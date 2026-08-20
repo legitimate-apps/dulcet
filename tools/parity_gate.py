@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
+STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
+LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
+TOP_KEYS = {"schema_version", "accepted_regressions", "features"}
+FEATURE_KEYS = {"id", "title", "spec", "gates", "conformance", "platforms"}
+CELL_KEYS = {"status", "evidence", "reason", "blocked_by"}
+
+
+def fail(message: str) -> None:
+    raise ValueError(message)
+
+
+def load_text(text: str, source: str) -> dict:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        fail(f"{source}: FEATURES.yml must remain JSON-compatible YAML: {error}")
+    if not isinstance(value, dict):
+        fail(f"{source}: top level must be an object")
+    return value
+
+
+def slug(heading: str) -> str:
+    value = heading.strip().lower()
+    value = re.sub(r"[`*_]", "", value)
+    value = re.sub(r"[^\w\- ]", "", value)
+    return re.sub(r"[ ]+", "-", value)
+
+
+def spec_anchors(path: Path) -> set[str]:
+    return {
+        slug(match.group(1))
+        for line in path.read_text().splitlines()
+        if (match := re.match(r"^#{1,6}\s+(.+?)\s*$", line))
+    }
+
+
+def workflow_jobs() -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for workflow in Path(".github/workflows").glob("*.yml"):
+        workflow_name = None
+        current_job = None
+        in_jobs = False
+        for line in workflow.read_text().splitlines():
+            if line.startswith("name:"):
+                workflow_name = line.split(":", 1)[1].strip()
+            if line == "jobs:":
+                in_jobs = True
+                continue
+            if in_jobs and (match := re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)):
+                current_job = match.group(1)
+                if workflow_name:
+                    pairs.add((workflow_name, current_job))
+            elif in_jobs and line and not line.startswith(" "):
+                in_jobs = False
+                current_job = None
+    return pairs
+
+
+def test_names() -> set[str]:
+    names: set[str] = set()
+    for path in Path(".").rglob("*"):
+        if not path.is_file() or any(part.startswith(".") or part == "build" for part in path.parts):
+            continue
+        if path.suffix not in {".kt", ".swift", ".java"}:
+            continue
+        text = path.read_text(errors="ignore")
+        names.update(re.findall(r"\b(?:fun|func|void)\s+([A-Za-z_][A-Za-z0-9_]*)", text))
+    return names
+
+
+def validate(document: dict, source: str) -> dict[str, dict]:
+    unknown = set(document) - TOP_KEYS
+    if unknown:
+        fail(f"{source}: unknown top-level keys: {sorted(unknown)}")
+    if document.get("schema_version") != 1:
+        fail(f"{source}: schema_version must be 1")
+    if not isinstance(document.get("accepted_regressions"), list):
+        fail(f"{source}: accepted_regressions must be a list")
+    features = document.get("features")
+    if not isinstance(features, list):
+        fail(f"{source}: features must be a list")
+
+    conformance_text = Path("docs/CONFORMANCE.md").read_text()
+    conformance_ids = set(re.findall(r"\bCONF-[0-9]+[a-z]?\b", conformance_text))
+    jobs = workflow_jobs()
+    tests = test_names()
+    by_id: dict[str, dict] = {}
+
+    for feature in features:
+        if not isinstance(feature, dict):
+            fail(f"{source}: feature rows must be objects")
+        unknown = set(feature) - FEATURE_KEYS
+        if unknown:
+            fail(f"{source}: unknown feature keys: {sorted(unknown)}")
+        feature_id = feature.get("id")
+        if not isinstance(feature_id, str) or not re.fullmatch(r"[a-z0-9]+(?:[._][a-z0-9]+)*", feature_id):
+            fail(f"{source}: invalid feature id {feature_id!r}")
+        if feature_id in by_id:
+            fail(f"{source}: duplicate feature id {feature_id}")
+        by_id[feature_id] = feature
+
+        spec = feature.get("spec", "")
+        if "#" not in spec:
+            fail(f"{source}: {feature_id} has no spec anchor")
+        spec_path_text, anchor = spec.split("#", 1)
+        spec_path = Path(spec_path_text)
+        if not spec_path.is_file() or anchor not in spec_anchors(spec_path):
+            fail(f"{source}: {feature_id} spec anchor does not resolve: {spec}")
+
+        for conf in feature.get("conformance", []):
+            if conf not in conformance_ids:
+                fail(f"{source}: {feature_id} references unknown {conf}")
+
+        platforms = feature.get("platforms")
+        if not isinstance(platforms, dict) or set(platforms) != PLATFORMS:
+            fail(f"{source}: {feature_id} must define exactly {sorted(PLATFORMS)}")
+        for platform, cell in platforms.items():
+            if not isinstance(cell, dict) or set(cell) - CELL_KEYS:
+                fail(f"{source}: {feature_id}/{platform} has invalid cell keys")
+            status = cell.get("status")
+            if status not in STATUSES:
+                fail(f"{source}: {feature_id}/{platform} has invalid status {status!r}")
+            if status == "n/a" and not cell.get("reason"):
+                fail(f"{source}: {feature_id}/{platform} n/a requires reason")
+            if status == "blocked" and not cell.get("blocked_by"):
+                fail(f"{source}: {feature_id}/{platform} blocked requires blocked_by")
+            if status == "shipped":
+                evidence = cell.get("evidence")
+                if not isinstance(evidence, dict) or set(evidence) != {"workflow", "job", "test"}:
+                    fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
+                if (evidence["workflow"], evidence["job"]) not in jobs:
+                    fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
+                if evidence["test"].split("/")[-1].split("#")[-1] not in tests:
+                    fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
+    return by_id
+
+
+def accepted(document: dict, feature_id: str, platform: str) -> bool:
+    for item in document["accepted_regressions"]:
+        if not isinstance(item, dict) or set(item) != {"id", "platform", "reason", "pr"}:
+            fail("accepted_regressions entries require exactly id, platform, reason, and pr")
+        if not item["reason"] or not re.fullmatch(r"#[0-9]+", str(item["pr"])):
+            fail("accepted_regressions entries require a reason and #<number> PR")
+        if item["id"] == feature_id and item["platform"] == platform:
+            return True
+    return False
+
+
+def base_document() -> dict | None:
+    base_ref = os.environ.get("GITHUB_BASE_REF")
+    candidates = []
+    if base_ref:
+        candidates.append(f"origin/{base_ref}")
+    candidates.append("HEAD^")
+    for candidate in candidates:
+        result = subprocess.run(
+            ["git", "show", f"{candidate}:FEATURES.yml"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            return load_text(result.stdout, candidate)
+    return None
+
+
+try:
+    current_document = load_text(Path("FEATURES.yml").read_text(), "FEATURES.yml")
+    current = validate(current_document, "FEATURES.yml")
+    previous_document = base_document()
+    if previous_document is not None:
+        previous = validate(previous_document, "base FEATURES.yml")
+        for feature_id, old_feature in previous.items():
+            if feature_id not in current:
+                fail(f"feature row removed: {feature_id}")
+            for platform in PLATFORMS:
+                old_status = old_feature["platforms"][platform]["status"]
+                new_status = current[feature_id]["platforms"][platform]["status"]
+                if old_status == "shipped" and new_status in LOWER_THAN_SHIPPED:
+                    if not accepted(current_document, feature_id, platform):
+                        fail(f"undeclared regression: {feature_id}/{platform} shipped -> {new_status}")
+    print(f"parity gate valid: {len(current)} feature rows")
+except (OSError, ValueError) as error:
+    print(error, file=sys.stderr)
+    raise SystemExit(1)

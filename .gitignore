@@ -1,0 +1,9 @@
+.gradle/
+.kotlin/
+**/build/
+DerivedData/
+*.xcresult
+*.xcuserstate
+xcuserdata/
+.DS_Store
+local.properties
