@@ -1,0 +1,77 @@
+name: apple-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apple-ci:
+    name: apple-ci
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Build all Apple frameworks
+        run: >-
+          ./gradlew --no-daemon
+          :core:linkDebugFrameworkMacosArm64
+          :core:linkDebugFrameworkIosArm64
+          :core:linkDebugFrameworkIosSimulatorArm64
+          :core:linkDebugFrameworkTvosArm64
+          :core:linkDebugFrameworkTvosSimulatorArm64
+          :core:macosArm64Test
+      - name: Build macOS shell
+        run: >-
+          xcodebuild build
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetMac
+          -configuration Debug
+          -destination 'generic/platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/DulcetMacDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build iOS and iPadOS shell
+        run: >-
+          xcodebuild build
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetiOS
+          -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build tvOS shell
+        run: >-
+          xcodebuild build
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetTV
+          -configuration Debug
+          -destination 'generic/platform=tvOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+      - name: Assert Kotlin and Xcode OS floors
+        run: >-
+          python3 tools/verify_os_floors.py
+          --macos-framework core/build/bin/macosArm64/debugFramework/DulcetCore.framework/Versions/A/DulcetCore
+          --ios-framework core/build/bin/iosSimulatorArm64/debugFramework/DulcetCore.framework/DulcetCore
+          --tvos-framework core/build/bin/tvosSimulatorArm64/debugFramework/DulcetCore.framework/DulcetCore
+          --macos-app "$RUNNER_TEMP/DulcetMacDerivedData/Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
+          --ios-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app/Dulcet DEV"
+          --tvos-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Dulcet DEV"

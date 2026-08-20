@@ -1,0 +1,529 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		766392F104BA53385E1EDE0A /* DulcetiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */; };
+		A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
+		F102F29962BAFAAE1D0152DF /* DulcetTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetMacApp.swift; sourceTree = "<group>"; };
+		90F869B5F737FF8CDAA6B182 /* DulcetTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetTVApp.swift; sourceTree = "<group>"; };
+		C94F682F0DA4A7A7D82934B3 /* DulcetiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetiOSApp.swift; sourceTree = "<group>"; };
+		EBEE55499C6E454B3A373AE1 /* DulcetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DulcetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		15B71ACC7A6C2A1F4D9F2CB3 /* DulcetiOS */ = {
+			isa = PBXGroup;
+			children = (
+				D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */,
+			);
+			path = DulcetiOS;
+			sourceTree = "<group>";
+		};
+		52787862A6A396B435831CF7 /* DulcetMac */ = {
+			isa = PBXGroup;
+			children = (
+				55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */,
+			);
+			path = DulcetMac;
+			sourceTree = "<group>";
+		};
+		66490B3250C62ABB4C784B41 = {
+			isa = PBXGroup;
+			children = (
+				15B71ACC7A6C2A1F4D9F2CB3 /* DulcetiOS */,
+				52787862A6A396B435831CF7 /* DulcetMac */,
+				C4EBD9B8094B6C71B1AA0E93 /* DulcetTV */,
+				EF09A798EC470842969DB215 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C4EBD9B8094B6C71B1AA0E93 /* DulcetTV */ = {
+			isa = PBXGroup;
+			children = (
+				B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */,
+			);
+			path = DulcetTV;
+			sourceTree = "<group>";
+		};
+		EF09A798EC470842969DB215 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C94F682F0DA4A7A7D82934B3 /* DulcetiOS.app */,
+				EBEE55499C6E454B3A373AE1 /* DulcetMac.app */,
+				90F869B5F737FF8CDAA6B182 /* DulcetTV.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6F24EA3CD16E818717B1FC45 /* DulcetTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B2B8E9A151E1DE5E43EAA7FD /* Build configuration list for PBXNativeTarget "DulcetTV" */;
+			buildPhases = (
+				0279D14F4C29492E2B1BB3E7 /* Compile Kotlin Framework */,
+				9A5B0199C733098312CEA26B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DulcetTV;
+			packageProductDependencies = (
+			);
+			productName = DulcetTV;
+			productReference = 90F869B5F737FF8CDAA6B182 /* DulcetTV.app */;
+			productType = "com.apple.product-type.application";
+		};
+		8BCA96527B244E2CCEE2901B /* DulcetMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2C42EF1D985A1D90FAC23DB6 /* Build configuration list for PBXNativeTarget "DulcetMac" */;
+			buildPhases = (
+				806940B958CE99915F933C06 /* Compile Kotlin Framework */,
+				ACE3176774BC5BACE2143179 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DulcetMac;
+			packageProductDependencies = (
+			);
+			productName = DulcetMac;
+			productReference = EBEE55499C6E454B3A373AE1 /* DulcetMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F191FAA4D2589FA394AC07D2 /* DulcetiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BFF6E597D61F20C292411331 /* Build configuration list for PBXNativeTarget "DulcetiOS" */;
+			buildPhases = (
+				228A4780425D9C613826E604 /* Compile Kotlin Framework */,
+				D39B864E960FD2B9352BC98A /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DulcetiOS;
+			packageProductDependencies = (
+			);
+			productName = DulcetiOS;
+			productReference = C94F682F0DA4A7A7D82934B3 /* DulcetiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		85AB9D651FD2629314AFF46A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					6F24EA3CD16E818717B1FC45 = {
+						DevelopmentTeam = 3LTL47SJ8C;
+						ProvisioningStyle = Automatic;
+					};
+					8BCA96527B244E2CCEE2901B = {
+						DevelopmentTeam = 3LTL47SJ8C;
+						ProvisioningStyle = Automatic;
+					};
+					F191FAA4D2589FA394AC07D2 = {
+						DevelopmentTeam = 3LTL47SJ8C;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = BA9D97B0A7AB9C7B8AA24B31 /* Build configuration list for PBXProject "Dulcet" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 66490B3250C62ABB4C784B41;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = EF09A798EC470842969DB215 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8BCA96527B244E2CCEE2901B /* DulcetMac */,
+				F191FAA4D2589FA394AC07D2 /* DulcetiOS */,
+				6F24EA3CD16E818717B1FC45 /* DulcetTV */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0279D14F4C29492E2B1BB3E7 /* Compile Kotlin Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Compile Kotlin Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+		};
+		228A4780425D9C613826E604 /* Compile Kotlin Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Compile Kotlin Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+		};
+		806940B958CE99915F933C06 /* Compile Kotlin Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Compile Kotlin Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		9A5B0199C733098312CEA26B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F102F29962BAFAAE1D0152DF /* DulcetTVApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACE3176774BC5BACE2143179 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D39B864E960FD2B9352BC98A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				766392F104BA53385E1EDE0A /* DulcetiOSApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		09CF159A04C1B438042F6BE8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
+				PRODUCT_NAME = "Dulcet DEV";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		0F66D7AC4142F42EC03D4A22 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
+				PRODUCT_NAME = "Dulcet DEV";
+				SDKROOT = appletvos;
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Debug;
+		};
+		3BD66460B4D1FB7D9875D805 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
+				PRODUCT_NAME = "Dulcet DEV";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		5488B7A744D4ECDEE10416E9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
+				PRODUCT_NAME = "Dulcet DEV";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C15376FBC04E4B5BACE3F4B6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 3LTL47SJ8C;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)";
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Release;
+		};
+		C34DCDB091D1EF814DEAB2E8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
+				PRODUCT_NAME = "Dulcet DEV";
+				SDKROOT = appletvos;
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Release;
+		};
+		CDB8A273766321642A7B3738 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
+				PRODUCT_NAME = "Dulcet DEV";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FAEE5A2D25B2DF9C5480D176 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 3LTL47SJ8C;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)";
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2C42EF1D985A1D90FAC23DB6 /* Build configuration list for PBXNativeTarget "DulcetMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3BD66460B4D1FB7D9875D805 /* Debug */,
+				09CF159A04C1B438042F6BE8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B2B8E9A151E1DE5E43EAA7FD /* Build configuration list for PBXNativeTarget "DulcetTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0F66D7AC4142F42EC03D4A22 /* Debug */,
+				C34DCDB091D1EF814DEAB2E8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BA9D97B0A7AB9C7B8AA24B31 /* Build configuration list for PBXProject "Dulcet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FAEE5A2D25B2DF9C5480D176 /* Debug */,
+				C15376FBC04E4B5BACE3F4B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BFF6E597D61F20C292411331 /* Build configuration list for PBXNativeTarget "DulcetiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CDB8A273766321642A7B3738 /* Debug */,
+				5488B7A744D4ECDEE10416E9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 85AB9D651FD2629314AFF46A /* Project object */;
+}

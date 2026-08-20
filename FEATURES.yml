@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "accepted_regressions": [],
+  "features": [
+    {
+      "id": "account.connect",
+      "title": "Connect an OpenSubsonic server",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
+      "gates": ["protocol:subsonic-1.16.1"],
+      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+      }
+    },
+    {
+      "id": "library.sync",
+      "title": "Synchronize and browse the library",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#162-shape-of-a-full-import",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-31", "CONF-32", "CONF-33"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+      }
+    },
+    {
+      "id": "search.query",
+      "title": "Search the local and server library",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#181-search",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-41"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+      }
+    },
+    {
+      "id": "playback.stream",
+      "title": "Play and validate a remote stream",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#124-validating-the-stream-inline-because-a-preflight-cannot-do-it",
+      "gates": ["engine:playable", "policy:allowed"],
+      "conformance": ["CONF-11", "CONF-12", "CONF-13", "CONF-14a", "CONF-14b", "CONF-15"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+      }
+    },
+    {
+      "id": "playback.scrobble",
+      "title": "Submit completed plays",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#151-the-rule",
+      "gates": ["permission:scrobble"],
+      "conformance": ["CONF-22", "CONF-23"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+      }
+    },
+    {
+      "id": "downloads.offline",
+      "title": "Download music for offline playback",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#145-downloads",
+      "gates": ["device:persistent-storage", "policy:downloads-enabled"],
+      "conformance": ["CONF-51", "CONF-52"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "ipados": {"status": "planned"}, "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},
+        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+      }
+    }
+  ]
+}

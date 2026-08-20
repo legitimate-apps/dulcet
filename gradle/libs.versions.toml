@@ -1,0 +1,40 @@
+[versions]
+kotlin = "2.4.10"
+gradle = "9.5.0"
+android-gradle-plugin = "9.1.0"
+xcode = "26.4.1"
+xcodegen = "2.46.0"
+jdk = "21"
+ktor = "3.5.2"
+sqldelight = "2.3.2"
+coroutines = "1.11.0"
+serialization = "1.11.0"
+compose-multiplatform = "1.11.0"
+compose-tv-material = "1.1.0"
+compose-tv-foundation = "1.0.0"
+media3 = "1.11.0"
+licensee = "1.14.1"
+android-compile-sdk = "36"
+android-target-sdk = "36"
+android-min-sdk = "26"
+macos-deployment = "14.0"
+ios-deployment = "17.0"
+tvos-deployment = "17.0"
+navidrome = "0.63.2"
+ffmpeg-linux = "6.1.1"
+ffmpeg-darwin = "9.0.1"
+
+[libraries]
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
+tv-material = { module = "androidx.tv:tv-material", version.ref = "compose-tv-material" }
+tv-foundation = { module = "androidx.tv:tv-foundation", version.ref = "compose-tv-foundation" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "android-gradle-plugin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
+licensee = { id = "app.cash.licensee", version.ref = "licensee" }
