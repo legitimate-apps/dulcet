@@ -40,6 +40,20 @@ behavior, not byte identity.
 | `android-actions/setup-android` | 4.0.1 · `40fd30fb8d7440372e1316f5d1809ec01dcd3699` |
 | `gradle/actions/setup-gradle` | 6.3.0 · `9c971963bec38e04b3d30dcc455b5382be2fdbfb` |
 
+## Hosted CI baseline
+
+The first complete cold `apple-ci` job on the standard GitHub-hosted `macos-26` runner started at
+`2026-08-20T22:11:30Z` and completed successfully at `2026-08-20T22:14:37Z`: 187 seconds wall-clock.
+The run built all five Kotlin/Native Apple frameworks, ran the empty-core macOS test, built the macOS,
+iOS/iPadOS, and tvOS shells, and checked the linked binaries' deployment floors.
+
+The calibrated `apple-ci` timeout is **15 minutes**. It is the next five-minute boundary above four
+times the observed cold duration (12 minutes 28 seconds), leaving 11 minutes 53 seconds of headroom
+while still releasing a hosted Apple concurrency slot promptly if the job hangs. Recalibrate from a
+representative sample when the Phase 1 suite materially changes the workload.
+
+Evidence: [GitHub Actions run 32423091935](https://github.com/legitimate-apps/dulcet/actions/runs/32423091935).
+
 ## Upgrade policy
 
 Upgrade one matrix component per pull request. Resolve every new coordinate against its primary

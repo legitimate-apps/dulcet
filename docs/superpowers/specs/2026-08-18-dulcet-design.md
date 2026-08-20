@@ -1,13 +1,13 @@
 # Dulcet — Design Spec
 
-**Status: PHASE 0 IMPLEMENTATION IN PROGRESS (2026-08-20).** Every open question is answered — §26 is
-now a decision record rather than a queue — and the design has been through independent adversarial
-review. The Kotlin Multiplatform and Xcode scaffold exists; Phase 0 closes only after the hosted CI,
-timeout calibration, and branch-protection evidence in §25 are observed.
+**Status: PHASE 0 COMPLETE (2026-08-20).** Every open question is answered — §26 is now a decision
+record rather than a queue — and the design has been through independent adversarial review. The
+public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured timeout, and enforced
+default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 10 — a final public-readiness scan removed the remaining identifiers of unrelated
-applications. Revision 9 verified the Apple signing path by API and promoted it from ASSUMED to OBSERVED; the
+**Revision:** 11 — Phase 0 completion recorded from hosted CI and repository API evidence. Revision
+10 removed the remaining identifiers of unrelated applications. Revision 9 verified the Apple signing path by API and promoted it from ASSUMED to OBSERVED; the
 only remaining unknown is the API key's CREATE permission, now the Phase-2 dry run's first act.
 Revision 8 re-confirmed and closed OQ-3's OS floors and removed the last private context from the
 repository tree. Revision 7 folded in a primary-source premise audit: a non-existent Maven coordinate, the
@@ -25,7 +25,7 @@ every change.
 
 **Author:** the Dulcet maintainers. Every revision after the first has been through an independent
 adversarial review pass; §28 records what each one changed.
-**Repo (not yet created):** `legitimate-apps/dulcet`
+**Repo:** `legitimate-apps/dulcet`
 **Domain and identifiers — two INDEPENDENT constants, defined here and nowhere else.** Every product
 URL in this document is written as `https://${DOMAIN}/...` and every bundle/application identifier as
 `${BUNDLE_PREFIX}.*`, so each can be settled with a one-line edit rather than a sweep.
@@ -2178,11 +2178,13 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 45 `apple-ci`, 5 `parity-gate`, 60
-`release`. ⚠️ **`apple-ci`'s 45 minutes is an unmeasured budget and must be calibrated in Phase 0, not
-guessed.** The hosted macOS runner is **3 vCPU / 7 GB**, and a cold Gradle KMP build producing five
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 15 `apple-ci`, 5 `parity-gate`, 60
+`release`. **OBSERVED 2026-08-20:** the first complete standard-hosted `macos-26` job ran from
+`22:11:30Z` to `22:14:37Z`, 187 seconds wall-clock. The 15-minute budget is the next five-minute
+boundary above four times that cold duration; `docs/TOOLCHAIN.md` links the run. The hosted macOS
+runner is **3 vCPU / 7 GB**, and a cold Gradle KMP build producing five
 Kotlin/Native targets plus four Xcode targets plus simulator tests is a lot for that machine. Run one
-throwaway build and set the number from the measurement — a timeout that is too low fails green builds,
+complete build and set the number from the measurement — a timeout that is too low fails green builds,
 and one that is too high holds a capped macOS concurrency slot while a hung job burns an hour. **These are now queue hygiene, not machine protection.** With a capped hosted-macOS
 concurrency pool, a superseded run that keeps holding a macOS slot delays the run that replaced it, and
 a hung job holds a slot until its timeout. Both settings matter more on hosted runners than they did on
@@ -2757,6 +2759,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 11 (2026-08-20)** — Phase 0 completion evidence.
+
+1. Recorded the green hosted `core-ci`, `parity-gate`, and Apple scaffold runs and closed the Phase 0
+   status after the repository controls were applied through GitHub's API.
+2. Replaced the unmeasured Apple timeout with 15 minutes, calibrated from a successful 187-second
+   cold run on the pinned standard `macos-26` image. The calculation and durable run link live in
+   `docs/TOOLCHAIN.md`.
+3. Updated the repository locator after the public repository was created.
 
 **Revision 10 (2026-08-20)** — final public-readiness scan.
 
