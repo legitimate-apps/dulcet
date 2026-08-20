@@ -37,6 +37,7 @@ behavior, not byte identity.
 |---|---:|
 | `actions/checkout` | 7.0.1 · `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `actions/setup-java` | 5.7.0 · `b6effb05e454b25005698d916606bdc6ffcbf961` |
+| `android-actions/setup-android` | 4.0.1 · `40fd30fb8d7440372e1316f5d1809ec01dcd3699` |
 | `gradle/actions/setup-gradle` | 6.3.0 · `9c971963bec38e04b3d30dcc455b5382be2fdbfb` |
 
 ## Upgrade policy
