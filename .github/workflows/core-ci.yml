@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  core-ci:
-    name: core-ci
+  core-build:
+    name: core-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -100,3 +100,21 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.linux.version)" \
             --ffmpeg-command-json "[\"docker\",\"exec\",\"$container\",\"$(tools/conformance-env/read-pin ffmpeg.linux.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+
+  core-ci:
+    name: core-ci
+    if: ${{ always() }}
+    needs: [core-build, conformance-env-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CORE_BUILD_RESULT: ${{ needs.core-build.result }}
+      CONFORMANCE_ENV_LINUX_RESULT: ${{ needs.conformance-env-linux.result }}
+    steps:
+      - name: Require build and Linux conformance environment
+        run: |
+          echo "core-build=$CORE_BUILD_RESULT"
+          echo "conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
+          test "$CORE_BUILD_RESULT" = success
+          test "$CONFORMANCE_ENV_LINUX_RESULT" = success
+          echo "CORE CI PASS build=success conformance-env-linux=success"

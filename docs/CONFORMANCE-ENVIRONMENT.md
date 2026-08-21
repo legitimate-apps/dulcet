@@ -74,7 +74,9 @@ to both the job log and the GitHub Actions job summary.
 
 ## CI identities
 
-The Linux self-assertion is job `conformance-env-linux` in `.github/workflows/core-ci.yml`. The Darwin
+The Linux self-assertion is job `conformance-env-linux` in `.github/workflows/core-ci.yml`. The required
+`core-ci` context is a final fail-closed aggregator: it runs even after an upstream failure or skip and
+passes only when both `core-build` and `conformance-env-linux` report `success`. The Darwin
 self-assertion is a serial tail of the sole `apple-ci` job in `.github/workflows/apple-ci.yml`; it does
 not allocate a second hosted-macOS job. Both workflows use standard hosted runners, explicit job
 timeouts, and cancel-in-progress concurrency.
