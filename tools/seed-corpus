@@ -110,7 +110,7 @@ def encode(
     codec_arguments = {
         ".flac": ["-c:a", "flac", "-compression_level", "5"],
         ".mp3": ["-c:a", "libmp3lame", "-b:a", "96k"],
-        ".ogg": ["-c:a", "libvorbis", "-q:a", "3"],
+        ".ogg": ["-c:a", "libopus", "-b:a", "64k"],
         ".m4a": ["-c:a", "aac", "-b:a", "96k"],
     }
     if output.suffix not in codec_arguments:
