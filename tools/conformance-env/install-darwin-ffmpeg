@@ -214,17 +214,14 @@ def main() -> None:
         )
 
     locked_keg_hashes = ffmpeg.get("installed_keg_sha256")
-    if locked_keg_hashes is not None:
-        if observed_keg_hashes != locked_keg_hashes:
-            raise SystemExit(
-                f"installed Homebrew keg payload drift: expected {locked_keg_hashes}, "
-                f"observed {observed_keg_hashes}"
-            )
-        print(f"DARWIN KEG PAYLOAD LOCK PASS formulas={len(observed_keg_hashes)}")
-    elif os.environ.get("DULCET_CALIBRATE_KEG_HASHES") == "1":
-        print("DARWIN KEG PAYLOAD CALIBRATION required=true")
-    else:
+    if not isinstance(locked_keg_hashes, dict) or set(locked_keg_hashes) != set(names):
         raise SystemExit("Darwin installed-keg payload hashes are not locked")
+    if observed_keg_hashes != locked_keg_hashes:
+        raise SystemExit(
+            f"installed Homebrew keg payload drift: expected {locked_keg_hashes}, "
+            f"observed {observed_keg_hashes}"
+        )
+    print(f"DARWIN KEG PAYLOAD LOCK PASS formulas={len(observed_keg_hashes)}")
 
     root_record = next(
         record

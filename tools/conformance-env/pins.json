@@ -26,6 +26,23 @@
       "formula": "ffmpeg",
       "path": "/opt/homebrew/bin/ffmpeg",
       "required_encoders": ["libmp3lame", "libopus"],
+      "installed_keg_sha256": {
+        "dav1d": "1f5a12182d36447e2d0fff3dfe67050fb9b1a8c8f12d71cdccd90046b6cf9e71",
+        "mpg123": "ff364ca028b708930afe4818fa6a2f7b6b70e41f176cfa05adea64961e089374",
+        "lame": "70e9f8a094a84a513176f0340d741943630f3cb1c3d00047dc57026367d6f67c",
+        "libvmaf": "9576bb7e1fbcc1d635f5aa6b5783f9dd672102ca82220a4fb5abc67c2d5deec4",
+        "libvpx": "d5540810fe0e6827ff5e78a9bd075522f8e9fe4cb3ea97b8bb5ca87f3e648c99",
+        "ca-certificates": "8593d5f6499e5e61700e8b5567f33fec30ee0f08810b30fe68a99016a6958ff6",
+        "openssl@3": "89c60f6a65fb29d62438615ccf9e4e43165042d4bf8a41e4f92060b0ee2bf67c",
+        "opus": "743b611b9511d4ea395f1c801422df25043f549f3c870a6de65986f64fb1a1ba",
+        "sdl3": "0b8b4ef7fdc0e090fec736f419648c6aacd2f1aa6dca4a18e56730d4d9a7f1d8",
+        "sdl2-compat": "bc4d29acd85493981da3c23307a132f3a074060bc69a0ad8bffb1fcd1175bd0e",
+        "svt-av1": "2d88133936480e68f1f76b19ea14e9fdee0de44ed4959e886d673abf0cb7e0e3",
+        "x264": "f3eab0fe1a8772968f9de7ae73a9f1b22cbce6ee3a26c0237453d9f78921b6e0",
+        "x265": "f3b50d2f4bf50de33b46ba849c271ae8aa78dd99b466383a9aec33082ef02ce7",
+        "xz": "fea4c0e562910b2657d8a06aefa83147f0d896cf14a0d97024fd13af8f913212",
+        "ffmpeg": "6b317afbcea8c70d8e85ee59ac2701f377c7f5c85c4de0c2854b2f36839e939b"
+      },
       "closure": [
         {
           "formula": "dav1d", "version": "1.5.4", "revision": 0,

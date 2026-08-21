@@ -97,7 +97,6 @@ jobs:
       - name: Install and verify checksum-pinned Darwin conformance closure
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
-          DULCET_CALIBRATE_KEG_HASHES: "1"
         run: |
           tools/conformance-env/prepare-darwin --output "$ROOT/bin"
           tools/conformance-env/install-darwin-ffmpeg
