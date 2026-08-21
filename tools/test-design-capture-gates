@@ -40,6 +40,24 @@ def refresh_manifest_file_evidence(root: Path) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+def bind_payload(payload: bytes, fixture_state: str, appearance: str, variant: str) -> bytes:
+    comment = (
+        "DULCET-CAPTURE-BINDING-V1\n"
+        f"fixtureState={fixture_state}\n"
+        f"appearance={appearance}\n"
+        f"variant={variant}\n"
+        f"jpegPayloadSha256={hashlib.sha256(payload).hexdigest()}\n"
+    ).encode("ascii")
+    segment_length = len(comment) + 2
+    return (
+        payload[:2]
+        + b"\xff\xfe"
+        + segment_length.to_bytes(2, "big")
+        + comment
+        + payload[2:]
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
@@ -76,6 +94,19 @@ def main() -> None:
             path.write_bytes(identical_bytes)
         refresh_manifest_file_evidence(identical_root)
         expect_rejection(identical_root, "captures are not pairwise distinct")
+
+        rebound_identical_root = Path(temporary) / "rebound-identical-visuals"
+        shutil.copytree(args.root, rebound_identical_root)
+        source = rebound_identical_root / "standard" / "macos-library-browse-light.jpg"
+        _, identical_payload = verifier.jpeg_payload_binding(source.read_bytes())
+        for path in (rebound_identical_root / "standard").glob("*.jpg"):
+            state, appearance, variant = verifier.expected_binding(path.name)
+            path.write_bytes(bind_payload(identical_payload, state, appearance, variant))
+        refresh_manifest_file_evidence(rebound_identical_root)
+        expect_rejection(
+            rebound_identical_root,
+            "capture visual payloads are not pairwise distinct",
+        )
 
         swapped_labels_root = Path(temporary) / "swapped-labels"
         shutil.copytree(args.root, swapped_labels_root)
@@ -125,7 +156,8 @@ def main() -> None:
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
-        "all-identical=true swapped-labels=true byte-identical-dynamic-type=true "
+        "all-identical=true rebound-identical-visuals=true swapped-labels=true "
+        "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true"
     )
 

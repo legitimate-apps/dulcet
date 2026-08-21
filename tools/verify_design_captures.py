@@ -173,14 +173,27 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"{directory.name} manifest record set is not exact")
 
     observed_hashes: dict[str, str] = {}
+    observed_payload_hashes: dict[str, str] = {}
+    bindings_by_file: dict[str, dict[str, str]] = {}
     for filename in sorted(expected):
-        digest = hashlib.sha256((directory / filename).read_bytes()).hexdigest()
+        data = (directory / filename).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
         if digest in observed_hashes:
             raise CaptureVerificationError(
                 "captures are not pairwise distinct: "
                 f"{observed_hashes[digest]} and {filename} are byte-identical"
             )
         observed_hashes[digest] = filename
+        binding, payload = jpeg_payload_binding(data)
+        payload_digest = hashlib.sha256(payload).hexdigest()
+        if payload_digest in observed_payload_hashes:
+            raise CaptureVerificationError(
+                "capture visual payloads are not pairwise distinct: "
+                f"{observed_payload_hashes[payload_digest]} and {filename} "
+                "contain the same compressed image bytes"
+            )
+        observed_payload_hashes[payload_digest] = filename
+        bindings_by_file[filename] = binding
 
     for filename in sorted(expected):
         path = directory / filename
@@ -230,7 +243,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             raise CaptureVerificationError(f"{directory.name}/{filename} appearance mismatch")
         if record.get("variant") != expected_variant:
             raise CaptureVerificationError(f"{directory.name}/{filename} variant mismatch")
-        binding, _ = jpeg_payload_binding(data)
+        binding = bindings_by_file[filename]
         for field, expected_value in (
             ("fixtureState", expected_state),
             ("appearance", expected_appearance),
@@ -293,7 +306,8 @@ def main() -> None:
     print(
         "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
-        "pairwise-distinct=true payload-label-bindings=true dynamic-type-claim=absent"
+        "pairwise-distinct=true visual-payloads-distinct=true "
+        "payload-label-bindings=true dynamic-type-claim=absent"
     )
 
 
