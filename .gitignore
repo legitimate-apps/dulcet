@@ -8,3 +8,4 @@ DerivedData/
 xcuserdata/
 .DS_Store
 local.properties
+__pycache__/
