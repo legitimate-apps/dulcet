@@ -5,9 +5,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote
-from urllib.request import Request, urlopen
+
+from required_checks import load_required_checks
 
 PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
 STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
@@ -15,8 +14,6 @@ LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
 TOP_KEYS = {"schema_version", "accepted_regressions", "features"}
 FEATURE_KEYS = {"id", "title", "spec", "gates", "conformance", "platforms"}
 CELL_KEYS = {"status", "evidence", "reason", "blocked_by"}
-GITHUB_API_ROOT = "https://api.github.com"
-GITHUB_API_VERSION = "2022-11-28"
 
 
 def fail(message: str) -> None:
@@ -82,93 +79,9 @@ def executed_evidence_jobs(jobs: dict[tuple[str, str], str]) -> set[tuple[str, s
     }
 
 
-def api_document(url: str, token: str) -> dict:
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        },
-    )
-    try:
-        with urlopen(request, timeout=15) as response:
-            text = response.read().decode("utf-8")
-    except HTTPError as error:
-        fail(f"GitHub branch-protection API returned HTTP {error.code}")
-    except (URLError, TimeoutError) as error:
-        fail(f"GitHub branch-protection API was unavailable: {type(error).__name__}")
-    try:
-        document = json.loads(text)
-    except json.JSONDecodeError as error:
-        fail(f"GitHub branch-protection API returned malformed JSON: {error}")
-    if not isinstance(document, dict):
-        fail("GitHub branch-protection API response must be an object")
-    return document
-
-
-def branch_protection_document() -> tuple[str, dict]:
-    fixture = os.environ.get("DULCET_BRANCH_PROTECTION_FIXTURE")
-    if fixture:
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            fail("branch-protection fixtures are forbidden in GitHub Actions")
-        path = Path(fixture)
-        try:
-            document = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
-            fail(f"branch-protection fixture is unreadable: {error}")
-        if not isinstance(document, dict):
-            fail("branch-protection fixture must be an object")
-        return "main", document
-
-    repository = os.environ.get("GITHUB_REPOSITORY", "")
-    token = os.environ.get("BRANCH_PROTECTION_TOKEN", "")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        fail("GITHUB_REPOSITORY is absent or malformed")
-    if not token:
-        fail("BRANCH_PROTECTION_TOKEN is required")
-
-    repository_document = api_document(f"{GITHUB_API_ROOT}/repos/{repository}", token)
-    default_branch = repository_document.get("default_branch")
-    if not isinstance(default_branch, str) or not default_branch:
-        fail("GitHub repository API omitted default_branch")
-    protection = api_document(
-        f"{GITHUB_API_ROOT}/repos/{repository}/branches/"
-        f"{quote(default_branch, safe='')}/protection/required_status_checks",
-        token,
-    )
-    return default_branch, protection
-
-
 def required_status_checks(_jobs: dict[tuple[str, str], str]) -> set[str]:
-    default_branch, document = branch_protection_document()
-    contexts = document.get("contexts")
-    checks = document.get("checks")
-    if (
-        not isinstance(contexts, list)
-        or not contexts
-        or any(not isinstance(context, str) or not context for context in contexts)
-        or len(contexts) != len(set(contexts))
-    ):
-        fail(f"GitHub branch protection for {default_branch}: contexts must be unique names")
-    if (
-        not isinstance(checks, list)
-        or not checks
-        or any(
-            not isinstance(check, dict)
-            or not isinstance(check.get("context"), str)
-            or not check["context"]
-            or not isinstance(check.get("app_id"), int)
-            for check in checks
-        )
-    ):
-        fail(f"GitHub branch protection for {default_branch}: checks are malformed")
-    check_contexts = [check["context"] for check in checks]
-    if len(check_contexts) != len(set(check_contexts)):
-        fail(f"GitHub branch protection for {default_branch}: check contexts are duplicated")
-    if set(contexts) != set(check_contexts):
-        fail(f"GitHub branch protection for {default_branch}: contexts and checks disagree")
-    return set(check_contexts)
+    _default_branch, contexts = load_required_checks()
+    return contexts
 
 
 def test_names() -> set[str]:
