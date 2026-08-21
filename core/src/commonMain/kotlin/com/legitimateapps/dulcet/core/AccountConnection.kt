@@ -396,7 +396,9 @@ public class AccountConnector(
                     authentication.forEach { (key, value) -> append(key, value) }
                 },
                 encodeInQuery = false,
-            )
+            ) {
+                authentication.forEach { (key, value) -> parameter(key, value) }
+            }
         } else {
             client.get(endpointUrl) {
                 commonParameters.forEach { (key, value) -> parameter(key, value) }
