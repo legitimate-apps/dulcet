@@ -292,6 +292,17 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun localHttpRequiresExplicitConsent() = runTest {
+        val result = fixture().connect()
+        val error = assertIs<AccountConnectionResult.Failed>(
+            result,
+            "plaintext local HTTP connected without an explicit per-server opt-in: $result",
+        ).error
+
+        assertIs<DomainError.Security.LocalExceptionViolated>(error)
+    }
+
+    @Test
     fun conf08EnforcesRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val sameOrigin = fixture().requireConnected("CONF-08", "$redirectRoot/same")
