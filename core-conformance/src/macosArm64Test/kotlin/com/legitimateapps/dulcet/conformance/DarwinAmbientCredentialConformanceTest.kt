@@ -7,6 +7,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
+import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.test.runTest
 import platform.Foundation.NSURLAuthenticationMethodHTTPBasic
@@ -19,7 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
-@OptIn(ExperimentalForeignApi::class)
+@OptIn(BetaInteropApi::class, ExperimentalForeignApi::class)
 class DarwinAmbientCredentialConformanceTest {
     @Test
     fun sharedCredentialStorageCannotAuthenticateBelowTheKtorBoundary() = runTest {

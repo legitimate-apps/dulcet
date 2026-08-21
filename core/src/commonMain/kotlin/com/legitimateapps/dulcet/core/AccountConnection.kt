@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import io.ktor.client.HttpClient
+import io.ktor.client.HttpClientConfig
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.api.SendingRequest
@@ -351,7 +352,7 @@ public class AccountConnector(
         normalized as NormalizedServerUrl.Valid
 
         val traceRecorder = RequestTraceRecorder(logSink)
-        val client = HttpClient {
+        val client = createAccountHttpClient {
             expectSuccess = false
             followRedirects = false
             install(RequestTracePlugin) {
@@ -709,6 +710,10 @@ public class AccountConnector(
 private class RequestTracePluginConfig {
     lateinit var observe: (HttpRequestBuilder, OutgoingContent) -> Unit
 }
+
+internal expect fun createAccountHttpClient(
+    configure: HttpClientConfig<*>.() -> Unit,
+): HttpClient
 
 private val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
     val observe = pluginConfig.observe
