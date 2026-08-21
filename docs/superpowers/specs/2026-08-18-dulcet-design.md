@@ -6,8 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 39 — raw and percent-encoded internationalized hosts now share the honest unsupported
-classification, and §10.1 no longer promises unimplemented IDNA conversion; revision 38 made CONF-08
+**Revision:** 40 — present account metadata and permission fields with the wrong JSON types now fail
+as a malformed envelope instead of silently disabling capabilities; revision 39 made raw and
+percent-encoded internationalized hosts share the honest unsupported classification, and §10.1 no
+longer promises unimplemented IDNA conversion; revision 38 made CONF-08
 derive and compare the full cross-origin target request, including method, exact path and raw query,
 and byte-exact body; revision 37 added both advertised form
 authentication and legacy query authentication scenarios; revision 36 made proxy-auth neutralisation explicitly
@@ -819,8 +821,13 @@ to the implementation. Given user input, Dulcet:
 3. **Authenticate with `ping`** using `v=1.16.1` and the salted token (§13.1). **The extension-probe
    result is not trusted until `ping` succeeds** — otherwise a reverse-proxy login page in front of an
    unknown server gets classified as `legacySubsonic` and we start sending credentials to it.
-4. Read envelope metadata: `openSubsonic`, `type`, `serverVersion`, `version`.
-5. Fetch user capabilities/roles (`getUser`): download, playlist, share, jukebox, admin.
+4. Read envelope metadata: `openSubsonic`, `type`, `serverVersion`, `version`. `version` is required.
+   For compatibility with classic servers the other three fields may be absent, but when present
+   `openSubsonic` must be a JSON boolean and `type`/`serverVersion` must be JSON strings; a wrong type
+   is `Protocol.MalformedEnvelope`, not a default value.
+5. Fetch user capabilities/roles (`getUser`): download, playlist, share, jukebox, admin. A missing
+   role remains `false` for legacy compatibility; every present role must be a JSON boolean or the
+   connection fails as `Protocol.MalformedEnvelope`.
 6. Construct a typed `CapabilitySet` from four independent inputs: protocol level, OpenSubsonic
    extensions, user permissions, known quirks (§17).
 7. Cache it per account. Refresh after each login and on the evidence rules in §10.4.
@@ -835,6 +842,7 @@ to the implementation. Given user input, Dulcet:
 | HTTP reached; extension probe non-envelope; **and** `ping` also fails to parse | `NotASubsonicServer` | "This doesn't look like a Subsonic server" — do not retry with credentials |
 | envelope parsed; error code indicates bad credentials | `AuthenticationFailed` | "Wrong username or password" — never "server down" |
 | envelope parsed; error code indicates a version mismatch | `ProtocolIncompatible` | show **what Dulcet sent** and **what the server reported** in its envelope. Do not promise a "required version" — the protocol does not reliably supply one |
+| successful envelope contains present account metadata or role fields with the wrong JSON type | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
 
 **OBSERVED:** a missing `getOpenSubsonicExtensions` is consistent with a classic pre-OpenSubsonic
 server. On `ExtensionListUnavailable`: do not fail login; mark `legacySubsonic`; mark every extension
@@ -2927,6 +2935,19 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 40 (2026-08-21)** — malformed successful envelopes stopped becoming connected accounts.
+
+1. A hosted red fixture returned three otherwise-successful account negotiations containing
+   `"openSubsonic":"yes"`, `"type":42`, or `"downloadRole":"true"`; each silently produced a
+   connected account with a false or stringified/defaulted capability value.
+2. Required envelope strings and every present optional account metadata or user-role field now use
+   their actual JSON type. A present wrong-typed field returns `Protocol.MalformedEnvelope` before a
+   `ConnectedAccount` can be constructed.
+3. Field absence remains deliberately lenient for classic-server compatibility: optional metadata
+   retains its empty/false default and an absent role remains `false`. The UI receives the distinct,
+   content-free malformed-envelope error and explains that the server returned invalid account
+   information; it does not present a silently capability-disabled account.
 
 **Revision 39 (2026-08-21)** — percent-encoded internationalized hosts became honestly unsupported.
 

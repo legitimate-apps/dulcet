@@ -469,6 +469,13 @@ public class AccountConnector(
                 ),
             )
         }
+        if (
+            !pingEnvelope.payload.hasOptionalBoolean("openSubsonic") ||
+            !pingEnvelope.payload.hasOptionalString("type") ||
+            !pingEnvelope.payload.hasOptionalString("serverVersion")
+        ) {
+            return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
+        }
 
         val userResponse = authenticatedRequest(
             client = client,
@@ -488,6 +495,12 @@ public class AccountConnector(
         }
         val user = userEnvelope.payload["user"] as? JsonObject
             ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
+        if (
+            listOf("downloadRole", "playlistRole", "shareRole", "jukeboxRole", "adminRole")
+                .any { !user.hasOptionalBoolean(it) }
+        ) {
+            return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
+        }
 
         val effectiveExtensions = if (extensionListUnavailable) emptyMap() else extensions
         return AccountConnectionResult.Connected(
@@ -1230,10 +1243,16 @@ private fun JsonElement?.toExtensionMap(): Map<String, Set<Int>> {
 }
 
 private fun JsonObject.string(name: String): String? =
-    (get(name) as? JsonPrimitive)?.contentOrNull
+    (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
 private fun JsonObject.boolean(name: String): Boolean? =
-    (get(name) as? JsonPrimitive)?.booleanOrNull
+    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+
+private fun JsonObject.hasOptionalString(name: String): Boolean =
+    name !in this || string(name) != null
+
+private fun JsonObject.hasOptionalBoolean(name: String): Boolean =
+    name !in this || boolean(name) != null
 
 private fun JsonObject.int(name: String): Int? =
     (get(name) as? JsonPrimitive)?.intOrNull
