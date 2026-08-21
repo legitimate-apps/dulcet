@@ -11,11 +11,16 @@ let package = Package(
     ],
     products: [
         .library(name: "DulcetKit", targets: ["DulcetKit"]),
+        .executable(name: "DulcetCapture", targets: ["DulcetCapture"]),
     ],
     targets: [
         .target(
             name: "DulcetKit",
             resources: [.process("Resources")]
+        ),
+        .executableTarget(
+            name: "DulcetCapture",
+            dependencies: ["DulcetKit"]
         ),
         .testTarget(name: "DulcetKitTests", dependencies: ["DulcetKit"]),
     ]

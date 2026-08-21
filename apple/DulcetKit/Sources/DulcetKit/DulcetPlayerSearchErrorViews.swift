@@ -84,24 +84,33 @@ struct DulcetNowPlayingView: View {
             }
 
             HStack(spacing: DulcetSpacing.lg) {
-                Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
+                Button(action: {}) {
+                    Image(systemName: "shuffle")
+                }
                     .buttonStyle(.plain)
                     .accessibilityLabel(DulcetStrings.shuffle)
-                Button(DulcetStrings.previous, systemImage: "backward.fill") {}
+                Button(action: {}) {
+                    Image(systemName: "backward.fill")
+                }
                     .buttonStyle(.plain)
                     .font(.title2)
                     .accessibilityLabel(DulcetStrings.previous)
                 Button(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: player.isPlaying ? "pause.fill" : "play.fill") {}
                     .buttonStyle(.borderedProminent)
+                    .tint(.dulcetAccent)
                     .controlSize(.large)
                     .font(.title2)
                     .keyboardShortcut(.space, modifiers: [])
                     .accessibilityLabel(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play)
-                Button(DulcetStrings.next, systemImage: "forward.fill") {}
+                Button(action: {}) {
+                    Image(systemName: "forward.fill")
+                }
                     .buttonStyle(.plain)
                     .font(.title2)
                     .accessibilityLabel(DulcetStrings.next)
-                Button(DulcetStrings.favorite, systemImage: player.current.isFavorite ? "heart.fill" : "heart") {}
+                Button(action: {}) {
+                    Image(systemName: player.current.isFavorite ? "heart.fill" : "heart")
+                }
                     .buttonStyle(.plain)
                     .accessibilityLabel(player.current.isFavorite ? DulcetStrings.unfavorite : DulcetStrings.favorite)
             }
@@ -318,6 +327,7 @@ struct DulcetTLSUntrustedView: View {
                 HStack(spacing: DulcetSpacing.sm) {
                     Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}
                         .buttonStyle(.borderedProminent)
+                        .tint(.dulcetAccent)
                         .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.connectionSettings)

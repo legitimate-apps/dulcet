@@ -23,12 +23,15 @@ public struct DulcetRootView: View {
             if variant == .deliberatelyBadControl {
                 DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
             } else {
-                NavigationSplitView {
-                    DulcetSidebar(store: store)
-                } detail: {
-                    DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
+                ZStack {
+                    Color.dulcetWindow.ignoresSafeArea()
+                    NavigationSplitView {
+                        DulcetSidebar(store: store)
+                    } detail: {
+                        DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
+                    }
+                    .navigationSplitViewStyle(.balanced)
                 }
-                .navigationSplitViewStyle(.balanced)
             }
         }
         .frame(minWidth: 900, minHeight: 600)
@@ -48,33 +51,78 @@ public struct DulcetRootView: View {
     }
 }
 
+/// Fixed-composition sibling of ``DulcetRootView`` for offscreen evidence rendering.
+///
+/// `NavigationSplitView` places its sidebar in a separate AppKit compositor subtree, which
+/// `NSHostingView.cacheDisplay` does not include. This view keeps the exact sidebar and state
+/// surfaces while making their fixed capture boundary explicit.
+public struct DulcetCaptureView: View {
+    @Bindable private var store: DulcetPresentationStore
+    private let variant: DulcetRenderVariant
+
+    public init(
+        store: DulcetPresentationStore,
+        variant: DulcetRenderVariant = .standard
+    ) {
+        self.store = store
+        self.variant = variant
+    }
+
+    public var body: some View {
+        if variant == .deliberatelyBadControl {
+            DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
+        } else {
+            HStack(spacing: 0) {
+                DulcetSidebar(store: store)
+                    .frame(width: 232)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(10)
+                    .zIndex(1)
+                Divider()
+                DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
+                    .id(store.snapshot.state.rawValue)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .zIndex(0)
+            }
+            .background(Color.dulcetWindow)
+        }
+    }
+}
+
 private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
 
     var body: some View {
-        List(selection: $store.selectedDestination) {
-            Section(DulcetStrings.browseSection) {
+        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+            Text(DulcetStrings.appName)
+                .font(.title2.weight(.bold))
+                .padding(.horizontal, DulcetSpacing.xs)
+
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                sidebarSectionTitle(DulcetStrings.browseSection)
                 sidebarRow(DulcetStrings.library, symbol: "rectangle.grid.2x2", destination: .library)
                 sidebarRow(DulcetStrings.search, symbol: "magnifyingglass", destination: .search)
                 sidebarRow(DulcetStrings.nowPlaying, symbol: "waveform", destination: .nowPlaying)
             }
 
-            Section(DulcetStrings.accountSection) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                sidebarSectionTitle(DulcetStrings.accountSection)
                 sidebarRow(DulcetStrings.settings, symbol: "server.rack", destination: .settings)
             }
+
+            Spacer(minLength: DulcetSpacing.md)
+            Divider()
+            serverStatus
+                .padding(.horizontal, DulcetSpacing.xs)
         }
-        .listStyle(.sidebar)
-        .navigationTitle(DulcetStrings.appName)
+        .padding(DulcetSpacing.sm)
+        .background(Color.dulcetControl.opacity(0.78))
         .navigationSplitViewColumnWidth(
             min: DulcetMetrics.sidebarMinWidth,
             ideal: 232,
             max: 300
         )
-        .safeAreaInset(edge: .bottom) {
-            serverStatus
-                .padding(DulcetSpacing.md)
-                .background(.bar)
-        }
     }
 
     private func sidebarRow(
@@ -82,10 +130,33 @@ private struct DulcetSidebar: View {
         symbol: String,
         destination: DulcetSidebarDestination
     ) -> some View {
-        Label(title, systemImage: symbol)
-            .tag(destination)
+        Button {
+            store.selectedDestination = destination
+        } label: {
+            Label(title, systemImage: symbol)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DulcetSpacing.xs)
+                .padding(.vertical, 6)
+                .background {
+                    if store.selectedDestination == destination {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.dulcetAccent.opacity(0.16))
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(store.selectedDestination == destination ? Color.dulcetAccent : Color.primary)
             .accessibilityLabel(title)
-            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(store.selectedDestination == destination ? [.isSelected] : [])
+    }
+
+    private func sidebarSectionTitle(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, DulcetSpacing.xs)
+            .accessibilityAddTraits(.isHeader)
     }
 
     @ViewBuilder
