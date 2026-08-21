@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 11 — Phase 0 completion recorded from hosted CI and repository API evidence. Revision
+**Revision:** 12 — the Phase 1 resource-loader spike measured progressive and HLS custom-scheme
+routing. Revision 11 recorded Phase 0 completion from hosted CI and repository API evidence. Revision
 10 removed the remaining identifiers of unrelated applications. Revision 9 verified the Apple signing path by API and promoted it from ASSUMED to OBSERVED; the
 only remaining unknown is the API key's CREATE permission, now the Phase-2 dry run's first act.
 Revision 8 re-confirmed and closed OQ-3's OS floors and removed the last private context from the
@@ -1038,22 +1039,19 @@ stream's validity.
 
 **Decision — inline validation is the correctness mechanism on both platforms:**
 
-⚠️ **The Apple mechanism is undocumented by Apple, and OQ-10 was answered without that being said.**
-Apple's `AVAssetResourceLoaderDelegate` reference describes only that *"A class should adopt this
-protocol when associated with the asset's resource loader… The resource loader works with your delegate
-to process the request."* It does **not** document the custom-scheme requirement, and it does **not**
-document whether the delegate can supply **HLS media segments** or only the playlist and encryption
-keys. That second gap matters directly: §12.5 Path A can return `protocol: "hls"`, and under a custom
-scheme AVPlayer resolves segment URIs relative to that scheme — so either every segment comes back
-through the loader (and Dulcet owns segment loading, range handling and validation for all of them) or
-they escape it entirely. **Those are very different amounts of work.**
+**OBSERVED 2026-08-20 — the undocumented Apple mechanism has now been measured.** Apple's
+`AVAssetResourceLoaderDelegate` reference describes methods for handling resource-loading requests
+from a URL asset, but does not specify custom-scheme HLS segment routing. The Phase 1 spike closes that
+gap with a custom-scheme `AVURLAsset` and `AVPlayer`: a progressive MP3 produced delegate byte-range
+requests, while an HLS manifest and a relative media-segment request separately reached the delegate.
+The identical generated two-segment HLS fixture first played over localhost HTTP as a negative
+control, with both control segments requested and playback time advancing.
 
-**Therefore Phase 1 opens with a one-day spike, before any loader code is written:** a custom-scheme
-`AVURLAsset` playing (a) a progressive MP3 and (b) an HLS manifest, with the delegate logging every
-request it receives. That is a **measurement, not a decision**, and its result is recorded here and in
-`docs/COMPATIBILITY.md`. If HLS segments do not route through the loader, the fallback is to refuse
-`protocol: "hls"` plans on Apple and force Path A to a progressive container — which is a supported
-outcome, not a failure.
+The result is recorded in `docs/COMPATIBILITY.md` and enforced by the `resource-loader-spike` CI job.
+Therefore Dulcet proceeds with HLS support on Apple through the inline resource loader; the fallback
+that would have refused `protocol: "hls"` plans is **not selected**. This measurement establishes
+routing, not range correctness, seeking, validation, redirect, or cancellation behavior; those remain
+requirements of the production loader below.
 
 - **Apple:** a custom scheme (`dulcet-stream://`) plus an `AVAssetResourceLoaderDelegate` that performs
   the fetch through `URLSession`. Dulcet therefore sees status, headers and bytes of the *actual*
@@ -2734,7 +2732,7 @@ argue against the recorded rationale — not as filling in a blank.
 | **OQ-7** | **`getdulcet.com` — chosen, not yet purchased.** | $11.08 register and renew, verified available. **Blocks nothing**: `${BUNDLE_PREFIX}` is decoupled from it (header), so it reaches only support/privacy URLs, the review demo server and marketing. Purchase needs a person because the registrar's web login requires a passkey and its API has no add-funds endpoint. |
 | **OQ-8** | **A local, disposable Navidrome pinned to 0.63.2 is the development and CI target.** | **Normative: conformance and CI run against the local instance, never against a personal or production server.** The complementary rule — that a person manually dogfooding a DEV build against their own real library is expected, because the line is *automation*, not the server — is set out in **§22.4**, which reconciles the two. Automated writes to a personal instance are forbidden in all cases, and a new sync generation's first pass always goes to the local instance. Machine-specific paths belong in maintainer-local operational notes, not in this repository (§28 revision 5). |
 | **OQ-9** | **OS-trusted TLS only in v1.** Self-signed certificates and private CAs are refused. | **The user-facing consequence, stated honestly: some self-hosters will not be able to connect** — private-CA and self-signed deployments are common in this audience, and for them Dulcet v1 will fail at login with `TlsUntrusted`. The documented remedy is to install the CA at OS level. **Known v1 limitation.** Candidate v2 story: explicit per-server pinning of a user-supplied certificate, shown and confirmed once, stored per account — **never** a trust-all toggle, which would silently defeat the protection for every server (§13.5). |
-| **OQ-10** | **Accepted, and now gated on a one-day spike that runs first.** Build the Apple inline-validation loader in Phase 1. | The alternative is a known correctness gap, and the loader also buys header auth, redirect control and honest error surfacing (§12.4). ⚠️ **But the decision was made on a mechanism Apple does not document**: neither the custom-scheme requirement nor whether HLS *segments* route through the delegate appears in Apple's reference. Since Path A can return `protocol: "hls"`, that gap is the difference between "validate a manifest" and "own segment loading entirely". **Phase 1 opens with a measurement spike (§12.4) before loader code is written**, with a defined fallback: refuse HLS plans on Apple and force Path A to a progressive container. |
+| **OQ-10** | **CLOSED by measurement 2026-08-20. Build the Apple inline-validation loader in Phase 1.** | **OBSERVED:** a custom-scheme progressive MP3 produced delegate byte-range requests; a custom-scheme HLS manifest and a relative media-segment request separately reached the delegate. A localhost HTTP playback of the identical generated two-segment HLS fixture was the negative control. The `resource-loader-spike` CI job enforces the recorded `routed` result. The fallback that would refuse HLS plans on Apple is not selected (§12.4; `docs/COMPATIBILITY.md`). |
 
 ---
 
@@ -2783,6 +2781,16 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 12 (2026-08-20)** — the Apple resource-loader gap closed by measurement.
+
+1. A checked-in macOS spike proved that progressive MP3 byte requests reach
+   `AVAssetResourceLoaderDelegate` under the custom scheme.
+2. The same spike proved that an HLS manifest and a relative media-segment request reach the
+   delegate. The identical runtime-generated two-segment HLS fixture plays over localhost HTTP first,
+   preventing a broken fixture from masquerading as a negative result.
+3. OQ-10 now selects the inline HLS loader path; the progressive-only fallback remains documented as
+   the rejected branch of the measured decision.
 
 **Revision 11 (2026-08-20)** — Phase 0 completion evidence.
 
