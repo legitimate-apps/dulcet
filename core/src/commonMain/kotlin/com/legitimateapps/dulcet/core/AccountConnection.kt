@@ -261,6 +261,8 @@ public sealed interface DomainError {
         public data object InvalidCredentials : Auth
         public data object TokenAuthUnsupported : Auth
         public data object Forbidden : Auth
+        /** The server or an intermediary requested an authentication mechanism Phase 1 does not support. */
+        public data object UnsupportedAuthenticationChallenge : Auth
         public data class RedirectCredentialLoss(
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
@@ -286,6 +288,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Auth.InvalidCredentials -> "Auth.InvalidCredentials"
         DomainError.Auth.TokenAuthUnsupported -> "Auth.TokenAuthUnsupported"
         DomainError.Auth.Forbidden -> "Auth.Forbidden"
+        DomainError.Auth.UnsupportedAuthenticationChallenge -> "Auth.UnsupportedAuthenticationChallenge"
         is DomainError.Auth.RedirectCredentialLoss -> "Auth.RedirectCredentialLoss"
         is DomainError.CapabilityUnsupported -> "Capability.Unsupported"
     }
@@ -317,6 +320,7 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Auth.InvalidCredentials,
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
+            DomainError.Auth.UnsupportedAuthenticationChallenge,
             is DomainError.Auth.RedirectCredentialLoss,
             -> Unit
             is DomainError.CapabilityUnsupported -> put(

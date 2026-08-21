@@ -312,6 +312,7 @@ class AccountConnectConformanceTest {
             DomainError.Auth.InvalidCredentials,
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
+            DomainError.Auth.UnsupportedAuthenticationChallenge,
             DomainError.Auth.RedirectCredentialLoss(),
             DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
         )
