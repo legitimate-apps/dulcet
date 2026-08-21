@@ -107,8 +107,14 @@ func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
         let appearance = try #require(NSAppearance(named: appearanceName))
         let window = try resolved(.windowBackgroundColor, appearance: appearance)
-        let accent = try resolved(DulcetContrastColor.accent, appearance: appearance)
-        let onAccent = try resolved(DulcetContrastColor.onAccent, appearance: appearance)
+        let primaryActionFill = try resolved(
+            DulcetContrastColor.primaryActionFill,
+            appearance: appearance
+        )
+        let primaryActionLabel = try resolved(
+            DulcetContrastColor.primaryActionLabel,
+            appearance: appearance
+        )
         let selectionBackground = try resolved(
             DulcetContrastColor.selectionBackground,
             appearance: appearance
@@ -119,15 +125,9 @@ func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
 
         let pairs = [
             ContrastRequirement(
-                name: "primary-button-label/accent-fill",
-                foreground: onAccent,
-                background: accent,
-                minimum: 4.5
-            ),
-            ContrastRequirement(
-                name: "primary-button-label/offline-fill",
-                foreground: onAccent,
-                background: offline,
+                name: "primary-button-label/primary-action-fill",
+                foreground: primaryActionLabel,
+                background: primaryActionFill,
                 minimum: 4.5
             ),
             ContrastRequirement(
