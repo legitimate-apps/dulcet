@@ -57,6 +57,42 @@ jobs:
           -destination 'generic/platform=macOS'
           -derivedDataPath "$RUNNER_TEMP/DulcetMacDerivedData"
           CODE_SIGNING_ALLOWED=NO
+      - name: Test native macOS presentation layer
+        run: swift test --package-path apple/DulcetKit
+      - name: Capture deterministic macOS design evidence twice
+        env:
+          CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
+        run: |
+          swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$CAPTURE_ROOT/run-a/standard" \
+            --state all --appearance all --include-control
+          swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$CAPTURE_ROOT/run-a/accessibility5" \
+            --state all --appearance light --dynamic-type accessibility5
+          swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$CAPTURE_ROOT/run-b/standard" \
+            --state all --appearance all --include-control
+          swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$CAPTURE_ROOT/run-b/accessibility5" \
+            --state all --appearance light --dynamic-type accessibility5
+          diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b"
+          python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a"
+          tools/test-design-capture-gates "$CAPTURE_ROOT/run-a"
+          {
+            echo '## macOS design captures'
+            echo
+            echo 'Two complete render runs were byte-identical.'
+            echo
+            echo 'Artifact contains 16 standard/control JPEGs and 7 accessibility-5 JPEGs.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload macOS design evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-design-captures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-design-captures/run-a
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Build iOS and iPadOS shell
         run: >-
           xcodebuild build
