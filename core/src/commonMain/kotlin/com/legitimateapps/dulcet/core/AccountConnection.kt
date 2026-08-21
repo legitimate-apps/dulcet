@@ -903,15 +903,63 @@ public object AccountConnectionContract {
 /** The only URL representation allowed into logs. Domain errors retain no URL content. */
 public object Redactor {
     public fun redactUrl(url: String): String {
+        val schemeDelimiter = url.indexOf("://")
+        if (schemeDelimiter <= 0) return UNRENDERABLE_URL
+        val authorityStart = schemeDelimiter + 3
+        val authorityEnd = url.indexOfFirstFrom(authorityStart) { character ->
+            character == '/' || character == '?' || character == '#'
+        }.let { if (it < 0) url.length else it }
+        if (authorityEnd == authorityStart) return UNRENDERABLE_URL
+        val authority = url.substring(authorityStart, authorityEnd)
+        if (!authority.isStructurallyRenderableUrlAuthority()) return UNRENDERABLE_URL
         val parsed = try {
             Url(url)
-        } catch (_: IllegalArgumentException) {
-            return "<unrenderable-url>"
+        } catch (_: Exception) {
+            return UNRENDERABLE_URL
         }
+        if (parsed.protocol.name.isBlank() || parsed.host.isBlank()) return UNRENDERABLE_URL
         val renderedHost = if (':' in parsed.host) "[${parsed.host}]" else parsed.host
         val queryMarker = if ('?' in url.substringBefore('#')) "?<redacted>" else ""
         return "${parsed.protocol.name}://$renderedHost:${parsed.port}${parsed.encodedPath}$queryMarker"
     }
+
+    private const val UNRENDERABLE_URL = "<unrenderable-url>"
+}
+
+private fun String.isStructurallyRenderableUrlAuthority(): Boolean {
+    if (
+        isBlank() || any { it.isWhitespace() || it.isISOControl() } ||
+        '@' in this || '\\' in this
+    ) {
+        return false
+    }
+    if (startsWith('[')) {
+        val closingBracket = indexOf(']')
+        if (closingBracket <= 1 || indexOf('[', startIndex = 1) >= 0) return false
+        if (indexOf(']', startIndex = closingBracket + 1) >= 0) return false
+        val suffix = substring(closingBracket + 1)
+        return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
+    }
+    if ('[' in this || ']' in this || count { it == ':' } > 1) return false
+    val host = substringBefore(':')
+    if (host.isBlank()) return false
+    val suffix = removePrefix(host)
+    return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
+}
+
+private fun String.isValidExplicitUrlPort(): Boolean {
+    if (!startsWith(':')) return false
+    val digits = drop(1)
+    if (digits.isEmpty() || !digits.all { it in '0'..'9' }) return false
+    val port = digits.toIntOrNull() ?: return false
+    return port in 0..65_535
+}
+
+private inline fun String.indexOfFirstFrom(startIndex: Int, predicate: (Char) -> Boolean): Int {
+    for (index in startIndex until length) {
+        if (predicate(this[index])) return index
+    }
+    return -1
 }
 
 private object SecureSaltSource : SaltSource {

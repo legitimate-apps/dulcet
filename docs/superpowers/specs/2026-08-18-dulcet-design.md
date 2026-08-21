@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 28 — CONF-07 absence assertions now use values captured by the receiving wire fixture;
-revision 27 moved required-check evidence to GitHub's protected default branch; revision 26 derived
+**Revision:** 29 — structural URL redaction is total over malformed input; revision 28 made CONF-07
+absence assertions use values captured by the receiving wire fixture; revision 27 moved required-check
+evidence to GitHub's protected default branch; revision 26 derived
 credential coverage from every observed header, query parameter, and form field
 and rejects unclassified channels; revision 25 separately observed query/form credential
 keys at the Ktor boundary; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
@@ -1344,7 +1345,10 @@ Normative policy, enforced in the transport layer and in the resource loader (§
 
 - A single `Redactor` structurally parses a request URL and renders only its scheme, host, port and
   path plus a constant query marker before it can reach a `LogSink`. User information, the complete
-  query and the fragment are never copied into the rendered representation.
+  query and the fragment are never copied into the rendered representation. The renderer is total
+  over arbitrary strings: an absent/empty authority, control characters, malformed ports, broken
+  brackets, or any parser exception produces the constant `<unrenderable-url>` rather than throwing
+  or falling through to a partially parsed representation.
 - **`DomainError` does not sanitize or retain server-controlled text at all.** Its fields are limited
   to closed enums, numeric error/version values, and content-free suppression markers whose
   `toString()` values are constants. A raw server message or URL therefore has no representable field;
@@ -1356,9 +1360,9 @@ Normative policy, enforced in the transport layer and in the resource loader (§
 - Never log the password, token or salt, at any level, in any build.
 - **Tests use canary values, not pattern matching.** Revision 1 proposed failing on any 32-hex run in
   the logs; that would flag ordinary Navidrome item and artwork IDs, which are themselves hash-like.
-  Instead the conformance environment uses a known canary password, and the tests assert that the
-  canary, its derived tokens, and the exact salts issued during the run appear **nowhere** in captured
-  log output, and that structured log fields carrying URLs are redacted. A separate structural test
+  Instead the conformance environment uses a known canary password; the receiving fixture reports the
+  exact username, tokens, and salts it observed, and the tests assert those observed values appear
+  **nowhere** in captured log output while structured URL fields are redacted. A separate structural test
   passes a bare credential in a server message and a credential in URL user information, enumerates
   every `DomainError` subtype, and checks direct rendering, wrapper rendering, logging, exception
   messages and the explicit diagnostic-JSON serializer.
@@ -2872,6 +2876,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 29 (2026-08-21)** — URL redaction became total.
+
+1. `Redactor` now owns a non-throwing structural authority grammar before invoking Ktor's parser:
+   empty authorities, whitespace/control characters, user information, backslashes, broken IPv6
+   brackets, ambiguous colons, empty/non-numeric ports, and ports outside `0..65535` fail closed.
+2. Every malformed path returns the same content-free marker, and all ordinary parser exceptions are
+   contained. No raw input, partial authority, query, fragment, user information, or exception text is
+   used as a fallback rendering.
+3. A generated malformed-input corpus plus named red controls for broken brackets and out-of-range
+   ports exercise totality, the safe marker, credential absence, and a valid structural control URL.
 
 **Revision 28 (2026-08-21)** — credential absence became wire-observed.
 
