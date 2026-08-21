@@ -11,7 +11,7 @@ internal actual fun tlsTrustFailureOrNull(failure: Throwable): TlsTrustFailure? 
         val candidate = current ?: return null
         val origin = (candidate as? DarwinHttpRequestException)?.origin
         if (origin?.domain == NSURLErrorDomain) {
-            when (origin.code) {
+            when (origin?.code) {
                 SERVER_CERTIFICATE_HAS_BAD_DATE,
                 SERVER_CERTIFICATE_NOT_YET_VALID -> return TlsTrustFailure.ValidityPeriod
                 SERVER_CERTIFICATE_UNTRUSTED,
