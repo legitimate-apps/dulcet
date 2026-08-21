@@ -1290,9 +1290,10 @@ settles that claim: `tools/conformance-env/redirect-server` does not act as a fo
 `Proxy-Authorization` on that proxy wire, or the resulting domain error. Promotion to **OBSERVED**
 requires a PR-head `.github/workflows/apple-ci.yml` run whose `apple-ci` job executes
 `DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
-against a dedicated loopback forward-proxy fixture that returns `407 Proxy Authentication Required`
-with `Proxy-Authenticate: Basic`, records every received `Proxy-Authorization` value, and asserts both
-zero such values and `Auth.UnsupportedAuthenticationChallenge`.
+against a future `tools/conformance-env/redirect-server --forward-proxy-auth` loopback fixture that
+returns `407 Proxy Authentication Required` with `Proxy-Authenticate: Basic`, records every received
+`Proxy-Authorization` value, and asserts both zero such values and
+`Auth.UnsupportedAuthenticationChallenge`.
 
 **Secure storage, specified rather than gestured at:**
 
@@ -2926,9 +2927,10 @@ argue against the recorded rationale — not as filling in a blank.
    and that this path maps to `Auth.UnsupportedAuthenticationChallenge`.
 3. Promotion to **OBSERVED** requires a PR-head `apple-ci` job running
    `DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
-   against a dedicated loopback forward-proxy fixture that emits 407 with
-   `Proxy-Authenticate: Basic`, records the received proxy-auth channels, and asserts the distinct
-   domain error. A green run without those fixture observations does not settle the claim.
+   against a future `tools/conformance-env/redirect-server --forward-proxy-auth` loopback fixture that
+   emits 407 with `Proxy-Authenticate: Basic`, records the received proxy-auth channels, and asserts
+   the distinct domain error. A green run without those fixture observations does not settle the
+   claim.
 
 **Revision 35 (2026-08-21)** — required-check timing became explicit.
 
