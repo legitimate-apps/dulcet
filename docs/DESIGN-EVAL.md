@@ -85,6 +85,8 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 `OBSERVED` from CI or source evidence, but not from pixels alone:
 
 - Swift package tests, app build success, capture-verifier negative controls;
+- WCAG AA contrast ratios for Dulcet's resolved accent, offline, and danger tokens against the
+  resolved macOS window background in Aqua and Dark Aqua;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized scalable-text rows, and native focusable controls.
 

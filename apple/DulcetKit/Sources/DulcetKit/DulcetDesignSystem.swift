@@ -20,12 +20,36 @@ enum DulcetMetrics {
 }
 
 extension Color {
-    static let dulcetAccent = Color(red: 0.20, green: 0.34, blue: 0.78)
-    static let dulcetOffline = Color(red: 0.72, green: 0.42, blue: 0.08)
-    static let dulcetDanger = Color(red: 0.72, green: 0.14, blue: 0.18)
+    static let dulcetAccent = Color(nsColor: DulcetContrastColor.accent)
+    static let dulcetOffline = Color(nsColor: DulcetContrastColor.offline)
+    static let dulcetDanger = Color(nsColor: DulcetContrastColor.danger)
     static let dulcetWindow = Color(nsColor: .windowBackgroundColor)
     static let dulcetControl = Color(nsColor: .controlBackgroundColor)
     static let dulcetSeparator = Color(nsColor: .separatorColor)
+}
+
+enum DulcetContrastColor {
+    static let accent = adaptive(
+        name: "DulcetAccent",
+        light: NSColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
+        dark: NSColor(red: 0.47, green: 0.64, blue: 1.00, alpha: 1)
+    )
+    static let offline = adaptive(
+        name: "DulcetOffline",
+        light: NSColor(red: 0.52, green: 0.27, blue: 0.02, alpha: 1),
+        dark: NSColor(red: 1.00, green: 0.68, blue: 0.28, alpha: 1)
+    )
+    static let danger = adaptive(
+        name: "DulcetDanger",
+        light: NSColor(red: 0.68, green: 0.10, blue: 0.14, alpha: 1),
+        dark: NSColor(red: 1.00, green: 0.46, blue: 0.49, alpha: 1)
+    )
+
+    private static func adaptive(name: String, light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: NSColor.Name(name)) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
 }
 
 struct DulcetArtworkView: View {
