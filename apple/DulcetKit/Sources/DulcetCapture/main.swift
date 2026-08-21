@@ -92,6 +92,7 @@ private enum CaptureError: Error, CustomStringConvertible {
     case unknownArgument(String)
     case unsupportedDynamicType(String)
     case outputExists(String)
+    case geometryMismatch(String)
     case bitmapAllocation
     case jpegEncoding
 
@@ -109,6 +110,8 @@ private enum CaptureError: Error, CustomStringConvertible {
             "macOS capture cannot claim Dynamic Type \(value): SwiftUI dynamicTypeSize does not affect text size on macOS"
         case let .outputExists(path):
             "output directory must not exist: \(path)"
+        case let .geometryMismatch(detail):
+            "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
             "could not allocate the fixed capture bitmap"
         case .jpegEncoding:
@@ -119,11 +122,17 @@ private enum CaptureError: Error, CustomStringConvertible {
 
 private struct CaptureRecord: Codable {
     let appearance: String
+    let captureBoundsHeightPoints: Int
+    let captureBoundsWidthPoints: Int
+    let captureBoundsXPoints: Int
+    let captureBoundsYPoints: Int
     let file: String
     let fixtureState: String
     let jpegBytes: Int
     let sha256: String
     let variant: String
+    let windowFrameHeightPoints: Int
+    let windowFrameWidthPoints: Int
 }
 
 private struct CaptureManifest: Codable {
@@ -201,7 +210,7 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 3,
+            schemaVersion: 4,
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
@@ -221,7 +230,11 @@ private struct DulcetCaptureMain {
         let manifestData = try encoder.encode(manifest) + Data("\n".utf8)
         try manifestData.write(to: options.outputDirectory.appendingPathComponent("manifest.json"))
 
-        print("DULCET CAPTURE PASS images=\(records.count) output=\(options.outputDirectory.lastPathComponent)")
+        print(
+            "DULCET CAPTURE PASS images=\(records.count) "
+                + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
+                + "output=\(options.outputDirectory.lastPathComponent)"
+        )
     }
 
     @MainActor
@@ -264,8 +277,8 @@ private struct DulcetCaptureMain {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
-        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
         window.contentView = hostingView
+        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -279,6 +292,20 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
+
+        let windowFrame = window.frame
+        let captureBounds = captureView.bounds
+        let expectedSize = NSSize(width: width, height: height)
+        guard windowFrame.size == expectedSize,
+              captureBounds.origin == .zero,
+              captureBounds.size == expectedSize else {
+            throw CaptureError.geometryMismatch(
+                "expected window=\(width)x\(height) capture-bounds=0,0,\(width)x\(height); "
+                    + "observed window=\(windowFrame.width)x\(windowFrame.height) "
+                    + "capture-bounds=\(captureBounds.origin.x),\(captureBounds.origin.y),"
+                    + "\(captureBounds.width)x\(captureBounds.height)"
+            )
+        }
 
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -320,11 +347,17 @@ private struct DulcetCaptureMain {
 
         return CaptureRecord(
             appearance: appearance.rawValue,
+            captureBoundsHeightPoints: Int(captureBounds.height),
+            captureBoundsWidthPoints: Int(captureBounds.width),
+            captureBoundsXPoints: Int(captureBounds.origin.x),
+            captureBoundsYPoints: Int(captureBounds.origin.y),
             file: filename,
             fixtureState: state.rawValue,
             jpegBytes: jpeg.count,
             sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(),
-            variant: variantName
+            variant: variantName,
+            windowFrameHeightPoints: Int(windowFrame.height),
+            windowFrameWidthPoints: Int(windowFrame.width)
         )
     }
 }

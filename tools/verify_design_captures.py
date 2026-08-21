@@ -89,7 +89,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -149,6 +149,20 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             raise CaptureVerificationError(
                 f"{directory.name}/{filename} claims unsupported macOS dynamicType evidence"
             )
+        geometry_contract = {
+            "windowFrameWidthPoints": WIDTH,
+            "windowFrameHeightPoints": HEIGHT,
+            "captureBoundsXPoints": 0,
+            "captureBoundsYPoints": 0,
+            "captureBoundsWidthPoints": WIDTH,
+            "captureBoundsHeightPoints": HEIGHT,
+        }
+        for key, expected_value in geometry_contract.items():
+            if record.get(key) != expected_value:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} {key} mismatch: "
+                    f"expected {expected_value}, observed {record.get(key)!r}"
+                )
         is_control = filename.startswith("macos-CONTROL-DELIBERATELY-BAD-")
         expected_variant = "deliberately-bad-control" if is_control else "reference"
         if record.get("variant") != expected_variant:
@@ -203,7 +217,10 @@ def main() -> None:
         verify_capture_root(args.root)
     except CaptureVerificationError as error:
         raise SystemExit(f"DESIGN CAPTURE FAIL {error}") from error
-    print("DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 dynamic-type-claim=absent")
+    print(
+        "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
+        "frame=1180x760 capture-bounds=0,0,1180x760 dynamic-type-claim=absent"
+    )
 
 
 if __name__ == "__main__":

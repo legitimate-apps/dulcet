@@ -24,6 +24,9 @@ environment is fixed:
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
 - a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
+- content installed before the fixed window frame is applied, followed by a runtime geometry guard
+  requiring an 1180 × 760 window frame and a zero-origin 1180 × 760 AppKit theme-frame capture
+  boundary;
 - redundant window-title text hidden while retaining standard AppKit title-bar chrome; each content
   surface carries its own visible state heading and debug target suffixes are excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
@@ -31,11 +34,12 @@ environment is fixed:
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
-byte lengths, and SHA-256 digests. `tools/verify_design_captures.py` rejects a missing, extra,
+measured window-frame and capture-bound coordinates, byte lengths, and SHA-256 digests.
+`tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
-control, a mutated JPEG, an extra JPEG, extra media with another extension, and a byte-identical
-capture mislabeled as a different Dynamic Type treatment.
+control, a mutated JPEG, an extra JPEG, extra media with another extension, a byte-identical capture
+mislabeled as a different Dynamic Type treatment, and a manifest claiming translated capture bounds.
 
 ### 1.1 Standard set: 16 JPEGs
 
@@ -80,6 +84,7 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   differentiation;
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
+- actual AppKit window-frame size and zero-origin theme-frame capture bounds recorded for every JPEG;
 - visible focus and contrast cues;
 - the standard AppKit window frame and chrome surrounding both reference and control content.
 
