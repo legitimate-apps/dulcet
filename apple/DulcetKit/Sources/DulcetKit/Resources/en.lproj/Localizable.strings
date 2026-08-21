@@ -19,7 +19,7 @@
 "action.browseHelp" = "Learn About Servers";
 "action.tryAgain" = "Try Again";
 "action.connectionSettings" = "Review Connection Settings";
-"action.certificateHelp" = "Certificate Help";
+"action.certificateHelp" = "Open CA Installation Guide";
 "action.more" = "More";
 "action.play" = "Play";
 "action.pause" = "Pause";
@@ -48,7 +48,7 @@
 "tls.body" = "Dulcet stopped before sending account credentials. There is no “continue anyway” option.";
 "tls.why" = "Why macOS stopped the connection";
 "tls.remedyTitle" = "How to reconnect safely";
-"tls.remedyBody" = "Fix or renew the server certificate. If your server uses a private certificate authority, install that CA in macOS at the operating-system level, then try again.";
+"tls.remedyBody" = "Fix or renew the server certificate. If your server uses a private certificate authority, install that CA in the System keychain using Keychain Access, then try again.";
 "offline.title" = "Browsing saved library metadata";
 "offline.body" = "Album and track details are available. Music remains on your server, so playback returns when the connection does.";
 "offline.unavailable" = "Unavailable offline";

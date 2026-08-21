@@ -22,7 +22,7 @@ enum DulcetStrings {
     static let browseHelp = text("action.browseHelp", "Learn About Servers")
     static let tryAgain = text("action.tryAgain", "Try Again")
     static let connectionSettings = text("action.connectionSettings", "Review Connection Settings")
-    static let openCertificateHelp = text("action.certificateHelp", "Certificate Help")
+    static let openCertificateHelp = text("action.certificateHelp", "Open CA Installation Guide")
     static let more = text("action.more", "More")
     static let play = text("action.play", "Play")
     static let pause = text("action.pause", "Pause")
@@ -87,4 +87,10 @@ enum DulcetStrings {
     ) -> String {
         String(localized: key, defaultValue: fallback, bundle: .module)
     }
+}
+
+enum DulcetLinks {
+    static let certificateInstallationGuide = URL(
+        string: "https://support.apple.com/guide/keychain-access/add-certificates-to-a-keychain-kyca2431/mac"
+    )!
 }
