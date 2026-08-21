@@ -326,15 +326,17 @@ struct DulcetTLSUntrustedView: View {
                 }
 
                 HStack(spacing: DulcetSpacing.sm) {
-                    Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}
+                    Link(destination: DulcetLinks.certificateInstallationGuide) {
+                        Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
+                    }
                         .buttonStyle(.borderedProminent)
                         .tint(.dulcetAccent)
                         .foregroundStyle(Color.dulcetOnAccent)
                         .keyboardShortcut(.defaultAction)
-                        .accessibilityLabel(DulcetStrings.connectionSettings)
-                    Button(DulcetStrings.openCertificateHelp, systemImage: "questionmark.circle") {}
-                        .buttonStyle(.bordered)
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
+                    Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel(DulcetStrings.connectionSettings)
                 }
             }
             .padding(DulcetSpacing.lg)

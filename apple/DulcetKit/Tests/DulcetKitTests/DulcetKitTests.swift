@@ -56,6 +56,9 @@ func tlsFailureIsUserPresentableAndSpecific() {
     #expect(failure?.technicalDetail.localizedCaseInsensitiveContains("OS-trusted") == true)
     #expect(failure?.technicalDetail.contains("http") == false)
     #expect(snapshot.connectivity == .connectionFailed(serverName: "Listening Room"))
+    #expect(DulcetStrings.tlsRemedyBody.contains("System keychain"))
+    #expect(DulcetLinks.certificateInstallationGuide.host == "support.apple.com")
+    #expect(DulcetLinks.certificateInstallationGuide.path.contains("add-certificates-to-a-keychain"))
 }
 
 @Test @MainActor
