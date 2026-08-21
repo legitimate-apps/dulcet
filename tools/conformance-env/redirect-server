@@ -109,7 +109,8 @@ class RedirectHandler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/loop/"):
             parts = parsed.path.split("/")
-            hop = int(parts[2][1:]) if len(parts) > 2 and parts[2].startswith("r") else 0
+            hop_segment = parts[2] if len(parts) > 3 else ""
+            hop = int(hop_segment[1:]) if hop_segment.startswith("r") and hop_segment[1:].isdigit() else 0
             self._redirect(f"/loop/r{hop + 1}/rest/{endpoint}.view")
             return
 
