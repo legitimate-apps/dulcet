@@ -24,8 +24,8 @@ environment is fixed:
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
 - a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
-- user-facing release name `Dulcet` as the initial fixture title, with the same state navigation
-  titles the SwiftUI views apply in the app; debug target suffixes are intentionally excluded;
+- redundant window-title text hidden while retaining standard AppKit title-bar chrome; each content
+  surface carries its own visible state heading and debug target suffixes are excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
   and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
@@ -88,7 +88,7 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 - Swift package tests, app build success, capture-verifier negative controls;
 - computed [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18) for
   every Dulcet-defined adjacent foreground/background pair in Aqua and Dark Aqua: prominent button
-  labels, selected-sidebar labels, offline labels, and danger labels or icons. The native test prints
+  labels, selected-sidebar labels, offline labels, and danger icons. The native test prints
   each ratio and proves that a known low-contrast pair is rejected;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
