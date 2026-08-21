@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 31 — cross-origin credential stripping is proved by a closed target-request oracle;
-revision 30 rejected malformed authorities as input before transport; revision 29 made
+**Revision:** 32 — bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
+cross-origin credential stripping with a closed target-request oracle; revision 30 rejected
+malformed authorities as input before transport; revision 29 made
 structural URL redaction total over malformed input; revision 28 made CONF-07 absence assertions use
 values captured by the receiving wire fixture; revision 27 moved required-check evidence to GitHub's
 protected default branch; revision 26 derived
@@ -2882,6 +2883,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 32 (2026-08-21)** — bracketed IPv6 zones became structurally bounded.
+
+1. Hosted red controls demonstrated that empty zones, illegal zone characters, and malformed
+   subsequent percent escapes could reach both safe rendering and transport classification.
+2. A bracketed literal now separates its IPv6 address from either a raw zone delimiter or RFC 6874's
+   encoded `%25` delimiter, requires a non-empty identifier, and accepts only unreserved characters
+   plus well-formed percent escapes. An encoded percent inside the identifier is rejected so a second
+   delimiter cannot be smuggled into the zone.
+3. The shaped corpus now reaches bracketed authorities and combines empty zones, encoded-empty zones,
+   repeated delimiters, bad escapes, illegal metadata characters, and valid or malformed port suffixes.
 
 **Revision 31 (2026-08-21)** — cross-origin verification became a closed oracle.
 

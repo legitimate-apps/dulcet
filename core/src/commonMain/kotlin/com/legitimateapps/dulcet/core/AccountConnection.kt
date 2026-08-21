@@ -945,7 +945,7 @@ private fun String.isStructurallyValidUrlAuthority(): Boolean {
         val literal = substring(1, closingBracket)
         val address = literal.substringBefore('%').lowercase()
         if (!address.isValidIpv6Literal()) return false
-        if ('%' in literal && literal.substringAfter('%').isEmpty()) return false
+        if ('%' in literal && !literal.substringAfter('%').isValidIpv6ZoneSuffix()) return false
         val suffix = substring(closingBracket + 1)
         return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
     }
@@ -958,6 +958,36 @@ private fun String.isStructurallyValidUrlAuthority(): Boolean {
     }
     val suffix = removePrefix(host)
     return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
+}
+
+private fun String.isValidIpv6ZoneSuffix(): Boolean {
+    val zoneIdentifier = if (startsWith("25")) drop(2) else this
+    if (zoneIdentifier.isEmpty()) return false
+    var index = 0
+    while (index < zoneIdentifier.length) {
+        val character = zoneIdentifier[index]
+        when {
+            character in 'a'..'z' || character in 'A'..'Z' || character in '0'..'9' ||
+                character in "-._~" -> index += 1
+
+            character == '%' -> {
+                if (
+                    index + 2 >= zoneIdentifier.length ||
+                    !zoneIdentifier[index + 1].isAsciiHexDigit() ||
+                    !zoneIdentifier[index + 2].isAsciiHexDigit()
+                ) {
+                    return false
+                }
+                if (zoneIdentifier.substring(index + 1, index + 3).equals("25", ignoreCase = true)) {
+                    return false
+                }
+                index += 3
+            }
+
+            else -> return false
+        }
+    }
+    return true
 }
 
 private fun String.isValidUrlRegName(): Boolean {
