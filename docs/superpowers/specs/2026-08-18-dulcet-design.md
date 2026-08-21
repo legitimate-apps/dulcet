@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 23 — parity evidence is resolved against the executing required job's JUnit results;
-revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
+**Revision:** 24 — typed JVM and Darwin trust failures now produce `TlsUntrusted` and are exercised
+against a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
+job's JUnit results; revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
 revision 21 made `DomainError` retain no server-controlled text or URL; revision 20 made CONF-01
 through CONF-08 execute on JVM and macOS against the pinned reference
 server, with preserved behavior-absent red evidence before the production connector. Revision 18
@@ -1355,9 +1356,12 @@ Normative policy, enforced in the transport layer and in the resource loader (§
 ### 13.5 TLS trust and the local-HTTP exception
 
 **v1 supports OS-trusted TLS only.** No trust-all, no per-server pinning, and **no user-accepted
-self-signed certificates**. A chain, hostname or expiry failure produces `TlsUntrusted(reason)` with
-the specific reason and a documented remedy (install the CA at OS level, or fix the certificate).
-There is no "continue anyway" button.
+self-signed certificates**. Typed certificate-chain, peer-identity, and validity failures are mapped
+to `TlsUntrusted(reason)` using the most specific category the platform transport exposes; exception
+message text is never a classification input. The documented remedy is to install the CA at OS level
+or fix the certificate. There is no "continue anyway" button. The JVM and Darwin hosted legs each
+connect to a one-run self-signed loopback endpoint and require `TlsUntrusted(CertificateChain)` rather
+than `Transport.Unreachable`; neither fixture installs the certificate or enables a trust override.
 
 This is a deliberate v1 restriction on a real self-hosted use case — private CAs and self-signed certs
 are common — and it is recorded as **OQ-9** rather than pretended away. What we will not do is ship a
@@ -2847,6 +2851,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 24 (2026-08-21)** — `TlsUntrusted` became reachable through production transports.
+
+1. JVM/Android map typed certificate exceptions, and Darwin maps Foundation's certificate error
+   codes from Ktor's typed request exception. Neither implementation inspects exception messages.
+2. Both hosted conformance legs generate an ephemeral self-signed loopback certificate, connect with
+   the default OS trust configuration, and require `TlsUntrusted(CertificateChain)`.
+3. The fixture has no trust-all mode, commits no private key, and is restricted to loopback.
 
 **Revision 23 (2026-08-21)** — parity evidence became execution-bound.
 

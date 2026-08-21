@@ -345,8 +345,12 @@ public class AccountConnector(
                     AccountConnectionResult.Failed(DomainError.Transport.Timeout)
                 } catch (_: CancellationException) {
                     return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
-                } catch (_: Throwable) {
-                    AccountConnectionResult.Failed(DomainError.Transport.Unreachable)
+                } catch (failure: Throwable) {
+                    AccountConnectionResult.Failed(
+                        tlsTrustFailureOrNull(failure)?.let {
+                            DomainError.Security.TlsUntrusted(it)
+                        } ?: DomainError.Transport.Unreachable,
+                    )
                 }
                 lastResult = result
                 val mayTryLocalHttp = index < normalized.candidates.lastIndex &&

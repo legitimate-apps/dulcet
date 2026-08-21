@@ -203,23 +203,33 @@ jobs:
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
+            -config tools/conformance-env/untrusted-tls-openssl.cnf \
+            -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
           "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
           navidrome_pid=$!
           python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
           redirect_pid=$!
+          python3 tools/conformance-env/untrusted-tls-server --port 4542 \
+            --certificate "$ROOT/untrusted-tls.crt" --key "$ROOT/untrusted-tls.key" &
+          tls_pid=$!
           cleanup() {
             kill "$redirect_pid" >/dev/null 2>&1 || true
             wait "$redirect_pid" 2>/dev/null || true
+            kill "$tls_pid" >/dev/null 2>&1 || true
+            wait "$tls_pid" 2>/dev/null || true
             kill "$navidrome_pid" >/dev/null 2>&1 || true
             wait "$navidrome_pid" 2>/dev/null || true
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
           for attempt in {1..20}; do
-            if curl --fail --silent http://127.0.0.1:4540/health >/dev/null; then break; fi
+            if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
+              curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null; then break; fi
             sleep 0.1
           done
           curl --fail --silent http://127.0.0.1:4540/health >/dev/null
+          curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null
           tools/conformance-env/health-check \
             --base-url http://127.0.0.1:4533 \
             --runtime darwin/arm64 \
@@ -229,6 +239,7 @@ jobs:
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
+            DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test
