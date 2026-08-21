@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DulcetKit",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
@@ -12,7 +13,10 @@ let package = Package(
         .library(name: "DulcetKit", targets: ["DulcetKit"]),
     ],
     targets: [
-        .target(name: "DulcetKit"),
+        .target(
+            name: "DulcetKit",
+            resources: [.process("Resources")]
+        ),
         .testTarget(name: "DulcetKitTests", dependencies: ["DulcetKit"]),
     ]
 )

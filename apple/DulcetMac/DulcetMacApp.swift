@@ -1,12 +1,19 @@
 import DulcetCore
+import DulcetKit
 import SwiftUI
 
 @main
 struct DulcetMacApp: App {
+    @State private var presentation = DulcetPresentationStore(
+        source: DulcetDeterministicFixture(),
+        initialState: .libraryBrowse
+    )
+
     var body: some Scene {
         WindowGroup {
-            Text(ScaffoldKt.scaffoldName())
-                .padding()
+            DulcetRootView(store: presentation)
+                .frame(minWidth: 900, minHeight: 600)
         }
+        .defaultSize(width: 1180, height: 760)
     }
 }
