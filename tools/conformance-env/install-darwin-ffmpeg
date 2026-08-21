@@ -194,6 +194,7 @@ def main() -> None:
 
     names = [entry["formula"] for entry in closure]
     observed_keg_hashes: dict[str, str] = {}
+    observed_live_closure: list[dict] = []
     for expected in closure:
         name = expected["formula"]
         quoted_name = urllib.parse.quote(name, safe="")
@@ -204,15 +205,19 @@ def main() -> None:
         live = formula_shape(live_formula, expected["bottle_tag"])
         if live != expected:
             raise SystemExit(f"Homebrew live formula drift for {name}: expected {expected}, observed {live}")
+        observed_live_closure.append(live)
 
     run(["brew", "update"])
     local_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
     local_by_name = {formula["name"]: formula for formula in local_info["formulae"]}
+    observed_local_closure: list[dict] = []
+    observed_bottle_sha256s: dict[str, str] = {}
     for expected in closure:
         name = expected["formula"]
         local = formula_shape(local_by_name.get(name, {}), expected["bottle_tag"])
         if local != expected:
             raise SystemExit(f"Homebrew resolver drift for {name}: expected {expected}, observed {local}")
+        observed_local_closure.append(local)
 
         run(["brew", "fetch", "--force", "--force-bottle", name])
         bottle_path = Path(
@@ -229,6 +234,7 @@ def main() -> None:
                 f"Homebrew bottle checksum mismatch for {name}: "
                 f"expected {expected['sha256']}, observed {observed_sha256}"
             )
+        observed_bottle_sha256s[name] = observed_sha256
 
     keg_paths = {
         expected["formula"]: (
@@ -358,16 +364,40 @@ def main() -> None:
     except ValueError as error:
         raise SystemExit(f"installed {error}") from error
     encoders = run([ffmpeg["path"], "-hide_banner", "-encoders"], capture=True)
-    missing_encoders = [name for name in ffmpeg["required_encoders"] if name not in encoders]
+    observed_encoder_names = {
+        fields[1]
+        for line in encoders.splitlines()
+        if len(fields := line.split()) >= 2
+    }
+    observed_required_encoders = sorted(
+        set(ffmpeg["required_encoders"]) & observed_encoder_names
+    )
+    missing_encoders = sorted(set(ffmpeg["required_encoders"]) - observed_encoder_names)
     if missing_encoders:
         raise SystemExit(f"locked ffmpeg omits required corpus encoders: {missing_encoders}")
 
-    closure_digest = hashlib.sha256(
+    expected_closure_digest = hashlib.sha256(
         json.dumps(closure, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    observed_live_closure_digest = hashlib.sha256(
+        json.dumps(observed_live_closure, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    observed_local_closure_digest = hashlib.sha256(
+        json.dumps(observed_local_closure, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    observed_bottle_digest = hashlib.sha256(
+        json.dumps(observed_bottle_sha256s, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     print(
-        f"DARWIN FFMPEG CLOSURE PASS root={observed_version} formulas={len(closure)} "
-        f"encoders={','.join(ffmpeg['required_encoders'])} closure_sha256={closure_digest}"
+        f"DARWIN FFMPEG CLOSURE PASS expected_root={ffmpeg['version']} "
+        f"observed_root={observed_version} expected_formulas={len(closure)} "
+        f"observed_formulas={len(observed_keg_hashes)} "
+        f"expected_encoders={','.join(sorted(ffmpeg['required_encoders']))} "
+        f"observed_encoders={','.join(observed_required_encoders)} "
+        f"expected_closure_sha256={expected_closure_digest} "
+        f"observed_live_closure_sha256={observed_live_closure_digest} "
+        f"observed_local_closure_sha256={observed_local_closure_digest} "
+        f"observed_bottle_sha256={observed_bottle_digest}"
     )
 
 

@@ -16,21 +16,23 @@ The Darwin installer does not accept a name-only resolution. It first compares t
 official formula API graph to the lock. Only after that succeeds does it update Homebrew's possibly
 stale runner metadata, and the refreshed local resolver must match the same lock before any bottle is
 fetched or installed. It hashes every bottle and fails on any extra, missing, or changed dependency.
-It then installs every missing formula, explicitly upgrades every stale formula, and reinstalls every
-already-matching formula from the verified bottle cache in dependency order. Installing only the root
-is insufficient because Homebrew can leave an already-installed nested dependency at an older
-version, while accepting an existing matching-version keg would not bind its payload to the verified
-archive.
+It records every locked keg's pre-install filesystem and receipt observation, removes the complete
+closure in reverse dependency order, and requires an observed absence checkpoint for every locked keg.
+It then pours every checksum-verified bottle in dependency order and records the new filesystem and
+receipt observation. Installing only the root is insufficient because Homebrew can leave an
+already-installed nested dependency at an older version, while accepting an existing matching-version
+keg would not bind its payload to the verified archive.
 After installation it verifies every active keg, every bottle receipt, ffmpeg's recorded runtime
 closure, and the `libmp3lame` and `libopus` encoders used by the corpus. The installer also computes a
-hash of every installed keg payload, requires every pour receipt to have been created during the same
-verification run, and re-hashes the payloads before reporting one aggregate. Installed payload hashes
-are deliberately not treated as cross-run pins: Homebrew's post-pour relocation and signing made all
-15 payload hashes differ across two fresh standard hosted runners while their checksum-verified source
-archives remained identical. The fresh-pour receipt is what prevents an already-present keg from
-substituting for the verified archive. This complete verification runs before either the
-resource-loader fixture encoder or the corpus encoder; both therefore come from the same verified
-closure.
+hash of every installed keg payload, requires each retained observation to transition through absent
+to a new present observation, and re-hashes the payloads before reporting one aggregate. Installed
+payload hashes are deliberately not treated as cross-run pins: Homebrew's post-pour relocation and
+signing made all 15 payload hashes differ across two fresh standard hosted runners while their
+checksum-verified source archives remained identical. The verifier-observed absence transition
+prevents an already-present keg from substituting for the verified archive; a negative control leaves
+a keg untouched and requires the fresh-pour gate to reject it. This complete verification runs before
+either the resource-loader fixture encoder or the corpus encoder; both therefore come from the same
+verified closure.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external
@@ -61,11 +63,14 @@ copyrighted recording is committed.
 
 The generator runs `ffprobe` against every non-paging awkward fixture and validates the probed
 container, exact tag values, tag-key absence, and threshold durations. A present-but-empty tag is not
-absent. Paging tracks are not filename-only copies: each of all 300 gets a distinct deterministic
+absent. The expected suffix-to-container token and the normalized raw `ffprobe` `format_name` are
+retained separately, so a multi-token observation remains visible even when it contains the required
+token. Paging tracks are not filename-only copies: each of all 300 gets a distinct deterministic
 ID3v2.4 title and track number. The generator parses all 300 tags back and also requires ffprobe to
-interpret tracks 1, 150, and 300 correctly. Only those observed values are written to
-`corpus-manifest.json`; the health check compares the complete evidence structure to the contract.
-Any encoding, parsing, tag, duration, count, or format mismatch errors the job.
+interpret tracks 1, 150, and 300 correctly. The contract values and retained observations are written
+to separate fields in `corpus-manifest.json`; the health check compares the complete evidence
+structure to the contract. Any encoding, parsing, tag, duration, count, or format mismatch errors the
+job.
 
 ## Fail-loud precondition gate
 

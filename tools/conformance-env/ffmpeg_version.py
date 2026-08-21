@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--banner", required=True)
     args = parser.parse_args()
     observed = require_ffmpeg_version(args.banner, args.expected)
-    print(f"ffmpeg version gate PASS observed={observed}")
+    print(f"ffmpeg version gate PASS expected={args.expected} observed={observed}")
 
 
 if __name__ == "__main__":

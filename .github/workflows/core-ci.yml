@@ -53,16 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prove ffmpeg version gate rejects prefix collisions
-        run: |
-          set +e
-          output="$(python3 tools/conformance-env/ffmpeg_version.py \
-            --expected 9.0.1 --banner 'ffmpeg version 9.0.10 forged-banner' 2>&1)"
-          status=$?
-          set -e
-          printf '%s\n' "$output"
-          test "$status" -ne 0
-          grep -q 'expected 9.0.1, observed 9.0.10' <<< "$output"
-          echo 'NEGATIVE CONTROL PASS expected=9.0.1 observed=9.0.10 rejected=true'
+        run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
         run: python3 tools/test-seed-corpus-gates
       - name: Create fresh test-class root
@@ -130,4 +121,4 @@ jobs:
           echo "conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
           test "$CORE_BUILD_RESULT" = success
           test "$CONFORMANCE_ENV_LINUX_RESULT" = success
-          echo "CORE CI PASS build=success conformance-env-linux=success"
+          echo "CORE CI PASS build=$CORE_BUILD_RESULT conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"

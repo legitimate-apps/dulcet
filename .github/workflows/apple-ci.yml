@@ -27,16 +27,7 @@ jobs:
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
       - name: Prove ffmpeg version gate rejects prefix collisions
-        run: |
-          set +e
-          output="$(python3 tools/conformance-env/ffmpeg_version.py \
-            --expected 9.0.1 --banner 'ffmpeg version 9.0.10 forged-banner' 2>&1)"
-          status=$?
-          set -e
-          printf '%s\n' "$output"
-          test "$status" -ne 0
-          grep -q 'expected 9.0.1, observed 9.0.10' <<< "$output"
-          echo 'NEGATIVE CONTROL PASS expected=9.0.1 observed=9.0.10 rejected=true'
+        run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
         run: python3 tools/test-seed-corpus-gates
       - name: Prove fresh-pour gate rejects a retained keg
@@ -112,12 +103,20 @@ jobs:
           status=$?
           set -e
           printf '%s\n' "$output"
+          observed_rejected=false
+          if test "$status" -ne 0; then observed_rejected=true; fi
+          observed_first_only=false
+          if grep -q 'HLS_MEDIA_SEGMENTS=FIRST_ONLY missing=segment1.aac' <<< "$output"; then
+            observed_first_only=true
+          fi
+          observed_segment0_requests="$(grep -c 'REQUEST path=segment0.aac' <<< "$output" || true)"
+          observed_segment1_requests="$(grep -c 'REQUEST path=segment1.aac' <<< "$output" || true)"
           test "$status" -ne 0
           grep -q 'HLS_PLAYBACK_ERROR surfaced=' <<< "$output"
           grep -q 'HLS_MEDIA_SEGMENTS=FIRST_ONLY missing=segment1.aac' <<< "$output"
           grep -q 'REQUEST path=segment0.aac' <<< "$output"
           if grep -q 'REQUEST path=segment1.aac' <<< "$output"; then exit 1; fi
-          echo 'NEGATIVE CONTROL PASS all-routed assertion rejected the observed first-only state'
+          echo "NEGATIVE CONTROL PASS expected=all-routed observed_first_only=$observed_first_only observed_rejected=$observed_rejected observed_segment0_requests=$observed_segment0_requests observed_segment1_requests=$observed_segment1_requests"
       - name: Record progressive routing and Apple HLS fallback
         run: >-
           swift run

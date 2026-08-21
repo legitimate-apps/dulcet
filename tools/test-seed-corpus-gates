@@ -18,6 +18,9 @@ class ProbeTools:
 
 
 def require_rejection(label: str, probe: dict, *, absent_tags: tuple[str, ...] = ()) -> None:
+    expected_rejected = True
+    observed_rejected = False
+    observed_detail = ""
     try:
         seed_corpus.assert_media(
             ProbeTools(probe),
@@ -27,18 +30,24 @@ def require_rejection(label: str, probe: dict, *, absent_tags: tuple[str, ...] =
             duration=1.0,
         )
     except SystemExit as error:
-        print(f"NEGATIVE CONTROL PASS {label} rejected=true detail={error}")
-        return
-    raise SystemExit(f"negative control failed open: {label}")
+        observed_rejected = True
+        observed_detail = str(error)
+    if observed_rejected != expected_rejected:
+        raise SystemExit(f"negative control failed open: {label}")
+    print(
+        f"NEGATIVE CONTROL PASS control={label} "
+        f"expected_rejected={str(expected_rejected).lower()} "
+        f"observed_rejected={str(observed_rejected).lower()} detail={observed_detail}"
+    )
 
 
 def main() -> None:
     require_rejection(
-        "mislabeled_container expected=flac observed=wav",
+        "mislabeled_container",
         {"format": {"format_name": "wav", "duration": "1.0", "tags": {}}, "streams": []},
     )
     require_rejection(
-        "present_empty_tags album=true albumartist=true",
+        "present_empty_tags",
         {
             "format": {
                 "format_name": "flac",
@@ -48,6 +57,33 @@ def main() -> None:
             "streams": [],
         },
         absent_tags=("album", "albumartist"),
+    )
+    _, _, observed_format_name = seed_corpus.assert_media(
+        ProbeTools(
+            {
+                "format": {
+                    "format_name": "wav, flac",
+                    "duration": "1.0",
+                    "tags": {},
+                },
+                "streams": [],
+            }
+        ),
+        Path("forged.flac"),
+        expected_tags={},
+        duration=1.0,
+    )
+    expected_format_token = seed_corpus.PROBED_FORMAT_BY_SUFFIX[".flac"]
+    expected_retained_format_name = "wav,flac"
+    if observed_format_name != expected_retained_format_name:
+        raise SystemExit(
+            "format-name provenance control smoothed the observation: "
+            f"expected {expected_retained_format_name!r}, observed {observed_format_name!r}"
+        )
+    print(
+        f"PROVENANCE CONTROL PASS expected_format_token={expected_format_token} "
+        f"expected_retained_format_name={expected_retained_format_name} "
+        f"observed_format_name={observed_format_name}"
     )
 
 

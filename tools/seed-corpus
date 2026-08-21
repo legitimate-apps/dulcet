@@ -134,15 +134,15 @@ def normalized_tags(probe: dict) -> dict[str, str]:
     return tags
 
 
-def probe_media(tools: MediaTools, path: Path) -> tuple[dict[str, str], float, set[str]]:
+def normalize_format_name(value: object) -> str:
+    return ",".join(name.strip() for name in str(value).split(",") if name.strip())
+
+
+def probe_media(tools: MediaTools, path: Path) -> tuple[dict[str, str], float, str]:
     probe = tools.ffprobe_json(path)
     format_data = probe.get("format", {})
-    format_names = {
-        name.strip()
-        for name in str(format_data.get("format_name", "")).split(",")
-        if name.strip()
-    }
-    return normalized_tags(probe), float(format_data.get("duration", 0)), format_names
+    observed_format_name = normalize_format_name(format_data.get("format_name", ""))
+    return normalized_tags(probe), float(format_data.get("duration", 0)), observed_format_name
 
 
 def assert_media(
@@ -153,14 +153,15 @@ def assert_media(
     absent_tags: tuple[str, ...] = (),
     duration: float | None = None,
 ) -> tuple[dict[str, str], float, str]:
-    tags, observed_duration, observed_format_names = probe_media(tools, path)
+    tags, observed_duration, observed_format_name = probe_media(tools, path)
+    observed_format_tokens = set(observed_format_name.split(",")) if observed_format_name else set()
     expected_format = PROBED_FORMAT_BY_SUFFIX.get(path.suffix.lower())
     if expected_format is None:
         raise SystemExit(f"no ffprobe format contract for {path.name}")
-    if expected_format not in observed_format_names:
+    if expected_format not in observed_format_tokens:
         raise SystemExit(
             f"ffprobe container mismatch for {path.name}: expected {expected_format!r}, "
-            f"observed {sorted(observed_format_names)}"
+            f"observed {observed_format_name!r}"
         )
     for key, expected in expected_tags.items():
         observed = tags.get(key)
@@ -173,12 +174,12 @@ def assert_media(
     if present:
         raise SystemExit(f"ffprobe found forbidden tags for {path.name}: {present}")
     if duration is None:
-        return tags, observed_duration, expected_format
+        return tags, observed_duration, observed_format_name
     if abs(observed_duration - duration) > 0.20:
         raise SystemExit(
             f"ffprobe duration mismatch for {path.name}: expected {duration}, observed {observed_duration}"
         )
-    return tags, observed_duration, expected_format
+    return tags, observed_duration, observed_format_name
 
 
 def synchsafe(value: int) -> bytes:
@@ -369,7 +370,7 @@ def main() -> None:
 
     observed_disc_tracks: list[dict[str, int]] = []
     for path, disc, track in multi_disc_paths:
-        assert_media(
+        observed_multi_disc_tags, _, _ = assert_media(
             tools,
             path,
             expected_tags={
@@ -379,7 +380,12 @@ def main() -> None:
                 "disc": str(disc),
             },
         )
-        observed_disc_tracks.append({"disc": disc, "track": track})
+        observed_disc_tracks.append(
+            {
+                "disc": int(observed_multi_disc_tags["disc"]),
+                "track": int(observed_multi_disc_tags["track"]),
+            }
+        )
 
     album_artist_tags, _, _ = assert_media(
         tools,
@@ -423,8 +429,9 @@ def main() -> None:
         duration=31.0,
     )
 
+    observed_paging_ffprobe_tracks: list[int] = []
     for index in (1, 150, 300):
-        assert_media(
+        observed_paging_tags, _, _ = assert_media(
             tools,
             paging_paths[index - 1],
             expected_tags={
@@ -435,6 +442,7 @@ def main() -> None:
                 "track": str(index),
             },
         )
+        observed_paging_ffprobe_tracks.append(int(observed_paging_tags["track"]))
 
     scanner_files = [
         path for path in root.rglob("*")
@@ -445,18 +453,41 @@ def main() -> None:
     scanner_extensions = sorted({path.suffix.lower() for path in scanner_files})
     if scanner_extensions != sorted(FORMATS):
         raise SystemExit(f"generated file-extension set mismatch: {scanner_extensions}")
-    observed_formats = sorted({health_format, unicode_format, ogg_format, m4a_format})
-    if observed_formats != ["flac", "m4a", "mp3", "ogg"]:
-        raise SystemExit(f"ffprobe container set mismatch: {observed_formats}")
+    representative_format_observations = [
+        {
+            "suffix": path.suffix.lower(),
+            "expected_token": PROBED_FORMAT_BY_SUFFIX[path.suffix.lower()],
+            "observed_format_name": observed_format_name,
+        }
+        for path, observed_format_name in (
+            (health_probe, health_format),
+            (unicode_probe, unicode_format),
+            (ogg_probe, ogg_format),
+            (m4a_probe, m4a_format),
+        )
+    ]
+    expected_format_tokens = sorted(
+        {observation["expected_token"] for observation in representative_format_observations}
+    )
+    if expected_format_tokens != ["flac", "m4a", "mp3", "ogg"]:
+        raise SystemExit(f"representative format-token set mismatch: {expected_format_tokens}")
+    observed_format_names = sorted(
+        {observation["observed_format_name"] for observation in representative_format_observations}
+    )
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "copyrighted_audio": False,
         "generated_media_files": len(scanner_files),
-        "formats": observed_formats,
+        "formats": {
+            "expected_tokens": expected_format_tokens,
+            "observed_format_names": observed_format_names,
+            "probes": representative_format_observations,
+        },
         "known_probe": {
             "title": health_tags["title"],
-            "format": health_format,
+            "expected_format_token": PROBED_FORMAT_BY_SUFFIX[health_probe.suffix.lower()],
+            "observed_format_name": health_format,
             "duration_seconds": round(health_duration, 3),
         },
         "awkward_cases": {
@@ -471,16 +502,22 @@ def main() -> None:
             "very_long_title_characters": len(long_title_tags["title"]),
             "paging_album": {
                 "tracks_id3_verified": len(paging_paths),
-                "ffprobe_verified_tracks": [1, 150, 300],
+                "ffprobe_verified_tracks": observed_paging_ffprobe_tracks,
             },
             "threshold_durations_seconds": [round(observed_29), round(observed_31)],
         },
         "verification": "ffprobe-plus-id3v24-round-trip",
     }
     (root / "corpus-manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    observed_paging = manifest["awkward_cases"]["paging_album"]
+    observed_thresholds = manifest["awkward_cases"]["threshold_durations_seconds"]
     print(
-        "SEED CORPUS PASS files=313 formats=flac,m4a,mp3,ogg awkward_metadata=probed "
-        "paging_id3=300 paging_ffprobe=1,150,300 thresholds=29,31"
+        f"SEED CORPUS PASS files={manifest['generated_media_files']} "
+        f"expected_format_tokens={json.dumps(expected_format_tokens, separators=(',', ':'))} "
+        f"observed_format_names={json.dumps(observed_format_names, separators=(',', ':'))} "
+        f"paging_id3={observed_paging['tracks_id3_verified']} "
+        f"paging_ffprobe={json.dumps(observed_paging['ffprobe_verified_tracks'], separators=(',', ':'))} "
+        f"thresholds={json.dumps(observed_thresholds, separators=(',', ':'))}"
     )
 
 
