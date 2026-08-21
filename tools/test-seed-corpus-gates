@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+
+"""Negative controls for the corpus evidence gates."""
+
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+
+seed_corpus = SourceFileLoader("seed_corpus", str(Path(__file__).with_name("seed-corpus"))).load_module()
+
+
+class ProbeTools:
+    def __init__(self, probe: dict):
+        self.probe = probe
+
+    def ffprobe_json(self, path: Path) -> dict:
+        return self.probe
+
+
+def require_rejection(
+    label: str,
+    probe: dict,
+    expected_detail: str,
+    *,
+    absent_tags: tuple[str, ...] = (),
+) -> None:
+    expected_rejected = True
+    observed_rejected = False
+    observed_detail = ""
+    try:
+        seed_corpus.assert_media(
+            ProbeTools(probe),
+            Path("forged.flac"),
+            expected_tags={},
+            absent_tags=absent_tags,
+            duration=1.0,
+        )
+    except SystemExit as error:
+        observed_rejected = True
+        observed_detail = str(error)
+        if observed_detail != expected_detail:
+            raise SystemExit(
+                f"negative control rejected for the wrong reason: {label}: "
+                f"expected_detail={expected_detail!r} observed_detail={observed_detail!r}"
+            ) from error
+    if observed_rejected != expected_rejected:
+        raise SystemExit(f"negative control failed open: {label}")
+    print(
+        f"NEGATIVE CONTROL PASS control={label} "
+        f"expected_rejected={str(expected_rejected).lower()} "
+        f"observed_rejected={str(observed_rejected).lower()} detail={observed_detail}"
+    )
+
+
+def main() -> None:
+    require_rejection(
+        "mislabeled_container",
+        {"format": {"format_name": "wav", "duration": "1.0", "tags": {}}, "streams": []},
+        "ffprobe container mismatch for forged.flac: expected 'flac', observed 'wav'",
+    )
+    require_rejection(
+        "present_empty_tags",
+        {
+            "format": {
+                "format_name": "flac",
+                "duration": "1.0",
+                "tags": {"album": "", "album_artist": ""},
+            },
+            "streams": [],
+        },
+        "ffprobe found forbidden tags for forged.flac: {'album': '', 'albumartist': ''}",
+        absent_tags=("album", "albumartist"),
+    )
+    _, _, observed_format_name = seed_corpus.assert_media(
+        ProbeTools(
+            {
+                "format": {
+                    "format_name": "wav, flac",
+                    "duration": "1.0",
+                    "tags": {},
+                },
+                "streams": [],
+            }
+        ),
+        Path("forged.flac"),
+        expected_tags={},
+        duration=1.0,
+    )
+    expected_format_token = seed_corpus.PROBED_FORMAT_BY_SUFFIX[".flac"]
+    expected_retained_format_name = "wav,flac"
+    if observed_format_name != expected_retained_format_name:
+        raise SystemExit(
+            "format-name provenance control smoothed the observation: "
+            f"expected {expected_retained_format_name!r}, observed {observed_format_name!r}"
+        )
+    print(
+        f"PROVENANCE CONTROL PASS expected_format_token={expected_format_token} "
+        f"expected_retained_format_name={expected_retained_format_name} "
+        f"observed_format_name={observed_format_name}"
+    )
+
+
+if __name__ == "__main__":
+    main()

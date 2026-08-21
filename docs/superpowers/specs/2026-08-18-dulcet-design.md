@@ -2038,7 +2038,7 @@ It is strictly worse than having no transcode test, because it manufactures conf
 | leg | transcoder | how it is pinned |
 |---|---|---|
 | Linux (`ubuntu-latest`) | the one **bundled in the Navidrome container** | **by the container's image digest.** A digest pins the exact filesystem, so it pins that ffmpeg build exactly. The resolved ffmpeg version is recorded in `docs/TOOLCHAIN.md` alongside the digest |
-| Darwin (`macos-latest`) | an **explicitly installed** ffmpeg | an explicit workflow step installing a **named version**, verified by checksum. Never "whatever `brew install ffmpeg` gives today" |
+| Darwin (`macos-latest`) | an **explicitly installed** ffmpeg | the complete Homebrew runtime closure is locked: formula version/revision, dependency edges, bottle rebuild, URL, and SHA-256 for the root and every dependency. CI compares both live and resolver metadata to the lock, hashes every fetched bottle, and verifies active kegs plus the installed runtime closure. Never "whatever `brew install ffmpeg` gives today" |
 
 ⚠️ **We disagree with one line of the premise audit here, and the difference is load-bearing.** The
 audit states the container's ffmpeg "floats with the Alpine base and is not part of the pin." That is
@@ -2188,17 +2188,17 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
    `macos-<version>` when a toolchain pin demands it, §4.4) and never a larger-runner label. A CI lint
    step asserts this, because the failure mode is a silent bill rather than a broken build.
 2. **Hosted macOS concurrency is capped well below Linux**, so a wide Apple matrix **queues rather than
-   fans out** and a broad matrix makes CI slower, not faster. **The Apple matrix is deliberately
-   narrow:** one job per surface that actually needs its own destination (macOS, iOS simulator, iPad
-   simulator, tvOS simulator), sharing one framework build, and never a cross-product over
-   configurations, Xcode versions or OS versions. Adding an Apple matrix axis is a design decision that
-   belongs in this section, not a convenience in a workflow file.
+   fans out** and a broad matrix makes CI slower, not faster. **There is one serial `apple-ci` job:** it
+   shares one framework build across the macOS, iOS/iPadOS-simulator, and tvOS destinations, then runs
+   every Apple-only measurement and the native Darwin conformance self-assertion in that same slot.
+   There is no Apple matrix and no second conformance or measurement job. Adding an Apple job or
+   matrix axis is a design decision that belongs in this section, not a workflow convenience.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | Gradle build of `common` + `jvm` + `androidTarget`; unit tests; ktlint/detekt; `verifySqlDelightMigration` plus the migration fixture databases (§11.4); **conformance suite** against the Navidrome service container; parser-parity and wire-pathology layers on the JVM target |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. Future CONF-xx, parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | `macos-latest` (standard) | one serial macOS job: the Phase-0 Kotlin/Native and Xcode shell build, OS-floor assertion, then the §12.4 resource-loader negative canary and strengthened measurement. Native Navidrome conformance joins this same job with the §20.2 environment; it never creates a second hosted-macOS job. |
+| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, and fail-loud conformance precondition self-assertion. Future Apple-only measurements and CONF-xx tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22): `push` to `main` ships DEV, a `v*` tag ships PROD. The only workflow able to read signing secrets |
 
@@ -2214,10 +2214,16 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 15 `apple-ci`, 5 `parity-gate`, 60
-`release`. **OBSERVED 2026-08-20:** the first complete standard-hosted `macos-26` job ran from
-`22:11:30Z` to `22:14:37Z`, 187 seconds wall-clock. The 15-minute budget is the next five-minute
-boundary above four times that cold duration; `docs/TOOLCHAIN.md` links the run. The hosted macOS
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci`, 5 `parity-gate`, 60
+`release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
+from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
+framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
+families, Darwin bottle checksum and closure checks, uninstall/install observations and two-read
+payload hashing, resource-loader canary and measurement, corpus generation, config rendering, and
+Darwin precondition assertion in the single serial job. Four times that combined duration is 25
+minutes 12 seconds, so the next five-minute
+boundary sets the measured cap at 30 minutes. This supersedes both the former 187-second scaffold
+baseline and the unmeasured 25-minute combined-workload assumption. The hosted macOS
 runner is **3 vCPU / 7 GB**, and a cold Gradle KMP build producing five
 Kotlin/Native targets plus four Xcode targets plus simulator tests is a lot for that machine. Run one
 complete build and set the number from the measurement — a timeout that is too low fails green builds,
@@ -2795,6 +2801,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 15 (2026-08-21)** — the combined Apple workload replaced its timeout assumption.
+
+1. A successful standard-hosted `macos-26` run measured the complete serial `apple-ci` workload at
+   378 seconds, including every build, negative control, closure attestation, measurement, corpus,
+   config, and Darwin-precondition stage required on this branch.
+2. The timeout is now 30 minutes: the next five-minute boundary above four times the observed
+   duration (25 minutes 12 seconds). This replaces the provisional 25-minute cap and supersedes the
+   earlier 15-minute empty-scaffold calibration.
+3. The durable timing, workload inventory, calculation, run link, and job identifier are recorded in
+   `docs/TOOLCHAIN.md`.
 
 **Revision 14 (2026-08-21)** — hosted evidence selected the Apple progressive fallback.
 

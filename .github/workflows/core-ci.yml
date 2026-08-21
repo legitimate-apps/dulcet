@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  core-ci:
-    name: core-ci
+  core-build:
+    name: core-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -43,3 +43,82 @@ jobs:
           :core:testAndroidHostTest
           :core:bundleAndroidMainAar
           :core:licensee
+
+  conformance-env-linux:
+    name: conformance-env-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prove ffmpeg version gate rejects prefix collisions
+        run: python3 tools/test-ffmpeg-version-gate
+      - name: Prove corpus probes reject mislabeled containers and empty tags
+        run: python3 tools/test-seed-corpus-gates
+      - name: Create fresh test-class root
+        id: root
+        run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Generate deterministic corpus with the pinned image ffmpeg
+        env:
+          ROOT: ${{ steps.root.outputs.path }}
+        run: |
+          image="$(tools/conformance-env/read-pin navidrome.linux.image)"
+          tools/seed-corpus --output "$ROOT/music" --runtime docker --image "$image"
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = "$(tools/conformance-env/read-pin navidrome.linux.architecture)"
+      - name: Render complete Navidrome configuration
+        env:
+          ROOT: ${{ steps.root.outputs.path }}
+        run: >-
+          tools/conformance-env/render-config
+          --output "$ROOT/config/navidrome.toml"
+          --music-folder /music
+          --data-folder /data
+          --cache-folder /cache
+          --address 0.0.0.0
+          --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.linux.path)"
+      - name: Start pinned Linux Navidrome and assert preconditions
+        env:
+          ROOT: ${{ steps.root.outputs.path }}
+        run: |
+          image="$(tools/conformance-env/read-pin navidrome.linux.image)"
+          container="dulcet-conformance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker logs "$container" 2>&1 | tail -200 || true
+            docker stop --time 5 "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name "$container" --platform linux/amd64 \
+            --user "$(id -u):$(id -g)" \
+            --publish 127.0.0.1:4533:4533 \
+            --env ND_CONFIGFILE=/config/navidrome.toml --env TZ=UTC \
+            --volume "$ROOT/config/navidrome.toml:/config/navidrome.toml:ro" \
+            --volume "$ROOT/music:/music:ro" \
+            --volume "$ROOT/data:/data" \
+            --volume "$ROOT/cache:/cache" \
+            "$image"
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 \
+            --runtime linux/amd64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.linux.version)" \
+            --ffmpeg-command-json "[\"docker\",\"exec\",\"$container\",\"$(tools/conformance-env/read-pin ffmpeg.linux.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
+
+  core-ci:
+    name: core-ci
+    if: ${{ always() }}
+    needs: [core-build, conformance-env-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CORE_BUILD_RESULT: ${{ needs.core-build.result }}
+      CONFORMANCE_ENV_LINUX_RESULT: ${{ needs.conformance-env-linux.result }}
+    steps:
+      - name: Require build and Linux conformance environment
+        run: |
+          echo "core-build=$CORE_BUILD_RESULT"
+          echo "conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
+          test "$CORE_BUILD_RESULT" = success
+          test "$CONFORMANCE_ENV_LINUX_RESULT" = success
+          echo "CORE CI PASS build=$CORE_BUILD_RESULT conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
