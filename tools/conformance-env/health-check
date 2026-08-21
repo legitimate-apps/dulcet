@@ -167,7 +167,7 @@ def main() -> None:
         raise SystemExit("restricted fixture user was not created")
 
     ping = client.subsonic("ping")
-    observed_server_version = str(ping.get("serverVersion", "")).removeprefix("v")
+    observed_server_version = str(ping.get("serverVersion", "")).removeprefix("v").split(" ", 1)[0]
     if observed_server_version != args.expected_server_version:
         raise SystemExit(
             f"Navidrome version mismatch: expected {args.expected_server_version}, observed {observed_server_version}"

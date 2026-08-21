@@ -57,16 +57,18 @@ def main() -> None:
     if observed_formula != expected_formula:
         raise SystemExit(f"Homebrew ffmpeg pin drift: expected {expected_formula}, observed {observed_formula}")
 
-    run(["brew", "fetch", "--force", "--bottle", f"--bottle-tag={ffmpeg['bottle_tag']}", ffmpeg["formula"]])
-    bottle_path = Path(run([
-        "brew", "--cache", f"--bottle-tag={ffmpeg['bottle_tag']}", ffmpeg["formula"]
-    ], capture=True))
-    if not bottle_path.is_file():
-        raise SystemExit(f"Homebrew did not fetch the expected bottle: {bottle_path}")
-    observed_checksum = file_sha256(bottle_path)
-    if observed_checksum != ffmpeg["sha256"]:
+    run(["brew", "fetch", "--force", "--bottle", ffmpeg["formula"]])
+    cache = Path(run(["brew", "--cache"], capture=True))
+    candidates = list(cache.rglob(f"*ffmpeg--{ffmpeg['version']}*.bottle.tar*"))
+    bottle_path = next(
+        (candidate for candidate in candidates if candidate.is_file() and file_sha256(candidate) == ffmpeg["sha256"]),
+        None,
+    )
+    if bottle_path is None:
+        observed = {str(candidate): file_sha256(candidate) for candidate in candidates if candidate.is_file()}
         raise SystemExit(
-            f"ffmpeg bottle checksum mismatch: expected {ffmpeg['sha256']}, observed {observed_checksum}"
+            f"Homebrew did not fetch the checksum-pinned ffmpeg bottle; expected {ffmpeg['sha256']}, "
+            f"observed {observed}"
         )
 
     run(["brew", "install", "--force-bottle", ffmpeg["formula"]])
