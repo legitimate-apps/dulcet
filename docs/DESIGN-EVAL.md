@@ -11,7 +11,10 @@ The `apple-ci` job produces the artifact named `dulcet-macos-design-captures-<ru
 `run-a` directory is the evidence set. The job renders a second complete `run-b` directory and
 requires a recursive byte comparison before uploading `run-a`.
 
-Every image is a compressed JPEG at exactly 1180 × 760 pixels. The render environment is fixed:
+Every image is a compressed JPEG of the complete titled `NSWindow` at exactly 1180 × 760 pixels.
+The standard AppKit title bar, title, and traffic-light controls are inside the evidence boundary;
+content-only or borderless renders are not eligible to calibrate the native-macOS lens. The render
+environment is fixed:
 
 - macOS runner image and Swift toolchain selected by `apple-ci`;
 - light or dark appearance set explicitly rather than inherited from the runner;
@@ -20,6 +23,7 @@ Every image is a compressed JPEG at exactly 1180 × 760 pixels. The render envir
 - system semantic fonts at either standard or accessibility-5 text size;
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
+- a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
@@ -71,7 +75,8 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   differentiation;
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
-- visible accessibility-size layout and visible focus/contrast cues.
+- visible accessibility-size layout and visible focus/contrast cues;
+- the standard AppKit window frame and chrome surrounding both reference and control content.
 
 `OBSERVED` from CI or source evidence, but not from pixels alone:
 
@@ -123,6 +128,24 @@ still fail §5.
 | State clarity and primary action | 20 | The state is identifiable without its filename; limitations and remedies are explicit; the most important available action is obvious. |
 | Coherence and finish | 15 | Light/dark parity, consistent artwork treatment, aligned controls, intentional empty space, and no visibly unfinished edge. |
 
+These categories form two independently calibrated lenses:
+
+- `platform_idiom`: Native macOS idiom (25 points);
+- `information_design`: Hierarchy and typography, spacing and density, state clarity and primary
+  action, and coherence and finish (75 points).
+
+An earlier synthetic good/bad calibration pair produced an `information_design` gap of 1.21 on a
+normalized 0–10 scale but only a `platform_idiom` gap of 0.43. Neither synthetic image contained real
+window chrome. Therefore that experiment calibrated only information design; platform idiom remains
+**unproven until the titled-window artifact defined in §1 passes §6**. The synthetic result must not
+be quoted as a Dulcet product score.
+
+A lens is calibrated only when, for every rater and appearance, its normalized good-browse score is
+at least 1.0 point above its deliberately bad control score. If either lens is uncalibrated, the run
+is `VOID`: that lens score, the 100-point taste score, and `product_taste_score` are all unreported
+(`null`), not averaged or presented with a caveat. Category findings may still be retained as
+diagnostics, but they are not scores.
+
 Score every reference JPEG separately, then compute:
 
 1. the mean of light and dark for each state;
@@ -162,21 +185,25 @@ Report `accessibility_score` independently. The design does not pass accessibili
 below 90, any essential text or action is clipped, any control lacks a label, or WCAG AA contrast has
 a confirmed failure.
 
-## 6. Negative-control gate — failure voids the run
+## 6. Lens calibration and negative-control gate — failure voids the run
 
 Each rater scores each bad-control appearance using the same taste rubric as the corresponding good
 `library-browse` image. The bad controls are excluded from the product average.
 
-For **each rater** and **each appearance**, all three conditions must hold:
+For **each rater** and **each appearance**, all five conditions must hold:
 
 1. bad-control score is at most 40/100;
 2. bad-control score is at least 25 points below the good `library-browse` score;
 3. bad control is the rater's lowest-scoring image for that appearance.
+4. normalized `information_design` gap between good browse and bad control is at least 1.0/10;
+5. normalized `platform_idiom` gap between good browse and bad control is at least 1.0/10.
 
 If any condition fails, the entire two-rater run is void. Do not average it, selectively discard a
-rater, relax the threshold, or prompt the same rater to lower the control. Start a new run with two
-fresh independent raters. A rating harness that cannot produce a decisively low score is not measuring
-the intended range.
+rater, relax the threshold, prompt the same rater to lower the control, or report a score from the
+uncalibrated lens. Record the failed lens and gap, leave lens and aggregate scores `null`, and start a
+new run with two fresh independent raters. A rating harness that cannot produce a decisively low
+score is not measuring the intended range. The real titled-window captures are the first evidence
+eligible to settle the currently unproven platform-idiom calibration.
 
 ## 7. Required rater output
 
@@ -186,16 +213,51 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
 {
   "rater": {"model_family": "...", "model": "..."},
   "control_gate": {
-    "light": {"score": 0, "browse_delta": 0, "lowest": true, "pass": true},
-    "dark": {"score": 0, "browse_delta": 0, "lowest": true, "pass": true},
+    "light": {
+      "score": 0,
+      "browse_delta": 0,
+      "lowest": true,
+      "information_design_gap_0_to_10": 0,
+      "platform_idiom_gap_0_to_10": 0,
+      "pass": true
+    },
+    "dark": {
+      "score": 0,
+      "browse_delta": 0,
+      "lowest": true,
+      "information_design_gap_0_to_10": 0,
+      "platform_idiom_gap_0_to_10": 0,
+      "pass": true
+    },
     "run_valid": true
   },
   "states": {
     "empty-library-no-account": {
-      "light": {"taste": 0, "findings": []},
-      "dark": {"taste": 0, "findings": []}
+      "light": {
+        "taste": 0,
+        "categories": {
+          "platform_idiom": 0,
+          "hierarchy_and_typography": 0,
+          "spacing_and_density": 0,
+          "state_clarity_and_primary_action": 0,
+          "coherence_and_finish": 0
+        },
+        "findings": []
+      },
+      "dark": {
+        "taste": 0,
+        "categories": {
+          "platform_idiom": 0,
+          "hierarchy_and_typography": 0,
+          "spacing_and_density": 0,
+          "state_clarity_and_primary_action": 0,
+          "coherence_and_finish": 0
+        },
+        "findings": []
+      }
     }
   },
+  "lens_scores": {"platform_idiom": 0, "information_design": 0},
   "product_taste_score": 0,
   "accessibility": {
     "contrast": 0,
@@ -215,8 +277,11 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
 }
 ```
 
-All seven state keys are required. Scores are integers. Findings name the file and the rubric category;
-generic praise or criticism without evidence is invalid.
+All seven state keys and all five category scores are required for a valid run. Point-weighted
+category scores and aggregate scores are integers; normalized control gaps may be decimals. For a
+void run, `lens_scores`, every per-image `taste`, and `product_taste_score` are `null`; the calibration
+gaps and failure evidence remain populated. Findings name the file and the rubric category; generic
+praise or criticism without evidence is invalid.
 
 ## 8. Reproduction
 

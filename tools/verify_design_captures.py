@@ -96,9 +96,10 @@ def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
+        "captureSurface": "titled-nswindow-with-standard-chrome",
         "jpegCompression": 0.72,
         "locale": "en_US_POSIX",
         "calendar": "gregorian",

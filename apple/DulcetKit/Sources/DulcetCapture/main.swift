@@ -150,6 +150,7 @@ private struct CaptureManifest: Codable {
     let schemaVersion: Int
     let widthPixels: Int
     let heightPixels: Int
+    let captureSurface: String
     let jpegCompression: Double
     let locale: String
     let calendar: String
@@ -206,9 +207,10 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 1,
+            schemaVersion: 2,
             widthPixels: width,
             heightPixels: height,
+            captureSurface: "titled-nswindow-with-standard-chrome",
             jpegCompression: jpegCompression,
             locale: "en_US_POSIX",
             calendar: "gregorian",
@@ -242,7 +244,7 @@ private struct DulcetCaptureMain {
             initialState: state
         )
         let scene = DulcetCaptureView(store: store, variant: variant)
-            .frame(width: CGFloat(width), height: CGFloat(height))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.colorScheme, appearance.colorScheme)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, calendar)
@@ -251,20 +253,24 @@ private struct DulcetCaptureMain {
             .background(Color(nsColor: NSColor.windowBackgroundColor))
 
         let hostingView = NSHostingView(rootView: scene)
-        hostingView.frame = NSRect(x: 0, y: 0, width: width, height: height)
         hostingView.sizingOptions = []
         hostingView.appearance = NSAppearance(named: appearance.appKitName)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         let window = NSWindow(
-            contentRect: hostingView.frame,
-            styleMask: [.borderless],
+            contentRect: .zero,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.appearance = hostingView.appearance
         window.backgroundColor = NSColor.windowBackgroundColor
+        window.title = "Dulcet"
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
+        window.isMovableByWindowBackground = false
+        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
@@ -273,6 +279,12 @@ private struct DulcetCaptureMain {
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
+
+        guard let captureView = hostingView.superview else {
+            throw CaptureError.bitmapAllocation
+        }
+        captureView.layoutSubtreeIfNeeded()
+        captureView.displayIfNeeded()
 
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -289,7 +301,7 @@ private struct DulcetCaptureMain {
             throw CaptureError.bitmapAllocation
         }
         bitmap.size = NSSize(width: width, height: height)
-        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+        captureView.cacheDisplay(in: captureView.bounds, to: bitmap)
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]
