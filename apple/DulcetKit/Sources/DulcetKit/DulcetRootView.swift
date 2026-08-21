@@ -119,7 +119,7 @@ private struct DulcetSidebar: View {
         destination: DulcetSidebarDestination
     ) -> some View {
         Button {
-            store.selectedDestination = destination
+            store.selectDestination(destination)
         } label: {
             Label(title, systemImage: symbol)
                 .frame(maxWidth: .infinity, alignment: .leading)

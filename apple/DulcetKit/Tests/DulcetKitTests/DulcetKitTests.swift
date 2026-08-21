@@ -59,7 +59,7 @@ func storeRoutesSemanticActionsWithoutExposingFixtureSelection() {
     let source = DulcetDeterministicDataSource(initialState: .libraryBrowse)
     let store = DulcetPresentationStore(source: source)
 
-    store.selectedDestination = .search
+    store.selectDestination(.search)
     #expect(store.snapshot.state == .searchMixedSources)
 
     store.searchQuery = "東京"
@@ -79,6 +79,20 @@ func storeAcceptsSnapshotsPushedByADataSource() {
     #expect(store.snapshot.state == .offlineMetadataOnly)
     #expect(store.selectedDestination == .library)
     #expect(store.snapshot.connectivity == .offline(lastSyncedDescription: "Today at 14:28 UTC"))
+}
+
+@Test @MainActor
+func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
+    let source = DulcetDeterministicDataSource(initialState: .albumDetailMultiDisc)
+    let store = DulcetPresentationStore(source: source)
+
+    #expect(store.selectedDestination == .library)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.selectedDestination == .library)
 }
 
 @MainActor
