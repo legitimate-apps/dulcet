@@ -146,6 +146,8 @@ jobs:
         run: >-
           echo "path=$(tools/conformance-env/new-class-root
           --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Prove redirect credential detector rejects semantic smuggling
+        run: python3 tools/test-redirect-credential-detector
       - name: Install and verify checksum-pinned Darwin conformance closure
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}

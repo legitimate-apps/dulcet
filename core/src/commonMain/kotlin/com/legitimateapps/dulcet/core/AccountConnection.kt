@@ -569,6 +569,7 @@ public class AccountConnector(
         }
         var followedRedirects = 0
         var credentialsStripped = false
+        var redirectCredentialMetadata: String? = null
 
         while (true) {
             val response = sendRequest(
@@ -578,6 +579,7 @@ public class AccountConnector(
                 formParameters = formParameters,
                 useForm = useForm,
                 allowLocalHttp = allowLocalHttp,
+                redirectCredentialMetadata = redirectCredentialMetadata,
             )
             if (response.status.value !in REDIRECT_STATUS_CODES) {
                 if (response.status.value == 401 && credentialsStripped) {
@@ -627,6 +629,8 @@ public class AccountConnector(
                 RedirectPolicyDecision.StripCredentials -> {
                     val credentialValues = queryParameters.authenticationValues() +
                         formParameters.authenticationValues()
+                    redirectCredentialMetadata =
+                        queryParameters["t"] ?: formParameters["t"]
                     credentialsStripped = credentialsStripped || credentialValues.isNotEmpty()
                     queryParameters = queryParameters.withoutCredentialChannels(credentialValues)
                     formParameters = formParameters.withoutCredentialChannels(credentialValues)
@@ -650,6 +654,7 @@ public class AccountConnector(
         formParameters: Parameters,
         useForm: Boolean,
         allowLocalHttp: Boolean,
+        redirectCredentialMetadata: String?,
     ): HttpResponse {
         val target = localHttpPolicy.targetFor(url, allowLocalHttp)
         return if (useForm) {
@@ -659,6 +664,7 @@ public class AccountConnector(
                 encodeInQuery = false,
             ) {
                 target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                redirectCredentialMetadata?.let { header(HttpHeaders.UserAgent, "Dulcet/$it") }
                 queryParameters.entries().forEach { (key, values) ->
                     values.forEach { value -> parameter(key, value) }
                 }
@@ -666,6 +672,7 @@ public class AccountConnector(
         } else {
             client.get(target.url) {
                 target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                redirectCredentialMetadata?.let { header(HttpHeaders.UserAgent, "Dulcet/$it") }
                 queryParameters.entries().forEach { (key, values) ->
                     values.forEach { value -> parameter(key, value) }
                 }

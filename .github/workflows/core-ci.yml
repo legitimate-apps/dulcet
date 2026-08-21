@@ -67,6 +67,8 @@ jobs:
         run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
         run: python3 tools/test-seed-corpus-gates
+      - name: Prove redirect credential detector rejects semantic smuggling
+        run: python3 tools/test-redirect-credential-detector
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
