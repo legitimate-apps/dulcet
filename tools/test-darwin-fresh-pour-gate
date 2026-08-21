@@ -25,6 +25,10 @@ def main() -> None:
         preinstall = installer.observe_keg(keg)
         before_pour = installer.observe_keg(keg)
         after_pour = installer.observe_keg(keg)
+        expected_detail = (
+            "fresh-pour gate rejected retained keg negative-control: "
+            "expected_absent_before_pour=true observed_absent_before_pour=false"
+        )
         observed_rejected = False
         observed_detail = ""
         try:
@@ -37,6 +41,11 @@ def main() -> None:
         except SystemExit as error:
             observed_rejected = True
             observed_detail = str(error)
+            if observed_detail != expected_detail:
+                raise SystemExit(
+                    "fresh-pour negative control rejected for the wrong reason: "
+                    f"expected_detail={expected_detail!r} observed_detail={observed_detail!r}"
+                ) from error
 
         if not observed_rejected:
             raise SystemExit("fresh-pour negative control failed open")

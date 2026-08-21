@@ -17,7 +17,13 @@ class ProbeTools:
         return self.probe
 
 
-def require_rejection(label: str, probe: dict, *, absent_tags: tuple[str, ...] = ()) -> None:
+def require_rejection(
+    label: str,
+    probe: dict,
+    expected_detail: str,
+    *,
+    absent_tags: tuple[str, ...] = (),
+) -> None:
     expected_rejected = True
     observed_rejected = False
     observed_detail = ""
@@ -32,6 +38,11 @@ def require_rejection(label: str, probe: dict, *, absent_tags: tuple[str, ...] =
     except SystemExit as error:
         observed_rejected = True
         observed_detail = str(error)
+        if observed_detail != expected_detail:
+            raise SystemExit(
+                f"negative control rejected for the wrong reason: {label}: "
+                f"expected_detail={expected_detail!r} observed_detail={observed_detail!r}"
+            ) from error
     if observed_rejected != expected_rejected:
         raise SystemExit(f"negative control failed open: {label}")
     print(
@@ -45,6 +56,7 @@ def main() -> None:
     require_rejection(
         "mislabeled_container",
         {"format": {"format_name": "wav", "duration": "1.0", "tags": {}}, "streams": []},
+        "ffprobe container mismatch for forged.flac: expected 'flac', observed 'wav'",
     )
     require_rejection(
         "present_empty_tags",
@@ -56,6 +68,7 @@ def main() -> None:
             },
             "streams": [],
         },
+        "ffprobe found forbidden tags for forged.flac: {'album': '', 'albumartist': ''}",
         absent_tags=("album", "albumartist"),
     )
     _, _, observed_format_name = seed_corpus.assert_media(
