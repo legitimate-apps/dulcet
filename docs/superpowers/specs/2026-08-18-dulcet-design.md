@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 37 — CONF-08 now exercises both advertised form authentication and legacy query
-authentication across an origin-changing redirect; revision 36 made proxy-auth neutralisation explicitly
+**Revision:** 38 — CONF-08 now derives and compares the full cross-origin target request, including
+method, exact path and raw query, and byte-exact body; revision 37 added both advertised form
+authentication and legacy query authentication scenarios; revision 36 made proxy-auth neutralisation explicitly
 ASSUMED and named the exact hosted control required to settle it; revision 35 made required-check drift explicitly a post-merge detector rather
 than a pre-merge live control; revision 34 made raw internationalized hostnames receive an honest unsupported
 classification; revision 33 made Darwin report unsupported authentication challenges distinctly and record its
@@ -1361,9 +1362,11 @@ Normative policy, enforced in the transport layer and in the resource loader (§
   once with advertised `formPost` and again with a source that advertises no `formPost`, requiring the
   authenticated source request to use GET/query placement in the latter scenario. **CONF-08 proves that each
   cross-origin target request is exactly the fixture-derived credential-free transformation of the
-  validated source request: the permitted channel set, fixed protocol values, target authority, body
-  length, and unchanged transport metadata must match. It does not claim to recognize every reversible
-  encoding of a credential.** Any target-only deviation fails independent of its encoding.
+  validated source request and the redirect location the fixture issued. The method, exact target
+  path, raw query serialization, byte-exact body, permitted channel set, fixed protocol values, target
+  authority, body length, and unchanged transport metadata must all match. It does not claim to
+  recognize every reversible encoding of a credential.** Any target-only deviation fails independent
+  of its encoding or request surface.
 - A downgrade from `https` to `http` is **rejected outright**, never followed.
 - Same-origin redirects preserve the query string as issued; credentials are not regenerated
   mid-redirect, since a fresh salt would invalidate an already-signed URL for no benefit.
@@ -2228,7 +2231,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
-| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; derives a closed header/query/form channel inventory from every request in each chain; validates the fixture's fixed protocol values and bounded transport metadata; preserves the exact issued credentials on same-origin hops; requires a cross-origin target to equal the credential-free transformation of its source request; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
+| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; derives the permitted target method, exact redirect path, raw query serialization, byte-exact body, and closed channel tuple from the observed source request plus the fixture-issued redirect location; validates fixed protocol values and bounded transport metadata; preserves the exact issued credentials on same-origin hops; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2921,6 +2924,23 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 38 (2026-08-21)** — the cross-origin oracle became request-exact, not only channel-exact.
+
+1. The hosted red mutation kept the accepted target channel tuple and body but placed the observed
+   username, token, and salt in extra target path segments. The oracle accepted the candidate because
+   request target was not one of its inputs.
+2. The fixture now stores each source request as one observation containing its method, exact path,
+   raw query serialization, raw body bytes, and complete parsed channel tuple, together with the exact
+   redirect location it issued. The permitted target request is derived from those observations.
+3. Credential-classified source fields—and metadata fields whose decoded values duplicate an observed
+   credential—are removed from the raw query and form serializations while every retained field byte
+   and ordering position is preserved. The redirect supplies the exact target path and authority;
+   method is preserved by the 307; content length is derived from the resulting raw body.
+4. The target must equal the resulting full observation. Mutation controls reject the credential-
+   bearing path first, then a GET-with-body method change, reordered byte-equivalent form and query
+   serializations, and target-only metadata values. No codec or request-surface list is used to find a
+   hidden credential.
+
 **Revision 37 (2026-08-21)** — authenticated query redirects entered CONF-08's reachable set.
 
 1. A hosted red control added `conf08EnforcesQueryAuthenticationRedirectCredentialPolicy`; 19 JVM
@@ -2995,10 +3015,11 @@ argue against the recorded rationale — not as filling in a blank.
 
 1. A hosted red control added double-Base64 to the finite representation scanner and demonstrated
    the inherent next-codec bypass.
-2. The cross-origin target fixture now derives the one permitted request from the already-validated
-   source: credential channels and duplicate credential values are absent, fixed application values
-   remain exact, the authority and byte length are recomputed, and transport metadata is unchanged.
-   The target must equal that expectation as a complete sorted channel tuple.
+2. The cross-origin target fixture derived the permitted parsed-channel tuple from the already-
+   validated source: credential channels and duplicate credential values were absent, fixed
+   application values remained exact, the authority and byte length were recomputed, and transport
+   metadata was unchanged. **Scope correction in revision 38:** this was channel-exact, not yet a
+   complete-request oracle; method, request target, raw query, and raw body bytes were not inputs.
 3. The finite encoding scanner was removed. Mutation controls place raw, framed, percent-encoded,
    Base64-family, Base85, hexadecimal, and recursively Base64-encoded values into an otherwise valid
    target metadata channel; every case fails because it deviates from the expectation, not because a

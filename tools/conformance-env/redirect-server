@@ -9,7 +9,7 @@ import json
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 
 CHANNEL_CLASSIFICATIONS = {
@@ -60,10 +60,20 @@ class ObservedChannel:
         return CHANNEL_CLASSIFICATIONS.get(self.location, {}).get(self.name)
 
 
+@dataclass(frozen=True)
+class ObservedRequest:
+    method: str
+    path: str
+    raw_query: str
+    body: bytes
+    channels: tuple[ObservedChannel, ...]
+
+
 class RedirectState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.issued: dict[tuple[str, str], tuple[str, tuple[ObservedChannel, ...]]] = {}
+        self.issued: dict[tuple[str, str], ObservedRequest] = {}
+        self.redirect_locations: dict[tuple[str, str], str] = {}
         self.ambient_auth_challenges = 0
         self.ambient_authentication_observed = False
 
@@ -71,11 +81,14 @@ class RedirectState:
         self,
         scenario: str,
         endpoint: str,
-        method: str,
-        channels: tuple[ObservedChannel, ...],
+        request: ObservedRequest,
+        redirect_location: str | None = None,
     ) -> None:
         with self.lock:
-            self.issued[(scenario, endpoint)] = (method, channels)
+            key = (scenario, endpoint)
+            self.issued[key] = request
+            if redirect_location is not None:
+                self.redirect_locations[key] = redirect_location
 
     def matches(
         self,
@@ -85,24 +98,31 @@ class RedirectState:
         channels: tuple[ObservedChannel, ...],
     ) -> bool:
         with self.lock:
-            return self.issued.get((scenario, endpoint)) == (method, channels)
+            observation = self.issued.get((scenario, endpoint))
+            return (
+                observation is not None
+                and observation.method == method
+                and observation.channels == channels
+            )
 
-    def source_channels(
+    def redirect_observation(
         self,
         scenario: str,
         endpoint: str,
-    ) -> tuple[ObservedChannel, ...] | None:
+    ) -> tuple[ObservedRequest, str] | None:
         with self.lock:
-            observation = self.issued.get((scenario, endpoint))
-            return observation[1] if observation is not None else None
+            key = (scenario, endpoint)
+            request = self.issued.get(key)
+            location = self.redirect_locations.get(key)
+            return (request, location) if request is not None and location is not None else None
 
     def scenario_channels(self, scenario: str) -> tuple[ObservedChannel, ...]:
         with self.lock:
             return tuple(
                 channel
-                for (observed_scenario, _endpoint), (_method, channels) in self.issued.items()
+                for (observed_scenario, _endpoint), request in self.issued.items()
                 if observed_scenario == scenario
-                for channel in channels
+                for channel in request.channels
             )
 
     def record_ambient_auth_challenge(self, channels: tuple[ObservedChannel, ...]) -> None:
@@ -130,7 +150,7 @@ def expected_cross_origin_target_channels(
     target_body: bytes,
     target_authority: str,
 ) -> tuple[ObservedChannel, ...]:
-    """Derive the one permitted target request from the validated source request."""
+    """Derive the permitted parsed target channels from observed source channels."""
     source_credentials = {
         value
         for channel in source_channels
@@ -152,17 +172,77 @@ def expected_cross_origin_target_channels(
     return tuple(sorted(expected))
 
 
-def cross_origin_target_matches_expectation(
-    source_channels: tuple[ObservedChannel, ...],
-    target_channels: tuple[ObservedChannel, ...],
-    target_body: bytes,
-    target_authority: str,
-) -> bool:
-    return target_channels == expected_cross_origin_target_channels(
-        source_channels,
-        target_body,
-        target_authority,
+def credential_free_raw_fields(
+    raw_fields: str,
+    location: str,
+    excluded_names: set[str],
+) -> str:
+    """Remove excluded observed channels while preserving every retained field byte and its order."""
+    if not raw_fields:
+        return ""
+    retained: list[str] = []
+    for raw_field in raw_fields.split("&"):
+        parsed_field = parse_qsl(raw_field, keep_blank_values=True, strict_parsing=True)
+        if len(parsed_field) != 1:
+            raise ValueError(f"invalid {location} field in validated source request")
+        name, _value = parsed_field[0]
+        if name.lower() not in excluded_names:
+            retained.append(raw_field)
+    return "&".join(retained)
+
+
+def expected_cross_origin_target_request(
+    source_request: ObservedRequest,
+    redirect_location: str,
+) -> ObservedRequest:
+    """Derive the full permitted target request from the observed source and issued redirect."""
+    source_credentials = {
+        value
+        for channel in source_request.channels
+        if channel.classification == "credential"
+        for value in channel.values
+    }
+    excluded_names = {
+        location: {
+            channel.name
+            for channel in source_request.channels
+            if channel.location == location and (
+                channel.classification == "credential"
+                or any(value in source_credentials for value in channel.values)
+            )
+        }
+        for location in ("query", "form")
+    }
+    target = urlsplit(redirect_location)
+    raw_query = credential_free_raw_fields(
+        source_request.raw_query,
+        "query",
+        excluded_names["query"],
     )
+    raw_body = credential_free_raw_fields(
+        source_request.body.decode("ascii", errors="strict"),
+        "form",
+        excluded_names["form"],
+    ).encode("ascii")
+    return ObservedRequest(
+        method=source_request.method,
+        path=target.path,
+        raw_query=raw_query,
+        body=raw_body,
+        channels=expected_cross_origin_target_channels(
+            source_request.channels,
+            raw_body,
+            target.netloc,
+        ),
+    )
+
+
+def cross_origin_target_matches_expectation(
+    source_request: ObservedRequest,
+    target_request: ObservedRequest,
+    redirect_location: str,
+) -> bool:
+    return target_request == expected_cross_origin_target_request(source_request, redirect_location)
 
 
 def envelope(endpoint: str, *, advertise_form_post: bool = True) -> dict[str, object]:
@@ -250,6 +330,13 @@ class RedirectHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length else b""
         endpoint = parsed.path.rsplit("/", 1)[-1].removesuffix(".view")
         channels = self._observed_channels(parsed.query, body)
+        request = ObservedRequest(
+            method=self.command,
+            path=parsed.path,
+            raw_query=parsed.query,
+            body=body,
+            channels=channels,
+        )
 
         if parsed.path.startswith("/ambient-auth/rest/"):
             STATE.record_ambient_auth_challenge(channels)
@@ -267,7 +354,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not self._observes_expected_channels(endpoint, channels, body):
                 self._send_json(500, {"error": "credential channel observation failed"})
                 return
-            STATE.remember("observe", endpoint, self.command, channels)
+            STATE.remember("observe", endpoint, request)
             self._send_json(200, envelope(endpoint))
             return
 
@@ -275,7 +362,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not self._all_channels_accounted_for(channels):
                 self._send_json(500, {"error": "unaccounted same-origin source channel"})
                 return
-            STATE.remember("same", endpoint, self.command, channels)
+            STATE.remember("same", endpoint, request)
             self._redirect(f"/same-target/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/same-target/rest/"):
@@ -295,25 +382,28 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not self._all_channels_accounted_for(channels):
                 self._send_json(500, {"error": "unaccounted cross-origin source channel"})
                 return
-            STATE.remember("cross", endpoint, self.command, channels)
             target_port = self.server.target_port  # type: ignore[attr-defined]
-            self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
+            location = f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view"
+            STATE.remember("cross", endpoint, request, location)
+            self._redirect(location)
             return
         if parsed.path.startswith("/cross-observe/rest/"):
             if not self._observes_expected_channels(endpoint, channels, body, "form"):
                 self._send_json(500, {"error": "cross-origin source credential channels failed"})
                 return
-            STATE.remember("cross-observe", endpoint, self.command, channels)
             target_port = self.server.target_port  # type: ignore[attr-defined]
-            self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
+            location = f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view"
+            STATE.remember("cross-observe", endpoint, request, location)
+            self._redirect(location)
             return
         if parsed.path.startswith("/cross-observe-query/rest/"):
             if not self._observes_expected_channels(endpoint, channels, body, "query"):
                 self._send_json(500, {"error": "cross-origin query source channels failed"})
                 return
-            STATE.remember("cross-observe-query", endpoint, self.command, channels)
             target_port = self.server.target_port  # type: ignore[attr-defined]
-            self._redirect(f"http://127.0.0.1:{target_port}/cross-target-query/rest/{endpoint}.view")
+            location = f"http://127.0.0.1:{target_port}/cross-target-query/rest/{endpoint}.view"
+            STATE.remember("cross-observe-query", endpoint, request, location)
+            self._redirect(location)
             return
         if parsed.path.startswith("/cross-target/rest/"):
             if not self._all_channels_accounted_for(channels):
@@ -322,16 +412,14 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if self._has_authentication(channels):
                 self._send_json(500, {"error": "credentials crossed an origin boundary"})
                 return
-            source_channels = STATE.source_channels("cross-observe", endpoint)
-            if source_channels is None:
+            observation = STATE.redirect_observation("cross-observe", endpoint)
+            if observation is None:
                 self._send_json(500, {"error": "cross-origin target had no observed source"})
                 return
-            target_authority = f"127.0.0.1:{self.server.server_port}"
             if not cross_origin_target_matches_expectation(
-                source_channels,
-                channels,
-                body,
-                target_authority,
+                observation[0],
+                request,
+                observation[1],
             ):
                 self._send_json(500, {"error": "cross-origin target request differed from expectation"})
                 return
@@ -347,16 +435,14 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if self._has_authentication(channels):
                 self._send_json(500, {"error": "query credentials crossed an origin boundary"})
                 return
-            source_channels = STATE.source_channels("cross-observe-query", endpoint)
-            if source_channels is None:
+            observation = STATE.redirect_observation("cross-observe-query", endpoint)
+            if observation is None:
                 self._send_json(500, {"error": "cross-origin query target had no observed source"})
                 return
-            target_authority = f"127.0.0.1:{self.server.server_port}"
             if not cross_origin_target_matches_expectation(
-                source_channels,
-                channels,
-                body,
-                target_authority,
+                observation[0],
+                request,
+                observation[1],
             ):
                 self._send_json(500, {"error": "cross-origin query target differed from expectation"})
                 return
