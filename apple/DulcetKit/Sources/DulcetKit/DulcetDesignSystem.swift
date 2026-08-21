@@ -21,6 +21,7 @@ enum DulcetMetrics {
 
 extension Color {
     static let dulcetAccent = Color(nsColor: DulcetContrastColor.accent)
+    static let dulcetOnAccent = Color(nsColor: DulcetContrastColor.onAccent)
     static let dulcetOffline = Color(nsColor: DulcetContrastColor.offline)
     static let dulcetDanger = Color(nsColor: DulcetContrastColor.danger)
     static let dulcetWindow = Color(nsColor: .windowBackgroundColor)
@@ -33,6 +34,11 @@ enum DulcetContrastColor {
         name: "DulcetAccent",
         light: NSColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
         dark: NSColor(red: 0.47, green: 0.64, blue: 1.00, alpha: 1)
+    )
+    static let onAccent = adaptive(
+        name: "DulcetOnAccent",
+        light: .white,
+        dark: .black
     )
     static let offline = adaptive(
         name: "DulcetOffline",

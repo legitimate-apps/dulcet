@@ -86,8 +86,10 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 `OBSERVED` from CI or source evidence, but not from pixels alone:
 
 - Swift package tests, app build success, capture-verifier negative controls;
-- WCAG AA contrast ratios for Dulcet's resolved accent, offline, and danger tokens against the
-  resolved macOS window background in Aqua and Dark Aqua;
+- computed [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18) for
+  every Dulcet-defined adjacent foreground/background pair in Aqua and Dark Aqua: prominent button
+  labels, selected-sidebar labels, offline labels, and danger labels or icons. The native test prints
+  each ratio and proves that a known low-contrast pair is rejected;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
 

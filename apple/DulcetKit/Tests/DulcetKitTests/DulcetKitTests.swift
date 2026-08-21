@@ -99,21 +99,83 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 }
 
 @Test @MainActor
-func customSemanticColorsMeetWCAGAAInBothAppearances() throws {
-    let foregrounds = [
-        DulcetContrastColor.accent,
-        DulcetContrastColor.offline,
-        DulcetContrastColor.danger,
-    ]
-
+func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
         let appearance = try #require(NSAppearance(named: appearanceName))
-        let background = try resolved(NSColor.windowBackgroundColor, appearance: appearance)
-        for foreground in foregrounds {
-            let resolvedForeground = try resolved(foreground, appearance: appearance)
-            #expect(contrastRatio(resolvedForeground, background) >= 4.5)
+        let window = try resolved(.windowBackgroundColor, appearance: appearance)
+        let control = try resolved(.controlBackgroundColor, appearance: appearance)
+        let accent = try resolved(DulcetContrastColor.accent, appearance: appearance)
+        let onAccent = try resolved(DulcetContrastColor.onAccent, appearance: appearance)
+        let offline = try resolved(DulcetContrastColor.offline, appearance: appearance)
+        let danger = try resolved(DulcetContrastColor.danger, appearance: appearance)
+        let label = try resolved(.labelColor, appearance: appearance)
+        let sidebar = composited(control, over: window, opacity: 0.78)
+        let selectedSidebar = composited(accent, over: sidebar, opacity: 0.16)
+
+        let pairs = [
+            ContrastRequirement(
+                name: "primary-button-label/accent-fill",
+                foreground: onAccent,
+                background: accent,
+                minimum: 4.5
+            ),
+            ContrastRequirement(
+                name: "primary-button-label/offline-fill",
+                foreground: onAccent,
+                background: offline,
+                minimum: 4.5
+            ),
+            ContrastRequirement(
+                name: "selected-sidebar-label/selection-fill",
+                foreground: label,
+                background: selectedSidebar,
+                minimum: 4.5
+            ),
+            ContrastRequirement(
+                name: "offline-label/window",
+                foreground: offline,
+                background: window,
+                minimum: 4.5
+            ),
+            ContrastRequirement(
+                name: "failure-label/sidebar",
+                foreground: danger,
+                background: sidebar,
+                minimum: 4.5
+            ),
+            ContrastRequirement(
+                name: "danger-icon/window",
+                foreground: danger,
+                background: window,
+                minimum: 3.0
+            ),
+        ]
+
+        for pair in pairs {
+            let ratio = contrastRatio(pair.foreground, pair.background)
+            print(
+                "WCAG CONTRAST pair=\(pair.name) appearance=\(appearanceName.rawValue) "
+                    + "ratio=\(String(format: "%.3f", ratio)) minimum=\(pair.minimum)"
+            )
+            #expect(
+                ratio >= pair.minimum,
+                "\(pair.name) in \(appearanceName.rawValue) is \(ratio):1, below \(pair.minimum):1"
+            )
         }
     }
+}
+
+@Test
+func contrastGateRejectsKnownFailure() {
+    let lowContrastText = NSColor(srgbRed: 0.72, green: 0.72, blue: 0.72, alpha: 1)
+    let ratio = contrastRatio(lowContrastText, .white)
+
+    #expect(ratio < 4.5)
+    #expect(!meetsContrastMinimum(lowContrastText, .white, minimum: 4.5))
+    print(
+        "WCAG CONTRAST NEGATIVE CONTROL PASS pair=gray-text/white "
+            + "ratio=\(String(format: "%.3f", ratio)) minimum=4.5 rejected=true"
+    )
 }
 
 @MainActor
@@ -135,6 +197,32 @@ private final class PushingTestDataSource: DulcetDataSource {
         currentSnapshot = snapshot
         handler?(snapshot)
     }
+}
+
+private struct ContrastRequirement {
+    let name: String
+    let foreground: NSColor
+    let background: NSColor
+    let minimum: Double
+}
+
+private func meetsContrastMinimum(
+    _ foreground: NSColor,
+    _ background: NSColor,
+    minimum: Double
+) -> Bool {
+    contrastRatio(foreground, background) >= minimum
+}
+
+private func composited(_ foreground: NSColor, over background: NSColor, opacity: CGFloat) -> NSColor {
+    let foregroundRGB = foreground.usingColorSpace(.sRGB) ?? foreground
+    let backgroundRGB = background.usingColorSpace(.sRGB) ?? background
+    return NSColor(
+        srgbRed: foregroundRGB.redComponent * opacity + backgroundRGB.redComponent * (1 - opacity),
+        green: foregroundRGB.greenComponent * opacity + backgroundRGB.greenComponent * (1 - opacity),
+        blue: foregroundRGB.blueComponent * opacity + backgroundRGB.blueComponent * (1 - opacity),
+        alpha: 1
+    )
 }
 
 private func contrastRatio(_ first: NSColor, _ second: NSColor) -> Double {
