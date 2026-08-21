@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Resolve FEATURES.yml evidence to testcases executed by this GitHub Actions job."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+if len(sys.argv) != 2:
+    fail("usage: verify-parity-evidence <JUnit-results-directory>")
+
+workflow = os.environ.get("GITHUB_WORKFLOW")
+job = os.environ.get("GITHUB_JOB")
+if not workflow or not job:
+    fail("executed evidence requires GITHUB_WORKFLOW and GITHUB_JOB from the CI runner")
+
+try:
+    document = json.loads(Path("FEATURES.yml").read_text())
+except (OSError, json.JSONDecodeError) as error:
+    fail(f"cannot read FEATURES.yml: {error}")
+
+expected: dict[tuple[str, str], list[str]] = {}
+for feature in document.get("features", []):
+    for platform, cell in feature.get("platforms", {}).items():
+        evidence = cell.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        if evidence.get("workflow") == workflow and evidence.get("job") == job:
+            identity = evidence.get("test", "")
+            parts = identity.split("/")
+            if len(parts) != 2 or not all(parts):
+                fail(f"invalid test identity for {feature.get('id')}/{platform}: {identity!r}")
+            expected.setdefault((parts[0], parts[1]), []).append(
+                f"{feature.get('id')}/{platform}"
+            )
+
+if not expected:
+    fail(f"no FEATURES.yml evidence targets the executing job {workflow}/{job}")
+
+results = Path(sys.argv[1])
+files = sorted(results.rglob("*.xml")) if results.is_dir() else []
+if not files:
+    fail(f"no JUnit XML results found under {results}")
+
+observed: dict[tuple[str, str], list[ET.Element]] = {}
+for path in files:
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as error:
+        fail(f"invalid JUnit XML {path}: {error}")
+    for testcase in root.iter("testcase"):
+        class_name = testcase.get("classname", "").rsplit(".", 1)[-1]
+        test_name = testcase.get("name", "")
+        if test_name.endswith("()"):
+            test_name = test_name[:-2]
+        observed.setdefault((class_name, test_name), []).append(testcase)
+
+for identity, claims in expected.items():
+    executions = observed.get(identity, [])
+    rendered = f"{identity[0]}/{identity[1]}"
+    if not executions:
+        fail(
+            f"evidence test did not execute in {workflow}/{job}: {rendered} "
+            f"claimed by {', '.join(claims)}"
+        )
+    for execution in executions:
+        terminal = next(
+            (name for name in ("failure", "error", "skipped") if execution.find(name) is not None),
+            None,
+        )
+        if terminal is not None:
+            fail(f"evidence test did not pass in {workflow}/{job}: {rendered} ({terminal})")
+
+print(
+    f"executed parity evidence valid: workflow={workflow} job={job} "
+    f"tests={len(expected)} reports={len(files)}"
+)

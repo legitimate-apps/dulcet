@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 22 — local HTTP requires persisted opt-in and a resolved, pinned local address;
+**Revision:** 23 — parity evidence is resolved against the executing required job's JUnit results;
+revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
 revision 21 made `DomainError` retain no server-controlled text or URL; revision 20 made CONF-01
 through CONF-08 execute on JVM and macOS against the pinned reference
 server, with preserved behavior-absent red evidence before the production connector. Revision 18
@@ -1922,10 +1923,13 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 **Evidence is a stable identity, not a run id.** Revision 1 required a CI run number in the `evidence`
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
 the number afterwards produces a commit nobody verified. Evidence is therefore
-`{workflow, job, test}` — knowable at commit time — and the gate asserts that (a) the named workflow
-and job exist, (b) the named test exists in the repo, and (c) the workflow is a **required check** on
-the default branch. Whether that test passed on this commit is answered by the required check itself,
-which is exactly the mechanism designed for the question.
+`{workflow, job, test}` — knowable at commit time. The static gate asserts that (a) the named workflow
+and job exist, (b) the named test exists in the repo, (c) the job is a **required check** on the
+default branch, and (d) the named job invokes the executed-evidence verifier. During that same job,
+after the named test task, the verifier reads the test runner's JUnit XML and requires the exact
+class/method testcase to be present, executed, unskipped, and passing. A source method, log line,
+invented job label, or tuple alone is not evidence. The required check therefore proves both that the
+verifier ran on this commit and that the tuple resolved to an actual successful execution.
 
 **Evidence must match the claim's granularity.** A core unit test does not evidence a platform UI
 capability, and an iPhone simulator run does not evidence iPad navigation, resizing, pointer/keyboard
@@ -2843,6 +2847,16 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 23 (2026-08-21)** — parity evidence became execution-bound.
+
+1. `FEATURES.yml` evidence still uses stable `{workflow, job, test}` identities, but the static gate
+   now rejects a required job that is not wired to the executed-evidence verifier.
+2. The named hosted job consumes the JUnit XML emitted by its own test task and requires each evidence
+   testcase to be present, executed, unskipped, and passing. Source declarations and log text do not
+   satisfy the verifier.
+3. Mutation controls cover nonexistent tests, required aggregators that execute no tests, absent
+   runtime testcases, self-declared log text, failures, and skips.
 
 **Revision 22 (2026-08-21)** — the local-HTTP exception became explicit and connection-bound.
 
