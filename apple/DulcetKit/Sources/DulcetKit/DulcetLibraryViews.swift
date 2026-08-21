@@ -13,7 +13,7 @@ struct DulcetEmptyLibraryView: View {
                 Image(systemName: "music.note.house")
                     .font(.system(size: 42, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.dulcetAccent)
+                    .dulcetForeground(.accentIconOnTint)
                     .accessibilityHidden(true)
             }
 
@@ -55,6 +55,7 @@ struct DulcetEmptyLibraryView: View {
         .padding(DulcetSpacing.xxl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
     }
 }
 
@@ -98,12 +99,17 @@ struct DulcetLibraryBrowseView: View {
                         Spacer()
                         Text(DulcetStrings.duration)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.dulcetSecondaryText)
+                            .dulcetForeground(.secondaryTextOnWindow)
                     }
 
                     VStack(spacing: 0) {
                         ForEach(Array(snapshot.recentlyAddedTracks.enumerated()), id: \.element.id) { index, track in
-                            DulcetTrackRow(track: track, showAlbum: true, index: index + 1)
+                            DulcetTrackRow(
+                                track: track,
+                                showAlbum: true,
+                                index: index + 1,
+                                surface: .control
+                            )
                             if track.id != snapshot.recentlyAddedTracks.last?.id {
                                 Divider().padding(.leading, 52)
                             }
@@ -119,6 +125,7 @@ struct DulcetLibraryBrowseView: View {
             .padding(DulcetSpacing.lg)
         }
         .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
     }
 }
 
@@ -134,7 +141,7 @@ struct DulcetLibraryHeader: View {
                     .lineLimit(nil)
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
             }
             Spacer(minLength: DulcetSpacing.md)
@@ -166,7 +173,7 @@ struct DulcetAlbumShelfItem: View {
                     if offline {
                         Image(systemName: "cloud.slash.fill")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.white) // dulcet-contrast-waiver: decorative-artwork-overlay
                             .padding(6)
                             .background(Color.black.opacity(0.64), in: Circle())
                             .padding(6)
@@ -176,15 +183,15 @@ struct DulcetAlbumShelfItem: View {
 
                 Text(album.title)
                     .font(.headline)
-                    .foregroundStyle(.primary)
+                    .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 Text(DulcetStrings.artistNames(album.albumArtists))
                     .font(.subheadline)
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 Text(DulcetStrings.trackCount(album.tracks.count))
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .dulcetForeground(.secondaryTextOnWindow)
             }
             .frame(width: dynamicTypeSize.isAccessibilitySize ? 190 : 126, alignment: .leading)
             .contentShape(Rectangle())
@@ -199,12 +206,39 @@ struct DulcetAlbumShelfItem: View {
     }
 }
 
+enum DulcetTrackRowSurface {
+    case window
+    case control
+    case regularMaterial
+
+    var primaryPair: DulcetRenderedContrastPair {
+        switch self {
+        case .window: .primaryTextOnWindow
+        case .control: .primaryTextOnControl
+        case .regularMaterial: .primaryTextOnRegularMaterial
+        }
+    }
+
+    var secondaryPair: DulcetRenderedContrastPair {
+        switch self {
+        case .window: .secondaryTextOnWindow
+        case .control: .secondaryTextOnControl
+        case .regularMaterial: .secondaryTextOnRegularMaterial
+        }
+    }
+
+    var offlinePair: DulcetRenderedContrastPair {
+        .offlineLabelOnControl
+    }
+}
+
 struct DulcetTrackRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let track: DulcetTrack
     let showAlbum: Bool
     let index: Int
     var offline = false
+    var surface: DulcetTrackRowSurface = .window
 
     var body: some View {
         Button(action: {}) {
@@ -212,11 +246,11 @@ struct DulcetTrackRow: View {
                 Group {
                     if offline {
                         Image(systemName: "cloud.slash")
-                            .dulcetForeground(.offlineLabelOnWindow)
+                            .dulcetForeground(surface.offlinePair)
                     } else {
                         Text(String(index))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(Color.dulcetSecondaryText)
+                            .dulcetForeground(surface.secondaryPair)
                     }
                 }
                 .frame(width: 24)
@@ -227,11 +261,11 @@ struct DulcetTrackRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(.body.weight(.medium))
-                        .foregroundStyle(.primary)
+                        .dulcetForeground(surface.primaryPair)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     Text(trackSubtitle)
                         .font(.caption)
-                        .foregroundStyle(Color.dulcetSecondaryText)
+                        .dulcetForeground(surface.secondaryPair)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
 
@@ -240,16 +274,16 @@ struct DulcetTrackRow: View {
                 if offline {
                     Text(DulcetStrings.offlineUnavailable)
                         .font(.caption.weight(.medium))
-                        .dulcetForeground(.offlineLabelOnWindow)
+                        .dulcetForeground(surface.offlinePair)
                         .lineLimit(nil)
                 } else {
                     Text(track.durationSeconds.dulcetDuration)
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color.dulcetSecondaryText)
+                        .dulcetForeground(surface.secondaryPair)
                 }
 
                 Image(systemName: "ellipsis")
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(surface.secondaryPair)
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, DulcetSpacing.sm)
@@ -257,6 +291,7 @@ struct DulcetTrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .dulcetForeground(surface.primaryPair)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
     }
@@ -306,7 +341,12 @@ struct DulcetAlbumDetailView: View {
                         VStack(spacing: 0) {
                             let tracks = album.tracks.filter { $0.discNumber == disc }
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                                DulcetTrackRow(track: track, showAlbum: false, index: index + 1)
+                                DulcetTrackRow(
+                                    track: track,
+                                    showAlbum: false,
+                                    index: index + 1,
+                                    surface: .window
+                                )
                                 if track.id != tracks.last?.id {
                                     Divider().padding(.leading, 52)
                                 }
@@ -318,6 +358,7 @@ struct DulcetAlbumDetailView: View {
             .padding(DulcetSpacing.xl)
         }
         .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(album.title)
     }
 
@@ -344,13 +385,13 @@ struct DulcetAlbumDetailView: View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Text(DulcetStrings.album.uppercased())
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
             Text(album.title)
                 .font(.largeTitle.weight(.bold))
                 .lineLimit(nil)
             Text(DulcetStrings.artistNames(album.albumArtists))
                 .font(.title3)
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
                 .lineLimit(nil)
             Text(DulcetStrings.albumMetadata(
                 year: album.year,
@@ -358,7 +399,7 @@ struct DulcetAlbumDetailView: View {
                 duration: album.totalDurationSeconds.dulcetDuration
             ))
                 .font(.subheadline)
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
                 .lineLimit(nil)
         }
     }
@@ -368,7 +409,7 @@ struct DulcetAlbumDetailView: View {
             Button(DulcetStrings.play, systemImage: "play.fill") {}
                 .buttonStyle(.borderedProminent)
                 .tint(.dulcetPrimaryActionFill)
-                .foregroundStyle(Color.dulcetPrimaryActionLabel)
+                .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel(DulcetStrings.play)
             Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
@@ -397,7 +438,7 @@ struct DulcetOfflineLibraryView: View {
                         if case let .offline(lastSynced) = snapshot.connectivity {
                             Text(DulcetStrings.lastSynced(lastSynced))
                                 .font(.subheadline)
-                                .foregroundStyle(Color.dulcetSecondaryText)
+                                .dulcetForeground(.secondaryTextOnWindow)
                                 .lineLimit(nil)
                         }
                     }
@@ -405,7 +446,7 @@ struct DulcetOfflineLibraryView: View {
                     Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
                         .buttonStyle(.borderedProminent)
                         .tint(.dulcetPrimaryActionFill)
-                        .foregroundStyle(Color.dulcetPrimaryActionLabel)
+                        .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.tryAgain)
                 }
@@ -435,7 +476,13 @@ struct DulcetOfflineLibraryView: View {
                 VStack(spacing: 0) {
                     let tracks = Array(snapshot.albums.prefix(3).flatMap(\.tracks).prefix(5))
                     ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                        DulcetTrackRow(track: track, showAlbum: true, index: index + 1, offline: true)
+                        DulcetTrackRow(
+                            track: track,
+                            showAlbum: true,
+                            index: index + 1,
+                            offline: true,
+                            surface: .control
+                        )
                         if track.id != tracks.last?.id {
                             Divider().padding(.leading, 52)
                         }
@@ -446,20 +493,22 @@ struct DulcetOfflineLibraryView: View {
             .padding(DulcetSpacing.lg)
         }
         .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
     }
 
     private var offlineBanner: some View {
         HStack(alignment: .top, spacing: DulcetSpacing.md) {
             Image(systemName: "wifi.slash")
                 .font(.title2.weight(.semibold))
-                .foregroundStyle(Color.dulcetOffline)
+                .dulcetForeground(.offlineIconOnTint)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.offlineTitle)
                     .font(.headline)
+                    .dulcetForeground(.primaryTextOnOfflineTint)
                 Text(DulcetStrings.offlineBody)
                     .font(.body)
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnOfflineTint)
                     .lineLimit(nil)
             }
             Spacer(minLength: 0)

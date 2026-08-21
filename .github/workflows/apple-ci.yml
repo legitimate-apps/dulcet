@@ -57,6 +57,10 @@ jobs:
           -destination 'generic/platform=macOS'
           -derivedDataPath "$RUNNER_TEMP/DulcetMacDerivedData"
           CODE_SIGNING_ALLOWED=NO
+      - name: Prove rendered contrast coverage rejects an unregistered pair
+        run: python3 tools/test-contrast-coverage-gate
+      - name: Require every rendered content foreground to enter the contrast catalog
+        run: python3 tools/verify_contrast_source_coverage.py
       - name: Test native macOS presentation and rendered-pixel WCAG contrast gates
         run: swift test --package-path apple/DulcetKit
       - name: Prove macOS capture rejects an inapplicable Dynamic Type label

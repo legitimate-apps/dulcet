@@ -7,16 +7,7 @@ struct DulcetNowPlayingView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    player.current.artwork.palette.colors[0].opacity(0.26),
-                    Color.dulcetWindow,
-                    player.current.artwork.palette.colors[1].opacity(0.10),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            Color.dulcetWindow.ignoresSafeArea()
 
             ScrollView {
                 Group {
@@ -38,6 +29,7 @@ struct DulcetNowPlayingView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+        .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.nowPlaying)
     }
 
@@ -55,13 +47,13 @@ struct DulcetNowPlayingView: View {
                     .lineLimit(nil)
                 Text(DulcetStrings.artistNames(player.current.artistNames))
                     .font(.title3)
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
                 if let album = player.current.albumTitle {
                     Text(album)
                         .font(.subheadline)
-                        .foregroundStyle(Color.dulcetSecondaryText)
+                        .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(nil)
                 }
             }
@@ -83,7 +75,7 @@ struct DulcetNowPlayingView: View {
                     Text(player.current.durationSeconds.dulcetDuration)
                 }
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
             }
 
             HStack(spacing: DulcetSpacing.lg) {
@@ -121,7 +113,7 @@ struct DulcetNowPlayingView: View {
 
             HStack(spacing: DulcetSpacing.sm) {
                 Image(systemName: "speaker.wave.2")
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .accessibilityHidden(true)
                 Slider(value: .constant(player.volume), in: 0...1)
                     .frame(maxWidth: 180)
@@ -132,7 +124,7 @@ struct DulcetNowPlayingView: View {
                     sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
                 ))
                     .font(.caption.monospaced())
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnRegularMaterial)
                     .padding(.horizontal, DulcetSpacing.xs)
                     .padding(.vertical, DulcetSpacing.xxs)
                     .background(.regularMaterial, in: Capsule())
@@ -140,7 +132,7 @@ struct DulcetNowPlayingView: View {
 
             Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
                 .font(.caption)
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
         }
     }
 
@@ -158,13 +150,19 @@ struct DulcetNowPlayingView: View {
 
             VStack(spacing: 0) {
                 ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
-                    DulcetTrackRow(track: track, showAlbum: true, index: index + 1)
+                    DulcetTrackRow(
+                        track: track,
+                        showAlbum: true,
+                        index: index + 1,
+                        surface: .regularMaterial
+                    )
                     if track.id != player.queue.last?.id {
                         Divider().padding(.leading, 52)
                     }
                 }
             }
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .dulcetForeground(.primaryTextOnRegularMaterial)
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
@@ -190,7 +188,7 @@ struct DulcetSearchView: View {
                         .accessibilityLabel(DulcetStrings.searchPrompt)
                     Text(DulcetStrings.searchSummary)
                         .font(.subheadline)
-                        .foregroundStyle(Color.dulcetSecondaryText)
+                        .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(nil)
                 }
 
@@ -201,7 +199,7 @@ struct DulcetSearchView: View {
                     Spacer()
                     Text(DulcetStrings.trackCount(snapshot.searchResults.count))
                         .font(.caption)
-                        .foregroundStyle(Color.dulcetSecondaryText)
+                        .dulcetForeground(.secondaryTextOnWindow)
                 }
 
                 LazyVStack(spacing: 0) {
@@ -213,6 +211,7 @@ struct DulcetSearchView: View {
                     }
                 }
                 .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .dulcetForeground(.primaryTextOnControl)
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
@@ -221,6 +220,7 @@ struct DulcetSearchView: View {
             .padding(DulcetSpacing.xl)
         }
         .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.search)
     }
 }
@@ -238,20 +238,20 @@ private struct DulcetSearchResultRow: View {
                     HStack(spacing: DulcetSpacing.xs) {
                         Text(result.title)
                             .font(.headline)
-                            .foregroundStyle(.primary)
+                            .dulcetForeground(.primaryTextOnControl)
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         Text(kindTitle)
                             .font(.caption)
-                            .foregroundStyle(Color.dulcetSecondaryText)
+                            .dulcetForeground(.secondaryTextOnControl)
                     }
                     Text(result.subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(Color.dulcetSecondaryText)
+                        .dulcetForeground(.secondaryTextOnControl)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     if result.refreshedFromServer {
                         Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
                             .font(.caption)
-                            .foregroundStyle(Color.dulcetSecondaryText)
+                            .dulcetForeground(.secondaryTextOnControl)
                     }
                 }
 
@@ -259,7 +259,7 @@ private struct DulcetSearchResultRow: View {
                 DulcetSourceBadge(source: result.source)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                    .dulcetForeground(.secondaryTextOnControl)
                     .accessibilityHidden(true)
             }
             .padding(DulcetSpacing.sm)
@@ -316,7 +316,7 @@ struct DulcetTLSUntrustedView: View {
                             .lineLimit(nil)
                         Text(failure.technicalDetail)
                             .font(.body)
-                            .foregroundStyle(Color.dulcetSecondaryText)
+                            .dulcetForeground(.secondaryTextOnWindow)
                             .lineLimit(nil)
                     }
                     .padding(.vertical, DulcetSpacing.xxs)
@@ -329,7 +329,7 @@ struct DulcetTLSUntrustedView: View {
                             .lineLimit(nil)
                     } icon: {
                         Image(systemName: "checkmark.shield")
-                            .foregroundStyle(Color.dulcetAccent)
+                            .dulcetForeground(.accentIconOnWindow)
                     }
                     .font(.body)
                     .padding(.vertical, DulcetSpacing.xxs)
@@ -354,6 +354,7 @@ struct DulcetTLSUntrustedView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
     }
 
@@ -365,7 +366,7 @@ struct DulcetTLSUntrustedView: View {
             Image(systemName: "exclamationmark.shield.fill")
                 .font(.system(size: 32, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
-                .dulcetForeground(.dangerIconOnWindow)
+                .dulcetForeground(.dangerIconOnTint)
                 .accessibilityHidden(true)
         }
     }
@@ -381,7 +382,7 @@ struct DulcetTLSUntrustedView: View {
                 .lineLimit(nil)
             Text(DulcetStrings.tlsBody)
                 .font(.body)
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
                 .lineLimit(nil)
         }
     }
@@ -395,15 +396,15 @@ struct DulcetDeliberatelyBadControlView: View {
             VStack(alignment: .leading, spacing: 29) {
                 Text(DulcetStrings.controlBad)
                     .font(.system(size: 9, weight: .black, design: .rounded))
-                    .foregroundStyle(badAccent)
+                    .foregroundStyle(badAccent) // dulcet-contrast-waiver: deliberately-bad-control
                 Text(DulcetStrings.library)
                     .font(.system(size: 31, weight: .thin, design: .serif))
-                    .foregroundStyle(Color.green)
+                    .foregroundStyle(Color.green) // dulcet-contrast-waiver: deliberately-bad-control
                 Text(DulcetStrings.search)
                     .font(.caption2)
                 Text(DulcetStrings.nowPlaying)
                     .font(.title2.monospaced())
-                    .foregroundStyle(Color.cyan)
+                    .foregroundStyle(Color.cyan) // dulcet-contrast-waiver: deliberately-bad-control
                 Spacer()
                 Button(DulcetStrings.playAll) {}
                     .buttonStyle(.borderedProminent)
@@ -419,7 +420,7 @@ struct DulcetDeliberatelyBadControlView: View {
                 HStack {
                     Text(DulcetStrings.library)
                         .font(.system(size: 54, weight: .heavy, design: .rounded))
-                        .foregroundStyle(badAccent)
+                        .foregroundStyle(badAccent) // dulcet-contrast-waiver: deliberately-bad-control
                     Spacer()
                     Button(DulcetStrings.shuffle) {}
                         .buttonStyle(.borderedProminent)
@@ -434,7 +435,7 @@ struct DulcetDeliberatelyBadControlView: View {
                                 .shadow(color: badAccent.opacity(0.8), radius: 17, x: 9, y: 11)
                             Text(album.title)
                                 .font(album.tracks.count > 10 ? .caption2 : .largeTitle)
-                                .foregroundStyle(album.tracks.count > 10 ? Color.green : Color.primary)
+                                .foregroundStyle(album.tracks.count > 10 ? Color.green : Color.primary) // dulcet-contrast-waiver: deliberately-bad-control
                                 .lineLimit(1)
                         }
                         .padding(album.tracks.count.isMultiple(of: 2) ? 3 : 17)
@@ -445,7 +446,7 @@ struct DulcetDeliberatelyBadControlView: View {
                 Text(snapshot.albums.first?.tracks.first?.title ?? DulcetStrings.controlBad)
                     .font(.system(size: 8, weight: .ultraLight, design: .rounded))
                     .padding(.top, 29)
-                    .foregroundStyle(badAccent)
+                    .foregroundStyle(badAccent) // dulcet-contrast-waiver: deliberately-bad-control
 
                 Spacer()
                 RoundedRectangle(cornerRadius: 31)
@@ -454,7 +455,7 @@ struct DulcetDeliberatelyBadControlView: View {
                     .overlay(alignment: .leading) {
                         Text(DulcetStrings.nowPlaying)
                             .font(.system(size: 7, design: .serif))
-                            .foregroundStyle(Color.green)
+                            .foregroundStyle(Color.green) // dulcet-contrast-waiver: deliberately-bad-control
                             .padding(.leading, 71)
                     }
             }

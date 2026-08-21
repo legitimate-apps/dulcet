@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+
+"""Prove an unregistered rendered foreground makes the coverage gate fail."""
+
+from __future__ import annotations
+
+import argparse
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+import shutil
+import tempfile
+
+
+VERIFIER_PATH = Path(__file__).with_name("verify_contrast_source_coverage.py")
+verifier = SourceFileLoader("verify_contrast_source_coverage", str(VERIFIER_PATH)).load_module()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=Path("apple/DulcetKit/Sources/DulcetKit"),
+    )
+    args = parser.parse_args()
+
+    with tempfile.TemporaryDirectory(prefix="dulcet-contrast-coverage-") as temporary:
+        source_root = Path(temporary) / "DulcetKit"
+        shutil.copytree(args.source_root, source_root)
+        probe = source_root / "UnregisteredRenderedPair.swift"
+        probe.write_text(
+            "import SwiftUI\n"
+            "struct UnregisteredRenderedPair: View {\n"
+            "    var body: some View { Text(\"probe\").foregroundStyle(Color.orange) }\n"
+            "}\n"
+        )
+        try:
+            verifier.verify_source_root(source_root)
+        except verifier.ContrastSourceCoverageError as error:
+            if "UnregisteredRenderedPair.swift:3" not in str(error):
+                raise SystemExit(f"coverage probe rejected for the wrong reason: {error}") from error
+        else:
+            raise SystemExit("coverage probe unexpectedly accepted an unregistered rendered pair")
+
+    print("CONTRAST SOURCE COVERAGE NEGATIVE CONTROL PASS unregistered-pair-rejected=true")
+
+
+if __name__ == "__main__":
+    main()

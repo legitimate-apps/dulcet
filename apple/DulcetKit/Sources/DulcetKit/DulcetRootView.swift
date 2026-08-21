@@ -32,6 +32,7 @@ public struct DulcetRootView: View {
                     }
                     .navigationSplitViewStyle(.balanced)
                     .buttonBorderShape(.roundedRectangle(radius: 6))
+                    .dulcetForeground(.primaryTextOnWindow)
                 }
             }
         }
@@ -85,6 +86,7 @@ public struct DulcetCaptureView: View {
             }
             .background(Color.dulcetWindow)
             .buttonBorderShape(.roundedRectangle(radius: 6))
+            .dulcetForeground(.primaryTextOnWindow)
         }
     }
 }
@@ -117,6 +119,7 @@ private struct DulcetSidebar: View {
         }
         .padding(DulcetSpacing.sm)
         .background(.thinMaterial)
+        .dulcetForeground(.primaryTextOnThinMaterial)
         .navigationSplitViewColumnWidth(
             min: DulcetMetrics.sidebarMinWidth,
             ideal: 232,
@@ -148,7 +151,7 @@ private struct DulcetSidebar: View {
         .dulcetForeground(
             store.selectedDestination == destination
                 ? .selectedSidebarLabelOnSelectionFill
-                : .secondaryTextOnWindow
+                : .primaryTextOnThinMaterial
         )
             .accessibilityLabel(title)
             .accessibilityAddTraits(store.selectedDestination == destination ? [.isSelected] : [])
@@ -157,7 +160,7 @@ private struct DulcetSidebar: View {
     private func sidebarSectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.caption2.weight(.semibold))
-            .dulcetForeground(.secondaryTextOnWindow)
+            .dulcetForeground(.secondaryTextOnThinMaterial)
             .padding(.horizontal, DulcetSpacing.xs)
             .accessibilityAddTraits(.isHeader)
     }
@@ -173,7 +176,7 @@ private struct DulcetSidebar: View {
                         .font(.subheadline.weight(.medium))
                     Text(DulcetStrings.online)
                         .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
+                        .dulcetForeground(.secondaryTextOnThinMaterial)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,7 +190,7 @@ private struct DulcetSidebar: View {
                         .font(.subheadline.weight(.medium))
                     Text(DulcetStrings.connectionFailed)
                         .font(.caption)
-                        .dulcetForeground(.dangerIconOnWindow)
+                        .dulcetForeground(.primaryTextOnThinMaterial)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -201,7 +204,7 @@ private struct DulcetSidebar: View {
                         .font(.subheadline.weight(.medium))
                     Text(DulcetStrings.lastSynced(lastSyncedDescription))
                         .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
+                        .dulcetForeground(.secondaryTextOnThinMaterial)
                         .lineLimit(nil)
                 }
             }
@@ -212,7 +215,7 @@ private struct DulcetSidebar: View {
                 DulcetStatusDot(color: .secondary)
                 Text(DulcetStrings.noServer)
                     .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
+                    .dulcetForeground(.secondaryTextOnThinMaterial)
                     .lineLimit(nil)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -68,6 +68,11 @@ enum DulcetContrastColor {
         light: NSColor(red: 0.68, green: 0.10, blue: 0.14, alpha: 1),
         dark: NSColor(red: 1.00, green: 0.46, blue: 0.49, alpha: 1)
     )
+    static let combinedSource = adaptive(
+        name: "DulcetCombinedSource",
+        light: NSColor(red: 0.34, green: 0.16, blue: 0.43, alpha: 1),
+        dark: NSColor(red: 0.82, green: 0.63, blue: 0.91, alpha: 1)
+    )
 
     private static func adaptive(name: String, light: NSColor, dark: NSColor) -> NSColor {
         NSColor(name: NSColor.Name(name)) { appearance in
@@ -77,11 +82,23 @@ enum DulcetContrastColor {
 }
 
 enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
+    case primaryTextOnWindow = "primary-text/window"
     case primaryButtonLabelOnPrimaryActionFill = "primary-button-label/primary-action-fill"
     case selectedSidebarLabelOnSelectionFill = "selected-sidebar-label/selection-fill"
     case secondaryTextOnWindow = "secondary-text/window"
-    case offlineLabelOnWindow = "offline-label/window"
-    case dangerIconOnWindow = "danger-icon/window"
+    case primaryTextOnControl = "primary-text/control"
+    case secondaryTextOnControl = "secondary-text/control"
+    case primaryTextOnThinMaterial = "primary-text/thin-material"
+    case secondaryTextOnThinMaterial = "secondary-text/thin-material"
+    case primaryTextOnRegularMaterial = "primary-text/regular-material"
+    case secondaryTextOnRegularMaterial = "secondary-text/regular-material"
+    case accentIconOnWindow = "accent-icon/window"
+    case accentIconOnTint = "accent-icon/accent-tint"
+    case offlineLabelOnControl = "offline-label/control"
+    case primaryTextOnOfflineTint = "primary-text/offline-tint"
+    case secondaryTextOnOfflineTint = "secondary-text/offline-tint"
+    case offlineIconOnTint = "offline-icon/offline-tint"
+    case dangerIconOnTint = "danger-icon/danger-tint"
     case localSourceLabelOnTint = "local-source-label/local-source-tint"
     case serverSourceLabelOnTint = "server-source-label/server-source-tint"
     case combinedSourceLabelOnTint = "combined-source-label/combined-source-tint"
@@ -90,42 +107,67 @@ enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .primaryButtonLabelOnPrimaryActionFill:
             .dulcetPrimaryActionLabel
-        case .selectedSidebarLabelOnSelectionFill:
+        case .primaryTextOnWindow, .primaryTextOnControl, .primaryTextOnOfflineTint,
+             .primaryTextOnThinMaterial, .primaryTextOnRegularMaterial,
+             .selectedSidebarLabelOnSelectionFill:
             .primary
-        case .secondaryTextOnWindow, .localSourceLabelOnTint:
+        case .secondaryTextOnWindow, .secondaryTextOnControl, .secondaryTextOnOfflineTint,
+             .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial,
+             .localSourceLabelOnTint:
             .dulcetSecondaryText
-        case .offlineLabelOnWindow:
-            .dulcetOffline
-        case .dangerIconOnWindow:
-            .dulcetDanger
-        case .serverSourceLabelOnTint:
+        case .accentIconOnWindow, .accentIconOnTint, .serverSourceLabelOnTint:
             .dulcetAccent
+        case .offlineLabelOnControl, .offlineIconOnTint:
+            .dulcetOffline
+        case .dangerIconOnTint:
+            .dulcetDanger
         case .combinedSourceLabelOnTint:
-            .purple
+            Color(nsColor: DulcetContrastColor.combinedSource)
         }
     }
 
     /// Ordered back-to-front to match the pixels under the rendered foreground.
-    var backgroundLayers: [Color] {
+    var backgroundLayers: [AnyShapeStyle] {
         switch self {
         case .primaryButtonLabelOnPrimaryActionFill:
-            [.dulcetWindow, .dulcetPrimaryActionFill]
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetPrimaryActionFill)]
         case .selectedSidebarLabelOnSelectionFill:
-            [.dulcetWindow, .dulcetSelectionBackground]
-        case .secondaryTextOnWindow, .offlineLabelOnWindow, .dangerIconOnWindow:
-            [.dulcetWindow]
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetSelectionBackground)]
+        case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow:
+            [AnyShapeStyle(Color.dulcetWindow)]
+        case .primaryTextOnControl, .secondaryTextOnControl, .offlineLabelOnControl:
+            [
+                AnyShapeStyle(Color.dulcetWindow),
+                AnyShapeStyle(Color.dulcetControl.opacity(0.52)),
+            ]
+        case .primaryTextOnThinMaterial, .secondaryTextOnThinMaterial:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(.thinMaterial)]
+        case .primaryTextOnRegularMaterial, .secondaryTextOnRegularMaterial:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(.regularMaterial)]
+        case .accentIconOnTint:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent.opacity(0.10))]
+        case .offlineIconOnTint:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
+        case .primaryTextOnOfflineTint, .secondaryTextOnOfflineTint:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
+        case .dangerIconOnTint:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetDanger.opacity(0.11))]
         case .localSourceLabelOnTint, .serverSourceLabelOnTint, .combinedSourceLabelOnTint:
-            [.dulcetWindow, .dulcetControl.opacity(0.52), foreground.opacity(0.11)]
+            [
+                AnyShapeStyle(Color.dulcetWindow),
+                AnyShapeStyle(Color.dulcetControl.opacity(0.52)),
+                AnyShapeStyle(foreground.opacity(0.11)),
+            ]
         }
     }
 
-    var immediateBackground: Color {
+    var immediateBackground: AnyShapeStyle {
         backgroundLayers[backgroundLayers.index(before: backgroundLayers.endIndex)]
     }
 
     var minimumRatio: Double {
         switch self {
-        case .dangerIconOnWindow:
+        case .accentIconOnWindow, .accentIconOnTint, .offlineIconOnTint, .dangerIconOnTint:
             3.0
         default:
             4.5
@@ -146,8 +188,10 @@ private struct DulcetRenderedContrastPairPreferenceKey: PreferenceKey {
 
 extension View {
     func dulcetForeground(_ pair: DulcetRenderedContrastPair) -> some View {
-        foregroundStyle(pair.foreground)
-            .preference(key: DulcetRenderedContrastPairPreferenceKey.self, value: [pair])
+        foregroundStyle(pair.foreground) // dulcet-contrast-waiver: catalog-applier
+            .transformPreference(DulcetRenderedContrastPairPreferenceKey.self) { value in
+                value.insert(pair)
+            }
     }
 
     func onDulcetRenderedContrastPairs(
@@ -187,7 +231,7 @@ struct DulcetArtworkView: View {
             Image(systemName: artwork.symbolName)
                 .font(.system(size: max(18, size * 0.23), weight: .medium))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.white.opacity(0.94))
+                .foregroundStyle(.white.opacity(0.94)) // dulcet-contrast-waiver: decorative-artwork
                 .accessibilityHidden(true)
         }
         .frame(width: size, height: size)

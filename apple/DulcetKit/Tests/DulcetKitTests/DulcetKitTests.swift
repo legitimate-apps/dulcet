@@ -185,7 +185,7 @@ func renderedFixtureStatesExerciseEveryContrastPairInTheGate() {
 func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
     let sample = try renderedContrastSample(
         foreground: .secondary,
-        backgroundLayers: [.white],
+        backgroundLayers: [AnyShapeStyle(Color.white)],
         appearanceName: .aqua
     )
 
@@ -195,6 +195,30 @@ func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
             + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
             + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=4.5 rejected=true"
     )
+}
+
+@Test @MainActor
+func renderedContrastGateRejectsLegacyCombinedSourceTagPairInBothAppearances() throws {
+    for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+        let sample = try renderedContrastSample(
+            foreground: .purple,
+            backgroundLayers: [
+                AnyShapeStyle(Color.dulcetWindow),
+                AnyShapeStyle(Color.dulcetControl.opacity(0.52)),
+                AnyShapeStyle(Color.purple.opacity(0.11)),
+            ],
+            appearanceName: appearanceName
+        )
+
+        #expect(sample.ratio < 4.5)
+        print(
+            "WCAG RENDERED CONTRAST LEGACY TAG NEGATIVE CONTROL PASS "
+                + "pair=combined-source-label/combined-source-tint "
+                + "appearance=\(appearanceName.rawValue) "
+                + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
+                + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=4.5 rejected=true"
+        )
+    }
 }
 
 @MainActor
@@ -229,12 +253,12 @@ private struct RenderedContrastSample {
 
 private struct RenderedContrastProbe: View {
     let foreground: Color
-    let backgroundLayers: [Color]
+    let backgroundLayers: [AnyShapeStyle]
 
     var body: some View {
         ZStack {
             ForEach(backgroundLayers.indices, id: \.self) { index in
-                backgroundLayers[index]
+                Rectangle().fill(backgroundLayers[index])
             }
             Rectangle()
                 .foregroundStyle(foreground)
@@ -247,7 +271,7 @@ private struct RenderedContrastProbe: View {
 @MainActor
 private func renderedContrastSample(
     foreground: Color,
-    backgroundLayers: [Color],
+    backgroundLayers: [AnyShapeStyle],
     appearanceName: NSAppearance.Name
 ) throws -> RenderedContrastSample {
     let colorScheme: ColorScheme = appearanceName == .darkAqua ? .dark : .light

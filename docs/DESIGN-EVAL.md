@@ -125,13 +125,18 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 
 - Swift package tests, app build success, capture-verifier negative controls;
 - sampled rendered-pixel [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18)
-  for each declared adjacent foreground/background pair in Aqua and Dark Aqua: prominent button
-  labels against their dedicated action fill, selected-sidebar labels, normal secondary text,
-  offline labels, and danger icons. A SwiftUI probe renders each production semantic style through
-  AppKit, samples the composited center and background pixels, and computes luminance after alpha
-  compositing. Link/accent color is deliberately separate from the darker prominent-action fill
-  because native macOS prominent controls render a white label in both appearances. The negative
-  control renders native `.secondary` over white and requires its below-4.5:1 result to be rejected;
+  for every content-bearing foreground/background pair emitted by the seven rendered fixture states
+  in Aqua and Dark Aqua. Production views apply foregrounds through `DulcetRenderedContrastPair`; a
+  SwiftUI preference records the cases reached by actual rendering, and the test requires that set to
+  equal `allCases` exactly before testing every case. A source gate rejects direct content
+  `foregroundStyle`/`foregroundColor` calls, with named waivers limited to decorative artwork and the
+  deliberately bad control; its negative control injects an unregistered foreground and requires
+  rejection. The probe renders each ordered background stack—including translucent control, material,
+  and tint layers—through AppKit, samples the composited pixels, and computes luminance after alpha
+  compositing. The former `Mac + Server` tag pair is retained as a negative control: native purple
+  over its 11% tint measures below 4.5:1 in both appearances and must be rejected. Link/accent color
+  remains separate from the darker prominent-action fill because native macOS prominent controls
+  render a white label in both appearances;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
 
