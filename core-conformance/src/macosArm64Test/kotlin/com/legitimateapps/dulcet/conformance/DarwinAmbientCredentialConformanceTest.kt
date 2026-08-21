@@ -1,7 +1,9 @@
 package com.legitimateapps.dulcet.conformance
 
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
+import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.AccountConnector
+import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.SaltSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
@@ -18,6 +20,7 @@ import platform.Foundation.NSURLProtectionSpace
 import platform.Foundation.create
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 
 @OptIn(BetaInteropApi::class, ExperimentalForeignApi::class)
@@ -43,7 +46,9 @@ class DarwinAmbientCredentialConformanceTest {
 
         val observationClient = HttpClient(Darwin) { expectSuccess = false }
         try {
-            AccountConnector(saltSource = SaltSource { "0123456789abcdef0123456789abcdef" }).connect(
+            val result = AccountConnector(
+                saltSource = SaltSource { "0123456789abcdef0123456789abcdef" },
+            ).connect(
                 AccountConnectionRequest(
                     serverUrl = "http://127.0.0.1:4540/ambient-auth",
                     username = "dulcet-ambient-auth",
@@ -51,6 +56,8 @@ class DarwinAmbientCredentialConformanceTest {
                     allowLocalHttp = true,
                 ),
             )
+            val failure = assertIs<AccountConnectionResult.Failed>(result)
+            assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(failure.error)
 
             val observation = observationClient.get(
                 "http://127.0.0.1:4540/observations/ambient-auth",
