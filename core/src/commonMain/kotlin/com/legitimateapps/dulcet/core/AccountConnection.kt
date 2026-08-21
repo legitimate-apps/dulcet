@@ -569,7 +569,6 @@ public class AccountConnector(
         }
         var followedRedirects = 0
         var credentialsStripped = false
-        var redirectCredentialHeader: String? = null
 
         while (true) {
             val response = sendRequest(
@@ -579,7 +578,6 @@ public class AccountConnector(
                 formParameters = formParameters,
                 useForm = useForm,
                 allowLocalHttp = allowLocalHttp,
-                redirectCredentialHeader = redirectCredentialHeader,
             )
             if (response.status.value !in REDIRECT_STATUS_CODES) {
                 if (response.status.value == 401 && credentialsStripped) {
@@ -627,12 +625,11 @@ public class AccountConnector(
             ) {
                 RedirectPolicyDecision.PreserveCredentials -> Unit
                 RedirectPolicyDecision.StripCredentials -> {
-                    redirectCredentialHeader = queryParameters["t"] ?: formParameters["t"]
-                    credentialsStripped = credentialsStripped ||
-                        queryParameters.containsAuthentication() ||
-                        formParameters.containsAuthentication()
-                    queryParameters = queryParameters.withoutAuthentication()
-                    formParameters = formParameters.withoutAuthentication()
+                    val credentialValues = queryParameters.authenticationValues() +
+                        formParameters.authenticationValues()
+                    credentialsStripped = credentialsStripped || credentialValues.isNotEmpty()
+                    queryParameters = queryParameters.withoutCredentialChannels(credentialValues)
+                    formParameters = formParameters.withoutCredentialChannels(credentialValues)
                 }
                 is RedirectPolicyDecision.Reject -> throw RedirectPolicyFailure(
                     DomainError.Security.RedirectRejected(
@@ -653,7 +650,6 @@ public class AccountConnector(
         formParameters: Parameters,
         useForm: Boolean,
         allowLocalHttp: Boolean,
-        redirectCredentialHeader: String?,
     ): HttpResponse {
         val target = localHttpPolicy.targetFor(url, allowLocalHttp)
         return if (useForm) {
@@ -663,7 +659,6 @@ public class AccountConnector(
                 encodeInQuery = false,
             ) {
                 target.hostHeader?.let { header(HttpHeaders.Host, it) }
-                redirectCredentialHeader?.let { header(HttpHeaders.Authorization, "Bearer $it") }
                 queryParameters.entries().forEach { (key, values) ->
                     values.forEach { value -> parameter(key, value) }
                 }
@@ -671,7 +666,6 @@ public class AccountConnector(
         } else {
             client.get(target.url) {
                 target.hostHeader?.let { header(HttpHeaders.Host, it) }
-                redirectCredentialHeader?.let { header(HttpHeaders.Authorization, "Bearer $it") }
                 queryParameters.entries().forEach { (key, values) ->
                     values.forEach { value -> parameter(key, value) }
                 }
@@ -816,16 +810,17 @@ private fun String.withoutQuery(): String = URLBuilder().apply {
     fragment = ""
 }.buildString()
 
-private fun Parameters.containsAuthentication(): Boolean =
-    AUTHENTICATION_PARAMETER_KEYS.any { this[it] != null }
+private fun Parameters.authenticationValues(): Set<String> =
+    AUTHENTICATION_PARAMETER_KEYS.flatMap { getAll(it).orEmpty() }.toSet()
 
-private fun Parameters.withoutAuthentication(): Parameters = Parameters.build {
-    this@withoutAuthentication.entries().forEach { (key, values) ->
-        if (key !in AUTHENTICATION_PARAMETER_KEYS) {
-            values.forEach { value -> append(key, value) }
+private fun Parameters.withoutCredentialChannels(credentialValues: Set<String>): Parameters =
+    Parameters.build {
+        this@withoutCredentialChannels.entries().forEach { (key, values) ->
+            if (key !in AUTHENTICATION_PARAMETER_KEYS) {
+                values.filterNot { it in credentialValues }.forEach { value -> append(key, value) }
+            }
         }
     }
-}
 
 private val AUTHENTICATION_PARAMETER_KEYS = setOf("u", "t", "s", "p")
 

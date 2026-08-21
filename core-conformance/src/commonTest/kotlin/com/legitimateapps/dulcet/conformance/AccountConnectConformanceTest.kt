@@ -13,6 +13,7 @@ import com.legitimateapps.dulcet.core.InvalidServerUrlReason
 import com.legitimateapps.dulcet.core.LogSink
 import com.legitimateapps.dulcet.core.HostResolver
 import com.legitimateapps.dulcet.core.ProtocolVersionLevel
+import com.legitimateapps.dulcet.core.RequestTrace
 import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.RequestChannelLocation
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
@@ -471,7 +472,7 @@ class AccountConnectConformanceTest {
         )
     }
 
-    private fun assertEveryRequestChannelAccountedFor(trace: com.legitimateapps.dulcet.core.RequestTrace) {
+    private fun assertEveryRequestChannelAccountedFor(trace: RequestTrace) {
         val accountedNames = mapOf(
             RequestChannelLocation.Header to setOf(
                 "accept",
