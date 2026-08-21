@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 21 — `DomainError` retains no server-controlled text or URL; revision 20 made CONF-01
+**Revision:** 22 — local HTTP requires persisted opt-in and a resolved, pinned local address;
+revision 21 made `DomainError` retain no server-controlled text or URL; revision 20 made CONF-01
 through CONF-08 execute on JVM and macOS against the pinned reference
 server, with preserved behavior-absent red evidence before the production connector. Revision 18
 narrowed the Phase-2 evidence claims to their measured boundary. Revision 17 gave the macOS
@@ -769,8 +770,9 @@ A self-hosted client's first failure is almost always the URL, so this is specif
 to the implementation. Given user input, Dulcet:
 
 1. trims whitespace; rejects empty.
-2. if no scheme, tries **`https` first**, then `http` only if the host qualifies for the local
-   exception (§13.5).
+2. if no scheme, tries **`https` first**. It adds an `http` candidate only after the user explicitly
+   opts into the local exception; the candidate is still unusable until its resolved address passes
+   §13.5 immediately before each request.
 3. accepts `host`, `host:port`, IPv6 literals in brackets, IDNs (converted to punycode for the
    request, displayed as entered), and an arbitrary base path.
 4. **strips a trailing `/rest`, `/rest/`, or a trailing `.view` component** if the user pasted an
@@ -1360,13 +1362,20 @@ This is a deliberate v1 restriction on a real self-hosted use case — private C
 are common — and it is recorded as **OQ-9** rather than pretended away. What we will not do is ship a
 trust-all path and call it a preference.
 
-**The local-HTTP exception** permits plain `http` only when the host is IPv4 RFC1918, IPv4 loopback,
-IPv6 loopback (`::1`), IPv6 unique-local (`fc00::/7`), or a `.local` name — and only after an explicit
-per-server opt-in with a visible warning. Classification is performed on the **resolved address at
-login** and re-checked on every subsequent connection: if a name that resolved privately later
-resolves publicly, requests fail with `Security.LocalExceptionViolated` rather than silently sending
-credentials over the open internet. A redirect from a local host to a public one is rejected (§13.3).
-A Cloudflare-terminated TLS front does not encrypt the final LAN hop, and the docs must not imply it
+**The local-HTTP exception** permits plain `http` only after an explicit per-server opt-in with a
+visible warning. The opt-in is persisted as account state; a URL spelling, including a `.local` name,
+never grants permission by itself. Immediately before **every** plaintext request, the transport
+resolves the logical hostname and requires every returned address to be IPv4 RFC1918, IPv4 loopback,
+IPv6 loopback (`::1`), or IPv6 unique-local (`fc00::/7`). Empty, malformed, mixed local/public, IPv4
+link-local, IPv6 link-local and public answers fail closed with `Security.LocalExceptionViolated`.
+
+The transport then replaces the connection URL's host with one vetted IP literal while preserving the
+logical authority in the HTTP `Host` header. The HTTP engine therefore connects to the address the
+policy actually classified; there is no second DNS lookup between a policy preflight and the socket.
+Resolution is repeated before each later request, even when the client could reuse a connection. If a
+name that resolved privately later resolves publicly, the request fails before credentials are sent.
+A redirect from a local host to a name that does not resolve entirely local is rejected (§13.3). A
+Cloudflare-terminated TLS front does not encrypt the final LAN hop, and the docs must not imply it
 does.
 
 ### 13.6 Local data privacy
@@ -2834,6 +2843,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 22 (2026-08-21)** — the local-HTTP exception became explicit and connection-bound.
+
+1. A hosted negative-control commit proved that the production connector authenticated over loopback
+   HTTP without any consent field. `AccountConnectionRequest` now defaults to no plaintext consent,
+   and a successful account retains the explicit per-server choice for later transports.
+2. Hostname spelling no longer classifies a local server. Every plaintext request resolves again and
+   requires an all-local answer across IPv4 RFC1918/loopback and IPv6 unique-local/loopback ranges.
+   This covers `.local` through its answer rather than through its suffix, rejects mixed answers, and
+   fails a private-to-public DNS change before the next credential-bearing request.
+3. The validated answer is not merely advisory: the request URL is rewritten to a selected vetted IP
+   literal and the original logical authority is carried in `Host`. That binds the engine's actual TCP
+   destination to the address the policy checked and closes the DNS-rebinding interval between a
+   separate lookup and connection.
 
 **Revision 21 (2026-08-21)** — arbitrary server text was removed from the domain-error model.
 

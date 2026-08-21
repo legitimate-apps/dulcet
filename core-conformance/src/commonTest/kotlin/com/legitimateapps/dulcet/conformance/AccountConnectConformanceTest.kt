@@ -10,6 +10,7 @@ import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.InvalidServerUrlReason
 import com.legitimateapps.dulcet.core.LogSink
+import com.legitimateapps.dulcet.core.HostResolver
 import com.legitimateapps.dulcet.core.ProtocolVersionLevel
 import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
@@ -32,7 +33,10 @@ class AccountConnectConformanceTest {
         "0ffedcba98765432100123456789abcd",
     )
 
-    private fun fixture(password: String = ADMIN_PASSWORD): Fixture {
+    private fun fixture(
+        password: String = ADMIN_PASSWORD,
+        hostResolver: HostResolver = HostResolver { listOf("127.0.0.1") },
+    ): Fixture {
         val logs = mutableListOf<String>()
         var saltIndex = 0
         val saltSource = SaltSource {
@@ -43,17 +47,20 @@ class AccountConnectConformanceTest {
         val connector = AccountConnector(
             saltSource = saltSource,
             logSink = LogSink(logs::add),
+            hostResolver = hostResolver,
         )
         return Fixture(connector, password, logs)
     }
 
     private suspend fun Fixture.connect(
         serverUrl: String = conformanceBaseUrl(),
+        allowLocalHttp: Boolean = true,
     ): AccountConnectionResult = connector.connect(
         AccountConnectionRequest(
             serverUrl = serverUrl,
             username = ADMIN_USER,
             password = password,
+            allowLocalHttp = allowLocalHttp,
         )
     )
 
@@ -171,6 +178,7 @@ class AccountConnectConformanceTest {
                 serverUrl = "http://127.0.0.1:1",
                 username = ADMIN_USER,
                 password = ADMIN_PASSWORD,
+                allowLocalHttp = true,
             ),
         )
         assertIs<DomainError.Transport.Unreachable>(
@@ -293,13 +301,74 @@ class AccountConnectConformanceTest {
 
     @Test
     fun localHttpRequiresExplicitConsent() = runTest {
-        val result = fixture().connect()
+        val result = fixture().connect(allowLocalHttp = false)
         val error = assertIs<AccountConnectionResult.Failed>(
             result,
             "plaintext local HTTP connected without an explicit per-server opt-in: $result",
         ).error
 
         assertIs<DomainError.Security.LocalExceptionViolated>(error)
+
+        val consented = assertIs<AccountConnectionResult.Connected>(fixture().connect()).account
+        assertTrue(consented.allowsLocalHttp)
+
+        val schemeLess = assertIs<AccountConnectionResult.Connected>(
+            fixture().connect(serverUrl = "127.0.0.1:4533"),
+        ).account
+        assertEquals("http://127.0.0.1:4533", schemeLess.normalizedBaseUrl)
+
+        val localName = assertIs<AccountConnectionResult.Connected>(
+            fixture(
+                hostResolver = HostResolver { host ->
+                    assertEquals("library.local", host)
+                    listOf("127.0.0.1")
+                },
+            ).connect(serverUrl = "http://library.local:4533"),
+        ).account
+        assertTrue(localName.requests.all { "127.0.0.1" in it.redactedUrl })
+        assertTrue(localName.requests.none { "library.local" in it.redactedUrl })
+
+        val mixedResolution = fixture(
+            hostResolver = HostResolver { listOf("127.0.0.1", "203.0.113.10") },
+        ).connect(serverUrl = "http://library.local:4533")
+        assertIs<DomainError.Security.LocalExceptionViolated>(
+            assertIs<AccountConnectionResult.Failed>(mixedResolution).error,
+        )
+
+        var resolutionCount = 0
+        val rebound = fixture(
+            hostResolver = HostResolver {
+                resolutionCount += 1
+                if (resolutionCount == 1) listOf("127.0.0.1") else listOf("203.0.113.10")
+            },
+        ).connect(serverUrl = "http://library.local:4533")
+        assertEquals(2, resolutionCount)
+        assertIs<DomainError.Security.LocalExceptionViolated>(
+            assertIs<AccountConnectionResult.Failed>(rebound).error,
+        )
+
+        listOf(
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "::1",
+            "fc00::1",
+            "fd12:3456:789a::1",
+        ).forEach { address ->
+            assertTrue(AccountConnectionContract.isPermittedLocalHttpAddress(address), address)
+        }
+        listOf(
+            "8.8.8.8",
+            "172.32.0.1",
+            "169.254.1.1",
+            "fe80::1",
+            "2001:db8::1",
+            "fc00:not-an-address",
+        ).forEach { address ->
+            assertFalse(AccountConnectionContract.isPermittedLocalHttpAddress(address), address)
+        }
     }
 
     @Test
