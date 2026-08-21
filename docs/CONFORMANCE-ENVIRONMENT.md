@@ -64,7 +64,7 @@ proves all of the following:
 - the fresh server is reachable and reports Navidrome 0.63.2 / Subsonic 1.16.1;
 - the scan reports complete, reports no scanner error, equals the generated file count exactly, and returns the
   known FLAC health-probe item through `search3`;
-- the leg's ffmpeg command exists and its first version line matches the pin;
+- the leg's ffmpeg command exists and the parsed version token in its first line exactly equals the pin;
 - fixed admin and restricted fixture roles are read back from the server with the expected persisted
   `isAdmin` values;
 - the server advertises the `transcoding` extension but not `sonicSimilarity`;

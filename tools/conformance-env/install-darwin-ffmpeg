@@ -11,6 +11,8 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+from ffmpeg_version import require_ffmpeg_version
+
 
 def run(arguments: list[str], *, capture: bool = False) -> str:
     process = subprocess.run(
@@ -209,9 +211,11 @@ def main() -> None:
             f"observed {observed_runtime}"
         )
 
-    version = run([ffmpeg["path"], "-version"], capture=True).splitlines()[0]
-    if not version.startswith(f"ffmpeg version {ffmpeg['version']}"):
-        raise SystemExit(f"installed ffmpeg version mismatch: {version}")
+    version_line = run([ffmpeg["path"], "-version"], capture=True).splitlines()[0]
+    try:
+        observed_version = require_ffmpeg_version(version_line, ffmpeg["version"])
+    except ValueError as error:
+        raise SystemExit(f"installed {error}") from error
     encoders = run([ffmpeg["path"], "-hide_banner", "-encoders"], capture=True)
     missing_encoders = [name for name in ffmpeg["required_encoders"] if name not in encoders]
     if missing_encoders:
@@ -221,7 +225,7 @@ def main() -> None:
         json.dumps(closure, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     print(
-        f"DARWIN FFMPEG CLOSURE PASS root={ffmpeg['version']} formulas={len(closure)} "
+        f"DARWIN FFMPEG CLOSURE PASS root={observed_version} formulas={len(closure)} "
         f"encoders={','.join(ffmpeg['required_encoders'])} closure_sha256={closure_digest}"
     )
 

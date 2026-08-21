@@ -52,6 +52,17 @@ jobs:
       TZ: UTC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prove ffmpeg version gate rejects prefix collisions
+        run: |
+          set +e
+          output="$(python3 tools/conformance-env/ffmpeg_version.py \
+            --expected 9.0.1 --banner 'ffmpeg version 9.0.10 forged-banner' 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          grep -q 'expected 9.0.1, observed 9.0.10' <<< "$output"
+          echo 'NEGATIVE CONTROL PASS expected=9.0.1 observed=9.0.10 rejected=true'
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"

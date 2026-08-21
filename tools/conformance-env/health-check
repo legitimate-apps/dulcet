@@ -14,6 +14,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from ffmpeg_version import require_ffmpeg_version
+
 
 ADMIN_USER = "dulcet-admin"
 ADMIN_PASSWORD = "dulcet-ci-canary-password"
@@ -311,10 +313,9 @@ def main() -> None:
     if ffmpeg.returncode != 0:
         raise SystemExit(f"pinned ffmpeg command failed: {redacted(ffmpeg.stderr.strip())}")
     ffmpeg_line = ffmpeg.stdout.splitlines()[0] if ffmpeg.stdout else ""
-    if not ffmpeg_line.startswith(f"ffmpeg version {args.expected_ffmpeg_version}"):
-        raise SystemExit(
-            f"ffmpeg version mismatch: expected {args.expected_ffmpeg_version}, observed {ffmpeg_line}"
-        )
+    observed_ffmpeg_version = require_ffmpeg_version(
+        ffmpeg_line, args.expected_ffmpeg_version
+    )
 
     decision_response = client.subsonic(
         "getTranscodeDecision",
@@ -350,7 +351,7 @@ def main() -> None:
             f"OBSERVED scan_complete=true scanned={scan_status.get('count')} "
             f"known_probe_retrievable=true"
         ),
-        f"OBSERVED ffmpeg={args.expected_ffmpeg_version} present=true version_match=true",
+        f"OBSERVED ffmpeg={observed_ffmpeg_version} present=true version_match=true",
         "OBSERVED users=dulcet-admin,dulcet-restricted roles_persisted=admin,restricted",
         "OBSERVED transcoding_extension=true canTranscode=true",
         "OBSERVED similarity_provider=absent",
