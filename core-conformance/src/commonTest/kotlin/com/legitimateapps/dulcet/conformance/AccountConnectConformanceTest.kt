@@ -189,6 +189,20 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun successfulEnvelopeFieldsWithWrongJsonTypesAreMalformed() = runTest {
+        val redirectRoot = redirectConformanceRoot()
+        listOf("open-subsonic", "type", "download-role").forEach { field ->
+            assertEquals(
+                DomainError.Protocol.MalformedEnvelope,
+                assertIs<AccountConnectionResult.Failed>(
+                    fixture().connect("$redirectRoot/malformed-envelope-$field"),
+                ).error,
+                field,
+            )
+        }
+    }
+
+    @Test
     fun conf06DistinguishesAuthenticationAndTransportFailures() = runTest {
         val unreachable = AccountConnector().connect(
             AccountConnectionRequest(

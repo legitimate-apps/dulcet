@@ -245,7 +245,12 @@ def cross_origin_target_matches_expectation(
     return target_request == expected_cross_origin_target_request(source_request, redirect_location)
 
 
-def envelope(endpoint: str, *, advertise_form_post: bool = True) -> dict[str, object]:
+def envelope(
+    endpoint: str,
+    *,
+    advertise_form_post: bool = True,
+    malformed_success_field: str | None = None,
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": "ok",
         "version": "1.16.1",
@@ -272,6 +277,14 @@ def envelope(endpoint: str, *, advertise_form_post: bool = True) -> dict[str, ob
             "jukeboxRole": False,
             "adminRole": True,
         }
+    if endpoint == "ping" and malformed_success_field == "open-subsonic":
+        payload["openSubsonic"] = "yes"
+    elif endpoint == "ping" and malformed_success_field == "type":
+        payload["type"] = 42
+    elif endpoint == "getUser" and malformed_success_field == "download-role":
+        user = payload["user"]
+        assert isinstance(user, dict)
+        user["downloadRole"] = "true"
     return {"subsonic-response": payload}
 
 
@@ -356,6 +369,20 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 return
             STATE.remember("observe", endpoint, request)
             self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/malformed-envelope-"):
+            scenario = parsed.path.split("/", 2)[1].removeprefix("malformed-envelope-")
+            if scenario not in {"open-subsonic", "type", "download-role"}:
+                self._send_json(404, {"error": "unknown malformed-envelope scenario"})
+                return
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "malformed-envelope request channels failed"})
+                return
+            self._send_json(
+                200,
+                envelope(endpoint, malformed_success_field=scenario),
+            )
             return
 
         if parsed.path.startswith("/same/rest/"):
