@@ -969,6 +969,21 @@ private fun String.isStructurallyValidUrlAuthority(): Boolean {
     return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
 }
 
+private fun String.isStructurallyValidInternationalizedHostAuthority(): Boolean {
+    if (
+        isBlank() || any { it.isWhitespace() || it.isISOControl() } ||
+        '@' in this || '\\' in this || startsWith('[') || '[' in this || ']' in this ||
+        count { it == ':' } > 1
+    ) {
+        return false
+    }
+    val host = substringBefore(':')
+    if (host.isBlank() || host.none { it.code > 0x7f }) return false
+    if (!host.isValidUrlRegName(allowNonAscii = true)) return false
+    val suffix = removePrefix(host)
+    return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
+}
+
 private fun String.isValidIpv6ZoneSuffix(): Boolean {
     val zoneIdentifier = if (startsWith("25")) drop(2) else this
     if (zoneIdentifier.isEmpty()) return false
@@ -999,13 +1014,15 @@ private fun String.isValidIpv6ZoneSuffix(): Boolean {
     return true
 }
 
-private fun String.isValidUrlRegName(): Boolean {
+private fun String.isValidUrlRegName(allowNonAscii: Boolean = false): Boolean {
     var index = 0
     while (index < length) {
         val character = this[index]
         when {
             character in 'a'..'z' || character in 'A'..'Z' || character in '0'..'9' ||
                 character in "-._~!$&'()*+,;=" -> index += 1
+
+            allowNonAscii && character.code > 0x7f -> index += 1
 
             character == '%' -> {
                 if (
@@ -1079,6 +1096,13 @@ private fun normalizeServerUrl(input: String, allowLocalHttp: Boolean): Normaliz
         return NormalizedServerUrl.Invalid(
             DomainError.Input.InvalidServerUrl(
                 InvalidServerUrlReason.EmbeddedUserInfo,
+            ),
+        )
+    }
+    if (authority.isStructurallyValidInternationalizedHostAuthority()) {
+        return NormalizedServerUrl.Invalid(
+            DomainError.Input.InvalidServerUrl(
+                InvalidServerUrlReason.UnsupportedInternationalizedHost,
             ),
         )
     }

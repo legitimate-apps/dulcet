@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 33 — Darwin reports unsupported authentication challenges distinctly and records its
+**Revision:** 34 — raw internationalized hostnames receive an honest unsupported classification;
+revision 33 made Darwin report unsupported authentication challenges distinctly and record its
 fail-closed authentication limitation; revision 32 made bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
 cross-origin credential stripping with a closed target-request oracle; revision 30 rejected
 malformed authorities as input before transport; revision 29 made
@@ -1897,6 +1898,10 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   normalization; bracket errors, ambiguous/empty/non-numeric ports, out-of-range ports, whitespace,
   and other parser failures therefore produce `MalformedHost`, never `Transport.Unreachable`. The
   earlier hierarchy omitted every pre-transport failure even though §10.1 normatively requires them.
+  A structurally shaped raw non-ASCII reg-name instead produces
+  `UnsupportedInternationalizedHost`: Phase 1 does not perform IDNA conversion or validation, and
+  therefore does not mislabel `https://müsic.example` as malformed. ASCII A-label input remains
+  subject to the ordinary reg-name grammar.
 - `Transport.Unreachable | Timeout | Cancelled`
 - `Security.TlsUntrusted(reason) | LocalExceptionViolated` — the TLS reason is a closed enum, never an
   exception message.
@@ -2895,6 +2900,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 34 (2026-08-21)** — internationalized-host classification became honest.
+
+1. A hosted red control showed that `https://müsic.example` was classified as `MalformedHost`.
+2. Raw non-ASCII reg-name authorities with an otherwise bounded authority shape now fail before
+   transport as `Input.InvalidServerUrl(UnsupportedInternationalizedHost)`.
+3. Phase 1 deliberately does not claim IDNA conversion or validation. Common code has no built-in
+   IDNA facility, and adding a new cross-platform dependency was not treated as a cheap compatibility
+   patch; malformed ASCII authorities remain `MalformedHost`.
 
 **Revision 33 (2026-08-21)** — unsupported Darwin authentication became legible.
 
