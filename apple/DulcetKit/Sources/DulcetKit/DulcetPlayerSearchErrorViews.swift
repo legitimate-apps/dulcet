@@ -330,12 +330,10 @@ struct DulcetTLSUntrustedView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.dulcetAccent)
                         .foregroundStyle(Color.dulcetOnAccent)
-                        .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.connectionSettings)
                     Button(DulcetStrings.openCertificateHelp, systemImage: "questionmark.circle") {}
                         .buttonStyle(.bordered)
-                        .controlSize(.large)
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
                 }
             }

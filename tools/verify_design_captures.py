@@ -93,7 +93,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
-        "windowTitlePolicy": "release-name-fixture-with-state-navigation-titles",
+        "windowTitlePolicy": "hidden-redundant-window-title-content-headings-visible",
         "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",
         "preflightRender": "discarded-library-browse-light-before-recording",
         "jpegCompression": 0.72,

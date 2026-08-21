@@ -104,14 +104,15 @@ func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
         let appearance = try #require(NSAppearance(named: appearanceName))
         let window = try resolved(.windowBackgroundColor, appearance: appearance)
-        let control = try resolved(.controlBackgroundColor, appearance: appearance)
         let accent = try resolved(DulcetContrastColor.accent, appearance: appearance)
         let onAccent = try resolved(DulcetContrastColor.onAccent, appearance: appearance)
+        let selectionBackground = try resolved(
+            DulcetContrastColor.selectionBackground,
+            appearance: appearance
+        )
         let offline = try resolved(DulcetContrastColor.offline, appearance: appearance)
         let danger = try resolved(DulcetContrastColor.danger, appearance: appearance)
         let label = try resolved(.labelColor, appearance: appearance)
-        let sidebar = composited(control, over: window, opacity: 0.78)
-        let selectedSidebar = composited(accent, over: sidebar, opacity: 0.16)
 
         let pairs = [
             ContrastRequirement(
@@ -129,19 +130,13 @@ func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
             ContrastRequirement(
                 name: "selected-sidebar-label/selection-fill",
                 foreground: label,
-                background: selectedSidebar,
+                background: selectionBackground,
                 minimum: 4.5
             ),
             ContrastRequirement(
                 name: "offline-label/window",
                 foreground: offline,
                 background: window,
-                minimum: 4.5
-            ),
-            ContrastRequirement(
-                name: "failure-label/sidebar",
-                foreground: danger,
-                background: sidebar,
                 minimum: 4.5
             ),
             ContrastRequirement(
@@ -213,17 +208,6 @@ private func meetsContrastMinimum(
     minimum: Double
 ) -> Bool {
     contrastRatio(foreground, background) >= minimum
-}
-
-private func composited(_ foreground: NSColor, over background: NSColor, opacity: CGFloat) -> NSColor {
-    let foregroundRGB = foreground.usingColorSpace(.sRGB) ?? foreground
-    let backgroundRGB = background.usingColorSpace(.sRGB) ?? background
-    return NSColor(
-        srgbRed: foregroundRGB.redComponent * opacity + backgroundRGB.redComponent * (1 - opacity),
-        green: foregroundRGB.greenComponent * opacity + backgroundRGB.greenComponent * (1 - opacity),
-        blue: foregroundRGB.blueComponent * opacity + backgroundRGB.blueComponent * (1 - opacity),
-        alpha: 1
-    )
 }
 
 private func contrastRatio(_ first: NSColor, _ second: NSColor) -> Double {

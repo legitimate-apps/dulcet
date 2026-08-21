@@ -31,6 +31,7 @@ public struct DulcetRootView: View {
                         DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
                     }
                     .navigationSplitViewStyle(.balanced)
+                    .buttonBorderShape(.roundedRectangle(radius: 6))
                 }
             }
         }
@@ -83,6 +84,7 @@ public struct DulcetCaptureView: View {
                 )
             }
             .background(Color.dulcetWindow)
+            .buttonBorderShape(.roundedRectangle(radius: 6))
         }
     }
 }
@@ -114,7 +116,7 @@ private struct DulcetSidebar: View {
                 .padding(.horizontal, DulcetSpacing.xs)
         }
         .padding(DulcetSpacing.sm)
-        .background(Color.dulcetControl.opacity(0.78))
+        .background(.thinMaterial)
         .navigationSplitViewColumnWidth(
             min: DulcetMetrics.sidebarMinWidth,
             ideal: 232,
@@ -136,8 +138,8 @@ private struct DulcetSidebar: View {
                 .padding(.vertical, 6)
                 .background {
                     if store.selectedDestination == destination {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.dulcetAccent.opacity(0.16))
+                        Capsule()
+                            .fill(Color.dulcetSelectionBackground)
                     }
                 }
                 .contentShape(Rectangle())
@@ -149,7 +151,7 @@ private struct DulcetSidebar: View {
     }
 
     private func sidebarSectionTitle(_ title: String) -> some View {
-        Text(title.uppercased())
+        Text(title)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, DulcetSpacing.xs)
@@ -181,7 +183,7 @@ private struct DulcetSidebar: View {
                         .font(.subheadline.weight(.medium))
                     Text(DulcetStrings.connectionFailed)
                         .font(.caption)
-                        .foregroundStyle(Color.dulcetDanger)
+                        .foregroundStyle(.primary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
