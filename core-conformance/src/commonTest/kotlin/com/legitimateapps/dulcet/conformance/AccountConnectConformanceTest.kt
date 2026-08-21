@@ -21,6 +21,14 @@ import com.legitimateapps.dulcet.core.RedirectRejectionReason
 import com.legitimateapps.dulcet.core.SaltSource
 import com.legitimateapps.dulcet.core.TlsTrustFailure
 import com.legitimateapps.dulcet.core.toDiagnosticJson
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -206,15 +214,16 @@ class AccountConnectConformanceTest {
     @Test
     fun conf07RedactsCredentialsFromDiagnostics() = runTest {
         val diagnosticFixture = fixture()
-        val connected = diagnosticFixture.requireConnected("CONF-07")
+        val redirectRoot = redirectConformanceRoot()
+        val connected = diagnosticFixture.requireConnected("CONF-07", "$redirectRoot/observe")
         val diagnosticText =
             diagnosticFixture.logs.joinToString("\n") + "\n" + connected.requests.joinToString("\n")
-        val issuedSalts = knownSalts.take(
-            connected.requests.count { it.authenticationLocation != AuthenticationLocation.None },
-        )
-        val derivedTokens = issuedSalts.map {
-            AccountConnectionContract.saltedToken(ADMIN_PASSWORD, it)
-        }
+        val observedCredentials = observedWireCredentials(redirectRoot)
+        assertEquals(setOf("u", "t", "s"), observedCredentials.keys)
+        assertTrue(observedCredentials.values.flatten().all(String::isNotEmpty))
+        val observedUsername = observedCredentials.getValue("u").first()
+        val observedToken = observedCredentials.getValue("t").first()
+        val observedSalt = observedCredentials.getValue("s").first()
 
         assertTrue(
             connected.requests.all {
@@ -232,25 +241,25 @@ class AccountConnectConformanceTest {
                 },
         )
         assertFalse(diagnosticText.contains(ADMIN_PASSWORD))
-        assertFalse(diagnosticText.contains(ADMIN_USER))
-        issuedSalts.forEach { assertFalse(diagnosticText.contains(it)) }
-        derivedTokens.forEach { assertFalse(diagnosticText.contains(it)) }
+        observedCredentials.values.flatten().forEach { observed ->
+            assertFalse(diagnosticText.contains(observed))
+        }
 
         val synthetic = AccountConnectionContract.mapSubsonicError(
             code = 999,
             message = "synthetic",
-            requestUrl = "https://music.invalid/rest/ping.view?u=$ADMIN_USER&t=${derivedTokens.first()}&s=${issuedSalts.first()}",
+            requestUrl = "https://music.invalid/rest/ping.view?u=$observedUsername&t=$observedToken&s=$observedSalt",
         )
         val renderedError = synthetic.toString()
-        assertFalse(renderedError.contains(ADMIN_USER))
-        assertFalse(renderedError.contains(derivedTokens.first()))
-        assertFalse(renderedError.contains(issuedSalts.first()))
+        observedCredentials.values.flatten().forEach { observed ->
+            assertFalse(renderedError.contains(observed))
+        }
         assertTrue("?<redacted>" in renderedError)
 
         val signedUrl =
-            "https://music.invalid/rest/ping.view?u=$ADMIN_USER&t=${derivedTokens.first()}&s=${issuedSalts.first()}"
+            "https://music.invalid/rest/ping.view?u=$observedUsername&t=$observedToken&s=$observedSalt"
         val echoedCredentials =
-            "u=$ADMIN_USER&t=${derivedTokens.first()}&s=${issuedSalts.first()}"
+            "u=$observedUsername&t=$observedToken&s=$observedSalt"
         listOf("server echoed $signedUrl", "server echoed $echoedCredentials").forEach { message ->
             listOf(0, 999).forEach { code ->
                 val everyRenderedField = AccountConnectionContract.mapSubsonicError(
@@ -258,20 +267,16 @@ class AccountConnectConformanceTest {
                     message = message,
                     requestUrl = signedUrl,
                 ).toString()
-                assertFalse(everyRenderedField.contains(ADMIN_USER))
-                assertFalse(everyRenderedField.contains(derivedTokens.first()))
-                assertFalse(everyRenderedField.contains(issuedSalts.first()))
+                observedCredentials.values.flatten().forEach { observed ->
+                    assertFalse(everyRenderedField.contains(observed))
+                }
             }
         }
 
-        val serverObserved = fixture().requireConnected(
-            "CONF-07 server-observed credential channels",
-            "${redirectConformanceRoot()}/observe",
-        )
-        assertTrue(serverObserved.requests.first().queryAuthenticationParameters.isEmpty())
-        assertTrue(serverObserved.requests.first().formAuthenticationParameters.isEmpty())
+        assertTrue(connected.requests.first().queryAuthenticationParameters.isEmpty())
+        assertTrue(connected.requests.first().formAuthenticationParameters.isEmpty())
         assertTrue(
-            serverObserved.requests.drop(1).all {
+            connected.requests.drop(1).all {
                 it.queryAuthenticationParameters.isEmpty() &&
                     it.formAuthenticationParameters == saltedTokenAuthentication
             },
@@ -495,6 +500,31 @@ class AccountConnectConformanceTest {
             unaccounted.isEmpty(),
             "request added unaccounted header/query/form channels: $unaccounted",
         )
+    }
+
+    private suspend fun observedWireCredentials(redirectRoot: String): Map<String, List<String>> {
+        val client = HttpClient()
+        try {
+            val response = client.get("$redirectRoot/observations/observe")
+            assertEquals(200, response.status.value, "CONF-07 wire observation endpoint is unavailable")
+            val document = Json.parseToJsonElement(response.bodyAsText()) as? JsonObject
+                ?: error("CONF-07 wire observation response is not an object")
+            val channels = document["channels"] as? JsonArray
+                ?: error("CONF-07 wire observation response has no channels")
+            return channels.map { element ->
+                val channel = element as? JsonObject
+                    ?: error("CONF-07 wire observation channel is not an object")
+                val name = (channel["name"] as? JsonPrimitive)?.contentOrNull
+                    ?: error("CONF-07 wire observation channel has no name")
+                val values = (channel["values"] as? JsonArray)?.map { value ->
+                    (value as? JsonPrimitive)?.contentOrNull
+                        ?: error("CONF-07 wire observation value is not a string")
+                } ?: error("CONF-07 wire observation channel has no values")
+                name to values
+            }.groupBy({ it.first }, { it.second }).mapValues { (_, grouped) -> grouped.flatten() }
+        } finally {
+            client.close()
+        }
     }
 
     private fun conformanceBaseUrl(): String =
