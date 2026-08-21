@@ -350,6 +350,10 @@ class AccountConnectConformanceTest {
                 "https://music.invalid:70000/rest/ping.view?u=credential-canary",
             "authority-whitespace" to
                 "https://music invalid/rest/ping.view?u=credential-canary",
+            "illegal-reg-name-character" to
+                "https://credential-canary|evil.invalid/rest/ping.view?u=credential-canary",
+            "invalid-percent-escape" to
+                "https://credential-canary%zz.invalid/rest/ping.view?u=credential-canary",
             "leading-control-character" to
                 "\u0000https://music.invalid/rest/ping.view?u=credential-canary",
         )
@@ -378,6 +382,25 @@ class AccountConnectConformanceTest {
         }
         generated.forEach { input ->
             assertTrue(Redactor.redactUrl(input).isNotEmpty())
+        }
+
+        val generatedMalformedAuthorities = buildList {
+            charArrayOf('|', '^', '`', '{', '}', '<', '>', '"').forEach { illegal ->
+                add("https://credential-canary$illegal.invalid/rest/ping.view?u=credential-canary")
+            }
+            listOf("%", "%z", "%zz", "%0z", "%z0").forEach { invalidEscape ->
+                add(
+                    "https://credential-canary$invalidEscape.invalid/" +
+                        "rest/ping.view?u=credential-canary",
+                )
+            }
+        }
+        generatedMalformedAuthorities.forEach { input ->
+            assertEquals(
+                "<unrenderable-url>",
+                Redactor.redactUrl(input),
+                input,
+            )
         }
 
         assertEquals(
@@ -437,6 +460,8 @@ class AccountConnectConformanceTest {
             "out-of-range-port" to "https://127.0.0.1:70000",
             "ambiguous-port" to "https://127.0.0.1:443:444",
             "authority-whitespace" to "https://127.0.0.1 :443",
+            "illegal-reg-name-character" to "https://bad|host.invalid",
+            "invalid-percent-escape" to "https://bad%zz.invalid",
         )
         malformedAuthorities.forEach { (caseName, serverUrl) ->
             assertEquals(
