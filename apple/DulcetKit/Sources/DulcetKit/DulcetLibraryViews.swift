@@ -24,7 +24,7 @@ struct DulcetEmptyLibraryView: View {
                     .lineLimit(nil)
                 Text(DulcetStrings.firstRunBody)
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
                     .frame(maxWidth: 560)
@@ -45,7 +45,7 @@ struct DulcetEmptyLibraryView: View {
 
             Text(DulcetStrings.firstRunFootnote)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
                 .multilineTextAlignment(.center)
                 .lineLimit(nil)
                 .frame(maxWidth: 520)
@@ -108,7 +108,7 @@ struct DulcetLibraryBrowseView: View {
                         Spacer()
                         Text(DulcetStrings.duration)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.dulcetSecondaryText)
                     }
 
                     VStack(spacing: 0) {
@@ -144,7 +144,7 @@ struct DulcetLibraryHeader: View {
                     .lineLimit(nil)
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .lineLimit(nil)
             }
             Spacer(minLength: DulcetSpacing.md)
@@ -190,7 +190,7 @@ struct DulcetAlbumShelfItem: View {
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 Text(album.albumArtists.joined(separator: ", "))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 Text(DulcetStrings.trackCount(album.tracks.count))
                     .font(.caption)
@@ -222,7 +222,7 @@ struct DulcetTrackRow: View {
                     } else {
                         Text(String(index))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.dulcetSecondaryText)
                     }
                 }
                 .frame(width: 24)
@@ -237,7 +237,7 @@ struct DulcetTrackRow: View {
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     Text(trackSubtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
 
@@ -251,11 +251,11 @@ struct DulcetTrackRow: View {
                 } else {
                     Text(track.durationSeconds.dulcetDuration)
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                 }
 
                 Image(systemName: "ellipsis")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, DulcetSpacing.sm)
@@ -340,17 +340,17 @@ struct DulcetAlbumDetailView: View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Text(DulcetStrings.album.uppercased())
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
             Text(album.title)
                 .font(.largeTitle.weight(.bold))
                 .lineLimit(nil)
             Text(album.albumArtists.joined(separator: ", "))
                 .font(.title3)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
                 .lineLimit(nil)
             Text("\(album.year) · \(DulcetStrings.trackCount(album.tracks.count)) · \(album.totalDurationSeconds.dulcetDuration)")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
                 .lineLimit(nil)
         }
     }
@@ -389,7 +389,7 @@ struct DulcetOfflineLibraryView: View {
                         if case let .offline(lastSynced) = snapshot.connectivity {
                             Text("\(DulcetStrings.lastSynced) \(lastSynced)")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.dulcetSecondaryText)
                                 .lineLimit(nil)
                         }
                     }
@@ -451,7 +451,7 @@ struct DulcetOfflineLibraryView: View {
                     .font(.headline)
                 Text(DulcetStrings.offlineBody)
                     .font(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .lineLimit(nil)
             }
             Spacer(minLength: 0)

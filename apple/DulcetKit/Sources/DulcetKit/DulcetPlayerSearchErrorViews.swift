@@ -55,13 +55,13 @@ struct DulcetNowPlayingView: View {
                     .lineLimit(nil)
                 Text(player.current.artistNames.joined(separator: ", "))
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
                 if let album = player.current.albumTitle {
                     Text(album)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(nil)
                 }
             }
@@ -80,7 +80,7 @@ struct DulcetNowPlayingView: View {
                     Text(player.current.durationSeconds.dulcetDuration)
                 }
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
             }
 
             HStack(spacing: DulcetSpacing.lg) {
@@ -118,7 +118,7 @@ struct DulcetNowPlayingView: View {
 
             HStack(spacing: DulcetSpacing.sm) {
                 Image(systemName: "speaker.wave.2")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .accessibilityHidden(true)
                 Slider(value: .constant(0.68), in: 0...1)
                     .frame(maxWidth: 180)
@@ -126,7 +126,7 @@ struct DulcetNowPlayingView: View {
                     .accessibilityValue("68%")
                 Text("FLAC · 44.1 kHz")
                     .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .padding(.horizontal, DulcetSpacing.xs)
                     .padding(.vertical, DulcetSpacing.xxs)
                     .background(.regularMaterial, in: Capsule())
@@ -134,7 +134,7 @@ struct DulcetNowPlayingView: View {
 
             Label("\(DulcetStrings.playingOn) \(player.outputName)", systemImage: "hifispeaker.2")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
         }
     }
 
@@ -184,7 +184,7 @@ struct DulcetSearchView: View {
                         .accessibilityLabel(DulcetStrings.searchPrompt)
                     Text(DulcetStrings.searchSummary)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(nil)
                 }
 
@@ -195,7 +195,7 @@ struct DulcetSearchView: View {
                     Spacer()
                     Text(DulcetStrings.trackCount(snapshot.searchResults.count))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                 }
 
                 LazyVStack(spacing: 0) {
@@ -236,16 +236,16 @@ private struct DulcetSearchResultRow: View {
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         Text(kindTitle)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.dulcetSecondaryText)
                     }
                     Text(result.subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     if result.refreshedFromServer {
                         Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.dulcetSecondaryText)
                     }
                 }
 
@@ -306,7 +306,7 @@ struct DulcetTLSUntrustedView: View {
                             .lineLimit(nil)
                         Text(failure.technicalDetail)
                             .font(.body)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.dulcetSecondaryText)
                             .lineLimit(nil)
                     }
                     .padding(.vertical, DulcetSpacing.xxs)
@@ -371,7 +371,7 @@ struct DulcetTLSUntrustedView: View {
                 .lineLimit(nil)
             Text(DulcetStrings.tlsBody)
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.dulcetSecondaryText)
                 .lineLimit(nil)
         }
     }

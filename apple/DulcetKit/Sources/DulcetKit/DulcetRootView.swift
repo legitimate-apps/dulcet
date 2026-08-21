@@ -153,7 +153,7 @@ private struct DulcetSidebar: View {
     private func sidebarSectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.dulcetSecondaryText)
             .padding(.horizontal, DulcetSpacing.xs)
             .accessibilityAddTraits(.isHeader)
     }
@@ -169,7 +169,7 @@ private struct DulcetSidebar: View {
                         .font(.subheadline.weight(.medium))
                     Text(DulcetStrings.online)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -197,7 +197,7 @@ private struct DulcetSidebar: View {
                         .font(.subheadline.weight(.medium))
                     Text("\(DulcetStrings.lastSynced) \(lastSyncedDescription)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(nil)
                 }
             }
@@ -208,7 +208,7 @@ private struct DulcetSidebar: View {
                 DulcetStatusDot(color: .secondary)
                 Text(DulcetStrings.noServer)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.dulcetSecondaryText)
                     .lineLimit(nil)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

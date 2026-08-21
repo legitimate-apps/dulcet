@@ -24,6 +24,7 @@ extension Color {
     static let dulcetPrimaryActionFill = Color(nsColor: DulcetContrastColor.primaryActionFill)
     static let dulcetPrimaryActionLabel = Color(nsColor: DulcetContrastColor.primaryActionLabel)
     static let dulcetSelectionBackground = Color(nsColor: DulcetContrastColor.selectionBackground)
+    static let dulcetSecondaryText = Color(nsColor: DulcetContrastColor.secondaryText)
     static let dulcetOffline = Color(nsColor: DulcetContrastColor.offline)
     static let dulcetDanger = Color(nsColor: DulcetContrastColor.danger)
     static let dulcetWindow = Color(nsColor: .windowBackgroundColor)
@@ -51,6 +52,11 @@ enum DulcetContrastColor {
         name: "DulcetSelectionBackground",
         light: NSColor(red: 0.82, green: 0.86, blue: 0.96, alpha: 1),
         dark: NSColor(red: 0.20, green: 0.27, blue: 0.43, alpha: 1)
+    )
+    static let secondaryText = adaptive(
+        name: "DulcetSecondaryText",
+        light: NSColor(red: 0.36, green: 0.36, blue: 0.38, alpha: 1),
+        dark: NSColor(red: 0.74, green: 0.74, blue: 0.77, alpha: 1)
     )
     static let offline = adaptive(
         name: "DulcetOffline",
@@ -157,7 +163,7 @@ struct DulcetSourceBadge: View {
 
     private var foreground: Color {
         switch source {
-        case .local: .secondary
+        case .local: .dulcetSecondaryText
         case .server: .dulcetAccent
         case .localAndServer: .purple
         }
