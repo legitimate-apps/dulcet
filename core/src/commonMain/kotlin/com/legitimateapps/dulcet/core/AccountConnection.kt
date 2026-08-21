@@ -53,6 +53,19 @@ public enum class AuthenticationParameter {
     LegacyPassword,
 }
 
+/** Structural request locations observed before the engine sends a request. */
+public enum class RequestChannelLocation {
+    Header,
+    Query,
+    FormBody,
+}
+
+/** A value-free request channel identity; names are normalized to lowercase. */
+public data class RequestChannel(
+    val location: RequestChannelLocation,
+    val name: String,
+)
+
 public enum class RequestObservationBoundary {
     KtorSendingRequest,
 }
@@ -78,6 +91,7 @@ public class RequestTrace private constructor(
     public val authenticationLocation: AuthenticationLocation,
     public val queryAuthenticationParameters: Set<AuthenticationParameter>,
     public val formAuthenticationParameters: Set<AuthenticationParameter>,
+    public val channels: Set<RequestChannel>,
     public val requestedProtocolVersion: String?,
     public val saltFingerprint: String?,
     public val observationBoundary: RequestObservationBoundary,
@@ -87,6 +101,7 @@ public class RequestTrace private constructor(
             "authenticationLocation=$authenticationLocation, " +
             "queryAuthenticationParameters=$queryAuthenticationParameters, " +
             "formAuthenticationParameters=$formAuthenticationParameters, " +
+            "channels=$channels, " +
             "requestedProtocolVersion=$requestedProtocolVersion, " +
             "saltFingerprint=$saltFingerprint, observationBoundary=$observationBoundary)"
 
@@ -98,6 +113,7 @@ public class RequestTrace private constructor(
             authenticationLocation: AuthenticationLocation,
             queryAuthenticationParameters: Set<AuthenticationParameter>,
             formAuthenticationParameters: Set<AuthenticationParameter>,
+            channels: Set<RequestChannel>,
             requestedProtocolVersion: String?,
             saltFingerprint: String?,
         ): RequestTrace = RequestTrace(
@@ -107,6 +123,7 @@ public class RequestTrace private constructor(
             authenticationLocation = authenticationLocation,
             queryAuthenticationParameters = queryAuthenticationParameters,
             formAuthenticationParameters = formAuthenticationParameters,
+            channels = channels,
             requestedProtocolVersion = requestedProtocolVersion,
             saltFingerprint = saltFingerprint,
             observationBoundary = RequestObservationBoundary.KtorSendingRequest,
@@ -552,6 +569,7 @@ public class AccountConnector(
         }
         var followedRedirects = 0
         var credentialsStripped = false
+        var redirectCredentialHeader: String? = null
 
         while (true) {
             val response = sendRequest(
@@ -561,6 +579,7 @@ public class AccountConnector(
                 formParameters = formParameters,
                 useForm = useForm,
                 allowLocalHttp = allowLocalHttp,
+                redirectCredentialHeader = redirectCredentialHeader,
             )
             if (response.status.value !in REDIRECT_STATUS_CODES) {
                 if (response.status.value == 401 && credentialsStripped) {
@@ -608,6 +627,7 @@ public class AccountConnector(
             ) {
                 RedirectPolicyDecision.PreserveCredentials -> Unit
                 RedirectPolicyDecision.StripCredentials -> {
+                    redirectCredentialHeader = queryParameters["t"] ?: formParameters["t"]
                     credentialsStripped = credentialsStripped ||
                         queryParameters.containsAuthentication() ||
                         formParameters.containsAuthentication()
@@ -633,6 +653,7 @@ public class AccountConnector(
         formParameters: Parameters,
         useForm: Boolean,
         allowLocalHttp: Boolean,
+        redirectCredentialHeader: String?,
     ): HttpResponse {
         val target = localHttpPolicy.targetFor(url, allowLocalHttp)
         return if (useForm) {
@@ -642,6 +663,7 @@ public class AccountConnector(
                 encodeInQuery = false,
             ) {
                 target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                redirectCredentialHeader?.let { header(HttpHeaders.Authorization, "Bearer $it") }
                 queryParameters.entries().forEach { (key, values) ->
                     values.forEach { value -> parameter(key, value) }
                 }
@@ -649,6 +671,7 @@ public class AccountConnector(
         } else {
             client.get(target.url) {
                 target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                redirectCredentialHeader?.let { header(HttpHeaders.Authorization, "Bearer $it") }
                 queryParameters.entries().forEach { (key, values) ->
                     values.forEach { value -> parameter(key, value) }
                 }
@@ -720,6 +743,17 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
             salt = form["s"],
             legacyPassword = form["p"],
         )
+        val channels = buildSet {
+            request.headers.names().forEach { name ->
+                add(RequestChannel(RequestChannelLocation.Header, name.lowercase()))
+            }
+            query.names().forEach { name ->
+                add(RequestChannel(RequestChannelLocation.Query, name.lowercase()))
+            }
+            form.names().forEach { name ->
+                add(RequestChannel(RequestChannelLocation.FormBody, name.lowercase()))
+            }
+        }
         val authenticationLocation = when {
             queryAuthenticationParameters.isNotEmpty() -> AuthenticationLocation.Query
             formAuthenticationParameters.isNotEmpty() -> AuthenticationLocation.FormBody
@@ -733,6 +767,7 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
             authenticationLocation = authenticationLocation,
             queryAuthenticationParameters = queryAuthenticationParameters,
             formAuthenticationParameters = formAuthenticationParameters,
+            channels = channels,
             requestedProtocolVersion = query["v"] ?: form["v"],
             saltFingerprint = salt?.let { md5Hex("salt:$it") },
         )

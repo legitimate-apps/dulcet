@@ -14,6 +14,7 @@ import com.legitimateapps.dulcet.core.LogSink
 import com.legitimateapps.dulcet.core.HostResolver
 import com.legitimateapps.dulcet.core.ProtocolVersionLevel
 import com.legitimateapps.dulcet.core.RequestObservationBoundary
+import com.legitimateapps.dulcet.core.RequestChannelLocation
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
 import com.legitimateapps.dulcet.core.RedirectRejectionReason
 import com.legitimateapps.dulcet.core.SaltSource
@@ -219,6 +220,7 @@ class AccountConnectConformanceTest {
                 it.observationBoundary == RequestObservationBoundary.KtorSendingRequest
             },
         )
+        connected.requests.forEach(::assertEveryRequestChannelAccountedFor)
         assertTrue(
             connected.requests.filter { it.authenticationLocation != AuthenticationLocation.None }
                 .all {
@@ -416,6 +418,7 @@ class AccountConnectConformanceTest {
     fun conf08EnforcesRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val sameOrigin = fixture().requireConnected("CONF-08", "$redirectRoot/same")
+        sameOrigin.requests.forEach(::assertEveryRequestChannelAccountedFor)
         val sameOriginPairs = sameOrigin.requests.groupBy { it.endpoint }
 
         assertEquals(
@@ -465,6 +468,31 @@ class AccountConnectConformanceTest {
                 targetUrl = "https://music.invalid/rest/ping.view",
                 redirectsAlreadyFollowed = 0,
             ),
+        )
+    }
+
+    private fun assertEveryRequestChannelAccountedFor(trace: com.legitimateapps.dulcet.core.RequestTrace) {
+        val accountedNames = mapOf(
+            RequestChannelLocation.Header to setOf(
+                "accept",
+                "accept-charset",
+                "accept-encoding",
+                "accept-language",
+                "connection",
+                "content-length",
+                "content-type",
+                "host",
+                "user-agent",
+            ),
+            RequestChannelLocation.Query to setOf("c", "f", "p", "s", "t", "u", "username", "v"),
+            RequestChannelLocation.FormBody to setOf("c", "f", "p", "s", "t", "u", "username", "v"),
+        )
+        val unaccounted = trace.channels.filter { channel ->
+            channel.name !in accountedNames.getValue(channel.location)
+        }
+        assertTrue(
+            unaccounted.isEmpty(),
+            "request added unaccounted header/query/form channels: $unaccounted",
         )
     }
 

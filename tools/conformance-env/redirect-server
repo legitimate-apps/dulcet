@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,20 +12,78 @@ from urllib.parse import parse_qs, urlsplit
 
 
 AUTHENTICATION_KEYS = {"u", "t", "s", "p"}
+CHANNEL_CLASSIFICATIONS = {
+    "header": {
+        "accept": "metadata",
+        "accept-charset": "metadata",
+        "accept-encoding": "metadata",
+        "accept-language": "metadata",
+        "authorization": "credential",
+        "connection": "metadata",
+        "content-length": "metadata",
+        "content-type": "metadata",
+        "host": "metadata",
+        "proxy-authorization": "credential",
+        "user-agent": "metadata",
+    },
+    "query": {
+        "c": "metadata",
+        "f": "metadata",
+        "p": "credential",
+        "s": "credential",
+        "t": "credential",
+        "u": "credential",
+        "username": "metadata",
+        "v": "metadata",
+    },
+    "form": {
+        "c": "metadata",
+        "f": "metadata",
+        "p": "credential",
+        "s": "credential",
+        "t": "credential",
+        "u": "credential",
+        "username": "metadata",
+        "v": "metadata",
+    },
+}
+
+
+@dataclass(frozen=True, order=True)
+class ObservedChannel:
+    location: str
+    name: str
+    values: tuple[str, ...]
+
+    @property
+    def classification(self) -> str | None:
+        return CHANNEL_CLASSIFICATIONS.get(self.location, {}).get(self.name)
 
 
 class RedirectState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.issued: dict[tuple[str, str], tuple[str, str, bytes]] = {}
+        self.issued: dict[tuple[str, str], tuple[str, tuple[ObservedChannel, ...]]] = {}
 
-    def remember(self, scenario: str, endpoint: str, method: str, query: str, body: bytes) -> None:
+    def remember(
+        self,
+        scenario: str,
+        endpoint: str,
+        method: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> None:
         with self.lock:
-            self.issued[(scenario, endpoint)] = (method, query, body)
+            self.issued[(scenario, endpoint)] = (method, channels)
 
-    def matches(self, scenario: str, endpoint: str, method: str, query: str, body: bytes) -> bool:
+    def matches(
+        self,
+        scenario: str,
+        endpoint: str,
+        method: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> bool:
         with self.lock:
-            return self.issued.get((scenario, endpoint)) == (method, query, body)
+            return self.issued.get((scenario, endpoint)) == (method, channels)
 
 
 STATE = RedirectState()
@@ -77,20 +136,27 @@ class RedirectHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b""
         endpoint = parsed.path.rsplit("/", 1)[-1].removesuffix(".view")
+        channels = self._observed_channels(parsed.query, body)
 
         if parsed.path.startswith("/observe/rest/"):
-            if not self._observes_expected_channels(endpoint, parsed.query, body):
+            if not self._observes_expected_channels(endpoint, channels):
                 self._send_json(500, {"error": "credential channel observation failed"})
                 return
             self._send_json(200, envelope(endpoint))
             return
 
         if parsed.path.startswith("/same/rest/"):
-            STATE.remember("same", endpoint, self.command, parsed.query, body)
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted same-origin source channel"})
+                return
+            STATE.remember("same", endpoint, self.command, channels)
             self._redirect(f"/same-target/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/same-target/rest/"):
-            if not STATE.matches("same", endpoint, self.command, parsed.query, body):
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted same-origin target channel"})
+                return
+            if not STATE.matches("same", endpoint, self.command, channels):
                 self._send_json(500, {"error": "same-origin request changed across redirect"})
                 return
             if endpoint != "getOpenSubsonicExtensions" and not self._has_form_authentication(body):
@@ -100,19 +166,25 @@ class RedirectHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path.startswith("/cross/rest/"):
-            STATE.remember("cross", endpoint, self.command, parsed.query, body)
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted cross-origin source channel"})
+                return
+            STATE.remember("cross", endpoint, self.command, channels)
             target_port = self.server.target_port  # type: ignore[attr-defined]
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/cross-observe/rest/"):
-            if not self._observes_expected_channels(endpoint, parsed.query, body):
+            if not self._observes_expected_channels(endpoint, channels):
                 self._send_json(500, {"error": "cross-origin source credential channels failed"})
                 return
             target_port = self.server.target_port  # type: ignore[attr-defined]
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/cross-target/rest/"):
-            if self._has_authentication(parsed.query, body):
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted cross-origin target channel"})
+                return
+            if self._has_authentication(channels):
                 self._send_json(500, {"error": "credentials crossed an origin boundary"})
                 return
             if endpoint == "getOpenSubsonicExtensions":
@@ -134,21 +206,63 @@ class RedirectHandler(BaseHTTPRequestHandler):
         form = parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True)
         return {"u", "t", "s"}.issubset(form)
 
-    def _has_authentication(self, query: str, body: bytes) -> bool:
-        query_authentication, form_authentication = self._authentication_channels(query, body)
-        return bool(query_authentication | form_authentication)
+    def _has_authentication(self, channels: tuple[ObservedChannel, ...]) -> bool:
+        return any(channel.classification == "credential" for channel in channels)
 
-    def _authentication_channels(self, query: str, body: bytes) -> tuple[set[str], set[str]]:
-        query_keys = set(parse_qs(query, keep_blank_values=True))
-        form_keys = set(parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True))
-        return AUTHENTICATION_KEYS & query_keys, AUTHENTICATION_KEYS & form_keys
+    def _observed_channels(self, query: str, body: bytes) -> tuple[ObservedChannel, ...]:
+        grouped: dict[tuple[str, str], list[str]] = {}
+        for name, value in self.headers.raw_items():
+            grouped.setdefault(("header", name.lower()), []).append(value)
+        for location, parameters in (
+            ("query", parse_qs(query, keep_blank_values=True)),
+            ("form", parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True)),
+        ):
+            for name, values in parameters.items():
+                grouped.setdefault((location, name.lower()), []).extend(values)
+        return tuple(
+            sorted(
+                ObservedChannel(location, name, tuple(values))
+                for (location, name), values in grouped.items()
+            )
+        )
 
-    def _observes_expected_channels(self, endpoint: str, query: str, body: bytes) -> bool:
-        query_authentication, form_authentication = self._authentication_channels(query, body)
+    def _all_channels_accounted_for(self, channels: tuple[ObservedChannel, ...]) -> bool:
+        return all(channel.classification is not None for channel in channels)
+
+    def _authentication_channels(
+        self,
+        channels: tuple[ObservedChannel, ...],
+    ) -> tuple[set[str], set[str], set[str]]:
+        by_location = {
+            location: {
+                channel.name
+                for channel in channels
+                if channel.location == location and channel.classification == "credential"
+            }
+            for location in ("header", "query", "form")
+        }
+        return by_location["header"], by_location["query"], by_location["form"]
+
+    def _observes_expected_channels(
+        self,
+        endpoint: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> bool:
+        if not self._all_channels_accounted_for(channels):
+            return False
+        header_authentication, query_authentication, form_authentication = (
+            self._authentication_channels(channels)
+        )
         if endpoint == "getOpenSubsonicExtensions":
-            return self.command == "GET" and not query_authentication and not form_authentication
+            return (
+                self.command == "GET"
+                and not header_authentication
+                and not query_authentication
+                and not form_authentication
+            )
         return (
             self.command == "POST"
+            and not header_authentication
             and not query_authentication
             and form_authentication == {"u", "t", "s"}
         )
