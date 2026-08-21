@@ -218,3 +218,5 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            ./gradlew --no-daemon :core-conformance:macosArm64Test

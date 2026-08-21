@@ -52,6 +52,17 @@ jobs:
       TZ: UTC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Prove ffmpeg version gate rejects prefix collisions
         run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
@@ -104,6 +115,8 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.linux.version)" \
             --ffmpeg-command-json "[\"docker\",\"exec\",\"$container\",\"$(tools/conformance-env/read-pin ffmpeg.linux.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            ./gradlew --no-daemon :core-conformance:jvmTest
 
   core-ci:
     name: core-ci

@@ -55,12 +55,10 @@ configuration, logs, and music directories. The environment contract is one root
 process per conformance test class. Reusing a data directory is not supported, so play counts,
 playlists, favourites, queues, and users cannot leak between classes.
 
-**This is not yet a CI-enforced per-class property.** The current PR has no CONF-xx classes, and
-`new-class-root` is a utility rather than a test-runner hook. Its `linux-self-check` and
-`darwin-self-check` callers each prove one isolated root and a fresh-admin bootstrap. Every future
-Phase 1 test-class fixture must call this utility, start its own Navidrome process from that root, run
-the fail-loud health check, and tear the process down. The reset claim becomes enforced only when the
-class runner owns that lifecycle; until then it is a normative caller contract.
+The account-connect conformance group is one test class. Each CI leg creates one root with
+`new-class-root`, launches one Navidrome process, runs the fail-loud health check, executes that class,
+and tears the process down in the same shell step. Future conformance classes must receive their own
+root and process rather than joining this lifecycle; `new-class-root` remains the required entry point.
 
 ## Generated corpus
 
@@ -103,9 +101,10 @@ to both the job log and the GitHub Actions job summary.
 
 ## CI identities
 
-The Linux self-assertion is job `conformance-env-linux` in `.github/workflows/core-ci.yml`. The required
-`core-ci` context is a final fail-closed aggregator: it runs even after an upstream failure or skip and
-passes only when both `core-build` and `conformance-env-linux` report `success`. The Darwin
-self-assertion is a serial tail of the sole `apple-ci` job in `.github/workflows/apple-ci.yml`; it does
-not allocate a second hosted-macOS job. Both workflows use standard hosted runners, explicit job
-timeouts, and cancel-in-progress concurrency.
+The Linux preconditions and `:core-conformance:jvmTest` are job `conformance-env-linux` in
+`.github/workflows/core-ci.yml`. The required `core-ci` context is a final fail-closed aggregator: it
+runs even after an upstream failure or skip and passes only when both `core-build` and
+`conformance-env-linux` report `success`. The Darwin preconditions and
+`:core-conformance:macosArm64Test` are a serial tail of the sole `apple-ci` job in
+`.github/workflows/apple-ci.yml`; they do not allocate a second hosted-macOS job. Both workflows use
+standard hosted runners, explicit job timeouts, and cancel-in-progress concurrency.
