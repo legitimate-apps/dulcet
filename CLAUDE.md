@@ -274,19 +274,29 @@ isolated asks produce locally-sensible answers that do not fit together.
 
 ### Merging
 
-`main` requires a code-owner review and its required status checks, and admin bypass is off.
-**GitHub refuses to let a pull request author approve their own pull request** — OBSERVED
-2026-08-20, `422 Unprocessable Entity — "Review Can not approve your own pull request"` — so a
-`CODEOWNERS` naming one account would make the branch permanently unmergeable rather than strictly
-guarded.
+`main` requires a code-owner review and its required status checks, admin bypass is off, and an
+approval must post-date the last push by a different actor.
 
-`CODEOWNERS` therefore names **both maintainer accounts**. Open a pull request as one and approve it
-as the other. `/FEATURES.yml` and `/.github/CODEOWNERS` are themselves code-owner-protected, so a
-change to either must be authored by whichever account is *not* going to approve it.
+**GitHub will not accept an approving review from a pull request's own author** — OBSERVED
+2026-08-20, `422 Unprocessable Entity — "Review Can not approve your own pull request"`. `CODEOWNERS`
+therefore names **both maintainer accounts**: the account doing the work opens the pull request, the
+other approves it.
 
-`@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams to assign
-— named accounts are the only mechanism available. Pull-request authorship and commit authorship are
-separate fields: commits stay `new-usemame` whichever account opens the pull request.
+**Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
+commit to the *pull request's* author, not to the commit author. Opening from an account whose
+address is not a `noreply` one writes that address into a public commit on `main` — it happened once,
+commit `0e3566e`. **Open pull requests as `new-usemame`.**
+
+Pull-request authorship and commit authorship are separate fields. Commits are authored
+`new-usemame` by the convention in *Identity* above; that is an instruction here, not something
+GitHub enforces.
+
+`@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams —
+`CODEOWNERS` entries must resolve to individual collaborators while ownership stays as it is.
+
+⚠️ **This is not independent review.** One person holds both accounts, so the required approval
+records an account switch. The adversarial review demanded above is a separate obligation and is not
+discharged by approving from the second account.
 
 ## Definition of done
 
