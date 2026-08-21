@@ -166,6 +166,12 @@ public object SuppressedServerUrl {
     override fun toString(): String = value
 }
 
+/** Content-free redirect marker with no query syntax. */
+public object SuppressedRedirectUrl {
+    public const val value: String = "<redirect-url-suppressed>"
+    override fun toString(): String = value
+}
+
 /**
  * Semantic failures safe for rendering, logging, exception wrapping, and diagnostic serialization.
  * Server-controlled messages and URLs are discarded before construction; fields contain only closed
@@ -187,7 +193,7 @@ public sealed interface DomainError {
         public data object LocalExceptionViolated : Security
         public data class RedirectRejected(
             val reason: RedirectRejectionReason,
-            val redactedUrl: SuppressedServerUrl = SuppressedServerUrl,
+            val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Security
     }
 
@@ -219,7 +225,7 @@ public sealed interface DomainError {
         public data object TokenAuthUnsupported : Auth
         public data object Forbidden : Auth
         public data class RedirectCredentialLoss(
-            val redactedUrl: SuppressedServerUrl = SuppressedServerUrl,
+            val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
     }
 
@@ -527,7 +533,7 @@ public class AccountConnector(
                 if (response.status.value == 401 && credentialsStripped) {
                     throw RedirectPolicyFailure(
                         DomainError.Auth.RedirectCredentialLoss(
-                            SuppressedServerUrl,
+                            SuppressedRedirectUrl,
                         ),
                     )
                 }
@@ -549,7 +555,7 @@ public class AccountConnector(
                 ?: throw RedirectPolicyFailure(
                     DomainError.Security.RedirectRejected(
                         RedirectRejectionReason.InvalidLocation,
-                        SuppressedServerUrl,
+                        SuppressedRedirectUrl,
                     ),
                 )
             when (
@@ -570,7 +576,7 @@ public class AccountConnector(
                 is RedirectPolicyDecision.Reject -> throw RedirectPolicyFailure(
                     DomainError.Security.RedirectRejected(
                         decision.reason,
-                        SuppressedServerUrl,
+                        SuppressedRedirectUrl,
                     ),
                 )
             }
