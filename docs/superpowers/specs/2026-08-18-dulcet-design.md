@@ -2214,12 +2214,15 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 25 `apple-ci`, 5 `parity-gate`, 60
-`release`. **OBSERVED 2026-08-20:** the first complete standard-hosted `macos-26` job ran from
-`22:11:30Z` to `22:14:37Z`, 187 seconds wall-clock. That calibrated the former 15-minute scaffold
-budget. **ASSUMED pending the first combined run:** 25 minutes is the initial cap after serial Darwin
-conformance was added; this PR must replace the assumption with the observed combined duration before
-it is merge-ready. The hosted macOS
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci`, 5 `parity-gate`, 60
+`release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
+from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
+framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
+families, checksum-verified fresh Darwin closure pour and payload hashing, resource-loader canary and
+measurement, corpus generation, config rendering, and Darwin precondition assertion in the single
+serial job. Four times that combined duration is 25 minutes 12 seconds, so the next five-minute
+boundary sets the measured cap at 30 minutes. This supersedes both the former 187-second scaffold
+baseline and the unmeasured 25-minute combined-workload assumption. The hosted macOS
 runner is **3 vCPU / 7 GB**, and a cold Gradle KMP build producing five
 Kotlin/Native targets plus four Xcode targets plus simulator tests is a lot for that machine. Run one
 complete build and set the number from the measurement — a timeout that is too low fails green builds,
@@ -2797,6 +2800,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 15 (2026-08-21)** — the combined Apple workload replaced its timeout assumption.
+
+1. A successful standard-hosted `macos-26` run measured the complete serial `apple-ci` workload at
+   378 seconds, including every build, negative control, closure attestation, measurement, corpus,
+   config, and Darwin-precondition stage required on this branch.
+2. The timeout is now 30 minutes: the next five-minute boundary above four times the observed
+   duration (25 minutes 12 seconds). This replaces the provisional 25-minute cap and supersedes the
+   earlier 15-minute empty-scaffold calibration.
+3. The durable timing, workload inventory, calculation, run link, and job identifier are recorded in
+   `docs/TOOLCHAIN.md`.
 
 **Revision 14 (2026-08-21)** — hosted evidence selected the Apple progressive fallback.
 

@@ -17,7 +17,7 @@ jobs:
   apple-ci:
     name: apple-ci
     runs-on: macos-26
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
