@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 27 — parity evidence now reads required checks from GitHub's protected default branch;
-revision 26 derived credential coverage from every observed header, query parameter, and form field
+**Revision:** 28 — CONF-07 absence assertions now use values captured by the receiving wire fixture;
+revision 27 moved required-check evidence to GitHub's protected default branch; revision 26 derived
+credential coverage from every observed header, query parameter, and form field
 and rejects unclassified channels; revision 25 separately observed query/form credential
 keys at the Ktor boundary; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
 a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
@@ -2178,7 +2179,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-04 | the client sends 1.16.1, the pinned server reports 1.16.1, and the compatibility rule accepts matching major/client-minor-at-or-below-server-minor versions |
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
-| CONF-07 | advertised `formPost` is used successfully; no credential appears in a request line, structured diagnostic, or `DomainError` rendering; the canary password, its derived tokens, and the exact issued salts are absent |
+| CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
 | CONF-08 | derives a closed header/query/form channel inventory from every request in the chain; rejects any unclassified channel; preserves the exact issued credentials on same-origin hops; strips credential channels and duplicate credential values across scheme, host, or port changes; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
@@ -2871,6 +2872,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 28 (2026-08-21)** — credential absence became wire-observed.
+
+1. A hosted red-proof commit rewrote CONF-07 to request observed credential values from the wire
+   fixture before that endpoint existed. The test client compiled on JVM, eleven tests executed, and
+   only CONF-07 failed; the ordinary core build stayed green.
+2. The loopback redirect fixture now retains the header/query/form channels received by its
+   `/observe` scenario and exposes credential-classified values through an in-memory observation
+   endpoint. It binds only to loopback and never logs those values.
+3. CONF-07 connects through that observer, fetches the username, tokens, and salts that the server
+   actually received, and uses those observations for every absence assertion and synthetic rendering
+   path. It no longer selects expected salts or derives expected tokens from the test fixture.
 
 **Revision 27 (2026-08-21)** — required-check evidence moved outside the gated change.
 

@@ -93,6 +93,15 @@ class RedirectState:
             observation = self.issued.get((scenario, endpoint))
             return observation[1] if observation is not None else None
 
+    def scenario_channels(self, scenario: str) -> tuple[ObservedChannel, ...]:
+        with self.lock:
+            return tuple(
+                channel
+                for (observed_scenario, _endpoint), (_method, channels) in self.issued.items()
+                if observed_scenario == scenario
+                for channel in channels
+            )
+
 
 STATE = RedirectState()
 
@@ -140,6 +149,29 @@ class RedirectHandler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self._send(200, b"ok", "text/plain")
             return
+        if parsed.path == "/observations/observe":
+            observed = tuple(
+                channel
+                for channel in STATE.scenario_channels("observe")
+                if channel.classification == "credential"
+            )
+            if not observed:
+                self._send_json(409, {"error": "no credential-bearing request was observed"})
+                return
+            self._send_json(
+                200,
+                {
+                    "channels": [
+                        {
+                            "location": channel.location,
+                            "name": channel.name,
+                            "values": list(channel.values),
+                        }
+                        for channel in observed
+                    ]
+                },
+            )
+            return
 
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b""
@@ -150,6 +182,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not self._observes_expected_channels(endpoint, channels):
                 self._send_json(500, {"error": "credential channel observation failed"})
                 return
+            STATE.remember("observe", endpoint, self.command, channels)
             self._send_json(200, envelope(endpoint))
             return
 
