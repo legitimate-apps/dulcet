@@ -1,5 +1,0 @@
-{
-  "schema_version": 1,
-  "default_branch": "main",
-  "contexts": ["apple-ci", "core-ci", "parity-gate"]
-}
