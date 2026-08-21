@@ -386,6 +386,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
         body: bytes,
     ) -> bool:
         if not self._all_channels_accounted_for(channels):
+            self._oracle_mismatch("source-unaccounted-channel", channels)
             return False
         if not self._headers_match_closed_rules(channels, body):
             return False
@@ -395,7 +396,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
         query = self._channels_at("query", channels)
         form = self._channels_at("form", channels)
         if endpoint == "getOpenSubsonicExtensions":
-            return (
+            matches = (
                 self.command == "GET"
                 and not header_authentication
                 and not query_authentication
@@ -403,6 +404,9 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 and query == {"c": ("Dulcet",), "f": ("json",), "v": ("1.16.1",)}
                 and not form
             )
+            if not matches:
+                self._oracle_mismatch("source-extension-application-channels", channels)
+            return matches
         expected_form = {
             "c": ("Dulcet",),
             "f": ("json",),
@@ -413,7 +417,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
         }
         if endpoint == "getUser":
             expected_form["username"] = ("dulcet-admin",)
-        return (
+        matches = (
             self.command == "POST"
             and not header_authentication
             and not query_authentication
@@ -423,6 +427,9 @@ class RedirectHandler(BaseHTTPRequestHandler):
             and len(form["s"]) == 1
             and len(form["t"]) == 1
         )
+        if not matches:
+            self._oracle_mismatch(f"source-{endpoint}-application-channels", channels)
+        return matches
 
     def _headers_match_closed_rules(
         self,
@@ -432,16 +439,21 @@ class RedirectHandler(BaseHTTPRequestHandler):
         headers = self._channels_at("header", channels)
         expected_authority = f"127.0.0.1:{self.server.server_port}"
         if headers.get("host") != (expected_authority,):
+            self._oracle_mismatch("source-host", channels)
             return False
         if body:
             if headers.get("content-length") != (str(len(body)),):
+                self._oracle_mismatch("source-content-length", channels)
                 return False
             if headers.get("content-type") != ("application/x-www-form-urlencoded; charset=UTF-8",):
+                self._oracle_mismatch("source-content-type", channels)
                 return False
         else:
             if "content-length" in headers and headers["content-length"] != ("0",):
+                self._oracle_mismatch("source-empty-content-length", channels)
                 return False
             if "content-type" in headers:
+                self._oracle_mismatch("source-empty-content-type", channels)
                 return False
         exact_optional = {
             "accept": {("*/*",), ("application/json",)},
@@ -450,6 +462,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
         }
         for name, permitted in exact_optional.items():
             if name in headers and headers[name] not in permitted:
+                self._oracle_mismatch(f"source-{name}", channels)
                 return False
         if "accept-encoding" in headers and not all(
             re.fullmatch(
@@ -460,6 +473,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             for value in headers["accept-encoding"]
             for token in value.split(",")
         ):
+            self._oracle_mismatch("source-accept-encoding", channels)
             return False
         if "accept-language" in headers and not all(
             len(value) <= 128 and re.fullmatch(
@@ -470,6 +484,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             )
             for value in headers["accept-language"]
         ):
+            self._oracle_mismatch("source-accept-language", channels)
             return False
         if "user-agent" in headers and not all(
             value == "Ktor client" or (
@@ -481,8 +496,29 @@ class RedirectHandler(BaseHTTPRequestHandler):
             )
             for value in headers["user-agent"]
         ):
+            self._oracle_mismatch("source-user-agent", channels)
             return False
         return True
+
+    def _oracle_mismatch(
+        self,
+        reason: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> None:
+        shape = [
+            {
+                "location": channel.location,
+                "name": channel.name,
+                "value_count": len(channel.values),
+                "value_lengths": [len(value) for value in channel.values],
+            }
+            for channel in channels
+        ]
+        print(
+            "CLOSED ORACLE MISMATCH " +
+            json.dumps({"reason": reason, "shape": shape}, separators=(",", ":")),
+            flush=True,
+        )
 
     def _channels_at(
         self,
