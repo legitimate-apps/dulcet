@@ -50,6 +50,7 @@ for marker in (
     "No existing hosted run settles that claim",
     "does not act as a forward proxy or return 407",
     "DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials",
+    "tools/conformance-env/redirect-server --forward-proxy-auth",
     "407 Proxy Authentication Required",
     "records every received `Proxy-Authorization` value",
     "zero such values and `Auth.UnsupportedAuthenticationChallenge`",
