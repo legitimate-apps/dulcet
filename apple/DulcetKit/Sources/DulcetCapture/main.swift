@@ -41,14 +41,14 @@ private enum CaptureTextSize: String {
 
 private struct CaptureOptions {
     let outputDirectory: URL
-    let states: [DulcetFixtureState]
+    let states: [DulcetPresentationState]
     let appearances: [CaptureAppearance]
     let textSize: CaptureTextSize
     let includeControl: Bool
 
     init(arguments: [String]) throws {
         var outputDirectory: URL?
-        var states = DulcetFixtureState.allCases
+        var states = DulcetPresentationState.allCases
         var appearances = CaptureAppearance.allCases
         var textSize = CaptureTextSize.standard
         var includeControl = false
@@ -66,8 +66,8 @@ private struct CaptureOptions {
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 let value = arguments[index]
                 if value == "all" {
-                    states = DulcetFixtureState.allCases
-                } else if let state = DulcetFixtureState(rawValue: value) {
+                    states = DulcetPresentationState.allCases
+                } else if let state = DulcetPresentationState(rawValue: value) {
                     states = [state]
                 } else {
                     throw CaptureError.invalidValue(argument, value)
@@ -151,6 +151,7 @@ private struct CaptureManifest: Codable {
     let widthPixels: Int
     let heightPixels: Int
     let captureSurface: String
+    let windowTitlePolicy: String
     let jpegCompression: Double
     let locale: String
     let calendar: String
@@ -211,6 +212,7 @@ private struct DulcetCaptureMain {
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
+            windowTitlePolicy: "release-name-fixture-with-state-navigation-titles",
             jpegCompression: jpegCompression,
             locale: "en_US_POSIX",
             calendar: "gregorian",
@@ -229,7 +231,7 @@ private struct DulcetCaptureMain {
 
     @MainActor
     private static func render(
-        state: DulcetFixtureState,
+        state: DulcetPresentationState,
         appearance: CaptureAppearance,
         textSize: CaptureTextSize,
         variant: DulcetRenderVariant,
@@ -240,8 +242,7 @@ private struct DulcetCaptureMain {
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
         let store = DulcetPresentationStore(
-            source: DulcetDeterministicFixture(),
-            initialState: state
+            source: DulcetDeterministicDataSource(initialState: state)
         )
         let scene = DulcetCaptureView(store: store, variant: variant)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

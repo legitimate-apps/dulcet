@@ -100,6 +100,7 @@ def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
+        "windowTitlePolicy": "release-name-fixture-with-state-navigation-titles",
         "jpegCompression": 0.72,
         "locale": "en_US_POSIX",
         "calendar": "gregorian",
@@ -114,20 +115,13 @@ def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
                 f"expected {expected_value!r}, observed {manifest.get(key)!r}"
             )
 
-    unexpected_media = sorted(
-        path.name
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in {".png", ".jpeg", ".heic", ".tiff"}
-    )
-    if unexpected_media:
+    expected_files = expected | {"manifest.json"}
+    observed_entries = {path.name for path in directory.iterdir()}
+    if observed_entries != expected_files:
         raise CaptureVerificationError(
-            f"{directory.name} contains forbidden media extensions: {unexpected_media}"
-        )
-    observed = {path.name for path in directory.glob("*.jpg")}
-    if observed != expected:
-        raise CaptureVerificationError(
-            f"{directory.name} JPEG set mismatch: "
-            f"missing={sorted(expected - observed)} unexpected={sorted(observed - expected)}"
+            f"{directory.name} exact file set mismatch: "
+            f"missing={sorted(expected_files - observed_entries)} "
+            f"unexpected={sorted(observed_entries - expected_files)}"
         )
 
     records = manifest.get("captures")

@@ -5,8 +5,7 @@ import SwiftUI
 @main
 struct DulcetMacApp: App {
     @State private var presentation = DulcetPresentationStore(
-        source: DulcetDeterministicFixture(),
-        initialState: .libraryBrowse
+        source: DulcetDeterministicDataSource(initialState: .libraryBrowse)
     )
 
     var body: some Scene {
