@@ -389,6 +389,24 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun structuralUrlRendererRejectsOutOfRangePort() {
+        assertEquals(
+            "<unrenderable-url>",
+            Redactor.redactUrl(
+                "https://music.invalid:70000/rest/ping.view?u=credential-canary",
+            ),
+        )
+    }
+
+    @Test
+    fun structuralUrlRendererRejectsUnclosedIpv6Bracket() {
+        assertEquals(
+            "<unrenderable-url>",
+            Redactor.redactUrl("https://[::1/rest/ping.view?u=credential-canary"),
+        )
+    }
+
+    @Test
     fun localHttpRequiresExplicitConsent() = runTest {
         val result = fixture().connect(allowLocalHttp = false)
         val error = assertIs<AccountConnectionResult.Failed>(
