@@ -26,5 +26,7 @@ jobs:
         run: python3 tools/test-parity-gate
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
+        env:
+          BRANCH_PROTECTION_TOKEN: ${{ secrets.BRANCH_PROTECTION_READ_TOKEN }}
       - name: Verify CI policy
         run: python3 tools/verify_ci_policy.py

@@ -14,12 +14,20 @@ from typing import Callable
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
+ACTUAL_BRANCH_PROTECTION = {
+    "strict": True,
+    "contexts": ["apple-ci", "core-ci", "parity-gate"],
+    "checks": [
+        {"context": "apple-ci", "app_id": 15368},
+        {"context": "core-ci", "app_id": 15368},
+        {"context": "parity-gate", "app_id": 15368},
+    ],
+}
 
 
 def materialize(root: Path) -> None:
     for relative in (
         "FEATURES.yml",
-        ".github/required-checks.json",
         "tools/parity_gate.py",
         "tools/verify-parity-evidence",
     ):
@@ -33,15 +41,14 @@ def materialize(root: Path) -> None:
 
 def invoke(
     root: Path,
-    branch_protection: dict[str, object] | None = None,
+    branch_protection: dict[str, object] = ACTUAL_BRANCH_PROTECTION,
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment.pop("GITHUB_BASE_REF", None)
     environment.pop("GITHUB_ACTIONS", None)
-    if branch_protection is not None:
-        fixture = root / "branch-protection.json"
-        fixture.write_text(json.dumps(branch_protection))
-        environment["DULCET_BRANCH_PROTECTION_FIXTURE"] = str(fixture)
+    fixture = root / "branch-protection.json"
+    fixture.write_text(json.dumps(branch_protection))
+    environment["DULCET_BRANCH_PROTECTION_FIXTURE"] = str(fixture)
     return subprocess.run(
         [sys.executable, "tools/parity_gate.py"],
         cwd=root,
@@ -93,8 +100,12 @@ def macos_evidence(document: dict[str, object]) -> dict[str, str]:
 
 def declare_core_build_required(root: Path) -> None:
     declaration = root / ".github/required-checks.json"
-    document = json.loads(declaration.read_text())
-    document["contexts"].append("core-build")
+    declaration.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema_version": 1,
+        "default_branch": "main",
+        "contexts": ["apple-ci", "core-ci", "parity-gate", "core-build"],
+    }
     declaration.write_text(json.dumps(document, indent=2) + "\n")
 
     workflow = root / ".github/workflows/core-ci.yml"
@@ -139,7 +150,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-gate-") as directory:
 expect_rejection(
     "existing but non-required job",
     lambda document: macos_evidence(document).update(workflow="core-ci", job="core-build"),
-    "evidence job is not a required status check",
+    "evidence job is not required by branch protection",
 )
 expect_rejection(
     "missing workflow and job",
@@ -168,16 +179,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-protection-") as director
         ),
     )
     declare_core_build_required(root)
-    actual_protection = {
-        "strict": True,
-        "contexts": ["apple-ci", "core-ci", "parity-gate"],
-        "checks": [
-            {"context": "apple-ci", "app_id": 15368},
-            {"context": "core-ci", "app_id": 15368},
-            {"context": "parity-gate", "app_id": 15368},
-        ],
-    }
-    result = invoke(root, branch_protection=actual_protection)
+    result = invoke(root)
     expected = "evidence job is not required by branch protection"
     if result.returncode == 0 or expected not in result.stdout:
         raise AssertionError(

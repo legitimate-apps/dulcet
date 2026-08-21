@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 26 — credential coverage is derived from every observed header, query parameter, and
-form field and rejects unclassified channels; revision 25 separately observed query/form credential
+**Revision:** 27 — parity evidence now reads required checks from GitHub's protected default branch;
+revision 26 derived credential coverage from every observed header, query parameter, and form field
+and rejects unclassified channels; revision 25 separately observed query/form credential
 keys at the Ktor boundary; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
 a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
 job's JUnit results; revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
@@ -1937,8 +1938,10 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
 the number afterwards produces a commit nobody verified. Evidence is therefore
 `{workflow, job, test}` — knowable at commit time. The static gate asserts that (a) the named workflow
-and job exist, (b) the named test exists in the repo, (c) the job is a **required check** on the
-default branch, and (d) the named job invokes the executed-evidence verifier. During that same job,
+and job exist, (b) the named test exists in the repo, (c) GitHub's branch-protection API reports the
+job as a **required check** on the repository's API-reported default branch, and (d) the named job
+invokes the executed-evidence verifier. The required-check set is never read from a repository file:
+such a declaration is editable by the same pull request it would purport to gate. During that same job,
 after the named test task, the verifier reads the test runner's JUnit XML and requires the exact
 class/method testcase to be present, executed, unskipped, and passing. A source method, log line,
 invented job label, or tuple alone is not evidence. The required check therefore proves both that the
@@ -2024,6 +2027,14 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
 3. **Referential integrity.** Every `spec:` anchor resolves to a real heading in this document; every
    `conformance:` id exists in `docs/CONFORMANCE.md`; every `blocked_by` id exists.
 4. **Schema validity.** Unknown keys, statuses or platform names fail.
+
+The parity job reads classic branch protection through GitHub's REST API using a repository secret
+with Administration read access. The API credential and response are outside the pull request's
+control. Missing credentials, API errors, malformed responses, duplicate contexts, or disagreement
+between the API's `contexts` and app-bound `checks` forms all fail the job. Test fixtures are accepted
+only outside GitHub Actions; fixture mode in Actions is itself a failure. Pull requests from forks do
+not receive the repository secret and therefore fail closed rather than accepting self-declared
+required checks.
 
 There is no source-annotation scheme. (Revision 1 floated one as a "phase 2 extension"; naming it
 invited building an annotation framework before the basic evidence cycle worked.)
@@ -2860,6 +2871,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 27 (2026-08-21)** — required-check evidence moved outside the gated change.
+
+1. A hosted negative control changed the repository declaration to call `core-build` required, wired
+   that job to the evidence verifier, and named it from `FEATURES.yml`. The old gate returned valid
+   even though GitHub did not require that context, so the mutation test failed the parity job.
+2. The editable declaration was deleted. The production gate now asks GitHub for the repository's
+   default branch, then reads that branch's classic required-status-check protection. Evidence jobs
+   are compared only with the API response.
+3. The response must contain unique, agreeing `contexts` and app-bound `checks` sets. Missing access,
+   transport failures, malformed JSON, missing required-check configuration, and disagreement fail
+   closed.
+4. Mutation tests use a branch-protection fixture only after removing the Actions environment marker.
+   The production gate rejects fixture mode whenever GitHub Actions is present.
 
 **Revision 26 (2026-08-21)** — request-channel coverage became fail-closed.
 
