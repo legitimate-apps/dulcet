@@ -30,8 +30,12 @@ configuration, logs, and music directories. The environment contract is one root
 process per conformance test class. Reusing a data directory is not supported, so play counts,
 playlists, favourites, queues, and users cannot leak between classes.
 
-The current PR has no CONF-xx tests. Its `linux-self-check` and `darwin-self-check` roots exercise the
-same creation path that future test classes use.
+**This is not yet a CI-enforced per-class property.** The current PR has no CONF-xx classes, and
+`new-class-root` is a utility rather than a test-runner hook. Its `linux-self-check` and
+`darwin-self-check` callers each prove one isolated root and a fresh-admin bootstrap. Every future
+Phase 1 test-class fixture must call this utility, start its own Navidrome process from that root, run
+the fail-loud health check, and tear the process down. The reset claim becomes enforced only when the
+class runner owns that lifecycle; until then it is a normative caller contract.
 
 ## Generated corpus
 

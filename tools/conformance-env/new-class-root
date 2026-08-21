@@ -8,7 +8,10 @@ import uuid
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create a fresh Navidrome root so each conformance class starts with a new database."
+        description=(
+            "Create one fresh Navidrome root. The future conformance class runner must invoke this "
+            "utility once per class; this utility cannot enforce its callers' lifecycle."
+        )
     )
     parser.add_argument("--parent", required=True)
     parser.add_argument("--label", required=True)
@@ -24,7 +27,7 @@ def main() -> None:
     root.mkdir(mode=0o700)
     for name in ("cache", "config", "data", "logs", "music"):
         (root / name).mkdir()
-    (root / ".dulcet-conformance-root").write_text("fresh-per-test-class\n")
+    (root / ".dulcet-conformance-root").write_text("isolated-root\n")
     print(root)
 
 
