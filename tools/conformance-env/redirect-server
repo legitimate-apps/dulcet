@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Disposable redirect-policy server for account-connect conformance tests."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+
+
+AUTHENTICATION_KEYS = {"u", "t", "s", "p"}
+
+
+class RedirectState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.issued: dict[tuple[str, str], tuple[str, str, bytes]] = {}
+
+    def remember(self, scenario: str, endpoint: str, method: str, query: str, body: bytes) -> None:
+        with self.lock:
+            self.issued[(scenario, endpoint)] = (method, query, body)
+
+    def matches(self, scenario: str, endpoint: str, method: str, query: str, body: bytes) -> bool:
+        with self.lock:
+            return self.issued.get((scenario, endpoint)) == (method, query, body)
+
+
+STATE = RedirectState()
+
+
+def envelope(endpoint: str) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": "ok",
+        "version": "1.16.1",
+    }
+    if endpoint == "getOpenSubsonicExtensions":
+        payload["openSubsonicExtensions"] = [{"name": "formPost", "versions": [1]}]
+    elif endpoint == "ping":
+        payload.update(
+            {
+                "openSubsonic": True,
+                "type": "redirect-conformance",
+                "serverVersion": "1.0.0",
+            }
+        )
+    elif endpoint == "getUser":
+        payload["user"] = {
+            "downloadRole": True,
+            "playlistRole": True,
+            "shareRole": False,
+            "jukeboxRole": False,
+            "adminRole": True,
+        }
+    return {"subsonic-response": payload}
+
+
+class RedirectHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._handle()
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._handle()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _handle(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path == "/health":
+            self._send(200, b"ok", "text/plain")
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b""
+        endpoint = parsed.path.rsplit("/", 1)[-1].removesuffix(".view")
+
+        if parsed.path.startswith("/same/rest/"):
+            STATE.remember("same", endpoint, self.command, parsed.query, body)
+            self._redirect(f"/same-target/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/same-target/rest/"):
+            if not STATE.matches("same", endpoint, self.command, parsed.query, body):
+                self._send_json(500, {"error": "same-origin request changed across redirect"})
+                return
+            if endpoint != "getOpenSubsonicExtensions" and not self._has_form_authentication(body):
+                self._send_json(500, {"error": "same-origin credentials were not preserved"})
+                return
+            self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/cross/rest/"):
+            STATE.remember("cross", endpoint, self.command, parsed.query, body)
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/cross-target/rest/"):
+            if self._has_authentication(parsed.query, body):
+                self._send_json(500, {"error": "credentials crossed an origin boundary"})
+                return
+            if endpoint == "getOpenSubsonicExtensions":
+                self._send_json(200, envelope(endpoint))
+            else:
+                self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+
+        if parsed.path.startswith("/loop/"):
+            parts = parsed.path.split("/")
+            hop = int(parts[2][1:]) if len(parts) > 2 and parts[2].startswith("r") else 0
+            self._redirect(f"/loop/r{hop + 1}/rest/{endpoint}.view")
+            return
+
+        self._send_json(404, {"error": "unknown conformance route"})
+
+    def _has_form_authentication(self, body: bytes) -> bool:
+        form = parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True)
+        return {"u", "t", "s"}.issubset(form)
+
+    def _has_authentication(self, query: str, body: bytes) -> bool:
+        query_keys = set(parse_qs(query, keep_blank_values=True))
+        form_keys = set(parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True))
+        return bool(AUTHENTICATION_KEYS & (query_keys | form_keys))
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(307)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _send_json(self, status: int, value: object) -> None:
+        self._send(status, json.dumps(value, separators=(",", ":")).encode(), "application/json")
+
+    def _send(self, status: int, body: bytes, content_type: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=4540)
+    parser.add_argument("--target-port", type=int, default=4541)
+    args = parser.parse_args()
+
+    source = ThreadingHTTPServer(("127.0.0.1", args.port), RedirectHandler)
+    target = ThreadingHTTPServer(("127.0.0.1", args.target_port), RedirectHandler)
+    source.target_port = args.target_port  # type: ignore[attr-defined]
+    target.target_port = args.target_port  # type: ignore[attr-defined]
+    target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+    try:
+        source.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        source.server_close()
+        target.shutdown()
+        target.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

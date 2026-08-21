@@ -7,7 +7,7 @@
       "title": "Connect an OpenSubsonic server",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
       "gates": ["protocol:subsonic-1.16.1"],
-      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07"],
+      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08"],
       "platforms": {
         "macos": {
           "status": "partial",
@@ -16,7 +16,7 @@
             "job": "apple-ci",
             "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"
           },
-          "reason": "CONF-01..07 prove the macOS core and Darwin transport; account UI and credential persistence are not wired."
+          "reason": "CONF-01..08 prove the macOS core and Darwin transport; account UI and credential persistence are not wired."
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}

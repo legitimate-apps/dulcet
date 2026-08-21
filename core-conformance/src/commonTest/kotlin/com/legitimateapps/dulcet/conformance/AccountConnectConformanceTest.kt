@@ -9,6 +9,8 @@ import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.LogSink
 import com.legitimateapps.dulcet.core.RequestObservationBoundary
+import com.legitimateapps.dulcet.core.RedirectPolicyDecision
+import com.legitimateapps.dulcet.core.RedirectRejectionReason
 import com.legitimateapps.dulcet.core.SaltSource
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -40,16 +42,21 @@ class AccountConnectConformanceTest {
         return Fixture(connector, password, logs)
     }
 
-    private suspend fun Fixture.connect(): AccountConnectionResult = connector.connect(
+    private suspend fun Fixture.connect(
+        serverUrl: String = conformanceBaseUrl(),
+    ): AccountConnectionResult = connector.connect(
         AccountConnectionRequest(
-            serverUrl = conformanceBaseUrl(),
+            serverUrl = serverUrl,
             username = ADMIN_USER,
             password = password,
         )
     )
 
-    private suspend fun Fixture.requireConnected(confId: String): ConnectedAccount {
-        val result = connect()
+    private suspend fun Fixture.requireConnected(
+        confId: String,
+        serverUrl: String = conformanceBaseUrl(),
+    ): ConnectedAccount {
+        val result = connect(serverUrl)
         return assertIs<AccountConnectionResult.Connected>(
             result,
             "$confId: deterministic server preconditions passed, but account.connect production behavior is absent: $result",
@@ -212,10 +219,69 @@ class AccountConnectConformanceTest {
         }
     }
 
+    @Test
+    fun conf08EnforcesRedirectCredentialPolicy() = runTest {
+        val redirectRoot = redirectConformanceRoot()
+        val sameOrigin = fixture().requireConnected("CONF-08", "$redirectRoot/same")
+        val sameOriginPairs = sameOrigin.requests.groupBy { it.endpoint }
+
+        assertEquals(
+            setOf("getOpenSubsonicExtensions", "ping", "getUser"),
+            sameOriginPairs.keys,
+        )
+        sameOriginPairs.forEach { (endpoint, pair) ->
+            assertEquals(2, pair.size, "CONF-08 expected one redirect for $endpoint")
+            assertEquals(pair[0].method, pair[1].method)
+            assertEquals(pair[0].authenticationLocation, pair[1].authenticationLocation)
+            assertEquals(pair[0].saltFingerprint, pair[1].saltFingerprint)
+        }
+        assertTrue(
+            sameOriginPairs.getValue("ping").all {
+                it.authenticationLocation == AuthenticationLocation.FormBody
+            },
+        )
+
+        val crossOrigin = fixture().connect("$redirectRoot/cross")
+        val credentialLoss = assertIs<DomainError.Auth.RedirectCredentialLoss>(
+            assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
+        )
+        assertFalse(credentialLoss.redactedUrl.value.contains('?'))
+
+        val redirectLoop = fixture().connect("$redirectRoot/loop")
+        val loopRejection = assertIs<DomainError.Security.RedirectRejected>(
+            assertIs<AccountConnectionResult.Failed>(redirectLoop).error,
+        )
+        assertEquals(RedirectRejectionReason.TooManyRedirects, loopRejection.reason)
+
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.HttpsDowngrade),
+            AccountConnectionContract.redirectDecision(
+                currentUrl = "https://127.0.0.1/rest/ping.view",
+                targetUrl = "http://127.0.0.1/rest/ping.view",
+                redirectsAlreadyFollowed = 0,
+            ),
+        )
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.LocalToPublic),
+            AccountConnectionContract.redirectDecision(
+                currentUrl = "http://127.0.0.1/rest/ping.view",
+                targetUrl = "https://music.invalid/rest/ping.view",
+                redirectsAlreadyFollowed = 0,
+            ),
+        )
+    }
+
     private fun conformanceBaseUrl(): String =
         requiredEnvironment("DULCET_CONFORMANCE_BASE_URL").also { baseUrl ->
             check(baseUrl == "http://127.0.0.1:4533") {
                 "conformance suite is restricted to the disposable loopback server, observed: $baseUrl"
+            }
+        }
+
+    private fun redirectConformanceRoot(): String =
+        requiredEnvironment("DULCET_REDIRECT_CONFORMANCE_ROOT").also { root ->
+            check(root == "http://127.0.0.1:4540") {
+                "redirect suite is restricted to the disposable loopback server, observed: $root"
             }
         }
 

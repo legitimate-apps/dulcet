@@ -6,7 +6,7 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 19 — CONF-01 through CONF-07 now execute on JVM and macOS against the pinned reference
+**Revision:** 20 — CONF-01 through CONF-08 now execute on JVM and macOS against the pinned reference
 server, with preserved behavior-absent red evidence before the production connector. Revision 18
 narrowed the Phase-2 evidence claims to their measured boundary. Revision 17 gave the macOS
 design-capture boundary measured framing evidence and rejects a translated or resized AppKit theme
@@ -2129,6 +2129,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | mappings for every error the harness can trigger, **plus** an unknown code round-tripping to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; no credential appears in a request line, structured diagnostic, or `DomainError` rendering; the canary password, its derived tokens, and the exact issued salts are absent |
+| CONF-08 | account connection follows at most five redirects; preserves the exact issued credentials on same-origin hops; strips them across scheme, host, or port changes; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2737,7 +2738,7 @@ compiles.
 | phase | deliverable | exit criteria |
 |---|---|---|
 | **0** | spec approved; toolchain matrix (§4.4) **incl. the pinned ffmpeg**; dependency licence audit; **public** repo scaffold; CI skeleton; branch protection + `CODEOWNERS` + required checks per §19.3; `docs/APP-REVIEW-NOTES.md` (§23.4); `FEATURES.yml` seeded at `planned`; `apple-ci` timeout calibrated from one real run (§21.1) | `core-ci` and `parity-gate` green on an empty core; both OS-floor settings (§4.1) asserted by a CI check |
-| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync, the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..07, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
+| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync, the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..08, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
 | **2** | **macOS app**, TestFlight | **Signing dry run first, and its job is narrow: prove CREATE permission** (register `com.legitimateapps.dulcet`, create the App ID, generate a profile) **and prove the sandbox entitlements**, by archiving a *sandboxed* hello-world that declares `com.apple.security.network.client` and writes into its container (§23.1, §23.3). macOS submission itself is already proven on this team and is not re-established here. Then: browse, search, play, queue, scrobble, offline **metadata** cache; installed from TestFlight on a real Mac and driven end to end. **No media downloads in Phase 2** — offline means the library browses, not that it plays offline |
 | **3** | iOS + iPadOS; **media downloads on all three Apple surfaces** | background download and background playback observed on a real device; iPad evidence from an iPad job, not an iPhone one |
 | **4** | Android phone/tablet | Media3 engine parity; parser-parity and wire-pathology green on every target |
