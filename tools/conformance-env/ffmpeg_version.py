@@ -2,8 +2,6 @@
 
 """Parse and exactly verify the version token in an ffmpeg banner."""
 
-import argparse
-
 
 def parse_ffmpeg_version(line: str) -> str:
     fields = line.split()
@@ -17,19 +15,3 @@ def require_ffmpeg_version(line: str, expected: str) -> str:
     if observed != expected:
         raise ValueError(f"ffmpeg version mismatch: expected {expected}, observed {observed}")
     return observed
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected", required=True)
-    parser.add_argument("--banner", required=True)
-    args = parser.parse_args()
-    observed = require_ffmpeg_version(args.banner, args.expected)
-    print(f"ffmpeg version gate PASS expected={args.expected} observed={observed}")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except ValueError as error:
-        raise SystemExit(str(error)) from error

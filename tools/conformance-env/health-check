@@ -504,14 +504,6 @@ def main() -> None:
             "OBSERVED transcode_decision expected_can_transcode=true "
             f"observed_can_transcode={str(observed_can_transcode).lower()}"
         ),
-        (
-            f"OBSERVED corpus_files expected=313 observed={manifest['generated_media_files']} "
-            f"expected_format_tokens={compact_json(expected_format_tokens)} "
-            f"observed_format_names={compact_json(derived_observed_format_names)} "
-            f"paging_id3_observed={manifest['awkward_cases']['paging_album']['tracks_id3_verified']} "
-            f"paging_ffprobe_observed={compact_json(manifest['awkward_cases']['paging_album']['ffprobe_verified_tracks'])} "
-            f"thresholds_observed={compact_json(manifest['awkward_cases']['threshold_durations_seconds'])}"
-        ),
     ]
     print(f"CONFORMANCE PRECONDITIONS PASS evidence_lines={len(lines)}")
     for line in lines:
