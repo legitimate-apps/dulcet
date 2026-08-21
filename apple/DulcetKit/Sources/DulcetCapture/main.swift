@@ -152,6 +152,12 @@ private struct CaptureManifest: Codable {
     let captures: [CaptureRecord]
 }
 
+private final class CaptureWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+}
+
 @main
 private struct DulcetCaptureMain {
     private static let width = 1180
@@ -265,7 +271,7 @@ private struct DulcetCaptureMain {
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let window = NSWindow(
+        let window = CaptureWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
