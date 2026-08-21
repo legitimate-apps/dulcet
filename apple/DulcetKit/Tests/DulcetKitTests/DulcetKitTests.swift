@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import DulcetKit
 
@@ -95,6 +96,24 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
     #expect(store.selectedDestination == .library)
 }
 
+@Test @MainActor
+func customSemanticColorsMeetWCAGAAInBothAppearances() throws {
+    let foregrounds = [
+        DulcetContrastColor.accent,
+        DulcetContrastColor.offline,
+        DulcetContrastColor.danger,
+    ]
+
+    for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+        let appearance = try #require(NSAppearance(named: appearanceName))
+        let background = try resolved(NSColor.windowBackgroundColor, appearance: appearance)
+        for foreground in foregrounds {
+            let resolvedForeground = try resolved(foreground, appearance: appearance)
+            #expect(contrastRatio(resolvedForeground, background) >= 4.5)
+        }
+    }
+}
+
 @MainActor
 private final class PushingTestDataSource: DulcetDataSource {
     private var handler: (@MainActor (DulcetSnapshot) -> Void)?
@@ -114,4 +133,31 @@ private final class PushingTestDataSource: DulcetDataSource {
         currentSnapshot = snapshot
         handler?(snapshot)
     }
+}
+
+private func contrastRatio(_ first: NSColor, _ second: NSColor) -> Double {
+    let lighter = max(relativeLuminance(first), relativeLuminance(second))
+    let darker = min(relativeLuminance(first), relativeLuminance(second))
+    return (lighter + 0.05) / (darker + 0.05)
+}
+
+private func resolved(_ color: NSColor, appearance: NSAppearance) throws -> NSColor {
+    var resolvedColor: NSColor?
+    appearance.performAsCurrentDrawingAppearance {
+        resolvedColor = color.usingColorSpace(.sRGB)
+    }
+    return try #require(resolvedColor)
+}
+
+private func relativeLuminance(_ color: NSColor) -> Double {
+    guard let rgb = color.usingColorSpace(.sRGB) else { return 0 }
+    func linear(_ component: CGFloat) -> Double {
+        let value = Double(component)
+        return value <= 0.04045
+            ? value / 12.92
+            : pow((value + 0.055) / 1.055, 2.4)
+    }
+    return 0.2126 * linear(rgb.redComponent)
+        + 0.7152 * linear(rgb.greenComponent)
+        + 0.0722 * linear(rgb.blueComponent)
 }
