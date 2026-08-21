@@ -1,0 +1,164 @@
+#if os(macOS)
+import AppKit
+import SwiftUI
+
+enum DulcetSpacing {
+    static let xxs: CGFloat = 4
+    static let xs: CGFloat = 8
+    static let sm: CGFloat = 12
+    static let md: CGFloat = 16
+    static let lg: CGFloat = 24
+    static let xl: CGFloat = 32
+    static let xxl: CGFloat = 44
+}
+
+enum DulcetMetrics {
+    static let sidebarMinWidth: CGFloat = 210
+    static let artworkCornerRadius: CGFloat = 12
+    static let captureWidth: CGFloat = 1180
+    static let captureHeight: CGFloat = 760
+}
+
+extension Color {
+    static let dulcetAccent = Color(red: 0.20, green: 0.34, blue: 0.78)
+    static let dulcetOffline = Color(red: 0.72, green: 0.42, blue: 0.08)
+    static let dulcetDanger = Color(red: 0.72, green: 0.14, blue: 0.18)
+    static let dulcetWindow = Color(nsColor: .windowBackgroundColor)
+    static let dulcetControl = Color(nsColor: .controlBackgroundColor)
+    static let dulcetSeparator = Color(nsColor: .separatorColor)
+}
+
+struct DulcetArtworkView: View {
+    let artwork: DulcetArtwork
+    let size: CGFloat
+    var muted = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: artwork.palette.colors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            Circle()
+                .fill(.white.opacity(0.18))
+                .frame(width: size * 0.72, height: size * 0.72)
+                .offset(x: size * 0.22, y: -size * 0.20)
+
+            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
+                .fill(.black.opacity(0.16))
+                .frame(width: size * 0.68, height: size * 0.22)
+                .rotationEffect(.degrees(artwork.rotation))
+                .offset(x: -size * 0.16, y: size * 0.20)
+
+            Image(systemName: artwork.symbolName)
+                .font(.system(size: max(18, size * 0.23), weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.white.opacity(0.94))
+                .accessibilityHidden(true)
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
+                .stroke(.white.opacity(0.16), lineWidth: 1)
+        }
+        .saturation(muted ? 0.28 : 1)
+        .accessibilityHidden(true)
+    }
+}
+
+struct DulcetStatusDot: View {
+    let color: Color
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .overlay(Circle().stroke(.white.opacity(0.45), lineWidth: 1))
+            .accessibilityHidden(true)
+    }
+}
+
+struct DulcetSourceBadge: View {
+    let source: DulcetSearchSource
+
+    var body: some View {
+        Label(title, systemImage: symbol)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, DulcetSpacing.xs)
+            .padding(.vertical, DulcetSpacing.xxs)
+            .background(foreground.opacity(0.11), in: Capsule())
+            .accessibilityLabel(title)
+    }
+
+    private var title: String {
+        switch source {
+        case .local: DulcetStrings.local
+        case .server: DulcetStrings.server
+        case .localAndServer: DulcetStrings.localAndServer
+        }
+    }
+
+    private var symbol: String {
+        switch source {
+        case .local: "laptopcomputer"
+        case .server: "server.rack"
+        case .localAndServer: "arrow.triangle.2.circlepath"
+        }
+    }
+
+    private var foreground: Color {
+        switch source {
+        case .local: .secondary
+        case .server: .dulcetAccent
+        case .localAndServer: .purple
+        }
+    }
+}
+
+extension DulcetArtworkPalette {
+    var colors: [Color] {
+        switch self {
+        case .indigoCoral: [Color(red: 0.18, green: 0.24, blue: 0.55), Color(red: 0.89, green: 0.34, blue: 0.34)]
+        case .mossGold: [Color(red: 0.16, green: 0.34, blue: 0.28), Color(red: 0.84, green: 0.62, blue: 0.18)]
+        case .plumIce: [Color(red: 0.38, green: 0.18, blue: 0.46), Color(red: 0.43, green: 0.72, blue: 0.83)]
+        case .oceanMint: [Color(red: 0.08, green: 0.34, blue: 0.52), Color(red: 0.36, green: 0.78, blue: 0.62)]
+        case .emberRose: [Color(red: 0.46, green: 0.16, blue: 0.12), Color(red: 0.90, green: 0.41, blue: 0.57)]
+        case .duskLavender: [Color(red: 0.15, green: 0.18, blue: 0.35), Color(red: 0.64, green: 0.49, blue: 0.82)]
+        case .slateApricot: [Color(red: 0.23, green: 0.29, blue: 0.34), Color(red: 0.91, green: 0.58, blue: 0.35)]
+        case .tealSun: [Color(red: 0.03, green: 0.39, blue: 0.40), Color(red: 0.90, green: 0.73, blue: 0.18)]
+        }
+    }
+}
+
+private extension DulcetArtwork {
+    var rotation: Double {
+        let value = seed.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % 31 }
+        return Double(value - 15)
+    }
+
+    var symbolName: String {
+        let symbols = ["waveform", "music.note", "dot.radiowaves.left.and.right", "circle.hexagongrid"]
+        let value = seed.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % symbols.count }
+        return symbols[value]
+    }
+}
+
+extension Int {
+    var dulcetDuration: String {
+        let hours = self / 3600
+        let minutes = (self % 3600) / 60
+        let seconds = self % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+#endif
