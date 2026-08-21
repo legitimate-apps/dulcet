@@ -24,12 +24,7 @@ public final class DulcetPresentationStore {
     @ObservationIgnored private var isApplyingSourceSnapshot = false
 
     public private(set) var snapshot: DulcetSnapshot
-    public var selectedDestination: DulcetSidebarDestination {
-        didSet {
-            guard !isApplyingSourceSnapshot, selectedDestination != oldValue else { return }
-            source.send(.selectDestination(selectedDestination))
-        }
-    }
+    public private(set) var selectedDestination: DulcetSidebarDestination
     public var searchQuery: String {
         didSet {
             guard !isApplyingSourceSnapshot, searchQuery != oldValue else { return }
@@ -47,6 +42,12 @@ public final class DulcetPresentationStore {
         source.setSnapshotHandler { [weak self] snapshot in
             self?.receive(snapshot)
         }
+    }
+
+    public func selectDestination(_ destination: DulcetSidebarDestination) {
+        guard !isApplyingSourceSnapshot else { return }
+        selectedDestination = destination
+        source.send(.selectDestination(destination))
     }
 
     private func receive(_ snapshot: DulcetSnapshot) {
