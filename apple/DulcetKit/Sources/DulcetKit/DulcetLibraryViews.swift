@@ -24,7 +24,7 @@ struct DulcetEmptyLibraryView: View {
                     .lineLimit(nil)
                 Text(DulcetStrings.firstRunBody)
                     .font(.title3)
-                    .foregroundStyle(Color.dulcetSecondaryText)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
                     .frame(maxWidth: 560)
@@ -34,7 +34,7 @@ struct DulcetEmptyLibraryView: View {
                 Button(DulcetStrings.connectServer, systemImage: "plus") {}
                     .buttonStyle(.borderedProminent)
                     .tint(.dulcetPrimaryActionFill)
-                    .foregroundStyle(Color.dulcetPrimaryActionLabel)
+                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.connectServer)
 
@@ -45,7 +45,7 @@ struct DulcetEmptyLibraryView: View {
 
             Text(DulcetStrings.firstRunFootnote)
                 .font(.footnote)
-                .foregroundStyle(Color.dulcetSecondaryText)
+                .dulcetForeground(.secondaryTextOnWindow)
                 .multilineTextAlignment(.center)
                 .lineLimit(nil)
                 .frame(maxWidth: 520)
@@ -142,7 +142,7 @@ struct DulcetLibraryHeader: View {
                 Button(DulcetStrings.playAll, systemImage: "play.fill") {}
                     .buttonStyle(.borderedProminent)
                     .tint(.dulcetPrimaryActionFill)
-                    .foregroundStyle(Color.dulcetPrimaryActionLabel)
+                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.playAll)
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
@@ -212,7 +212,7 @@ struct DulcetTrackRow: View {
                 Group {
                     if offline {
                         Image(systemName: "cloud.slash")
-                            .foregroundStyle(Color.dulcetOffline)
+                            .dulcetForeground(.offlineLabelOnWindow)
                     } else {
                         Text(String(index))
                             .font(.caption.monospacedDigit())
@@ -240,7 +240,7 @@ struct DulcetTrackRow: View {
                 if offline {
                     Text(DulcetStrings.offlineUnavailable)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.dulcetOffline)
+                        .dulcetForeground(.offlineLabelOnWindow)
                         .lineLimit(nil)
                 } else {
                     Text(track.durationSeconds.dulcetDuration)

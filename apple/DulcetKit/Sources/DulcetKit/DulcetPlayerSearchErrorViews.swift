@@ -101,7 +101,7 @@ struct DulcetNowPlayingView: View {
                 Button(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: player.isPlaying ? "pause.fill" : "play.fill") {}
                     .buttonStyle(.borderedProminent)
                     .tint(.dulcetPrimaryActionFill)
-                    .foregroundStyle(Color.dulcetPrimaryActionLabel)
+                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .controlSize(.large)
                     .font(.title2)
                     .keyboardShortcut(.space, modifiers: [])
@@ -341,7 +341,7 @@ struct DulcetTLSUntrustedView: View {
                     }
                         .buttonStyle(.borderedProminent)
                         .tint(.dulcetPrimaryActionFill)
-                        .foregroundStyle(Color.dulcetPrimaryActionLabel)
+                        .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
                     Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}
@@ -365,7 +365,7 @@ struct DulcetTLSUntrustedView: View {
             Image(systemName: "exclamationmark.shield.fill")
                 .font(.system(size: 32, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Color.dulcetDanger)
+                .dulcetForeground(.dangerIconOnWindow)
                 .accessibilityHidden(true)
         }
     }

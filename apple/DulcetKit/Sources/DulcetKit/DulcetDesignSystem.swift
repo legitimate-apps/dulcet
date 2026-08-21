@@ -76,6 +76,87 @@ enum DulcetContrastColor {
     }
 }
 
+enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
+    case primaryButtonLabelOnPrimaryActionFill = "primary-button-label/primary-action-fill"
+    case selectedSidebarLabelOnSelectionFill = "selected-sidebar-label/selection-fill"
+    case secondaryTextOnWindow = "secondary-text/window"
+    case offlineLabelOnWindow = "offline-label/window"
+    case dangerIconOnWindow = "danger-icon/window"
+    case localSourceLabelOnTint = "local-source-label/local-source-tint"
+    case serverSourceLabelOnTint = "server-source-label/server-source-tint"
+    case combinedSourceLabelOnTint = "combined-source-label/combined-source-tint"
+
+    var foreground: Color {
+        switch self {
+        case .primaryButtonLabelOnPrimaryActionFill:
+            .dulcetPrimaryActionLabel
+        case .selectedSidebarLabelOnSelectionFill:
+            .primary
+        case .secondaryTextOnWindow, .localSourceLabelOnTint:
+            .dulcetSecondaryText
+        case .offlineLabelOnWindow:
+            .dulcetOffline
+        case .dangerIconOnWindow:
+            .dulcetDanger
+        case .serverSourceLabelOnTint:
+            .dulcetAccent
+        case .combinedSourceLabelOnTint:
+            .purple
+        }
+    }
+
+    /// Ordered back-to-front to match the pixels under the rendered foreground.
+    var backgroundLayers: [Color] {
+        switch self {
+        case .primaryButtonLabelOnPrimaryActionFill:
+            [.dulcetWindow, .dulcetPrimaryActionFill]
+        case .selectedSidebarLabelOnSelectionFill:
+            [.dulcetWindow, .dulcetSelectionBackground]
+        case .secondaryTextOnWindow, .offlineLabelOnWindow, .dangerIconOnWindow:
+            [.dulcetWindow]
+        case .localSourceLabelOnTint, .serverSourceLabelOnTint, .combinedSourceLabelOnTint:
+            [.dulcetWindow, .dulcetControl.opacity(0.52), foreground.opacity(0.11)]
+        }
+    }
+
+    var immediateBackground: Color {
+        backgroundLayers[backgroundLayers.index(before: backgroundLayers.endIndex)]
+    }
+
+    var minimumRatio: Double {
+        switch self {
+        case .dangerIconOnWindow:
+            3.0
+        default:
+            4.5
+        }
+    }
+}
+
+private struct DulcetRenderedContrastPairPreferenceKey: PreferenceKey {
+    static let defaultValue: Set<DulcetRenderedContrastPair> = []
+
+    static func reduce(
+        value: inout Set<DulcetRenderedContrastPair>,
+        nextValue: () -> Set<DulcetRenderedContrastPair>
+    ) {
+        value.formUnion(nextValue())
+    }
+}
+
+extension View {
+    func dulcetForeground(_ pair: DulcetRenderedContrastPair) -> some View {
+        foregroundStyle(pair.foreground)
+            .preference(key: DulcetRenderedContrastPairPreferenceKey.self, value: [pair])
+    }
+
+    func onDulcetRenderedContrastPairs(
+        perform action: @escaping (Set<DulcetRenderedContrastPair>) -> Void
+    ) -> some View {
+        onPreferenceChange(DulcetRenderedContrastPairPreferenceKey.self, perform: action)
+    }
+}
+
 struct DulcetArtworkView: View {
     let artwork: DulcetArtwork
     let size: CGFloat
@@ -138,10 +219,10 @@ struct DulcetSourceBadge: View {
     var body: some View {
         Label(title, systemImage: symbol)
             .font(.caption.weight(.medium))
-            .foregroundStyle(foreground)
+            .dulcetForeground(contrastPair)
             .padding(.horizontal, DulcetSpacing.xs)
             .padding(.vertical, DulcetSpacing.xxs)
-            .background(foreground.opacity(0.11), in: Capsule())
+            .background(contrastPair.immediateBackground, in: Capsule())
             .accessibilityLabel(title)
     }
 
@@ -161,11 +242,11 @@ struct DulcetSourceBadge: View {
         }
     }
 
-    private var foreground: Color {
+    private var contrastPair: DulcetRenderedContrastPair {
         switch source {
-        case .local: .dulcetSecondaryText
-        case .server: .dulcetAccent
-        case .localAndServer: .purple
+        case .local: .localSourceLabelOnTint
+        case .server: .serverSourceLabelOnTint
+        case .localAndServer: .combinedSourceLabelOnTint
         }
     }
 }

@@ -143,63 +143,49 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 @Test @MainActor
 func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
-        let pairs = [
-            RenderedContrastRequirement(
-                name: "primary-button-label/primary-action-fill",
-                foreground: .dulcetPrimaryActionLabel,
-                background: .dulcetPrimaryActionFill,
-                minimum: 4.5
-            ),
-            RenderedContrastRequirement(
-                name: "selected-sidebar-label/selection-fill",
-                foreground: .primary,
-                background: .dulcetSelectionBackground,
-                minimum: 4.5
-            ),
-            RenderedContrastRequirement(
-                name: "secondary-text/window",
-                foreground: .dulcetSecondaryText,
-                background: .dulcetWindow,
-                minimum: 4.5
-            ),
-            RenderedContrastRequirement(
-                name: "offline-label/window",
-                foreground: .dulcetOffline,
-                background: .dulcetWindow,
-                minimum: 4.5
-            ),
-            RenderedContrastRequirement(
-                name: "danger-icon/window",
-                foreground: .dulcetDanger,
-                background: .dulcetWindow,
-                minimum: 3.0
-            ),
-        ]
-
-        for pair in pairs {
+        for pair in DulcetRenderedContrastPair.allCases {
             let sample = try renderedContrastSample(
                 foreground: pair.foreground,
-                background: pair.background,
+                backgroundLayers: pair.backgroundLayers,
                 appearanceName: appearanceName
             )
             print(
-                "WCAG RENDERED CONTRAST pair=\(pair.name) appearance=\(appearanceName.rawValue) "
+                "WCAG RENDERED CONTRAST pair=\(pair.rawValue) appearance=\(appearanceName.rawValue) "
                     + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
-                    + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=\(pair.minimum)"
+                    + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=\(pair.minimumRatio)"
             )
             #expect(
-                sample.ratio >= pair.minimum,
-                "\(pair.name) in \(appearanceName.rawValue) is \(sample.ratio):1, below \(pair.minimum):1"
+                sample.ratio >= pair.minimumRatio,
+                "\(pair.rawValue) in \(appearanceName.rawValue) is \(sample.ratio):1, below \(pair.minimumRatio):1"
             )
         }
     }
 }
 
 @Test @MainActor
+func renderedFixtureStatesExerciseEveryContrastPairInTheGate() {
+    var observed: Set<DulcetRenderedContrastPair> = []
+
+    for state in DulcetPresentationState.allCases {
+        let store = DulcetPresentationStore(
+            source: DulcetDeterministicDataSource(initialState: state)
+        )
+        let view = NSHostingView(rootView: DulcetCaptureView(store: store)
+            .onDulcetRenderedContrastPairs { observed.formUnion($0) })
+        view.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+
+    #expect(observed == Set(DulcetRenderedContrastPair.allCases))
+}
+
+@Test @MainActor
 func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
     let sample = try renderedContrastSample(
         foreground: .secondary,
-        background: .white,
+        backgroundLayers: [.white],
         appearanceName: .aqua
     )
 
@@ -232,13 +218,6 @@ private final class PushingTestDataSource: DulcetDataSource {
     }
 }
 
-private struct RenderedContrastRequirement {
-    let name: String
-    let foreground: Color
-    let background: Color
-    let minimum: Double
-}
-
 private struct RenderedContrastSample {
     let foreground: NSColor
     let background: NSColor
@@ -250,11 +229,13 @@ private struct RenderedContrastSample {
 
 private struct RenderedContrastProbe: View {
     let foreground: Color
-    let background: Color
+    let backgroundLayers: [Color]
 
     var body: some View {
         ZStack {
-            background
+            ForEach(backgroundLayers.indices, id: \.self) { index in
+                backgroundLayers[index]
+            }
             Rectangle()
                 .foregroundStyle(foreground)
                 .frame(width: 24, height: 24)
@@ -266,13 +247,13 @@ private struct RenderedContrastProbe: View {
 @MainActor
 private func renderedContrastSample(
     foreground: Color,
-    background: Color,
+    backgroundLayers: [Color],
     appearanceName: NSAppearance.Name
 ) throws -> RenderedContrastSample {
     let colorScheme: ColorScheme = appearanceName == .darkAqua ? .dark : .light
     let view = NSHostingView(rootView: RenderedContrastProbe(
         foreground: foreground,
-        background: background
+        backgroundLayers: backgroundLayers
     ).environment(\.colorScheme, colorScheme))
     view.frame = NSRect(x: 0, y: 0, width: 64, height: 64)
     view.appearance = NSAppearance(named: appearanceName)
