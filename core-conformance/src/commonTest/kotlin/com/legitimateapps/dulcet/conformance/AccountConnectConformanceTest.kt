@@ -103,6 +103,8 @@ class AccountConnectConformanceTest {
             it.authenticationLocation != AuthenticationLocation.None
         }
 
+        assertEquals(listOf("ping", "getUser"), authenticated.map { it.endpoint })
+        assertTrue(authenticated.size > 1)
         assertTrue(authenticated.any { it.endpoint == "ping" })
         assertTrue(authenticated.all { it.authenticationLocation == AuthenticationLocation.FormBody })
         assertTrue(authenticated.all { it.saltFingerprint != null })
@@ -124,6 +126,22 @@ class AccountConnectConformanceTest {
                 it.requestedProtocolVersion == AccountConnectionContract.protocolVersion
             },
         )
+        val compatibilityCases = listOf(
+            Triple("1.16.1", "1.16.1", true),
+            Triple("1.15.99", "1.16.0", true),
+            Triple("1.16.99", "1.16.0", true),
+            Triple("1.17.0", "1.16.99", false),
+            Triple("2.0.0", "1.99.0", false),
+            Triple("malformed", "1.16.1", false),
+            Triple("1.16.1", "malformed", false),
+        )
+        compatibilityCases.forEach { (clientVersion, serverVersion, expected) ->
+            assertEquals(
+                expected,
+                AccountConnectionContract.isCompatibleVersion(clientVersion, serverVersion),
+                "CONF-04 client=$clientVersion server=$serverVersion",
+            )
+        }
     }
 
     @Test
