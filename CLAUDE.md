@@ -272,6 +272,22 @@ workflow, job and test that prove it."* Batch the whole ask into one brief rathe
 follow-ups — a reviewer or implementer who sees the whole job decides coherently across it, where
 isolated asks produce locally-sensible answers that do not fit together.
 
+### Merging
+
+`main` requires a code-owner review and its required status checks, and admin bypass is off.
+**GitHub refuses to let a pull request author approve their own pull request** — OBSERVED
+2026-08-20, `422 Unprocessable Entity — "Review Can not approve your own pull request"` — so a
+`CODEOWNERS` naming one account would make the branch permanently unmergeable rather than strictly
+guarded.
+
+`CODEOWNERS` therefore names **both maintainer accounts**. Open a pull request as one and approve it
+as the other. `/FEATURES.yml` and `/.github/CODEOWNERS` are themselves code-owner-protected, so a
+change to either must be authored by whichever account is *not* going to approve it.
+
+`@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams to assign
+— named accounts are the only mechanism available. Pull-request authorship and commit authorship are
+separate fields: commits stay `new-usemame` whichever account opens the pull request.
+
 ## Definition of done
 
 A feature is done when the real trigger has been driven to the real observed effect on a real device or
