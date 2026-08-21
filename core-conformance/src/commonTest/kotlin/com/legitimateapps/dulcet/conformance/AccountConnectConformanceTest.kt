@@ -186,6 +186,19 @@ class AccountConnectConformanceTest {
         assertFalse(renderedError.contains(derivedTokens.first()))
         assertFalse(renderedError.contains(issuedSalts.first()))
         assertTrue("?<redacted>" in renderedError)
+
+        val signedUrl =
+            "https://music.invalid/rest/ping.view?u=$ADMIN_USER&t=${derivedTokens.first()}&s=${issuedSalts.first()}"
+        listOf(0, 999).forEach { code ->
+            val everyRenderedField = AccountConnectionContract.mapSubsonicError(
+                code = code,
+                message = "server echoed $signedUrl",
+                requestUrl = signedUrl,
+            ).toString()
+            assertFalse(everyRenderedField.contains(ADMIN_USER))
+            assertFalse(everyRenderedField.contains(derivedTokens.first()))
+            assertFalse(everyRenderedField.contains(issuedSalts.first()))
+        }
     }
 
     private fun conformanceBaseUrl(): String =
