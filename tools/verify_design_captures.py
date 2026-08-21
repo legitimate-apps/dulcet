@@ -101,6 +101,7 @@ def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
         "windowTitlePolicy": "release-name-fixture-with-state-navigation-titles",
+        "preflightRender": "discarded-library-browse-light-before-recording",
         "jpegCompression": 0.72,
         "locale": "en_US_POSIX",
         "calendar": "gregorian",

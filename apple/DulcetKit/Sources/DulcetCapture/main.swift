@@ -152,6 +152,7 @@ private struct CaptureManifest: Codable {
     let heightPixels: Int
     let captureSurface: String
     let windowTitlePolicy: String
+    let preflightRender: String
     let jpegCompression: Double
     let locale: String
     let calendar: String
@@ -181,6 +182,20 @@ private struct DulcetCaptureMain {
 
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
+
+        let preflightDirectory = options.outputDirectory.appendingPathComponent(".preflight")
+        try fileManager.createDirectory(
+            at: preflightDirectory,
+            withIntermediateDirectories: false
+        )
+        _ = try render(
+            state: .libraryBrowse,
+            appearance: .light,
+            textSize: options.textSize,
+            variant: .standard,
+            outputDirectory: preflightDirectory
+        )
+        try fileManager.removeItem(at: preflightDirectory)
 
         var records: [CaptureRecord] = []
         for state in options.states {
@@ -213,6 +228,7 @@ private struct DulcetCaptureMain {
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
             windowTitlePolicy: "release-name-fixture-with-state-navigation-titles",
+            preflightRender: "discarded-library-browse-light-before-recording",
             jpegCompression: jpegCompression,
             locale: "en_US_POSIX",
             calendar: "gregorian",
