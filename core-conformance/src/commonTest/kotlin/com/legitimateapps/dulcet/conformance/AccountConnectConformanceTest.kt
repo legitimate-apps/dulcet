@@ -488,6 +488,21 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun percentEncodedInternationalizedHostnameIsUnsupportedNotTransport() = runTest {
+        assertEquals(
+            DomainError.Input.InvalidServerUrl(
+                InvalidServerUrlReason.UnsupportedInternationalizedHost,
+            ),
+            assertIs<AccountConnectionResult.Failed>(
+                fixture().connect(
+                    serverUrl = "https://m%C3%BCsic.example",
+                    allowLocalHttp = false,
+                ),
+            ).error,
+        )
+    }
+
+    @Test
     fun everyMalformedAuthorityIsInvalidBeforeTransport() = runTest {
         val malformedAuthorities = listOf(
             "empty-host" to "https://:443",
