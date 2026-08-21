@@ -146,7 +146,7 @@ jobs:
         run: >-
           echo "path=$(tools/conformance-env/new-class-root
           --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
-      - name: Prove redirect credential detector rejects semantic smuggling
+      - name: Prove closed redirect target oracle rejects every deviation
         run: python3 tools/test-redirect-credential-detector
       - name: Install and verify checksum-pinned Darwin conformance closure
         env:

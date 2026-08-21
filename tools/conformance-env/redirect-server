@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import base64
 from dataclasses import dataclass
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, quote, quote_plus, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 CHANNEL_CLASSIFICATIONS = {
@@ -125,33 +125,43 @@ class RedirectState:
 STATE = RedirectState()
 
 
-def credential_representations(value: str) -> frozenset[str]:
-    """Return reversible wire representations that must remain origin-bound."""
-    encoded = value.encode("utf-8")
-    representations = {
-        value,
-        quote(value, safe=""),
-        quote_plus(value, safe=""),
-        base64.b64encode(encoded).decode("ascii"),
-        base64.urlsafe_b64encode(encoded).decode("ascii"),
-        base64.b32encode(encoded).decode("ascii"),
-        base64.b85encode(encoded).decode("ascii"),
-        encoded.hex(),
-        encoded.hex().upper(),
+def expected_cross_origin_target_channels(
+    source_channels: tuple[ObservedChannel, ...],
+    target_body: bytes,
+    target_authority: str,
+) -> tuple[ObservedChannel, ...]:
+    """Derive the one permitted target request from the validated source request."""
+    source_credentials = {
+        value
+        for channel in source_channels
+        if channel.classification == "credential"
+        for value in channel.values
     }
-    representations.update(
-        representation.rstrip("=")
-        for representation in tuple(representations)
-        if representation.endswith("=")
-    )
-    return frozenset(representation for representation in representations if representation)
+    expected: list[ObservedChannel] = []
+    for channel in source_channels:
+        if channel.classification == "credential":
+            continue
+        if any(value in source_credentials for value in channel.values):
+            continue
+        if channel.location == "header" and channel.name == "host":
+            expected.append(ObservedChannel("header", "host", (target_authority,)))
+        elif channel.location == "header" and channel.name == "content-length":
+            expected.append(ObservedChannel("header", "content-length", (str(len(target_body)),)))
+        else:
+            expected.append(channel)
+    return tuple(sorted(expected))
 
 
-def contains_source_credential(value: str, source_credentials: set[str]) -> bool:
-    return any(
-        representation in value
-        for credential in source_credentials
-        for representation in credential_representations(credential)
+def cross_origin_target_matches_expectation(
+    source_channels: tuple[ObservedChannel, ...],
+    target_channels: tuple[ObservedChannel, ...],
+    target_body: bytes,
+    target_authority: str,
+) -> bool:
+    return target_channels == expected_cross_origin_target_channels(
+        source_channels,
+        target_body,
+        target_authority,
     )
 
 
@@ -250,7 +260,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path.startswith("/observe/rest/"):
-            if not self._observes_expected_channels(endpoint, channels):
+            if not self._observes_expected_channels(endpoint, channels, body):
                 self._send_json(500, {"error": "credential channel observation failed"})
                 return
             STATE.remember("observe", endpoint, self.command, channels)
@@ -286,7 +296,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/cross-observe/rest/"):
-            if not self._observes_expected_channels(endpoint, channels):
+            if not self._observes_expected_channels(endpoint, channels, body):
                 self._send_json(500, {"error": "cross-origin source credential channels failed"})
                 return
             STATE.remember("cross-observe", endpoint, self.command, channels)
@@ -304,18 +314,14 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if source_channels is None:
                 self._send_json(500, {"error": "cross-origin target had no observed source"})
                 return
-            source_credentials = {
-                value
-                for channel in source_channels
-                if channel.classification == "credential"
-                for value in channel.values
-            }
-            if any(
-                contains_source_credential(value, source_credentials)
-                for channel in channels
-                for value in channel.values
+            target_authority = f"127.0.0.1:{self.server.server_port}"
+            if not cross_origin_target_matches_expectation(
+                source_channels,
+                channels,
+                body,
+                target_authority,
             ):
-                self._send_json(500, {"error": "credential value crossed in a non-credential channel"})
+                self._send_json(500, {"error": "cross-origin target request differed from expectation"})
                 return
             if endpoint == "getOpenSubsonicExtensions":
                 self._send_json(200, envelope(endpoint))
@@ -377,25 +383,117 @@ class RedirectHandler(BaseHTTPRequestHandler):
         self,
         endpoint: str,
         channels: tuple[ObservedChannel, ...],
+        body: bytes,
     ) -> bool:
         if not self._all_channels_accounted_for(channels):
+            return False
+        if not self._headers_match_closed_rules(channels, body):
             return False
         header_authentication, query_authentication, form_authentication = (
             self._authentication_channels(channels)
         )
+        query = self._channels_at("query", channels)
+        form = self._channels_at("form", channels)
         if endpoint == "getOpenSubsonicExtensions":
             return (
                 self.command == "GET"
                 and not header_authentication
                 and not query_authentication
                 and not form_authentication
+                and query == {"c": ("Dulcet",), "f": ("json",), "v": ("1.16.1",)}
+                and not form
             )
+        expected_form = {
+            "c": ("Dulcet",),
+            "f": ("json",),
+            "s": tuple(value for value in form.get("s", ()) if re.fullmatch(r"[0-9a-f]{32}", value)),
+            "t": tuple(value for value in form.get("t", ()) if re.fullmatch(r"[0-9a-f]{32}", value)),
+            "u": ("dulcet-admin",),
+            "v": ("1.16.1",),
+        }
+        if endpoint == "getUser":
+            expected_form["username"] = ("dulcet-admin",)
         return (
             self.command == "POST"
             and not header_authentication
             and not query_authentication
             and form_authentication == {"u", "t", "s"}
+            and not query
+            and form == expected_form
+            and len(form["s"]) == 1
+            and len(form["t"]) == 1
         )
+
+    def _headers_match_closed_rules(
+        self,
+        channels: tuple[ObservedChannel, ...],
+        body: bytes,
+    ) -> bool:
+        headers = self._channels_at("header", channels)
+        expected_authority = f"127.0.0.1:{self.server.server_port}"
+        if headers.get("host") != (expected_authority,):
+            return False
+        if body:
+            if headers.get("content-length") != (str(len(body)),):
+                return False
+            if headers.get("content-type") != ("application/x-www-form-urlencoded; charset=UTF-8",):
+                return False
+        else:
+            if "content-length" in headers and headers["content-length"] != ("0",):
+                return False
+            if "content-type" in headers:
+                return False
+        exact_optional = {
+            "accept": {("*/*",), ("application/json",)},
+            "accept-charset": {("UTF-8",), ("utf-8",)},
+            "connection": {("Keep-Alive",), ("keep-alive",)},
+        }
+        for name, permitted in exact_optional.items():
+            if name in headers and headers[name] not in permitted:
+                return False
+        if "accept-encoding" in headers and not all(
+            re.fullmatch(
+                r"(?:gzip|deflate|br|identity)"
+                r"(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?",
+                token.strip(),
+            )
+            for value in headers["accept-encoding"]
+            for token in value.split(",")
+        ):
+            return False
+        if "accept-language" in headers and not all(
+            len(value) <= 128 and re.fullmatch(
+                r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?"
+                r"(?:\s*,\s*[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*"
+                r"(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?)*",
+                value,
+            )
+            for value in headers["accept-language"]
+        ):
+            return False
+        if "user-agent" in headers and not all(
+            value == "Ktor client" or (
+                len(value) <= 128 and re.fullmatch(
+                    r"[A-Za-z][A-Za-z0-9._-]*/[0-9][A-Za-z0-9._-]*"
+                    r"(?: CFNetwork/[0-9.]+ Darwin/[0-9.]+)?",
+                    value,
+                )
+            )
+            for value in headers["user-agent"]
+        ):
+            return False
+        return True
+
+    def _channels_at(
+        self,
+        location: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> dict[str, tuple[str, ...]]:
+        return {
+            channel.name: channel.values
+            for channel in channels
+            if channel.location == location
+        }
 
     def _redirect(self, location: str) -> None:
         self.send_response(307)
