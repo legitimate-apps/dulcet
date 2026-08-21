@@ -37,6 +37,8 @@ jobs:
           test "$status" -ne 0
           grep -q 'expected 9.0.1, observed 9.0.10' <<< "$output"
           echo 'NEGATIVE CONTROL PASS expected=9.0.1 observed=9.0.10 rejected=true'
+      - name: Prove corpus probes reject mislabeled containers and empty tags
+        run: python3 tools/test-seed-corpus-gates
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0

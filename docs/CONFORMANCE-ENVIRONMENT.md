@@ -59,12 +59,13 @@ with no album or album-artist tag; a title longer than 300 characters; a 300-tra
 29- and 31-second threshold tracks. All samples are synthesized tone or silence. No audio file or
 copyrighted recording is committed.
 
-The generator runs `ffprobe` against every non-paging awkward fixture and validates exact tag values,
-absent tags, and threshold durations. Paging tracks are not filename-only copies: each of all 300 gets
-a distinct deterministic ID3v2.4 title and track number. The generator parses all 300 tags back and
-also requires ffprobe to interpret tracks 1, 150, and 300 correctly. Only those observed values are
-written to `corpus-manifest.json`; the health check compares the complete evidence structure to the
-contract. Any encoding, parsing, tag, duration, count, or format mismatch errors the job.
+The generator runs `ffprobe` against every non-paging awkward fixture and validates the probed
+container, exact tag values, tag-key absence, and threshold durations. A present-but-empty tag is not
+absent. Paging tracks are not filename-only copies: each of all 300 gets a distinct deterministic
+ID3v2.4 title and track number. The generator parses all 300 tags back and also requires ffprobe to
+interpret tracks 1, 150, and 300 correctly. Only those observed values are written to
+`corpus-manifest.json`; the health check compares the complete evidence structure to the contract.
+Any encoding, parsing, tag, duration, count, or format mismatch errors the job.
 
 ## Fail-loud precondition gate
 

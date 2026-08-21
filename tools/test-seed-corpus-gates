@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+
+"""Negative controls for the corpus evidence gates."""
+
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+
+seed_corpus = SourceFileLoader("seed_corpus", str(Path(__file__).with_name("seed-corpus"))).load_module()
+
+
+class ProbeTools:
+    def __init__(self, probe: dict):
+        self.probe = probe
+
+    def ffprobe_json(self, path: Path) -> dict:
+        return self.probe
+
+
+def require_rejection(label: str, probe: dict, *, absent_tags: tuple[str, ...] = ()) -> None:
+    try:
+        seed_corpus.assert_media(
+            ProbeTools(probe),
+            Path("forged.flac"),
+            expected_tags={},
+            absent_tags=absent_tags,
+            duration=1.0,
+        )
+    except SystemExit as error:
+        print(f"NEGATIVE CONTROL PASS {label} rejected=true detail={error}")
+        return
+    raise SystemExit(f"negative control failed open: {label}")
+
+
+def main() -> None:
+    require_rejection(
+        "mislabeled_container expected=flac observed=wav",
+        {"format": {"format_name": "wav", "duration": "1.0", "tags": {}}, "streams": []},
+    )
+    require_rejection(
+        "present_empty_tags album=true albumartist=true",
+        {
+            "format": {
+                "format_name": "flac",
+                "duration": "1.0",
+                "tags": {"album": "", "album_artist": ""},
+            },
+            "streams": [],
+        },
+        absent_tags=("album", "albumartist"),
+    )
+
+
+if __name__ == "__main__":
+    main()

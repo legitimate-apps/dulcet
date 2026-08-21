@@ -10,6 +10,12 @@ import subprocess
 
 
 FORMATS = {".flac", ".m4a", ".mp3", ".ogg"}
+PROBED_FORMAT_BY_SUFFIX = {
+    ".flac": "flac",
+    ".m4a": "m4a",
+    ".mp3": "mp3",
+    ".ogg": "ogg",
+}
 
 
 class MediaTools:
@@ -128,10 +134,15 @@ def normalized_tags(probe: dict) -> dict[str, str]:
     return tags
 
 
-def probe_media(tools: MediaTools, path: Path) -> tuple[dict[str, str], float]:
+def probe_media(tools: MediaTools, path: Path) -> tuple[dict[str, str], float, set[str]]:
     probe = tools.ffprobe_json(path)
     format_data = probe.get("format", {})
-    return normalized_tags(probe), float(format_data.get("duration", 0))
+    format_names = {
+        name.strip()
+        for name in str(format_data.get("format_name", "")).split(",")
+        if name.strip()
+    }
+    return normalized_tags(probe), float(format_data.get("duration", 0)), format_names
 
 
 def assert_media(
@@ -141,8 +152,16 @@ def assert_media(
     expected_tags: dict[str, str],
     absent_tags: tuple[str, ...] = (),
     duration: float | None = None,
-) -> tuple[dict[str, str], float]:
-    tags, observed_duration = probe_media(tools, path)
+) -> tuple[dict[str, str], float, str]:
+    tags, observed_duration, observed_format_names = probe_media(tools, path)
+    expected_format = PROBED_FORMAT_BY_SUFFIX.get(path.suffix.lower())
+    if expected_format is None:
+        raise SystemExit(f"no ffprobe format contract for {path.name}")
+    if expected_format not in observed_format_names:
+        raise SystemExit(
+            f"ffprobe container mismatch for {path.name}: expected {expected_format!r}, "
+            f"observed {sorted(observed_format_names)}"
+        )
     for key, expected in expected_tags.items():
         observed = tags.get(key)
         if observed != expected:
@@ -150,16 +169,16 @@ def assert_media(
                 f"ffprobe tag mismatch for {path.name} {key}: expected {expected!r}, "
                 f"observed {observed!r}"
             )
-    present = {key: tags[key] for key in absent_tags if tags.get(key)}
+    present = {key: tags[key] for key in absent_tags if key in tags}
     if present:
         raise SystemExit(f"ffprobe found forbidden tags for {path.name}: {present}")
     if duration is None:
-        return tags, observed_duration
+        return tags, observed_duration, expected_format
     if abs(observed_duration - duration) > 0.20:
         raise SystemExit(
             f"ffprobe duration mismatch for {path.name}: expected {duration}, observed {observed_duration}"
         )
-    return tags, observed_duration
+    return tags, observed_duration, expected_format
 
 
 def synchsafe(value: int) -> bytes:
@@ -329,20 +348,24 @@ def main() -> None:
             )
         paging_paths.append(destination)
 
-    health_tags, health_duration = assert_media(
+    health_tags, health_duration, health_format = assert_media(
         tools,
         health_probe,
         expected_tags={"title": "Dulcet Health Probe"},
         duration=2.0,
     )
-    unicode_tags, _ = assert_media(
+    unicode_tags, _, unicode_format = assert_media(
         tools,
         unicode_probe,
         expected_tags={"title": "Étude 東京"},
         duration=1.0,
     )
-    assert_media(tools, ogg_probe, expected_tags={"title": "Ogg Probe"}, duration=1.0)
-    assert_media(tools, m4a_probe, expected_tags={"title": "M4A Probe"}, duration=1.0)
+    _, _, ogg_format = assert_media(
+        tools, ogg_probe, expected_tags={"title": "Ogg Probe"}, duration=1.0
+    )
+    _, _, m4a_format = assert_media(
+        tools, m4a_probe, expected_tags={"title": "M4A Probe"}, duration=1.0
+    )
 
     observed_disc_tracks: list[dict[str, int]] = []
     for path, disc, track in multi_disc_paths:
@@ -358,7 +381,7 @@ def main() -> None:
         )
         observed_disc_tracks.append({"disc": disc, "track": track})
 
-    album_artist_tags, _ = assert_media(
+    album_artist_tags, _, _ = assert_media(
         tools,
         album_artist_probe,
         expected_tags={
@@ -373,13 +396,13 @@ def main() -> None:
             f"split album-artist mismatch: expected {album_artists}, observed {observed_album_artists}"
         )
 
-    no_album_tags, _ = assert_media(
+    no_album_tags, _, _ = assert_media(
         tools,
         no_album_probe,
         expected_tags={"title": "No Album"},
         absent_tags=("album", "albumartist"),
     )
-    long_title_tags, _ = assert_media(
+    long_title_tags, _, _ = assert_media(
         tools,
         long_title_probe,
         expected_tags={"title": long_title},
@@ -387,13 +410,13 @@ def main() -> None:
     if len(long_title_tags["title"]) != len(long_title):
         raise SystemExit("long-title length changed after encoding")
 
-    _, observed_29 = assert_media(
+    _, observed_29, _ = assert_media(
         tools,
         boundary_29,
         expected_tags={"title": "Twenty Nine Seconds"},
         duration=29.0,
     )
-    _, observed_31 = assert_media(
+    _, observed_31, _ = assert_media(
         tools,
         boundary_31,
         expected_tags={"title": "Thirty One Seconds"},
@@ -419,9 +442,12 @@ def main() -> None:
     ]
     if len(scanner_files) != 313:
         raise SystemExit(f"expected 313 scanner-visible media files, generated {len(scanner_files)}")
-    observed_formats = sorted({path.suffix.lower().removeprefix(".") for path in scanner_files})
+    scanner_extensions = sorted({path.suffix.lower() for path in scanner_files})
+    if scanner_extensions != sorted(FORMATS):
+        raise SystemExit(f"generated file-extension set mismatch: {scanner_extensions}")
+    observed_formats = sorted({health_format, unicode_format, ogg_format, m4a_format})
     if observed_formats != ["flac", "m4a", "mp3", "ogg"]:
-        raise SystemExit(f"generated format set mismatch: {observed_formats}")
+        raise SystemExit(f"ffprobe container set mismatch: {observed_formats}")
 
     manifest = {
         "schema_version": 1,
@@ -430,7 +456,7 @@ def main() -> None:
         "formats": observed_formats,
         "known_probe": {
             "title": health_tags["title"],
-            "format": "flac",
+            "format": health_format,
             "duration_seconds": round(health_duration, 3),
         },
         "awkward_cases": {
@@ -439,8 +465,8 @@ def main() -> None:
             "album_artists": observed_album_artists,
             "track_without_album": {
                 "title": no_album_tags["title"],
-                "album_tag_present": bool(no_album_tags.get("album")),
-                "album_artist_tag_present": bool(no_album_tags.get("albumartist")),
+                "album_tag_present": "album" in no_album_tags,
+                "album_artist_tag_present": "albumartist" in no_album_tags,
             },
             "very_long_title_characters": len(long_title_tags["title"]),
             "paging_album": {
