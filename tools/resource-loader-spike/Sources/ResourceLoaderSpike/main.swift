@@ -109,14 +109,12 @@ private final class FixtureResourceLoader: NSObject, AVAssetResourceLoaderDelega
     let recorder = EventRecorder()
     private let fixtureRoot: URL
     private let router: ManifestRouter
-    private let simulateFirstSegmentOnly: Bool
 
-    init(fixtureRoot: URL, simulateFirstSegmentOnly: Bool = false) {
+    init(fixtureRoot: URL) {
         self.fixtureRoot = fixtureRoot
         self.router = ManifestRouter(
             manifestURL: URL(string: "https://playlist-origin.invalid/library/playlist.m3u8")!
         )
-        self.simulateFirstSegmentOnly = simulateFirstSegmentOnly
     }
 
     var routedOriginalURLs: [String] { router.routedOriginalURLs }
@@ -137,12 +135,6 @@ private final class FixtureResourceLoader: NSObject, AVAssetResourceLoaderDelega
         }
 
         let relativePath = router.fixturePath(for: requestedPath) ?? requestedPath
-        if simulateFirstSegmentOnly, relativePath == "segment1.aac" {
-            print("INJECTED HLS_SECOND_SEGMENT=FAILED_BEFORE_DELEGATE_RESPONSE")
-            loadingRequest.finishLoading(with: SpikeError.injectedSecondSegmentFailure)
-            return true
-        }
-
         let fileURL = fixtureRoot.appendingPathComponent(relativePath)
         guard var data = try? Data(contentsOf: fileURL) else {
             loadingRequest.finishLoading(with: SpikeError.missingFixture(relativePath))
@@ -216,11 +208,10 @@ private enum SpikeError: LocalizedError {
     case invalidByteRange(Int, Int)
     case invalidFixturePath(String)
     case invalidManifest(String)
-    case injectedSecondSegmentFailure
     case missingFixture(String)
     case missingRequestURL
-    case playbackFailed(String, String)
-    case playbackTimedOut(String)
+    case playbackFailed(String, String, Double)
+    case playbackTimedOut(String, Double)
     case unexpectedArgument(String)
     case verificationFailed(String)
 
@@ -236,16 +227,14 @@ private enum SpikeError: LocalizedError {
             return "invalid fixture path: \(path)"
         case let .invalidManifest(detail):
             return "invalid HLS manifest: \(detail)"
-        case .injectedSecondSegmentFailure:
-            return "injected first-segment-only HLS failure"
         case let .missingFixture(path):
             return "missing fixture: \(path)"
         case .missingRequestURL:
             return "resource-loading request has no URL"
-        case let .playbackFailed(label, detail):
-            return "\(label) playback failed: \(detail)"
-        case let .playbackTimedOut(label):
-            return "\(label) playback did not become ready or request media before the deadline"
+        case let .playbackFailed(label, detail, time):
+            return "\(label) playback failed at \(ResourceLoaderSpike.format(time))s: \(detail)"
+        case let .playbackTimedOut(label, time):
+            return "\(label) playback timed out at \(ResourceLoaderSpike.format(time))s"
         case let .unexpectedArgument(argument):
             return "unexpected argument: \(argument)"
         case let .verificationFailed(message):
@@ -266,7 +255,6 @@ private struct HTTPFixtureServer {
 
 private struct SpikeArguments {
     let expectedSegmentOutcome: String
-    let simulateFirstSegmentOnly: Bool
 }
 
 @main
@@ -324,11 +312,9 @@ private enum ResourceLoaderSpike {
             printEvents(progressiveEvents)
 
             let requiredSegments = Set(["segment0.aac", "segment1.aac"])
-            let hlsLoader = FixtureResourceLoader(
-                fixtureRoot: root,
-                simulateFirstSegmentOnly: arguments.simulateFirstSegmentOnly
-            )
-            let hlsObservation: PlaybackObservation
+            let hlsLoader = FixtureResourceLoader(fixtureRoot: root)
+            var hlsObservation: PlaybackObservation?
+            var hlsPlaybackError: Error?
             do {
                 hlsObservation = try play(
                     label: "custom-scheme HLS",
@@ -344,10 +330,11 @@ private enum ResourceLoaderSpike {
                     }
                 )
             } catch {
+                hlsPlaybackError = error
                 print("HLS_FAILURE_EVENTS_BEGIN")
                 printEvents(hlsLoader.recorder.events)
                 print("HLS_FAILURE_EVENTS_END")
-                throw error
+                print("HLS_PLAYBACK_ERROR surfaced=\(error.localizedDescription)")
             }
             let hlsEvents = hlsLoader.recorder.events
             let manifestSeen = hlsEvents.contains { $0.path == "playlist.m3u8" }
@@ -359,17 +346,6 @@ private enum ResourceLoaderSpike {
             }
 
             let observedSegments = Set(segmentEvents.map(\.path))
-            let missingSegments = requiredSegments.subtracting(observedSegments).sorted()
-            guard missingSegments.isEmpty else {
-                throw SpikeError.verificationFailed(
-                    "not every HLS media segment reached the delegate; missing \(missingSegments.joined(separator: ","))"
-                )
-            }
-            guard hlsObservation.maximumTime >= 1.20, hlsObservation.status != .failed else {
-                throw SpikeError.verificationFailed(
-                    "custom-scheme HLS did not play past the first segment boundary"
-                )
-            }
             let expectedOrigins = Set([
                 "https://media-a.invalid/audio/segment0.aac",
                 "https://media-b.invalid/audio/segment1.aac",
@@ -378,11 +354,41 @@ private enum ResourceLoaderSpike {
                 throw SpikeError.verificationFailed("absolute cross-origin source URIs were not all rewritten")
             }
 
-            let observedOutcome = "all-routed"
-            print(
-                "OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=ALL_DELEGATE "
-                    + "required=2 time=\(format(hlsObservation.maximumTime))s"
-            )
+            let missingSegments = requiredSegments.subtracting(observedSegments).sorted()
+            var measuredHLSPlaybackTime = hlsObservation?.maximumTime ?? 0
+            if let spikeError = hlsPlaybackError as? SpikeError {
+                switch spikeError {
+                case let .playbackFailed(_, _, time): measuredHLSPlaybackTime = time
+                case let .playbackTimedOut(_, time): measuredHLSPlaybackTime = time
+                default: break
+                }
+            }
+            let playedPastBoundary = measuredHLSPlaybackTime >= 1.20
+            let observedOutcome: String
+            if missingSegments.isEmpty, playedPastBoundary, hlsPlaybackError == nil {
+                observedOutcome = "all-routed"
+                print(
+                    "OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=ALL_DELEGATE "
+                        + "required=2 time=\(format(measuredHLSPlaybackTime))s playback_error=none"
+                )
+            } else if observedSegments == Set(["segment0.aac"]),
+                      !playedPastBoundary,
+                      hlsPlaybackError != nil
+            {
+                observedOutcome = "first-only-playback-failed"
+                print(
+                    "OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=FIRST_ONLY "
+                        + "missing=segment1.aac time=\(format(measuredHLSPlaybackTime))s "
+                        + "past_boundary=false playback_error=surfaced"
+                )
+            } else {
+                observedOutcome = "indeterminate"
+                print(
+                    "OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=INDETERMINATE "
+                        + "missing=\(missingSegments.joined(separator: ",")) "
+                        + "past_boundary=\(playedPastBoundary) playback_error=\(hlsPlaybackError != nil)"
+                )
+            }
             printEvents(segmentEvents)
             guard arguments.expectedSegmentOutcome == observedOutcome else {
                 throw SpikeError.verificationFailed(
@@ -398,22 +404,15 @@ private enum ResourceLoaderSpike {
 
     private static func parseArguments() throws -> SpikeArguments {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard arguments.count == 2 || arguments.count == 3,
+        guard arguments.count == 2,
               arguments[0] == "--expect-hls-segments"
         else {
             throw SpikeError.unexpectedArgument(arguments.joined(separator: " "))
         }
-        guard arguments[1] == "all-routed" else {
+        guard ["all-routed", "first-only-playback-failed"].contains(arguments[1]) else {
             throw SpikeError.unexpectedArgument(arguments[1])
         }
-        let simulate = arguments.count == 3
-        if simulate, arguments[2] != "--simulate-first-segment-only" {
-            throw SpikeError.unexpectedArgument(arguments[2])
-        }
-        return SpikeArguments(
-            expectedSegmentOutcome: arguments[1],
-            simulateFirstSegmentOnly: simulate
-        )
+        return SpikeArguments(expectedSegmentOutcome: arguments[1])
     }
 
     private static func createFixtures(at root: URL) throws {
@@ -639,11 +638,11 @@ private enum ResourceLoaderSpike {
             }
             if item.status == .failed {
                 let detail = item.error?.localizedDescription ?? "unknown AVPlayerItem failure"
-                throw SpikeError.playbackFailed(label, detail)
+                throw SpikeError.playbackFailed(label, detail, maximumTime)
             }
         }
         player.pause()
-        throw SpikeError.playbackTimedOut(label)
+        throw SpikeError.playbackTimedOut(label, maximumTime)
     }
 
     private static func printEvents(_ events: [LoadingEvent]) {
@@ -658,16 +657,7 @@ private enum ResourceLoaderSpike {
         }
     }
 
-    private static func statusName(_ status: AVPlayerItem.Status) -> String {
-        switch status {
-        case .unknown: return "unknown"
-        case .readyToPlay: return "readyToPlay"
-        case .failed: return "failed"
-        @unknown default: return "future(\(status.rawValue))"
-        }
-    }
-
-    private static func format(_ value: Double) -> String {
+    fileprivate static func format(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
 

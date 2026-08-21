@@ -6,9 +6,11 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 13 — adversarial review narrowed the Phase 1 resource-loader claim to the manifest-
-rewrite contract the strengthened spike actually measures. Revision 12 recorded the original,
-insufficient first-segment observation. Revision 11 recorded Phase 0 completion from hosted CI and repository API evidence. Revision
+**Revision:** 14 — the strengthened hosted measurement rejected complete custom-scheme HLS routing,
+so Apple now takes the specified progressive-container fallback. Revision 13 attempted to narrow the
+claim to a manifest-rewrite contract, but the hosted result did not establish that contract. Revision
+12 recorded the original, insufficient first-segment observation. Revision 11 recorded Phase 0
+completion from hosted CI and repository API evidence. Revision
 10 removed the remaining identifiers of unrelated applications. Revision 9 verified the Apple signing path by API and promoted it from ASSUMED to OBSERVED; the
 only remaining unknown is the API key's CREATE permission, now the Phase-2 dry run's first act.
 Revision 8 re-confirmed and closed OQ-3's OS floors and removed the last private context from the
@@ -1047,49 +1049,39 @@ Revision 12 observed one relative segment callback and stopped; that could not d
 routing from a first-segment-only failure. Adversarial review reopened OQ-10 and required a negative
 canary for exactly that powerless-test shape.
 
-**OBSERVED — the strengthened measurement closes only a narrower, enforced contract.** A progressive
-MP3 produces delegate byte-range requests. For HLS, the delegate resolves two absolute media URIs on
-different source origins, records their original URLs, and rewrites both into opaque relative routes
-that resolve under the manifest's `dulcet-stream://` URL before returning it. `AVPlayer` then requests
-**both named segments through the
-delegate and plays beyond the first segment boundary without a swallowed error**. A fault-injection
-invocation lets the first segment route and fails the second; `apple-ci` proves that the measurement
-rejects that state before running the passing case.
-
-This does **not** establish what AVFoundation does with arbitrary **unrewritten** relative, absolute,
-cross-origin, redirected, or key URIs, and Dulcet does not make that behavior a product dependency.
-The production loader resolves every fetchable manifest URI — media segment, nested playlist,
-encryption key, and initialization map — before returning the manifest, stores the original absolute
-URL in loader-owned routing state, and substitutes an opaque route that resolves under the manifest's
-custom scheme. Redirects then occur
-inside the loader's `URLSession` request and remain subject to §13.3 rather than AVFoundation's
-unobserved behavior.
+**OBSERVED — the strengthened measurement rejects complete custom-scheme HLS routing for the tested
+path.** A progressive MP3 produces delegate byte-range requests. The HTTP control plays both HLS
+segments past their boundary. In the custom-scheme leg, the delegate resolves two absolute media URIs
+on different source origins and rewrites both into opaque relative routes that resolve under the
+manifest's `dulcet-stream://` URL. The manifest and `segment0.aac` reach the delegate, then playback
+fails with `CoreMediaErrorDomain -12881`; `segment1.aac` never reaches the delegate and playback never
+crosses the first boundary. The error is surfaced and asserted. The evidence does not say that the
+second segment escaped to another loader—it says playback failed before the second request.
 
 The result is recorded in `docs/COMPATIBILITY.md` and runs serially inside the branch-protection-
-required `apple-ci` job. The required job enforces the first-segment-only negative canary and the two-
-segment rewritten-manifest result; it does not claim to enforce the unmeasured production-loader
-behaviors listed below. Under this rewrite contract Dulcet proceeds with HLS support on Apple. If the
-contract cannot be preserved, the documented fallback still refuses `protocol: "hls"` plans and
-forces Path A to a progressive container.
+required `apple-ci` job. The required job proves that an `all-routed` assertion rejects the observed
+first-only/error state, then records that exact state as the expected compatibility result. Therefore
+Apple **refuses `protocol: "hls"` playback plans and forces Path A to a progressive container**. This
+is the specified successful fallback outcome, not a failed spike. A future decision to attempt Apple
+HLS again requires new evidence and a spec revision.
 
-- **Apple:** a custom scheme (`dulcet-stream://`) plus an `AVAssetResourceLoaderDelegate` that performs
-  the fetch through `URLSession`. Dulcet therefore sees status, headers and bytes of the *actual*
+- **Apple progressive containers:** a custom scheme (`dulcet-stream://`) plus an
+  `AVAssetResourceLoaderDelegate` that performs the fetch through `URLSession`. Dulcet therefore sees
+  status, headers and bytes of the *actual*
   playback request, controls redirects (§13.3), can attach headers, and can surface a structured
   server error instead of an opaque `AVFoundation` failure. Cost, stated honestly: we must satisfy
   `contentInformationRequest` correctly and implement range handling ourselves, or seeking breaks.
-  **This is Phase-1 work, not a deferred fallback.**
+  **This is Phase-1 work. HLS is not accepted on this platform.**
 - **Android:** a custom `DataSource.Factory` wrapping the HTTP client, giving the same visibility for
   substantially less work.
 - **Preflight is demoted to an optional, advisory fast-fail** used only where inline validation is
   impossible (a platform path we do not currently have) or as a pre-queue health check. When used,
   `PlaybackPlan.validation` is `PreflightAdvisory(evidence)` and the code must not treat it as proof.
   There is no `validated: ValidationEvidence` field that claims otherwise.
-- **HLS** (`deliveryProtocol == Hls`, possible under the transcoding extension) is validated as a
-  **manifest**, not as audio: the loader checks it parses as an M3U8, resolves every fetchable URI,
-  applies the redirect/origin policy of §13.3, stores the approved absolute URL in its routing table,
-  and rewrites the manifest reference to an opaque route token that resolves under the manifest's
-  `dulcet-stream://` URL. Audio magic-byte rules
-  do not apply to the manifest.
+- **HLS:** Apple rejects the plan and requests a progressive Path A container. Platforms that accept
+  HLS validate it as a **manifest**, not as audio: parse M3U8 and apply the platform loader's origin,
+  redirect, authentication, and resource-validation policy. Audio magic-byte rules do not apply to
+  the manifest.
 
 **The validator table is normative.** Prose bullets are not implementable; the implementation carries a
 table with, per container: accepted MIME types, minimum bytes required, signature bytes with offset and
@@ -2754,7 +2746,7 @@ argue against the recorded rationale — not as filling in a blank.
 | **OQ-7** | **`getdulcet.com` — chosen, not yet purchased.** | $11.08 register and renew, verified available. **Blocks nothing**: `${BUNDLE_PREFIX}` is decoupled from it (header), so it reaches only support/privacy URLs, the review demo server and marketing. Purchase needs a person because the registrar's web login requires a passkey and its API has no add-funds endpoint. |
 | **OQ-8** | **A local, disposable Navidrome pinned to 0.63.2 is the development and CI target.** | **Normative: conformance and CI run against the local instance, never against a personal or production server.** The complementary rule — that a person manually dogfooding a DEV build against their own real library is expected, because the line is *automation*, not the server — is set out in **§22.4**, which reconciles the two. Automated writes to a personal instance are forbidden in all cases, and a new sync generation's first pass always goes to the local instance. Machine-specific paths belong in maintainer-local operational notes, not in this repository (§28 revision 5). |
 | **OQ-9** | **OS-trusted TLS only in v1.** Self-signed certificates and private CAs are refused. | **The user-facing consequence, stated honestly: some self-hosters will not be able to connect** — private-CA and self-signed deployments are common in this audience, and for them Dulcet v1 will fail at login with `TlsUntrusted`. The documented remedy is to install the CA at OS level. **Known v1 limitation.** Candidate v2 story: explicit per-server pinning of a user-supplied certificate, shown and confirmed once, stored per account — **never** a trust-all toggle, which would silently defeat the protection for every server (§13.5). |
-| **OQ-10** | **REOPENED by review, then resolved only for Dulcet's manifest-rewrite contract. Build that Apple inline-validation loader in Phase 1.** | Revision 12's one-segment callback did not answer the general routing question. **OBSERVED 2026-08-21:** the strengthened `apple-ci` measurement requires both absolute, cross-origin source segments to be rewritten into Dulcet routes, requested through the delegate, and played beyond their boundary; its first-segment-only fault injection must fail. Unrewritten arbitrary topology remains deliberately unanswered and is not the product contract. The production loader must rewrite all fetchable manifest URIs; otherwise Apple HLS plans fall back to a progressive Path A container (§12.4; `docs/COMPATIBILITY.md`). |
+| **OQ-10** | **RESOLVED by measurement: refuse Apple `protocol: "hls"` plans and force Path A to a progressive container.** | Revision 12's one-segment callback did not answer the general routing question. **OBSERVED 2026-08-21:** the strengthened `apple-ci` leg rewrote two absolute cross-origin segment references. The manifest and first segment reached the delegate, but playback surfaced `CoreMediaErrorDomain -12881` before the second segment request and before the boundary. The `all-routed` assertion rejects that state. This does not prove escape; it proves the required complete-routing/playback contract was not established, which selects the documented fallback (§12.4; `docs/COMPATIBILITY.md`). |
 
 ---
 
@@ -2803,6 +2795,16 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 14 (2026-08-21)** — hosted evidence selected the Apple progressive fallback.
+
+1. The strengthened measurement played the two-segment HTTP control past its boundary, then surfaced
+   `CoreMediaErrorDomain -12881` on the rewritten custom-scheme leg after only `segment0.aac` reached
+   the delegate. `segment1.aac` was not requested and playback did not cross the boundary.
+2. The required `apple-ci` job now demonstrates that the `all-routed` assertion rejects this exact
+   first-only/error state before recording the state as the expected compatibility result.
+3. OQ-10 is resolved to the predeclared fallback: Apple refuses `protocol: "hls"` and forces Path A
+   to a progressive container. The evidence does not claim the second segment escaped.
 
 **Revision 13 (2026-08-21)** — adversarial review removed the overbroad resource-loader claim.
 
