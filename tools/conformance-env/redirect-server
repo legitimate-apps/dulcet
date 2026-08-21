@@ -487,7 +487,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             self._oracle_mismatch("source-accept-language", channels)
             return False
         if "user-agent" in headers and not all(
-            value == "Ktor client" or (
+            value in {"Ktor client", "ktor-client"} or (
                 len(value) <= 128 and re.fullmatch(
                     r"[A-Za-z][A-Za-z0-9._-]*/[0-9][A-Za-z0-9._-]*"
                     r"(?: CFNetwork/[0-9.]+ Darwin/[0-9.]+)?",
