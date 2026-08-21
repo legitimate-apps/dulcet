@@ -23,9 +23,9 @@ CI checks the Apple values duplicated in Xcode's native project format.
 | Media3 | 1.11.0 | resolved from Google Maven |
 | Android compileSdk / targetSdk / minSdk | 36 / 36 / 26 | current stable Android SDK; project support floor remains API 26 |
 | macOS / iOS / tvOS deployment | 14.0 / 17.0 / 17.0 | Kotlin framework flags and Xcode targets are checked together in CI |
-| Navidrome | 0.63.2 | OCI index `sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40`; Linux amd64 manifest `sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce` |
+| Navidrome | 0.63.2 | OCI index `sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40`; Linux amd64 manifest `sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce`; upstream Darwin arm64 asset `sha256:f621f1b730af93d200d3400e549f60b34dd796d27801ebf9b6ab219df6ac7048` |
 | Linux ffmpeg | 6.1.1 | observed inside the pinned Navidrome Linux amd64 image; the image digest pins the full build |
-| Darwin ffmpeg | 9.0.1 | Homebrew arm64 Tahoe bottle `sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080`; exact bottle and runtime version must match before Darwin conformance is enabled |
+| Darwin ffmpeg | 9.0.1 | Homebrew arm64 Tahoe bottle `sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080`; `tools/conformance-env/pins.json` locks the complete 15-formula closure (root plus 14 dependencies), including each version, revision, dependency list, bottle rebuild, URL, and archive SHA-256; CI freshly pours and hashes every installed keg before use |
 
 The Darwin and Linux ffmpeg builds deliberately differ. Byte-level transcode assertions belong only
 to the Linux reference leg. Darwin uses its pinned build for Darwin-specific transport and loader
@@ -40,19 +40,23 @@ behavior, not byte identity.
 | `android-actions/setup-android` | 4.0.1 · `40fd30fb8d7440372e1316f5d1809ec01dcd3699` |
 | `gradle/actions/setup-gradle` | 6.3.0 · `9c971963bec38e04b3d30dcc455b5382be2fdbfb` |
 
-## Hosted CI baseline
+## Hosted CI calibration
 
-The first complete cold `apple-ci` job on the standard GitHub-hosted `macos-26` runner started at
-`2026-08-20T22:11:30Z` and completed successfully at `2026-08-20T22:14:37Z`: 187 seconds wall-clock.
-The run built all five Kotlin/Native Apple frameworks, ran the empty-core macOS test, built the macOS,
-iOS/iPadOS, and tvOS shells, and checked the linked binaries' deployment floors.
+The first complete combined `apple-ci` job on the standard GitHub-hosted `macos-26` runner started at
+`2026-08-21T06:03:23Z` and completed successfully at `2026-08-21T06:09:41Z`: 378 seconds wall-clock.
+The serial job built all five Kotlin/Native Apple frameworks, ran the macOS test, built the macOS,
+iOS/iPadOS, and tvOS shells, checked their deployment floors, rejected the exact-version and corpus
+negative controls, freshly poured and hashed the checksum-verified Darwin formula closure, ran the
+resource-loader canary and measurement, generated the corpus, rendered the config, and asserted the
+Darwin conformance preconditions.
 
-The calibrated `apple-ci` timeout is **15 minutes**. It is the next five-minute boundary above four
-times the observed cold duration (12 minutes 28 seconds), leaving 11 minutes 53 seconds of headroom
-while still releasing a hosted Apple concurrency slot promptly if the job hangs. Recalibrate from a
-representative sample when the Phase 1 suite materially changes the workload.
+The calibrated `apple-ci` timeout is **30 minutes**. Four times the observed combined duration is
+25 minutes 12 seconds; 30 minutes is the next five-minute boundary. This leaves 23 minutes 42 seconds
+of headroom while still releasing a hosted Apple concurrency slot promptly if the job hangs.
+Recalibrate from a representative sample when the serial workload materially changes.
 
-Evidence: [GitHub Actions run 32423091935](https://github.com/legitimate-apps/dulcet/actions/runs/32423091935).
+Evidence: [GitHub Actions run 32452865876](https://github.com/legitimate-apps/dulcet/actions/runs/32452865876),
+job `96684430341`.
 
 ## Upgrade policy
 

@@ -1,0 +1,520 @@
+#!/usr/bin/env python3
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import secrets
+import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from ffmpeg_version import require_ffmpeg_version
+
+
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+RESTRICTED_USER = "dulcet-restricted"
+RESTRICTED_PASSWORD = "dulcet-ci-restricted-password"
+CLIENT = "dulcet-conformance"
+SUBSONIC_VERSION = "1.16.1"
+
+
+def redacted(value: str) -> str:
+    return value.replace(ADMIN_PASSWORD, "<redacted>").replace(RESTRICTED_PASSWORD, "<redacted>")
+
+
+class ServerClient:
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+
+    def json_request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        query: dict[str, str] | None = None,
+        body: dict | None = None,
+        jwt: str | None = None,
+        timeout: float = 10,
+    ) -> dict:
+        url = self.base_url + path
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        headers = {"Accept": "application/json"}
+        if jwt:
+            headers["X-ND-Authorization"] = f"Bearer {jwt}"
+        payload = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            payload = json.dumps(body).encode()
+        request = urllib.request.Request(url, data=payload, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode(errors="replace")
+            raise RuntimeError(redacted(f"{method} {path} returned HTTP {error.code}: {detail}")) from error
+
+    def subsonic(
+        self,
+        endpoint: str,
+        *,
+        parameters: dict[str, str] | None = None,
+        body: dict | None = None,
+    ) -> dict:
+        salt = secrets.token_hex(8)
+        token = hashlib.md5((ADMIN_PASSWORD + salt).encode(), usedforsecurity=False).hexdigest()
+        query = {
+            "u": ADMIN_USER,
+            "t": token,
+            "s": salt,
+            "v": SUBSONIC_VERSION,
+            "c": CLIENT,
+            "f": "json",
+            **(parameters or {}),
+        }
+        payload = self.json_request(
+            f"/rest/{endpoint}.view",
+            method="POST" if body is not None else "GET",
+            query=query,
+            body=body,
+        )
+        response = payload.get("subsonic-response")
+        if not isinstance(response, dict):
+            raise RuntimeError(f"{endpoint} returned no Subsonic envelope")
+        if response.get("version") != SUBSONIC_VERSION:
+            raise RuntimeError(
+                f"{endpoint} Subsonic version mismatch: expected {SUBSONIC_VERSION}, "
+                f"observed {response.get('version')!r}"
+            )
+        if response.get("status") != "ok":
+            raise RuntimeError(f"{endpoint} returned error envelope: {response.get('error')}")
+        return response
+
+
+def wait_for_server(client: ServerClient, deadline: float) -> int:
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(client.base_url + "/ping", timeout=2) as response:
+                if response.status == 200:
+                    return response.status
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(0.2)
+    raise RuntimeError("Navidrome did not become reachable before the explicit timeout")
+
+
+def find_probe(response: dict, title: str) -> dict | None:
+    songs = response.get("searchResult3", {}).get("song", [])
+    return next((song for song in songs if song.get("title") == title), None)
+
+
+def append_summary(lines: list[str]) -> None:
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    with open(summary_path, "a", encoding="utf-8") as summary:
+        summary.write("## Dulcet conformance preconditions\n\n")
+        for line in lines:
+            summary.write(f"- {line}\n")
+
+
+def compact_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def observed_runtime() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    architecture = {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(machine, machine)
+    return f"{system}/{architecture}"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Fail-loud precondition gate for the real Navidrome conformance environment."
+    )
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--runtime", required=True)
+    parser.add_argument("--expected-server-version", required=True)
+    parser.add_argument("--expected-ffmpeg-version", required=True)
+    parser.add_argument("--ffmpeg-command-json", required=True)
+    parser.add_argument("--corpus-manifest", required=True)
+    parser.add_argument("--timeout-seconds", type=int, default=120)
+    args = parser.parse_args()
+
+    observed_timezone = {
+        "environment": os.environ.get("TZ"),
+    }
+    if observed_timezone["environment"] != "UTC":
+        raise SystemExit("conformance environment must set TZ=UTC")
+    if hasattr(time, "tzset"):
+        time.tzset()
+    utc_offset = datetime.datetime.now().astimezone().utcoffset()
+    observed_timezone.update(
+        {
+            "offset_seconds": int(utc_offset.total_seconds()) if utc_offset is not None else None,
+            "epoch_local_hour": time.localtime(0).tm_hour,
+        }
+    )
+    expected_timezone = {
+        "environment": "UTC",
+        "offset_seconds": 0,
+        "epoch_local_hour": 0,
+    }
+    if observed_timezone != expected_timezone:
+        raise SystemExit(
+            f"conformance process is not actually using UTC: offset={utc_offset} tzname={time.tzname}"
+        )
+    actual_runtime = observed_runtime()
+    if actual_runtime != args.runtime:
+        raise SystemExit(f"runtime mismatch: expected {args.runtime}, observed {actual_runtime}")
+    manifest = json.loads(Path(args.corpus_manifest).read_text())
+    if manifest.get("schema_version") != 2:
+        raise SystemExit(
+            f"corpus manifest schema mismatch: expected 2, observed {manifest.get('schema_version')}"
+        )
+    if manifest.get("copyrighted_audio") is not False:
+        raise SystemExit("corpus manifest must assert copyrighted_audio=false")
+    if manifest.get("generated_media_files") != 313:
+        raise SystemExit("corpus manifest must contain exactly 313 scanner-visible media files")
+    format_evidence = manifest.get("formats", {})
+    expected_format_tokens = ["flac", "m4a", "mp3", "ogg"]
+    if format_evidence.get("expected_tokens") != expected_format_tokens:
+        raise SystemExit(
+            f"corpus expected format-token set drifted: expected {expected_format_tokens}, "
+            f"observed {format_evidence.get('expected_tokens')}"
+        )
+    expected_probe_contract = sorted(
+        [
+            {"suffix": ".flac", "expected_token": "flac"},
+            {"suffix": ".m4a", "expected_token": "m4a"},
+            {"suffix": ".mp3", "expected_token": "mp3"},
+            {"suffix": ".ogg", "expected_token": "ogg"},
+        ],
+        key=lambda evidence: evidence["suffix"],
+    )
+    observed_format_probes = format_evidence.get("probes", [])
+    observed_probe_contract = sorted(
+        [
+            {
+                "suffix": evidence.get("suffix"),
+                "expected_token": evidence.get("expected_token"),
+            }
+            for evidence in observed_format_probes
+        ],
+        key=lambda evidence: str(evidence["suffix"]),
+    )
+    if observed_probe_contract != expected_probe_contract:
+        raise SystemExit(
+            f"corpus representative format probes drifted: expected {expected_probe_contract}, "
+            f"observed {observed_probe_contract}"
+        )
+    for evidence in observed_format_probes:
+        observed_tokens = set(str(evidence.get("observed_format_name", "")).split(","))
+        if evidence["expected_token"] not in observed_tokens:
+            raise SystemExit(
+                f"corpus representative format mismatch: expected {evidence['expected_token']!r}, "
+                f"observed {evidence.get('observed_format_name')!r}"
+            )
+    derived_observed_format_names = sorted(
+        {evidence["observed_format_name"] for evidence in observed_format_probes}
+    )
+    if format_evidence.get("observed_format_names") != derived_observed_format_names:
+        raise SystemExit(
+            "corpus observed format-name summary does not match its probes: "
+            f"expected {derived_observed_format_names}, "
+            f"observed {format_evidence.get('observed_format_names')}"
+        )
+    expected_known_probe = {
+        "title": "Dulcet Health Probe",
+        "expected_format_token": "flac",
+        "duration_seconds": 2.0,
+    }
+    known_probe = manifest.get("known_probe", {})
+    observed_known_probe_contract = {
+        key: known_probe.get(key) for key in expected_known_probe
+    }
+    if observed_known_probe_contract != expected_known_probe:
+        raise SystemExit(
+            f"corpus known-probe evidence drifted: expected {expected_known_probe}, "
+            f"observed {observed_known_probe_contract}"
+        )
+    observed_flac_format_names = {
+        evidence["observed_format_name"]
+        for evidence in observed_format_probes
+        if evidence["suffix"] == ".flac"
+    }
+    if known_probe.get("observed_format_name") not in observed_flac_format_names:
+        raise SystemExit(
+            "known-probe observed format name does not match the representative FLAC probe: "
+            f"expected one of {sorted(observed_flac_format_names)}, "
+            f"observed {known_probe.get('observed_format_name')!r}"
+        )
+    expected_awkward_cases = {
+        "unicode_title": "Étude 東京",
+        "multi_disc_tracks": [
+            {"disc": disc, "track": track}
+            for disc in (1, 2)
+            for track in (1, 2)
+        ],
+        "album_artists": ["Alpha Ensemble", "Beta Ensemble", "Gamma Ensemble"],
+        "track_without_album": {
+            "title": "No Album",
+            "album_tag_present": False,
+            "album_artist_tag_present": False,
+        },
+        "very_long_title_characters": len("A deliberately long title " + ("0123456789" * 32)),
+        "paging_album": {
+            "tracks_id3_verified": 300,
+            "ffprobe_verified_tracks": [1, 150, 300],
+        },
+        "threshold_durations_seconds": [29, 31],
+    }
+    if manifest.get("awkward_cases") != expected_awkward_cases:
+        raise SystemExit(
+            f"corpus awkward-case evidence drifted: expected {expected_awkward_cases}, "
+            f"observed {manifest.get('awkward_cases')}"
+        )
+    if manifest.get("verification") != "ffprobe-plus-id3v24-round-trip":
+        raise SystemExit("corpus manifest does not identify the required media probes")
+
+    deadline = time.monotonic() + args.timeout_seconds
+    client = ServerClient(args.base_url)
+    observed_health_status = wait_for_server(client, deadline)
+
+    admin = client.json_request(
+        "/auth/createAdmin",
+        method="POST",
+        body={"username": ADMIN_USER, "password": ADMIN_PASSWORD},
+    )
+    jwt = admin.get("token")
+    admin_id = admin.get("id")
+    admin_name = admin.get("username", admin.get("userName"))
+    observed_admin_bootstrap = {
+        "token_present": bool(jwt),
+        "id_present": bool(admin_id),
+        "username": admin_name,
+        "is_admin": admin.get("isAdmin"),
+    }
+    expected_admin_bootstrap = {
+        "token_present": True,
+        "id_present": True,
+        "username": ADMIN_USER,
+        "is_admin": True,
+    }
+    if observed_admin_bootstrap != expected_admin_bootstrap:
+        raise SystemExit("fresh database did not create the fixed admin role")
+
+    restricted = client.json_request(
+        "/api/user",
+        method="POST",
+        jwt=jwt,
+        body={
+            "userName": RESTRICTED_USER,
+            "name": "Dulcet Restricted Fixture",
+            "email": "",
+            "password": RESTRICTED_PASSWORD,
+            "isAdmin": False,
+        },
+    )
+    restricted_id = restricted.get("id")
+    if not restricted_id:
+        raise SystemExit("restricted fixture user was not created")
+    persisted_admin = client.json_request(f"/api/user/{urllib.parse.quote(str(admin_id))}", jwt=jwt)
+    persisted_restricted = client.json_request(
+        f"/api/user/{urllib.parse.quote(str(restricted_id))}", jwt=jwt
+    )
+    expected_users = [
+        (persisted_admin, str(admin_id), ADMIN_USER, True),
+        (persisted_restricted, str(restricted_id), RESTRICTED_USER, False),
+    ]
+    observed_user_roles: list[dict[str, object]] = []
+    for persisted, expected_id, expected_name, expected_admin in expected_users:
+        observed_user = (
+            str(persisted.get("id", "")),
+            persisted.get("userName"),
+            persisted.get("isAdmin"),
+        )
+        expected_user = (expected_id, expected_name, expected_admin)
+        if observed_user != expected_user:
+            raise SystemExit(
+                f"persisted fixture role mismatch: expected {expected_user}, observed {observed_user}"
+            )
+        observed_user_roles.append(
+            {"username": observed_user[1], "is_admin": observed_user[2]}
+        )
+    expected_user_roles = [
+        {"username": ADMIN_USER, "is_admin": True},
+        {"username": RESTRICTED_USER, "is_admin": False},
+    ]
+
+    ping = client.subsonic("ping")
+    observed_subsonic_version = ping["version"]
+    observed_server_version = str(ping.get("serverVersion", "")).removeprefix("v").split(" ", 1)[0]
+    if observed_server_version != args.expected_server_version:
+        raise SystemExit(
+            f"Navidrome version mismatch: expected {args.expected_server_version}, observed {observed_server_version}"
+        )
+
+    probe_title = manifest["known_probe"]["title"]
+    scan_status = None
+    probe = None
+    while time.monotonic() < deadline:
+        scan_status = client.subsonic("getScanStatus").get("scanStatus", {})
+        search = client.subsonic(
+            "search3",
+            parameters={
+                "query": probe_title,
+                "artistCount": "0",
+                "albumCount": "0",
+                "songCount": "20",
+            },
+        )
+        probe = find_probe(search, probe_title)
+        if not scan_status.get("scanning", True) and scan_status.get("lastScan") and probe:
+            break
+        time.sleep(0.25)
+    if not scan_status or scan_status.get("scanning", True):
+        raise SystemExit("scanner did not report complete before the explicit timeout")
+    if scan_status.get("error"):
+        raise SystemExit(f"scanner completed with an error: {scan_status['error']}")
+    if not probe:
+        raise SystemExit("scanner completed but the known health-probe item was not retrievable")
+    if int(scan_status.get("count", 0)) != manifest["generated_media_files"]:
+        raise SystemExit(
+            f"scanner count mismatch: expected {manifest['generated_media_files']}, "
+            f"observed {scan_status.get('count')}"
+        )
+
+    extensions_response = client.subsonic("getOpenSubsonicExtensions")
+    extension_names = {
+        extension.get("name") for extension in extensions_response.get("openSubsonicExtensions", [])
+    }
+    if "transcoding" not in extension_names:
+        raise SystemExit("pinned server did not advertise the transcoding extension")
+    if "sonicSimilarity" in extension_names:
+        raise SystemExit("similarity provider must not be configured in the conformance environment")
+    observed_extension_contract = {
+        "transcoding_present": "transcoding" in extension_names,
+        "sonic_similarity_present": "sonicSimilarity" in extension_names,
+    }
+    expected_extension_contract = {
+        "transcoding_present": True,
+        "sonic_similarity_present": False,
+    }
+
+    ffmpeg_command = json.loads(args.ffmpeg_command_json)
+    if not isinstance(ffmpeg_command, list) or not all(isinstance(value, str) for value in ffmpeg_command):
+        raise SystemExit("--ffmpeg-command-json must be a JSON string array")
+    ffmpeg = subprocess.run(
+        [*ffmpeg_command, "-version"], text=True, capture_output=True, timeout=20
+    )
+    if ffmpeg.returncode != 0:
+        raise SystemExit(f"pinned ffmpeg command failed: {redacted(ffmpeg.stderr.strip())}")
+    ffmpeg_line = ffmpeg.stdout.splitlines()[0] if ffmpeg.stdout else ""
+    observed_ffmpeg_version = require_ffmpeg_version(
+        ffmpeg_line, args.expected_ffmpeg_version
+    )
+
+    decision_response = client.subsonic(
+        "getTranscodeDecision",
+        parameters={"mediaId": probe["id"], "mediaType": "song"},
+        body={
+            "name": "Dulcet Conformance",
+            "platform": args.runtime,
+            "maxAudioBitrate": 128000,
+            "maxTranscodingAudioBitrate": 128000,
+            "directPlayProfiles": [],
+            "transcodingProfiles": [
+                {
+                    "container": "mp3",
+                    "audioCodec": "mp3",
+                    "protocol": "http",
+                    "maxAudioChannels": 2,
+                }
+            ],
+            "codecProfiles": [],
+        },
+    )
+    decision = decision_response.get("transcodeDecision", {})
+    observed_can_transcode = decision.get("canTranscode")
+    if observed_can_transcode is not True:
+        raise SystemExit(f"known FLAC probe did not report canTranscode=true: {decision}")
+
+    observed_scan = {
+        "scanning": scan_status.get("scanning"),
+        "last_scan_present": bool(scan_status.get("lastScan")),
+        "error": scan_status.get("error"),
+        "count": int(scan_status.get("count", 0)),
+        "known_probe_retrievable": probe is not None,
+    }
+    expected_scan = {
+        "scanning": False,
+        "last_scan_present": True,
+        "error": None,
+        "count": manifest["generated_media_files"],
+        "known_probe_retrievable": True,
+    }
+    lines = [
+        f"OBSERVED runtime expected={args.runtime} observed={actual_runtime}",
+        (
+            f"OBSERVED timezone expected={compact_json(expected_timezone)} "
+            f"observed={compact_json(observed_timezone)}"
+        ),
+        (
+            f"OBSERVED admin_bootstrap expected={compact_json(expected_admin_bootstrap)} "
+            f"observed={compact_json(observed_admin_bootstrap)}"
+        ),
+        f"OBSERVED reachability expected_http_status=200 observed_http_status={observed_health_status}",
+        (
+            f"OBSERVED navidrome expected={args.expected_server_version} "
+            f"observed={observed_server_version} subsonic_expected={SUBSONIC_VERSION} "
+            f"subsonic_observed={observed_subsonic_version}"
+        ),
+        (
+            f"OBSERVED scan expected={compact_json(expected_scan)} "
+            f"observed={compact_json(observed_scan)}"
+        ),
+        (
+            f"OBSERVED ffmpeg expected_version={args.expected_ffmpeg_version} "
+            f"observed_version={observed_ffmpeg_version} "
+            f"expected_returncode=0 observed_returncode={ffmpeg.returncode}"
+        ),
+        (
+            f"OBSERVED users expected={compact_json(expected_user_roles)} "
+            f"observed={compact_json(observed_user_roles)}"
+        ),
+        (
+            f"OBSERVED extensions expected={compact_json(expected_extension_contract)} "
+            f"observed={compact_json(observed_extension_contract)}"
+        ),
+        (
+            "OBSERVED transcode_decision expected_can_transcode=true "
+            f"observed_can_transcode={str(observed_can_transcode).lower()}"
+        ),
+    ]
+    print(f"CONFORMANCE PRECONDITIONS PASS evidence_lines={len(lines)}")
+    for line in lines:
+        print(line)
+    append_summary(lines)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        message = redacted(str(error))
+        append_summary([f"ERROR {message}"])
+        raise SystemExit(f"CONFORMANCE PRECONDITIONS ERROR: {message}") from error

@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+import argparse
+from pathlib import Path
+
+
+TOKENS = {
+    "@MUSIC_FOLDER@": "music_folder",
+    "@DATA_FOLDER@": "data_folder",
+    "@CACHE_FOLDER@": "cache_folder",
+    "@ADDRESS@": "address",
+    "@FFMPEG_PATH@": "ffmpeg_path",
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Render the checked-in Navidrome configuration.")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--music-folder", required=True)
+    parser.add_argument("--data-folder", required=True)
+    parser.add_argument("--cache-folder", required=True)
+    parser.add_argument("--address", required=True)
+    parser.add_argument("--ffmpeg-path", required=True)
+    args = parser.parse_args()
+
+    values = vars(args)
+    text = (Path(__file__).parent / "navidrome.toml.template").read_text()
+    for token, argument in TOKENS.items():
+        value = values[argument]
+        if any(character in value for character in ('"', "\n", "\r")):
+            raise SystemExit(f"unsafe value for {argument}")
+        text = text.replace(token, value)
+    if "@" in text:
+        raise SystemExit("unresolved configuration token")
+
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(text)
+    print(f"rendered deterministic Navidrome config: {output}")
+
+
+if __name__ == "__main__":
+    main()

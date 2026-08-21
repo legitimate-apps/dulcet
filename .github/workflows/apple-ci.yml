@@ -17,12 +17,21 @@ jobs:
   apple-ci:
     name: apple-ci
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - name: Prove ffmpeg version gate rejects prefix collisions
+        run: python3 tools/test-ffmpeg-version-gate
+      - name: Prove corpus probes reject mislabeled containers and empty tags
+        run: python3 tools/test-seed-corpus-gates
+      - name: Prove fresh-pour gate rejects a retained keg
+        run: python3 tools/test-darwin-fresh-pour-gate
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -75,10 +84,17 @@ jobs:
           --macos-app "$RUNNER_TEMP/DulcetMacDerivedData/Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
           --ios-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app/Dulcet DEV"
           --tvos-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Dulcet DEV"
-      - name: Install pinned resource-loader fixture encoder
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Install and verify checksum-pinned Darwin conformance closure
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
-          brew install lame
-          test "$(brew info --json=v2 lame | jq -r '.formulae[0].installed[0].version')" = 4.0
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
       - name: Prove the measurement rejects the observed first-only state
         run: |
           set +e
@@ -87,15 +103,61 @@ jobs:
           status=$?
           set -e
           printf '%s\n' "$output"
+          observed_rejected=false
+          if test "$status" -ne 0; then observed_rejected=true; fi
+          observed_first_only=false
+          if grep -q 'HLS_MEDIA_SEGMENTS=FIRST_ONLY missing=segment1.aac' <<< "$output"; then
+            observed_first_only=true
+          fi
+          observed_segment0_requests="$(grep -c 'REQUEST path=segment0.aac' <<< "$output" || true)"
+          observed_segment1_requests="$(grep -c 'REQUEST path=segment1.aac' <<< "$output" || true)"
           test "$status" -ne 0
           grep -q 'HLS_PLAYBACK_ERROR surfaced=' <<< "$output"
           grep -q 'HLS_MEDIA_SEGMENTS=FIRST_ONLY missing=segment1.aac' <<< "$output"
           grep -q 'REQUEST path=segment0.aac' <<< "$output"
           if grep -q 'REQUEST path=segment1.aac' <<< "$output"; then exit 1; fi
-          echo 'NEGATIVE CONTROL PASS all-routed assertion rejected the observed first-only state'
+          echo "NEGATIVE CONTROL PASS expected=all-routed observed_first_only=$observed_first_only observed_rejected=$observed_rejected observed_segment0_requests=$observed_segment0_requests observed_segment1_requests=$observed_segment1_requests"
       - name: Record progressive routing and Apple HLS fallback
         run: >-
           swift run
           --package-path tools/resource-loader-spike
           resource-loader-spike
           --expect-hls-segments first-only-playback-failed
+      - name: Generate deterministic Darwin corpus
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/seed-corpus
+          --output "$ROOT/music"
+          --runtime native
+          --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Render Darwin Navidrome configuration
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/conformance-env/render-config
+          --output "$ROOT/config/navidrome.toml"
+          --music-folder "$ROOT/music"
+          --data-folder "$ROOT/data"
+          --cache-folder "$ROOT/cache"
+          --address 127.0.0.1
+          --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Assert Darwin conformance preconditions
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          cleanup() {
+            kill "$navidrome_pid" >/dev/null 2>&1 || true
+            wait "$navidrome_pid" 2>/dev/null || true
+            tail -200 "$ROOT/logs/navidrome.log" || true
+          }
+          trap cleanup EXIT
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 \
+            --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"

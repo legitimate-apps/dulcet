@@ -1,0 +1,525 @@
+#!/usr/bin/env python3
+
+"""Generate Dulcet's deterministic, copyright-free conformance media corpus."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+
+
+FORMATS = {".flac", ".m4a", ".mp3", ".ogg"}
+PROBED_FORMAT_BY_SUFFIX = {
+    ".flac": "flac",
+    ".m4a": "m4a",
+    ".mp3": "mp3",
+    ".ogg": "ogg",
+}
+
+
+class MediaTools:
+    def __init__(self, root: Path, runtime: str, ffmpeg: str, image: str | None):
+        self.root = root.resolve()
+        self.runtime = runtime
+        self.ffmpeg = ffmpeg
+        self.image = image
+        if runtime == "docker" and (not image or "@sha256:" not in image):
+            raise SystemExit("docker corpus generation requires an image pinned by digest")
+
+    def ffmpeg_run(self, arguments: list[str]) -> None:
+        self._run("ffmpeg", arguments)
+
+    def ffprobe_json(self, path: Path) -> dict:
+        result = self._run(
+            "ffprobe",
+            [
+                "-v", "error",
+                "-show_entries", "format=format_name,duration:format_tags:stream_tags",
+                "-of", "json",
+                str(path),
+            ],
+            capture=True,
+        )
+        return json.loads(result)
+
+    def _run(self, tool: str, arguments: list[str], capture: bool = False) -> str:
+        mapped = [self._map_path(argument) for argument in arguments]
+        if self.runtime == "native":
+            executable = self.ffmpeg if tool == "ffmpeg" else str(Path(self.ffmpeg).with_name("ffprobe"))
+            command = [executable, *mapped]
+        else:
+            command = [
+                "docker", "run", "--rm", "--platform", "linux/amd64",
+                "--user", f"{os.getuid()}:{os.getgid()}",
+                "--entrypoint", f"/usr/bin/{tool}",
+                "-v", f"{self.root}:/corpus",
+                self.image,
+                *mapped,
+            ]
+        process = subprocess.run(command, text=True, capture_output=True)
+        if process.returncode != 0:
+            detail = (process.stderr or process.stdout).strip()
+            raise SystemExit(f"{tool} failed ({process.returncode}): {detail}")
+        return process.stdout if capture else ""
+
+    def _map_path(self, argument: str) -> str:
+        if self.runtime != "docker":
+            return argument
+        try:
+            path = Path(argument).resolve()
+            relative = path.relative_to(self.root)
+        except (OSError, ValueError):
+            return argument
+        return str(Path("/corpus") / relative)
+
+
+def encode(
+    tools: MediaTools,
+    output: Path,
+    *,
+    duration: float,
+    frequency: int,
+    title: str | None,
+    artist: str | None = "Dulcet Fixtures",
+    album: str | None = "Dulcet Conformance",
+    album_artist: str | None = "Dulcet Fixtures",
+    track: str | None = None,
+    disc: str | None = None,
+    date: str | None = "2026",
+    silence: bool = False,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    source = (
+        f"anullsrc=r=44100:cl=mono:d={duration}"
+        if silence
+        else f"sine=frequency={frequency}:sample_rate=44100:duration={duration}"
+    )
+    arguments = [
+        "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-f", "lavfi", "-i", source,
+        "-map_metadata", "-1", "-vn", "-threads", "1",
+    ]
+    metadata = {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "album_artist": album_artist,
+        "track": track,
+        "disc": disc,
+        "date": date,
+    }
+    for key, value in metadata.items():
+        if value is not None:
+            arguments.extend(["-metadata", f"{key}={value}"])
+
+    codec_arguments = {
+        ".flac": ["-c:a", "flac", "-compression_level", "5"],
+        ".mp3": ["-c:a", "libmp3lame", "-b:a", "96k"],
+        ".ogg": ["-c:a", "libopus", "-b:a", "64k"],
+        ".m4a": ["-c:a", "aac", "-b:a", "96k"],
+    }
+    if output.suffix not in codec_arguments:
+        raise SystemExit(f"unsupported corpus format: {output.suffix}")
+    tools.ffmpeg_run([*arguments, *codec_arguments[output.suffix], str(output)])
+
+
+def normalized_tags(probe: dict) -> dict[str, str]:
+    tags: dict[str, str] = {}
+    containers = [probe.get("format", {}), *probe.get("streams", [])]
+    for container in containers:
+        for key, value in container.get("tags", {}).items():
+            normalized = "".join(character for character in str(key).lower() if character.isalnum())
+            tags.setdefault(normalized, str(value))
+    return tags
+
+
+def normalize_format_name(value: object) -> str:
+    return ",".join(name.strip() for name in str(value).split(",") if name.strip())
+
+
+def probe_media(tools: MediaTools, path: Path) -> tuple[dict[str, str], float, str]:
+    probe = tools.ffprobe_json(path)
+    format_data = probe.get("format", {})
+    observed_format_name = normalize_format_name(format_data.get("format_name", ""))
+    return normalized_tags(probe), float(format_data.get("duration", 0)), observed_format_name
+
+
+def assert_media(
+    tools: MediaTools,
+    path: Path,
+    *,
+    expected_tags: dict[str, str],
+    absent_tags: tuple[str, ...] = (),
+    duration: float | None = None,
+) -> tuple[dict[str, str], float, str]:
+    tags, observed_duration, observed_format_name = probe_media(tools, path)
+    observed_format_tokens = set(observed_format_name.split(",")) if observed_format_name else set()
+    expected_format = PROBED_FORMAT_BY_SUFFIX.get(path.suffix.lower())
+    if expected_format is None:
+        raise SystemExit(f"no ffprobe format contract for {path.name}")
+    if expected_format not in observed_format_tokens:
+        raise SystemExit(
+            f"ffprobe container mismatch for {path.name}: expected {expected_format!r}, "
+            f"observed {observed_format_name!r}"
+        )
+    for key, expected in expected_tags.items():
+        observed = tags.get(key)
+        if observed != expected:
+            raise SystemExit(
+                f"ffprobe tag mismatch for {path.name} {key}: expected {expected!r}, "
+                f"observed {observed!r}"
+            )
+    present = {key: tags[key] for key in absent_tags if key in tags}
+    if present:
+        raise SystemExit(f"ffprobe found forbidden tags for {path.name}: {present}")
+    if duration is None:
+        return tags, observed_duration, observed_format_name
+    if abs(observed_duration - duration) > 0.20:
+        raise SystemExit(
+            f"ffprobe duration mismatch for {path.name}: expected {duration}, observed {observed_duration}"
+        )
+    return tags, observed_duration, observed_format_name
+
+
+def synchsafe(value: int) -> bytes:
+    if not 0 <= value < (1 << 28):
+        raise ValueError(f"ID3 synchsafe value out of range: {value}")
+    return bytes(((value >> shift) & 0x7F) for shift in (21, 14, 7, 0))
+
+
+def id3v24_text_tag(values: dict[str, str]) -> bytes:
+    frames = bytearray()
+    for frame_id, value in values.items():
+        payload = b"\x03" + value.encode("utf-8")
+        frames.extend(frame_id.encode("ascii") + synchsafe(len(payload)) + b"\x00\x00" + payload)
+    return b"ID3\x04\x00\x00" + synchsafe(len(frames)) + bytes(frames)
+
+
+def strip_leading_id3v2(data: bytes) -> bytes:
+    if len(data) < 10 or data[:3] != b"ID3":
+        return data
+    size = sum((data[6 + index] & 0x7F) << shift for index, shift in enumerate((21, 14, 7, 0)))
+    end = 10 + size
+    if end > len(data):
+        raise SystemExit("paging audio template has a truncated ID3v2 tag")
+    return data[end:]
+
+
+def parse_id3v24_text(path: Path) -> dict[str, str]:
+    data = path.read_bytes()
+    if len(data) < 10 or data[:6] != b"ID3\x04\x00\x00":
+        raise SystemExit(f"paging fixture has no deterministic ID3v2.4 tag: {path.name}")
+    size = sum((data[6 + index] & 0x7F) << shift for index, shift in enumerate((21, 14, 7, 0)))
+    cursor = 10
+    end = cursor + size
+    result: dict[str, str] = {}
+    while cursor + 10 <= end and data[cursor:cursor + 4] != b"\x00\x00\x00\x00":
+        frame_id = data[cursor:cursor + 4].decode("ascii")
+        frame_size = sum(
+            (data[cursor + 4 + index] & 0x7F) << shift
+            for index, shift in enumerate((21, 14, 7, 0))
+        )
+        payload = data[cursor + 10:cursor + 10 + frame_size]
+        if not payload or payload[0] != 3:
+            raise SystemExit(f"paging fixture has a non-UTF-8 text frame: {path.name} {frame_id}")
+        result[frame_id] = payload[1:].decode("utf-8")
+        cursor += 10 + frame_size
+    if cursor != end:
+        raise SystemExit(f"paging fixture ID3 size mismatch: {path.name}")
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--runtime", choices=("native", "docker"), required=True)
+    parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--image")
+    args = parser.parse_args()
+
+    root = Path(args.output).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    if any(root.iterdir()):
+        raise SystemExit(f"seed output must be empty: {root}")
+    tools = MediaTools(root, args.runtime, args.ffmpeg, args.image)
+
+    health_probe = root / "Health Probe" / "01 - Dulcet Health Probe.flac"
+    unicode_probe = root / "Unicode" / "01 - Étude 東京.mp3"
+    ogg_probe = root / "Formats" / "01 - Ogg Probe.ogg"
+    m4a_probe = root / "Formats" / "02 - M4A Probe.m4a"
+    encode(tools, health_probe, duration=2.0, frequency=440, title="Dulcet Health Probe", track="1")
+    encode(tools, unicode_probe, duration=1.0, frequency=494, title="Étude 東京", track="1")
+    encode(tools, ogg_probe, duration=1.0, frequency=523, title="Ogg Probe", track="1")
+    encode(tools, m4a_probe, duration=1.0, frequency=587, title="M4A Probe", track="2")
+
+    multi_disc_paths: list[tuple[Path, int, int]] = []
+    for disc in (1, 2):
+        for track in (1, 2):
+            path = root / "Double Lines" / f"Disc {disc}" / f"{track:02d} - Disc {disc} Track {track}.mp3"
+            encode(
+                tools,
+                path,
+                duration=0.5,
+                frequency=600 + disc * 40 + track * 10,
+                title=f"Disc {disc} Track {track}",
+                album="Double Lines",
+                track=str(track),
+                disc=str(disc),
+            )
+            multi_disc_paths.append((path, disc, track))
+
+    album_artists = ["Alpha Ensemble", "Beta Ensemble", "Gamma Ensemble"]
+    album_artist_probe = root / "Several Album Artists" / "01 - Shared Credit.flac"
+    encode(
+        tools,
+        album_artist_probe,
+        duration=0.5,
+        frequency=720,
+        title="Shared Credit",
+        album="Several Album Artists",
+        album_artist=";".join(album_artists),
+        track="1",
+    )
+    no_album_probe = root / "Singles" / "No Album.ogg"
+    encode(
+        tools,
+        no_album_probe,
+        duration=0.5,
+        frequency=760,
+        title="No Album",
+        album=None,
+        album_artist=None,
+    )
+    long_title = "A deliberately long title " + ("0123456789" * 32)
+    long_title_probe = root / "Long Titles" / "01 - Long Title.m4a"
+    encode(
+        tools,
+        long_title_probe,
+        duration=0.5,
+        frequency=800,
+        title=long_title,
+        album="Long Titles",
+        track="1",
+    )
+    boundary_29 = root / "Threshold Boundary" / "01 - Twenty Nine Seconds.flac"
+    boundary_31 = root / "Threshold Boundary" / "02 - Thirty One Seconds.flac"
+    encode(
+        tools, boundary_29, duration=29.0, frequency=0, title="Twenty Nine Seconds",
+        album="Threshold Boundary", track="1", silence=True,
+    )
+    encode(
+        tools, boundary_31, duration=31.0, frequency=0, title="Thirty One Seconds",
+        album="Threshold Boundary", track="2", silence=True,
+    )
+
+    template = root / ".templates" / "paging-template.mp3"
+    encode(
+        tools,
+        template,
+        duration=0.25,
+        frequency=880,
+        title=None,
+        artist=None,
+        album=None,
+        album_artist=None,
+        track=None,
+        date=None,
+    )
+    paging_audio = strip_leading_id3v2(template.read_bytes())
+    paging = root / "Paging Atlas"
+    paging.mkdir()
+    paging_paths: list[Path] = []
+    for track in range(1, 301):
+        destination = paging / f"{track:03d} - Paging Track {track:03d}.mp3"
+        paging_tags = {
+            "TIT2": f"Paging Track {track:03d}",
+            "TPE1": "Dulcet Fixtures",
+            "TALB": "Paging Atlas",
+            "TPE2": "Dulcet Fixtures",
+            "TRCK": str(track),
+            "TDRC": "2026",
+        }
+        destination.write_bytes(id3v24_text_tag(paging_tags) + paging_audio)
+        observed_paging_tags = parse_id3v24_text(destination)
+        if observed_paging_tags != paging_tags:
+            raise SystemExit(
+                f"paging ID3 round-trip mismatch for track {track}: "
+                f"expected {paging_tags}, observed {observed_paging_tags}"
+            )
+        paging_paths.append(destination)
+
+    health_tags, health_duration, health_format = assert_media(
+        tools,
+        health_probe,
+        expected_tags={"title": "Dulcet Health Probe"},
+        duration=2.0,
+    )
+    unicode_tags, _, unicode_format = assert_media(
+        tools,
+        unicode_probe,
+        expected_tags={"title": "Étude 東京"},
+        duration=1.0,
+    )
+    _, _, ogg_format = assert_media(
+        tools, ogg_probe, expected_tags={"title": "Ogg Probe"}, duration=1.0
+    )
+    _, _, m4a_format = assert_media(
+        tools, m4a_probe, expected_tags={"title": "M4A Probe"}, duration=1.0
+    )
+
+    observed_disc_tracks: list[dict[str, int]] = []
+    for path, disc, track in multi_disc_paths:
+        observed_multi_disc_tags, _, _ = assert_media(
+            tools,
+            path,
+            expected_tags={
+                "title": f"Disc {disc} Track {track}",
+                "album": "Double Lines",
+                "track": str(track),
+                "disc": str(disc),
+            },
+        )
+        observed_disc_tracks.append(
+            {
+                "disc": int(observed_multi_disc_tags["disc"]),
+                "track": int(observed_multi_disc_tags["track"]),
+            }
+        )
+
+    album_artist_tags, _, _ = assert_media(
+        tools,
+        album_artist_probe,
+        expected_tags={
+            "title": "Shared Credit",
+            "album": "Several Album Artists",
+            "albumartist": ";".join(album_artists),
+        },
+    )
+    observed_album_artists = album_artist_tags["albumartist"].split(";")
+    if observed_album_artists != album_artists:
+        raise SystemExit(
+            f"split album-artist mismatch: expected {album_artists}, observed {observed_album_artists}"
+        )
+
+    no_album_tags, _, _ = assert_media(
+        tools,
+        no_album_probe,
+        expected_tags={"title": "No Album"},
+        absent_tags=("album", "albumartist"),
+    )
+    long_title_tags, _, _ = assert_media(
+        tools,
+        long_title_probe,
+        expected_tags={"title": long_title},
+    )
+    if len(long_title_tags["title"]) != len(long_title):
+        raise SystemExit("long-title length changed after encoding")
+
+    _, observed_29, _ = assert_media(
+        tools,
+        boundary_29,
+        expected_tags={"title": "Twenty Nine Seconds"},
+        duration=29.0,
+    )
+    _, observed_31, _ = assert_media(
+        tools,
+        boundary_31,
+        expected_tags={"title": "Thirty One Seconds"},
+        duration=31.0,
+    )
+
+    observed_paging_ffprobe_tracks: list[int] = []
+    for index in (1, 150, 300):
+        observed_paging_tags, _, _ = assert_media(
+            tools,
+            paging_paths[index - 1],
+            expected_tags={
+                "title": f"Paging Track {index:03d}",
+                "artist": "Dulcet Fixtures",
+                "album": "Paging Atlas",
+                "albumartist": "Dulcet Fixtures",
+                "track": str(index),
+            },
+        )
+        observed_paging_ffprobe_tracks.append(int(observed_paging_tags["track"]))
+
+    scanner_files = [
+        path for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in FORMATS and ".templates" not in path.parts
+    ]
+    if len(scanner_files) != 313:
+        raise SystemExit(f"expected 313 scanner-visible media files, generated {len(scanner_files)}")
+    scanner_extensions = sorted({path.suffix.lower() for path in scanner_files})
+    if scanner_extensions != sorted(FORMATS):
+        raise SystemExit(f"generated file-extension set mismatch: {scanner_extensions}")
+    representative_format_observations = [
+        {
+            "suffix": path.suffix.lower(),
+            "expected_token": PROBED_FORMAT_BY_SUFFIX[path.suffix.lower()],
+            "observed_format_name": observed_format_name,
+        }
+        for path, observed_format_name in (
+            (health_probe, health_format),
+            (unicode_probe, unicode_format),
+            (ogg_probe, ogg_format),
+            (m4a_probe, m4a_format),
+        )
+    ]
+    expected_format_tokens = sorted(
+        {observation["expected_token"] for observation in representative_format_observations}
+    )
+    if expected_format_tokens != ["flac", "m4a", "mp3", "ogg"]:
+        raise SystemExit(f"representative format-token set mismatch: {expected_format_tokens}")
+    observed_format_names = sorted(
+        {observation["observed_format_name"] for observation in representative_format_observations}
+    )
+
+    manifest = {
+        "schema_version": 2,
+        "copyrighted_audio": False,
+        "generated_media_files": len(scanner_files),
+        "formats": {
+            "expected_tokens": expected_format_tokens,
+            "observed_format_names": observed_format_names,
+            "probes": representative_format_observations,
+        },
+        "known_probe": {
+            "title": health_tags["title"],
+            "expected_format_token": PROBED_FORMAT_BY_SUFFIX[health_probe.suffix.lower()],
+            "observed_format_name": health_format,
+            "duration_seconds": round(health_duration, 3),
+        },
+        "awkward_cases": {
+            "unicode_title": unicode_tags["title"],
+            "multi_disc_tracks": observed_disc_tracks,
+            "album_artists": observed_album_artists,
+            "track_without_album": {
+                "title": no_album_tags["title"],
+                "album_tag_present": "album" in no_album_tags,
+                "album_artist_tag_present": "albumartist" in no_album_tags,
+            },
+            "very_long_title_characters": len(long_title_tags["title"]),
+            "paging_album": {
+                "tracks_id3_verified": len(paging_paths),
+                "ffprobe_verified_tracks": observed_paging_ffprobe_tracks,
+            },
+            "threshold_durations_seconds": [round(observed_29), round(observed_31)],
+        },
+        "verification": "ffprobe-plus-id3v24-round-trip",
+    }
+    (root / "corpus-manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    observed_paging = manifest["awkward_cases"]["paging_album"]
+    observed_thresholds = manifest["awkward_cases"]["threshold_durations_seconds"]
+    print(
+        f"SEED CORPUS PASS files={manifest['generated_media_files']} "
+        f"expected_format_tokens={json.dumps(expected_format_tokens, separators=(',', ':'))} "
+        f"observed_format_names={json.dumps(observed_format_names, separators=(',', ':'))} "
+        f"paging_id3={observed_paging['tracks_id3_verified']} "
+        f"paging_ffprobe={json.dumps(observed_paging['ffprobe_verified_tracks'], separators=(',', ':'))} "
+        f"thresholds={json.dumps(observed_thresholds, separators=(',', ':'))}"
+    )
+
+
+if __name__ == "__main__":
+    main()
