@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 24 — typed JVM and Darwin trust failures now produce `TlsUntrusted` and are exercised
-against a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
+**Revision:** 25 — credential channels are separately observed at the Ktor boundary and enforced by
+disposable servers; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
+a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
 job's JUnit results; revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
 revision 21 made `DomainError` retain no server-controlled text or URL; revision 20 made CONF-01
 through CONF-08 execute on JVM and macOS against the pinned reference
@@ -1880,9 +1881,10 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
 - `Server.Known(code)` **and `Server.Unknown(code)`** — server messages and request URLs are discarded
   at the wire boundary. The
   model **must** carry an unrecognized numeric code. **ASSUMED:** the documented Subsonic set is
-  expected to be `{0, 10, 20, 30, 40, 41, 50, 60, 70}`; **CONF-06 tests the mappings it can actually
-  trigger and tests that an unknown code round-trips**, because one server instance cannot establish a
-  closed universe of codes and other compatible servers may return others.
+  expected to be `{0, 10, 20, 30, 40, 41, 50, 60, 70}`; **CONF-03 tests the invalid-credential
+  mapping, while CONF-06 tests transport reachability and that an unknown code round-trips**, because
+  one server instance cannot establish a closed universe of codes and other compatible servers may
+  return others.
 - `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | RedirectCredentialLoss`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
@@ -2154,10 +2156,10 @@ gap; it needs no Docker and no fixture-fidelity argument.
 |---|---|
 | CONF-01 | `getOpenSubsonicExtensions` reachable **unauthenticated** |
 | CONF-02 | the advertised extension set **for the pinned image and configuration**; an unknown new extension is informational drift, **not** a failure (a client that must ignore unknown extensions cannot also fail when one appears); a **missing** previously-required extension **is** a failure |
-| CONF-03 | `ping` with a salted token succeeds; each authenticated request consumes a fresh 16-byte salt; a wrong password yields `AuthenticationFailed`, not `ServerUnreachable` |
+| CONF-03 | `ping` with a salted token succeeds; each authenticated request consumes a fresh 16-byte salt; a wrong password yields `Auth.InvalidCredentials`, not `Transport.Unreachable` |
 | CONF-04 | the client sends 1.16.1, the pinned server reports 1.16.1, and the compatibility rule accepts matching major/client-minor-at-or-below-server-minor versions |
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
-| CONF-06 | mappings for every error the harness can trigger, **plus** an unknown code round-tripping to `Server.Unknown` |
+| CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; no credential appears in a request line, structured diagnostic, or `DomainError` rendering; the canary password, its derived tokens, and the exact issued salts are absent |
 | CONF-08 | account connection follows at most five redirects; preserves the exact issued credentials on same-origin hops; strips them across scheme, host, or port changes; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
@@ -2851,6 +2853,21 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 25 (2026-08-21)** — credential-channel claims became directly observable.
+
+1. A hosted negative control added two server-observation routes before implementing them. Eleven
+   tests executed; only CONF-07 and CONF-08 failed, while CONF-03 continued to pass after taking
+   ownership of its wrong-password claim.
+2. `RequestTrace` now records separate query and form sets of closed credential-key enums at Ktor's
+   `SendingRequest` boundary. It can represent mixed placement and retains no username, token, salt,
+   or password value.
+3. The disposable observation server rejects authenticated requests unless exactly `u`, `t`, and `s`
+   occupy the form body with no credential key in the query. The cross-origin scenario requires that
+   complete source placement and rejects every credential key at the target; the same-origin scenario
+   compares the raw method, query, and body across the redirect.
+4. The wrong-password assertion moved from CONF-06 into CONF-03, where §20.4 assigns it. CONF-06 is
+   now described by the transport and unknown-server mappings it actually asserts.
 
 **Revision 24 (2026-08-21)** — `TlsUntrusted` became reachable through production transports.
 

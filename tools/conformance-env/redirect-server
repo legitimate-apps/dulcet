@@ -78,6 +78,13 @@ class RedirectHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length else b""
         endpoint = parsed.path.rsplit("/", 1)[-1].removesuffix(".view")
 
+        if parsed.path.startswith("/observe/rest/"):
+            if not self._observes_expected_channels(endpoint, parsed.query, body):
+                self._send_json(500, {"error": "credential channel observation failed"})
+                return
+            self._send_json(200, envelope(endpoint))
+            return
+
         if parsed.path.startswith("/same/rest/"):
             STATE.remember("same", endpoint, self.command, parsed.query, body)
             self._redirect(f"/same-target/rest/{endpoint}.view")
@@ -94,6 +101,13 @@ class RedirectHandler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/cross/rest/"):
             STATE.remember("cross", endpoint, self.command, parsed.query, body)
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/cross-observe/rest/"):
+            if not self._observes_expected_channels(endpoint, parsed.query, body):
+                self._send_json(500, {"error": "cross-origin source credential channels failed"})
+                return
             target_port = self.server.target_port  # type: ignore[attr-defined]
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
             return
@@ -121,9 +135,23 @@ class RedirectHandler(BaseHTTPRequestHandler):
         return {"u", "t", "s"}.issubset(form)
 
     def _has_authentication(self, query: str, body: bytes) -> bool:
+        query_authentication, form_authentication = self._authentication_channels(query, body)
+        return bool(query_authentication | form_authentication)
+
+    def _authentication_channels(self, query: str, body: bytes) -> tuple[set[str], set[str]]:
         query_keys = set(parse_qs(query, keep_blank_values=True))
         form_keys = set(parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True))
-        return bool(AUTHENTICATION_KEYS & (query_keys | form_keys))
+        return AUTHENTICATION_KEYS & query_keys, AUTHENTICATION_KEYS & form_keys
+
+    def _observes_expected_channels(self, endpoint: str, query: str, body: bytes) -> bool:
+        query_authentication, form_authentication = self._authentication_channels(query, body)
+        if endpoint == "getOpenSubsonicExtensions":
+            return self.command == "GET" and not query_authentication and not form_authentication
+        return (
+            self.command == "POST"
+            and not query_authentication
+            and form_authentication == {"u", "t", "s"}
+        )
 
     def _redirect(self, location: str) -> None:
         self.send_response(307)

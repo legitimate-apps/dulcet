@@ -5,6 +5,7 @@ import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.AccountConnector
 import com.legitimateapps.dulcet.core.AuthenticationLocation
+import com.legitimateapps.dulcet.core.AuthenticationParameter
 import com.legitimateapps.dulcet.core.CapabilityFeature
 import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
@@ -26,6 +27,11 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class AccountConnectConformanceTest {
+    private val saltedTokenAuthentication = setOf(
+        AuthenticationParameter.Username,
+        AuthenticationParameter.SaltedToken,
+        AuthenticationParameter.Salt,
+    )
     private val knownSalts = listOf(
         "00112233445566778899aabbccddeeff",
         "102132435465768798a9bacbdcedfe0f",
@@ -215,7 +221,12 @@ class AccountConnectConformanceTest {
         )
         assertTrue(
             connected.requests.filter { it.authenticationLocation != AuthenticationLocation.None }
-                .all { it.method == "POST" && '?' !in it.redactedUrl },
+                .all {
+                    it.method == "POST" &&
+                        '?' !in it.redactedUrl &&
+                        it.queryAuthenticationParameters.isEmpty() &&
+                        it.formAuthenticationParameters == saltedTokenAuthentication
+                },
         )
         assertFalse(diagnosticText.contains(ADMIN_PASSWORD))
         assertFalse(diagnosticText.contains(ADMIN_USER))
@@ -250,9 +261,17 @@ class AccountConnectConformanceTest {
             }
         }
 
-        fixture().requireConnected(
+        val serverObserved = fixture().requireConnected(
             "CONF-07 server-observed credential channels",
             "${redirectConformanceRoot()}/observe",
+        )
+        assertTrue(serverObserved.requests.first().queryAuthenticationParameters.isEmpty())
+        assertTrue(serverObserved.requests.first().formAuthenticationParameters.isEmpty())
+        assertTrue(
+            serverObserved.requests.drop(1).all {
+                it.queryAuthenticationParameters.isEmpty() &&
+                    it.formAuthenticationParameters == saltedTokenAuthentication
+            },
         )
     }
 
@@ -407,11 +426,15 @@ class AccountConnectConformanceTest {
             assertEquals(2, pair.size, "CONF-08 expected one redirect for $endpoint")
             assertEquals(pair[0].method, pair[1].method)
             assertEquals(pair[0].authenticationLocation, pair[1].authenticationLocation)
+            assertEquals(pair[0].queryAuthenticationParameters, pair[1].queryAuthenticationParameters)
+            assertEquals(pair[0].formAuthenticationParameters, pair[1].formAuthenticationParameters)
             assertEquals(pair[0].saltFingerprint, pair[1].saltFingerprint)
         }
         assertTrue(
             sameOriginPairs.getValue("ping").all {
-                it.authenticationLocation == AuthenticationLocation.FormBody
+                it.authenticationLocation == AuthenticationLocation.FormBody &&
+                    it.queryAuthenticationParameters.isEmpty() &&
+                    it.formAuthenticationParameters == saltedTokenAuthentication
             },
         )
 
