@@ -29,7 +29,7 @@ internal actual fun isUnsupportedAuthenticationChallenge(failure: Throwable): Bo
     repeat(MAX_CAUSE_DEPTH) {
         val candidate = current ?: return false
         val origin = (candidate as? DarwinHttpRequestException)?.origin
-        if (origin?.domain == NSURLErrorDomain && origin.code == USER_AUTHENTICATION_REQUIRED) {
+        if (origin?.domain == NSURLErrorDomain && origin?.code == USER_AUTHENTICATION_REQUIRED) {
             return true
         }
         current = candidate.cause
