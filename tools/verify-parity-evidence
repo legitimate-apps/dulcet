@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -52,14 +53,21 @@ if not files:
     fail(f"no JUnit XML results found under {results}")
 
 observed: dict[tuple[str, str], list[ET.Element]] = {}
+
+
+def runner_identity(value: str) -> str:
+    """Remove only Gradle's terminal Kotlin/Native target decoration."""
+    return re.sub(r"\[[A-Za-z][A-Za-z0-9_-]*\]$", "", value)
+
+
 for path in files:
     try:
         root = ET.parse(path).getroot()
     except (OSError, ET.ParseError) as error:
         fail(f"invalid JUnit XML {path}: {error}")
     for testcase in root.iter("testcase"):
-        class_name = testcase.get("classname", "").rsplit(".", 1)[-1]
-        test_name = testcase.get("name", "")
+        class_name = runner_identity(testcase.get("classname", "")).rsplit(".", 1)[-1]
+        test_name = runner_identity(testcase.get("name", ""))
         if test_name.endswith("()"):
             test_name = test_name[:-2]
         observed.setdefault((class_name, test_name), []).append(testcase)
@@ -68,9 +76,14 @@ for identity, claims in expected.items():
     executions = observed.get(identity, [])
     rendered = f"{identity[0]}/{identity[1]}"
     if not executions:
+        nearby = sorted(
+            f"{class_name}/{test_name}"
+            for class_name, test_name in observed
+            if identity[0] in class_name or identity[1] in test_name
+        )
         fail(
             f"evidence test did not execute in {workflow}/{job}: {rendered} "
-            f"claimed by {', '.join(claims)}"
+            f"claimed by {', '.join(claims)}; nearby={nearby[:5]}"
         )
     for execution in executions:
         terminal = next(
