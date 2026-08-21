@@ -126,6 +126,11 @@ class AccountConnectConformanceTest {
         val generated = List(8) { secureSaltSource.nextSalt() }
         assertTrue(generated.all { salt -> salt.length == 32 && salt.all { it.isLowerCaseHexDigit() } })
         assertEquals(generated.size, generated.toSet().size)
+
+        val badCredentials = fixture(password = "definitely-wrong-password").connect()
+        val badCredentialsError = assertIs<AccountConnectionResult.Failed>(badCredentials).error
+        assertIs<DomainError.Auth.InvalidCredentials>(badCredentialsError)
+        assertFalse(badCredentialsError is DomainError.Transport.Unreachable)
     }
 
     @Test
@@ -168,11 +173,6 @@ class AccountConnectConformanceTest {
 
     @Test
     fun conf06DistinguishesAuthenticationAndTransportFailures() = runTest {
-        val badCredentials = fixture(password = "definitely-wrong-password").connect()
-        val badCredentialsError = assertIs<AccountConnectionResult.Failed>(badCredentials).error
-        assertIs<DomainError.Auth.InvalidCredentials>(badCredentialsError)
-        assertFalse(badCredentialsError is DomainError.Transport.Unreachable)
-
         val unreachable = AccountConnector().connect(
             AccountConnectionRequest(
                 serverUrl = "http://127.0.0.1:1",
@@ -197,9 +197,10 @@ class AccountConnectConformanceTest {
 
     @Test
     fun conf07RedactsCredentialsFromDiagnostics() = runTest {
-        val fixture = fixture()
-        val connected = fixture.requireConnected("CONF-07")
-        val diagnosticText = fixture.logs.joinToString("\n") + "\n" + connected.requests.joinToString("\n")
+        val diagnosticFixture = fixture()
+        val connected = diagnosticFixture.requireConnected("CONF-07")
+        val diagnosticText =
+            diagnosticFixture.logs.joinToString("\n") + "\n" + connected.requests.joinToString("\n")
         val issuedSalts = knownSalts.take(
             connected.requests.count { it.authenticationLocation != AuthenticationLocation.None },
         )
@@ -248,6 +249,11 @@ class AccountConnectConformanceTest {
                 assertFalse(everyRenderedField.contains(issuedSalts.first()))
             }
         }
+
+        fixture().requireConnected(
+            "CONF-07 server-observed credential channels",
+            "${redirectConformanceRoot()}/observe",
+        )
     }
 
     @Test
@@ -409,7 +415,7 @@ class AccountConnectConformanceTest {
             },
         )
 
-        val crossOrigin = fixture().connect("$redirectRoot/cross")
+        val crossOrigin = fixture().connect("$redirectRoot/cross-observe")
         val credentialLoss = assertIs<DomainError.Auth.RedirectCredentialLoss>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
