@@ -143,7 +143,7 @@ private struct DulcetSidebar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(store.selectedDestination == destination ? Color.dulcetAccent : Color.primary)
+        .foregroundStyle(Color.primary)
             .accessibilityLabel(title)
             .accessibilityAddTraits(store.selectedDestination == destination ? [.isSelected] : [])
     }

@@ -34,6 +34,7 @@ struct DulcetEmptyLibraryView: View {
                 Button(DulcetStrings.connectServer, systemImage: "plus") {}
                     .buttonStyle(.borderedProminent)
                     .tint(.dulcetAccent)
+                    .foregroundStyle(Color.dulcetOnAccent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.connectServer)
@@ -152,6 +153,7 @@ struct DulcetLibraryHeader: View {
                 Button(DulcetStrings.playAll, systemImage: "play.fill") {}
                     .buttonStyle(.borderedProminent)
                     .tint(.dulcetAccent)
+                    .foregroundStyle(Color.dulcetOnAccent)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.playAll)
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
@@ -359,6 +361,7 @@ struct DulcetAlbumDetailView: View {
             Button(DulcetStrings.play, systemImage: "play.fill") {}
                 .buttonStyle(.borderedProminent)
                 .tint(.dulcetAccent)
+                .foregroundStyle(Color.dulcetOnAccent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel(DulcetStrings.play)
@@ -398,6 +401,7 @@ struct DulcetOfflineLibraryView: View {
                     Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
                         .buttonStyle(.borderedProminent)
                         .tint(.dulcetOffline)
+                        .foregroundStyle(Color.dulcetOnAccent)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.tryAgain)
                 }
