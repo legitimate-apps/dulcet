@@ -189,15 +189,19 @@ class AccountConnectConformanceTest {
 
         val signedUrl =
             "https://music.invalid/rest/ping.view?u=$ADMIN_USER&t=${derivedTokens.first()}&s=${issuedSalts.first()}"
-        listOf(0, 999).forEach { code ->
-            val everyRenderedField = AccountConnectionContract.mapSubsonicError(
-                code = code,
-                message = "server echoed $signedUrl",
-                requestUrl = signedUrl,
-            ).toString()
-            assertFalse(everyRenderedField.contains(ADMIN_USER))
-            assertFalse(everyRenderedField.contains(derivedTokens.first()))
-            assertFalse(everyRenderedField.contains(issuedSalts.first()))
+        val echoedCredentials =
+            "u=$ADMIN_USER&t=${derivedTokens.first()}&s=${issuedSalts.first()}"
+        listOf("server echoed $signedUrl", "server echoed $echoedCredentials").forEach { message ->
+            listOf(0, 999).forEach { code ->
+                val everyRenderedField = AccountConnectionContract.mapSubsonicError(
+                    code = code,
+                    message = message,
+                    requestUrl = signedUrl,
+                ).toString()
+                assertFalse(everyRenderedField.contains(ADMIN_USER))
+                assertFalse(everyRenderedField.contains(derivedTokens.first()))
+                assertFalse(everyRenderedField.contains(issuedSalts.first()))
+            }
         }
     }
 
