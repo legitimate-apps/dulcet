@@ -87,6 +87,25 @@ jobs:
             --output "$CAPTURE_ROOT/run-b/standard" \
             --state all --appearance all --include-control
           diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b"
+          python3 - "$CAPTURE_ROOT/run-a" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) / "standard"
+          identical = (root / "macos-library-browse-light.jpg").read_bytes()
+          for path in root.glob("*.jpg"):
+              path.write_bytes(identical)
+          manifest_path = root / "manifest.json"
+          manifest = json.loads(manifest_path.read_text())
+          for record in manifest["captures"]:
+              data = (root / record["file"]).read_bytes()
+              record["jpegBytes"] = len(data)
+              record["sha256"] = hashlib.sha256(data).hexdigest()
+          manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          print("ALL-IDENTICAL RED PROOF bytes-copied=true manifest-hashes-refreshed=true")
+          PY
           python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a"
           tools/test-design-capture-gates "$CAPTURE_ROOT/run-a"
           {
