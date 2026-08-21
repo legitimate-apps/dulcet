@@ -14,7 +14,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class AccountConnectConformanceTest {
@@ -133,7 +132,7 @@ class AccountConnectConformanceTest {
         val badCredentials = fixture(password = "definitely-wrong-password").connect()
         val badCredentialsError = assertIs<AccountConnectionResult.Failed>(badCredentials).error
         assertIs<DomainError.Auth.InvalidCredentials>(badCredentialsError)
-        assertNotEquals(DomainError.Transport.Unreachable, badCredentialsError)
+        assertFalse(badCredentialsError is DomainError.Transport.Unreachable)
 
         val unreachable = AccountConnector().connect(
             AccountConnectionRequest(
