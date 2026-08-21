@@ -119,10 +119,10 @@ struct DulcetSourceBadge: View {
 
     var body: some View {
         Label(title, systemImage: symbol)
-            .font(.caption.weight(.medium))
+            .font(.caption2.weight(.medium))
             .foregroundStyle(foreground)
-            .padding(.horizontal, DulcetSpacing.xs)
-            .padding(.vertical, DulcetSpacing.xxs)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
             .background(foreground.opacity(0.11), in: Capsule())
             .accessibilityLabel(title)
     }

@@ -173,7 +173,7 @@ struct DulcetSearchView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+            LazyVStack(alignment: .leading, spacing: DulcetSpacing.md) {
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                     Text(DulcetStrings.searchTitle)
                         .font(.largeTitle.weight(.bold))
@@ -198,11 +198,11 @@ struct DulcetSearchView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
                     ForEach(snapshot.searchResults) { result in
                         DulcetSearchResultRow(result: result)
                         if result.id != snapshot.searchResults.last?.id {
-                            Divider().padding(.leading, 76)
+                            Divider().padding(.leading, 60)
                         }
                     }
                 }
@@ -212,7 +212,7 @@ struct DulcetSearchView: View {
                         .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
                 }
             }
-            .padding(DulcetSpacing.xl)
+            .padding(DulcetSpacing.lg)
         }
         .background(Color.dulcetWindow)
         .navigationTitle(DulcetStrings.search)
@@ -225,26 +225,26 @@ private struct DulcetSearchResultRow: View {
 
     var body: some View {
         Button(action: {}) {
-            HStack(alignment: .center, spacing: DulcetSpacing.md) {
-                DulcetArtworkView(artwork: result.artwork, size: 48)
+            HStack(alignment: .center, spacing: DulcetSpacing.sm) {
+                DulcetArtworkView(artwork: result.artwork, size: 36)
 
-                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: DulcetSpacing.xs) {
                         Text(result.title)
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         Text(kindTitle)
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                     Text(result.subtitle)
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     if result.refreshedFromServer {
                         Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -256,7 +256,8 @@ private struct DulcetSearchResultRow: View {
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            .padding(DulcetSpacing.sm)
+            .padding(.horizontal, DulcetSpacing.sm)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -282,25 +283,24 @@ private struct DulcetSearchResultRow: View {
 }
 
 struct DulcetTLSUntrustedView: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let failure: DulcetTLSFailure
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: DulcetSpacing.lg) {
+                    HStack(alignment: .top, spacing: DulcetSpacing.md) {
                         shield
                         heading
                     }
-                    VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                         shield
                         heading
                     }
                 }
 
                 GroupBox(DulcetStrings.tlsWhy) {
-                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                         Text(failure.reason)
                             .font(.headline)
                             .lineLimit(nil)
@@ -309,7 +309,7 @@ struct DulcetTLSUntrustedView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(nil)
                     }
-                    .padding(.vertical, DulcetSpacing.xs)
+                    .padding(.vertical, DulcetSpacing.xxs)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -322,7 +322,7 @@ struct DulcetTLSUntrustedView: View {
                             .foregroundStyle(Color.dulcetAccent)
                     }
                     .font(.body)
-                    .padding(.vertical, DulcetSpacing.xs)
+                    .padding(.vertical, DulcetSpacing.xxs)
                 }
 
                 HStack(spacing: DulcetSpacing.sm) {
@@ -339,8 +339,8 @@ struct DulcetTLSUntrustedView: View {
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
                 }
             }
-            .padding(dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.lg : DulcetSpacing.xxl)
-            .frame(maxWidth: 760)
+            .padding(DulcetSpacing.lg)
+            .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
         }
         .background(Color.dulcetWindow)
@@ -351,9 +351,9 @@ struct DulcetTLSUntrustedView: View {
         ZStack {
             Circle()
                 .fill(Color.dulcetDanger.opacity(0.11))
-                .frame(width: 96, height: 96)
+                .frame(width: 72, height: 72)
             Image(systemName: "exclamationmark.shield.fill")
-                .font(.system(size: 42, weight: .semibold))
+                .font(.system(size: 32, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Color.dulcetDanger)
                 .accessibilityHidden(true)

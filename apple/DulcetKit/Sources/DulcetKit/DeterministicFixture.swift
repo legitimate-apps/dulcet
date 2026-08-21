@@ -363,6 +363,55 @@ private extension DulcetDeterministicFixture {
             source: .server,
             artwork: DulcetArtwork(seed: "atlas-after-dark", palette: .duskLavender)
         ),
+        DulcetSearchResult(
+            id: "track-atlas-in-blue",
+            title: "Atlas in Blue",
+            subtitle: "Mara Venn · Cartography",
+            kind: .track,
+            source: .local,
+            artwork: DulcetArtwork(seed: "atlas-in-blue", palette: .oceanMint)
+        ),
+        DulcetSearchResult(
+            id: "album-atlas-archive",
+            title: "The Atlas Archive",
+            subtitle: "North Window · 18 tracks",
+            kind: .album,
+            source: .server,
+            artwork: DulcetArtwork(seed: "atlas-archive", palette: .slateApricot)
+        ),
+        DulcetSearchResult(
+            id: "artist-atlas-quartet",
+            title: "Atlas Quartet",
+            subtitle: "Artist · 7 albums",
+            kind: .artist,
+            source: .localAndServer,
+            artwork: DulcetArtwork(seed: "atlas-quartet", palette: .indigoCoral),
+            refreshedFromServer: true
+        ),
+        DulcetSearchResult(
+            id: "track-atlas-north",
+            title: "Atlas North",
+            subtitle: "Signal Coast · Bearings",
+            kind: .track,
+            source: .server,
+            artwork: DulcetArtwork(seed: "atlas-north", palette: .mossGold)
+        ),
+        DulcetSearchResult(
+            id: "track-atlas-signal",
+            title: "Atlas Signal",
+            subtitle: "Rhea Vale · Night Glass",
+            kind: .track,
+            source: .local,
+            artwork: DulcetArtwork(seed: "atlas-signal", palette: .plumIce)
+        ),
+        DulcetSearchResult(
+            id: "album-atlas-field",
+            title: "Atlas Field Recordings",
+            subtitle: "Dulcet Fixtures · 24 tracks",
+            kind: .album,
+            source: .localAndServer,
+            artwork: DulcetArtwork(seed: "atlas-field", palette: .emberRose)
+        ),
     ]
 
     static let tlsFailure = DulcetTLSFailure(
