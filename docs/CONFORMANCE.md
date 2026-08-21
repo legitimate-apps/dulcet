@@ -13,6 +13,7 @@ the detailed assertion.
 | CONF-05 | OpenSubsonic envelope fields |
 | CONF-06 | distinguish authentication and transport failures |
 | CONF-07 | redact credentials from diagnostics |
+| CONF-08 | redirect credential policy |
 | CONF-11 | successful stream signature validation |
 | CONF-12 | legacy stream error-envelope detection |
 | CONF-13 | ranged stream behavior |

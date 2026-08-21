@@ -12,9 +12,13 @@ import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
+import io.ktor.http.URLBuilder
+import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.encodedPath
+import io.ktor.http.takeFrom
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -41,6 +45,19 @@ public enum class AuthenticationLocation {
 
 public enum class RequestObservationBoundary {
     KtorSendingRequest,
+}
+
+public enum class RedirectRejectionReason {
+    HttpsDowngrade,
+    LocalToPublic,
+    TooManyRedirects,
+    InvalidLocation,
+}
+
+public sealed interface RedirectPolicyDecision {
+    public data object PreserveCredentials : RedirectPolicyDecision
+    public data object StripCredentials : RedirectPolicyDecision
+    public data class Reject(val reason: RedirectRejectionReason) : RedirectPolicyDecision
 }
 
 /** Redacted request evidence retained for diagnostics and conformance assertions. */
@@ -145,6 +162,10 @@ public sealed interface DomainError {
     public sealed interface Security : DomainError {
         public data class TlsUntrusted(val reason: RedactedText) : Security
         public data object LocalExceptionViolated : Security
+        public data class RedirectRejected(
+            val reason: RedirectRejectionReason,
+            val redactedUrl: RedactedUrl,
+        ) : Security
     }
 
     public sealed interface Protocol : DomainError {
@@ -174,7 +195,7 @@ public sealed interface DomainError {
         public data object InvalidCredentials : Auth
         public data object TokenAuthUnsupported : Auth
         public data object Forbidden : Auth
-        public data object RedirectCredentialLoss : Auth
+        public data class RedirectCredentialLoss(val redactedUrl: RedactedUrl) : Auth
     }
 
     public data class CapabilityUnsupported(val featureId: RedactedText) : DomainError
@@ -220,6 +241,8 @@ public class AccountConnector(
                 traceRecorder.clear()
                 val result = try {
                     connectNormalized(client, baseUrl, request, traceRecorder)
+                } catch (failure: RedirectPolicyFailure) {
+                    AccountConnectionResult.Failed(failure.error)
                 } catch (_: HttpRequestTimeoutException) {
                     AccountConnectionResult.Failed(DomainError.Transport.Timeout)
                 } catch (_: CancellationException) {
@@ -388,26 +411,108 @@ public class AccountConnector(
             linkedMapOf("u" to it.username, "t" to it.token, "s" to it.salt)
         }.orEmpty()
         val useForm = credentials != null && formPost
-        val response: HttpResponse = if (useForm) {
-            client.submitForm(
-                url = endpointUrl,
-                formParameters = Parameters.build {
-                    commonParameters.forEach { (key, value) -> append(key, value) }
-                    authentication.forEach { (key, value) -> append(key, value) }
-                },
-                encodeInQuery = false,
-            )
-        } else {
-            client.get(endpointUrl) {
-                commonParameters.forEach { (key, value) -> parameter(key, value) }
-                authentication.forEach { (key, value) -> parameter(key, value) }
+        var currentUrl = endpointUrl
+        var queryParameters = Parameters.build {
+            if (!useForm) {
+                commonParameters.forEach { (key, value) -> append(key, value) }
+                authentication.forEach { (key, value) -> append(key, value) }
             }
         }
-        return WireResponse(
-            statusCode = response.status.value,
-            body = response.bodyAsText(),
-            logicalRequestUrl = traceRecorder.latestRedactedUrl(),
-        )
+        var formParameters = Parameters.build {
+            if (useForm) {
+                commonParameters.forEach { (key, value) -> append(key, value) }
+                authentication.forEach { (key, value) -> append(key, value) }
+            }
+        }
+        var followedRedirects = 0
+        var credentialsStripped = false
+
+        while (true) {
+            val response = sendRequest(
+                client = client,
+                url = currentUrl,
+                queryParameters = queryParameters,
+                formParameters = formParameters,
+                useForm = useForm,
+            )
+            if (response.status.value !in REDIRECT_STATUS_CODES) {
+                if (response.status.value == 401 && credentialsStripped) {
+                    throw RedirectPolicyFailure(
+                        DomainError.Auth.RedirectCredentialLoss(
+                            RedactedUrl.from(traceRecorder.latestRedactedUrl()),
+                        ),
+                    )
+                }
+                return WireResponse(
+                    statusCode = response.status.value,
+                    body = response.bodyAsText(),
+                    logicalRequestUrl = traceRecorder.latestRedactedUrl(),
+                )
+            }
+
+            val location = response.headers[HttpHeaders.Location]
+                ?: return WireResponse(
+                    statusCode = response.status.value,
+                    body = response.bodyAsText(),
+                    logicalRequestUrl = traceRecorder.latestRedactedUrl(),
+                )
+            response.bodyAsText()
+            val nextUrl = resolveRedirectUrl(currentUrl, location)
+                ?: throw RedirectPolicyFailure(
+                    DomainError.Security.RedirectRejected(
+                        RedirectRejectionReason.InvalidLocation,
+                        RedactedUrl.from(currentUrl),
+                    ),
+                )
+            when (
+                val decision = AccountConnectionContract.redirectDecision(
+                    currentUrl = currentUrl,
+                    targetUrl = nextUrl,
+                    redirectsAlreadyFollowed = followedRedirects,
+                )
+            ) {
+                RedirectPolicyDecision.PreserveCredentials -> Unit
+                RedirectPolicyDecision.StripCredentials -> {
+                    credentialsStripped = credentialsStripped ||
+                        queryParameters.containsAuthentication() ||
+                        formParameters.containsAuthentication()
+                    queryParameters = queryParameters.withoutAuthentication()
+                    formParameters = formParameters.withoutAuthentication()
+                }
+                is RedirectPolicyDecision.Reject -> throw RedirectPolicyFailure(
+                    DomainError.Security.RedirectRejected(
+                        decision.reason,
+                        RedactedUrl.from(nextUrl),
+                    ),
+                )
+            }
+            currentUrl = nextUrl.withoutQuery()
+            followedRedirects += 1
+        }
+    }
+
+    private suspend fun sendRequest(
+        client: HttpClient,
+        url: String,
+        queryParameters: Parameters,
+        formParameters: Parameters,
+        useForm: Boolean,
+    ): HttpResponse = if (useForm) {
+        client.submitForm(
+            url = url,
+            formParameters = formParameters,
+            encodeInQuery = false,
+        ) {
+            queryParameters.entries().forEach { (key, values) ->
+                values.forEach { value -> parameter(key, value) }
+            }
+        }
+    } else {
+        client.get(url) {
+            queryParameters.entries().forEach { (key, values) ->
+                values.forEach { value -> parameter(key, value) }
+            }
+        }
     }
 
     private fun mapEnvelopeError(envelope: SubsonicEnvelope, requestUrl: String): DomainError {
@@ -438,6 +543,7 @@ public class AccountConnector(
     private companion object {
         const val CLIENT_NAME = "Dulcet"
         const val REQUEST_TIMEOUT_MILLIS = 10_000L
+        val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
         val SALT_PATTERN = Regex("[0-9a-f]{32}")
     }
 }
@@ -491,6 +597,40 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
     }
 }
 
+private class RedirectPolicyFailure(val error: DomainError) : Exception()
+
+private fun resolveRedirectUrl(currentUrl: String, location: String): String? = try {
+    URLBuilder().apply {
+        takeFrom(currentUrl)
+        parameters.clear()
+        fragment = ""
+        takeFrom(location)
+        parameters.clear()
+        fragment = ""
+    }.buildString()
+} catch (_: IllegalArgumentException) {
+    null
+}
+
+private fun String.withoutQuery(): String = URLBuilder().apply {
+    takeFrom(this@withoutQuery)
+    parameters.clear()
+    fragment = ""
+}.buildString()
+
+private fun Parameters.containsAuthentication(): Boolean =
+    AUTHENTICATION_PARAMETER_KEYS.any { this[it] != null }
+
+private fun Parameters.withoutAuthentication(): Parameters = Parameters.build {
+    this@withoutAuthentication.entries().forEach { (key, values) ->
+        if (key !in AUTHENTICATION_PARAMETER_KEYS) {
+            values.forEach { value -> append(key, value) }
+        }
+    }
+}
+
+private val AUTHENTICATION_PARAMETER_KEYS = setOf("u", "t", "s", "p")
+
 /** Stable protocol functions shared by transport, tests, and future account refreshes. */
 public object AccountConnectionContract {
     public const val protocolVersion: String = "1.16.1"
@@ -499,6 +639,40 @@ public object AccountConnectionContract {
 
     public fun saltedToken(password: String, salt: String): String =
         md5Hex(password + salt)
+
+    public fun redirectDecision(
+        currentUrl: String,
+        targetUrl: String,
+        redirectsAlreadyFollowed: Int,
+    ): RedirectPolicyDecision {
+        if (redirectsAlreadyFollowed >= MAX_REDIRECTS) {
+            return RedirectPolicyDecision.Reject(RedirectRejectionReason.TooManyRedirects)
+        }
+        val current = try {
+            Url(currentUrl)
+        } catch (_: IllegalArgumentException) {
+            return RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation)
+        }
+        val target = try {
+            Url(targetUrl)
+        } catch (_: IllegalArgumentException) {
+            return RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation)
+        }
+        if (current.protocol.name == "https" && target.protocol.name == "http") {
+            return RedirectPolicyDecision.Reject(RedirectRejectionReason.HttpsDowngrade)
+        }
+        if (current.host.isLocalHttpHost() && !target.host.isLocalHttpHost()) {
+            return RedirectPolicyDecision.Reject(RedirectRejectionReason.LocalToPublic)
+        }
+        val sameOrigin = current.protocol == target.protocol &&
+            current.host.equals(target.host, ignoreCase = true) &&
+            current.port == target.port
+        return if (sameOrigin) {
+            RedirectPolicyDecision.PreserveCredentials
+        } else {
+            RedirectPolicyDecision.StripCredentials
+        }
+    }
 
     public fun mapSubsonicError(
         code: Int,
@@ -516,6 +690,7 @@ public object AccountConnectionContract {
         }
     }
 
+    private const val MAX_REDIRECTS = 5
     private val KNOWN_SUBSONIC_ERROR_CODES = setOf(0, 10, 20, 30, 40, 41, 50, 60, 70)
 }
 
