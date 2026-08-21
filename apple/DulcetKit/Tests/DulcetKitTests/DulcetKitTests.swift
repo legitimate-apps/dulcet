@@ -48,11 +48,13 @@ func searchFixtureMakesMergedSourcesExplicitWithoutDuplicates() {
 
 @Test @MainActor
 func tlsFailureIsUserPresentableAndSpecific() {
-    let failure = DulcetDeterministicFixture().snapshot(for: .tlsUntrusted).tlsFailure
+    let snapshot = DulcetDeterministicFixture().snapshot(for: .tlsUntrusted)
+    let failure = snapshot.tlsFailure
 
     #expect(failure?.reason.localizedCaseInsensitiveContains("expired") == true)
     #expect(failure?.technicalDetail.localizedCaseInsensitiveContains("OS-trusted") == true)
     #expect(failure?.technicalDetail.contains("http") == false)
+    #expect(snapshot.connectivity == .connectionFailed(serverName: "Listening Room"))
 }
 
 @Test @MainActor

@@ -173,6 +173,20 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(DulcetStrings.serverStatus(serverName))
+        case let .connectionFailed(serverName):
+            HStack(spacing: DulcetSpacing.xs) {
+                DulcetStatusDot(color: .dulcetDanger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(serverName)
+                        .font(.subheadline.weight(.medium))
+                    Text(DulcetStrings.connectionFailed)
+                        .font(.caption)
+                        .foregroundStyle(Color.dulcetDanger)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(DulcetStrings.serverConnectionFailed(serverName))
         case let .offline(lastSyncedDescription):
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetStatusDot(color: .dulcetOffline)

@@ -10,6 +10,7 @@ enum DulcetStrings {
     static let accountSection = text("sidebar.accountSection", "Account")
     static let noServer = text("sidebar.noServer", "No server connected")
     static let online = text("status.online", "Online")
+    static let connectionFailed = text("status.connectionFailed", "Connection failed")
     static let offline = text("status.offline", "Offline")
     static let albums = text("library.albums", "Albums")
     static let recentlyAdded = text("library.recentlyAdded", "Recently Added")
@@ -74,6 +75,10 @@ enum DulcetStrings {
 
     static func serverStatus(_ name: String) -> String {
         String(format: text("status.server", "%@ · Online"), name)
+    }
+
+    static func serverConnectionFailed(_ name: String) -> String {
+        String(format: text("status.serverConnectionFailed", "%@ · Connection failed"), name)
     }
 
     private static func text(
