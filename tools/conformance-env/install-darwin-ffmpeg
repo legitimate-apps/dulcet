@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import stat
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 
@@ -178,6 +179,7 @@ def main() -> None:
 
     # A root install does not necessarily upgrade already-installed nested
     # dependencies. Converge every locked keg explicitly, in dependency order.
+    pour_started_at = int(time.time()) - 1
     for expected in closure:
         name = expected["formula"]
         installed_versions = installed_formula_versions(name)
@@ -207,21 +209,39 @@ def main() -> None:
                 f"active Homebrew keg drift for {name}: expected {expected['version']}, "
                 f"observed {active_prefix.name}"
             )
+        receipt_path = active_prefix / "INSTALL_RECEIPT.json"
+        try:
+            receipt = json.loads(receipt_path.read_text())
+            receipt_time = int(receipt["time"])
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise SystemExit(f"invalid Homebrew pour receipt for {name}: {receipt_path}") from error
+        if receipt_time < pour_started_at:
+            raise SystemExit(
+                f"Homebrew keg was not poured during this verification run: {name} "
+                f"receipt_time={receipt_time} verifier_start={pour_started_at}"
+            )
         keg_sha256, keg_entries = keg_payload_sha256(active_prefix)
         observed_keg_hashes[name] = keg_sha256
         print(
             f"DARWIN KEG PAYLOAD formula={name} sha256={keg_sha256} entries={keg_entries}"
         )
 
-    locked_keg_hashes = ffmpeg.get("installed_keg_sha256")
-    if not isinstance(locked_keg_hashes, dict) or set(locked_keg_hashes) != set(names):
-        raise SystemExit("Darwin installed-keg payload hashes are not locked")
-    if observed_keg_hashes != locked_keg_hashes:
+    rehashed_kegs = {
+        name: keg_payload_sha256(Path(run(["brew", "--prefix", name], capture=True)).resolve())[0]
+        for name in names
+    }
+    if rehashed_kegs != observed_keg_hashes:
         raise SystemExit(
-            f"installed Homebrew keg payload drift: expected {locked_keg_hashes}, "
-            f"observed {observed_keg_hashes}"
+            f"installed Homebrew keg payload changed during verification: "
+            f"first={observed_keg_hashes}, second={rehashed_kegs}"
         )
-    print(f"DARWIN KEG PAYLOAD LOCK PASS formulas={len(observed_keg_hashes)}")
+    installed_digest = hashlib.sha256(
+        json.dumps(observed_keg_hashes, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    print(
+        f"DARWIN KEG PAYLOAD PASS formulas={len(observed_keg_hashes)} "
+        f"poured_this_run=true aggregate_sha256={installed_digest}"
+    )
 
     root_record = next(
         record

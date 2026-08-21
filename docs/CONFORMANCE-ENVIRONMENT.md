@@ -23,9 +23,14 @@ version, while accepting an existing matching-version keg would not bind its pay
 archive.
 After installation it verifies every active keg, every bottle receipt, ffmpeg's recorded runtime
 closure, and the `libmp3lame` and `libopus` encoders used by the corpus. The installer also computes a
-deterministic hash of every installed keg payload and compares it with hashes recorded after a fresh
-pour from the verified archives. This complete verification runs before either the resource-loader
-fixture encoder or the corpus encoder; both therefore come from the same verified closure.
+hash of every installed keg payload, requires every pour receipt to have been created during the same
+verification run, and re-hashes the payloads before reporting one aggregate. Installed payload hashes
+are deliberately not treated as cross-run pins: Homebrew's post-pour relocation and signing made all
+15 payload hashes differ across two fresh standard hosted runners while their checksum-verified source
+archives remained identical. The fresh-pour receipt is what prevents an already-present keg from
+substituting for the verified archive. This complete verification runs before either the
+resource-loader fixture encoder or the corpus encoder; both therefore come from the same verified
+closure.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external
