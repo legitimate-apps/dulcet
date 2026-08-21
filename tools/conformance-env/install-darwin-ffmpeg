@@ -34,6 +34,13 @@ def main() -> None:
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit(f"Darwin ffmpeg pin requires Darwin/arm64, observed {platform.system()}/{platform.machine()}")
 
+    update_environment = dict(os.environ)
+    update_environment.pop("HOMEBREW_NO_AUTO_UPDATE", None)
+    update = subprocess.run(["brew", "update"], text=True, capture_output=True, env=update_environment)
+    if update.returncode != 0:
+        detail = ((update.stdout or "") + (update.stderr or "")).strip()
+        raise SystemExit(f"brew update failed ({update.returncode}): {detail}")
+
     with urllib.request.urlopen("https://formulae.brew.sh/api/formula/ffmpeg.json", timeout=30) as response:
         formula = json.load(response)
     bottle = formula["bottle"]["stable"]["files"][ffmpeg["bottle_tag"]]

@@ -30,7 +30,7 @@ class MediaTools:
             "ffprobe",
             [
                 "-v", "error",
-                "-show_entries", "format=format_name,duration:format_tags",
+                "-show_entries", "format=format_name,duration:format_tags:stream_tags",
                 "-of", "json",
                 str(path),
             ],
@@ -122,6 +122,9 @@ def validate_probe(tools: MediaTools, path: Path, title: str, duration: float) -
     probe = tools.ffprobe_json(path)
     format_data = probe.get("format", {})
     tags = {str(key).lower(): str(value) for key, value in format_data.get("tags", {}).items()}
+    for stream in probe.get("streams", []):
+        for key, value in stream.get("tags", {}).items():
+            tags.setdefault(str(key).lower(), str(value))
     observed_title = tags.get("title", "")
     if observed_title != title:
         raise SystemExit(f"ffprobe title mismatch for {path.name}: {observed_title!r}")
