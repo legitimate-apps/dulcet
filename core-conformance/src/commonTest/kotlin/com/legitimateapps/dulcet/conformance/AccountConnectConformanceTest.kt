@@ -372,6 +372,22 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun tlsTrustFailureProducesTlsUntrusted() = runTest {
+        val result = fixture().connect(
+            serverUrl = requiredEnvironment("DULCET_UNTRUSTED_TLS_URL").also { url ->
+                check(url == "https://127.0.0.1:4542") {
+                    "TLS trust fixture is restricted to loopback, observed: $url"
+                }
+            },
+            allowLocalHttp = false,
+        )
+        val error = assertIs<DomainError.Security.TlsUntrusted>(
+            assertIs<AccountConnectionResult.Failed>(result).error,
+        )
+        assertEquals(TlsTrustFailure.CertificateChain, error.reason)
+    }
+
+    @Test
     fun conf08EnforcesRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val sameOrigin = fixture().requireConnected("CONF-08", "$redirectRoot/same")
