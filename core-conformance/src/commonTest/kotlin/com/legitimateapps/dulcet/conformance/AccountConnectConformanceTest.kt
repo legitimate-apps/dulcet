@@ -18,6 +18,7 @@ import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.RequestChannelLocation
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
 import com.legitimateapps.dulcet.core.RedirectRejectionReason
+import com.legitimateapps.dulcet.core.Redactor
 import com.legitimateapps.dulcet.core.SaltSource
 import com.legitimateapps.dulcet.core.TlsTrustFailure
 import com.legitimateapps.dulcet.core.toDiagnosticJson
@@ -330,6 +331,51 @@ class AccountConnectConformanceTest {
             assertFalse(rendered.contains(bareCredential))
             assertFalse(rendered.contains(userInfoCredential))
         }
+    }
+
+    @Test
+    fun structuralUrlRendererIsTotalForMalformedInputs() {
+        val malformed = listOf(
+            "",
+            ":",
+            "://",
+            "https://",
+            "https:///missing-authority",
+            "https://[",
+            "https://[]/rest/ping.view?u=credential-canary",
+            "https://[::1",
+            "https://music.invalid:not-a-port/rest/ping.view?u=credential-canary",
+            "https://music.invalid:70000/rest/ping.view?u=credential-canary",
+            "https://music invalid/rest/ping.view?u=credential-canary",
+            "\u0000https://music.invalid/rest/ping.view?u=credential-canary",
+        )
+        malformed.forEach { input ->
+            val rendered = Redactor.redactUrl(input)
+            assertEquals("<unrenderable-url>", rendered, "malformed URL must use the safe rendering")
+            assertFalse(rendered.contains("credential-canary"))
+        }
+
+        val alphabet = charArrayOf(':', '/', '?', '#', '@', '[', ']', '%', 'a', '0', ' ', '\u0000')
+        val generated = buildList {
+            add("")
+            alphabet.forEach { first ->
+                add(first.toString())
+                alphabet.forEach { second ->
+                    add("$first$second")
+                    alphabet.forEach { third -> add("$first$second$third") }
+                }
+            }
+        }
+        generated.forEach { input ->
+            assertTrue(Redactor.redactUrl(input).isNotEmpty())
+        }
+
+        assertEquals(
+            "https://music.invalid:443/rest/ping.view?<redacted>",
+            Redactor.redactUrl(
+                "https://music.invalid/rest/ping.view?u=credential-canary#credential-fragment",
+            ),
+        )
     }
 
     @Test
