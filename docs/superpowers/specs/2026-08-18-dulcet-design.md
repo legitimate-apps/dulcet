@@ -2218,9 +2218,10 @@ with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci`, 5 
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
-families, checksum-verified fresh Darwin closure pour and payload hashing, resource-loader canary and
-measurement, corpus generation, config rendering, and Darwin precondition assertion in the single
-serial job. Four times that combined duration is 25 minutes 12 seconds, so the next five-minute
+families, Darwin bottle checksum and closure checks, uninstall/install observations and two-read
+payload hashing, resource-loader canary and measurement, corpus generation, config rendering, and
+Darwin precondition assertion in the single serial job. Four times that combined duration is 25
+minutes 12 seconds, so the next five-minute
 boundary sets the measured cap at 30 minutes. This supersedes both the former 187-second scaffold
 baseline and the unmeasured 25-minute combined-workload assumption. The hosted macOS
 runner is **3 vCPU / 7 GB**, and a cold Gradle KMP build producing five

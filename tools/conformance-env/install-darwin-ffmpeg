@@ -127,7 +127,8 @@ def assert_fresh_pour(
         "preinstall_present": preinstall is not None,
         "absent_before_pour": observed_absent_before_pour,
         "present_after_pour": observed_present_after_pour,
-        "observation_changed": observed_changed,
+        "postinstall_receipt_observed": observed_present_after_pour,
+        "postinstall_observation_differs_from_preinstall": observed_changed,
     }
 
 
@@ -263,7 +264,7 @@ def main() -> None:
 
     installed_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
     installed_by_name = {formula["name"]: formula for formula in installed_info["formulae"]}
-    observed_pour_attestations: dict[str, dict[str, bool]] = {}
+    observed_install_observations: dict[str, dict[str, bool]] = {}
     for expected in closure:
         name = expected["formula"]
         installed = [
@@ -289,15 +290,17 @@ def main() -> None:
             absent_before_pour[name],
             postinstall_keg,
         )
-        observed_pour_attestations[name] = attestation
+        observed_install_observations[name] = attestation
         keg_sha256, keg_entries = keg_payload_sha256(active_prefix)
         observed_keg_hashes[name] = keg_sha256
         print(
             f"DARWIN KEG PAYLOAD formula={name} sha256={keg_sha256} entries={keg_entries} "
             f"preinstall_present={str(attestation['preinstall_present']).lower()} "
-            f"absent_before_pour={str(attestation['absent_before_pour']).lower()} "
-            f"present_after_pour={str(attestation['present_after_pour']).lower()} "
-            f"observation_changed={str(attestation['observation_changed']).lower()} "
+            f"absent_after_uninstall={str(attestation['absent_before_pour']).lower()} "
+            f"present_after_install={str(attestation['present_after_pour']).lower()} "
+            f"postinstall_receipt_observed={str(attestation['postinstall_receipt_observed']).lower()} "
+            "postinstall_observation_differs_from_preinstall="
+            f"{str(attestation['postinstall_observation_differs_from_preinstall']).lower()} "
             f"receipt_time={postinstall_keg['receipt_time']}"
         )
 
@@ -313,15 +316,30 @@ def main() -> None:
     installed_digest = hashlib.sha256(
         json.dumps(observed_keg_hashes, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    poured_this_run = all(
-        attestation["absent_before_pour"]
-        and attestation["present_after_pour"]
-        and attestation["observation_changed"]
-        for attestation in observed_pour_attestations.values()
+    all_absent_after_uninstall = all(
+        observation["absent_before_pour"]
+        for observation in observed_install_observations.values()
+    )
+    all_present_after_install = all(
+        observation["present_after_pour"]
+        for observation in observed_install_observations.values()
+    )
+    all_postinstall_receipts_observed = all(
+        observation["postinstall_receipt_observed"]
+        for observation in observed_install_observations.values()
+    )
+    all_postinstall_observations_differ = all(
+        observation["postinstall_observation_differs_from_preinstall"]
+        for observation in observed_install_observations.values()
     )
     print(
-        f"DARWIN KEG PAYLOAD PASS formulas={len(observed_pour_attestations)} "
-        f"poured_this_run={str(poured_this_run).lower()} aggregate_sha256={installed_digest}"
+        f"DARWIN KEG OBSERVATIONS PASS formulas={len(observed_install_observations)} "
+        f"absent_after_uninstall={str(all_absent_after_uninstall).lower()} "
+        f"present_after_install={str(all_present_after_install).lower()} "
+        f"postinstall_receipts_observed={str(all_postinstall_receipts_observed).lower()} "
+        "postinstall_observations_differ_from_preinstall="
+        f"{str(all_postinstall_observations_differ).lower()} "
+        f"payload_hashes_match_second_in_run=true aggregate_sha256={installed_digest}"
     )
 
     root_record = next(
