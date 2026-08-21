@@ -8,25 +8,35 @@ targets. Protocol claims become evidence-backed in Phase 1.
 
 ## Apple custom-scheme resource loading
 
-**OBSERVED 2026-08-20:** on the standard GitHub-hosted `macos-26` runner with Xcode 26.4.1,
-`AVAssetResourceLoaderDelegate` receives the media data for both delivery shapes measured by the
-Phase 1 spike:
+**OBSERVED 2026-08-21:** on the standard GitHub-hosted `macos-26` runner with Xcode 26.4.1, the
+strengthened Phase 1 spike established these deliberately bounded results:
 
 - A progressive MP3 at `dulcet-stream://fixture/progressive.mp3` produced delegate data requests with
   explicit offsets and lengths. The delegate, rather than an independent URL loader, supplied the
   bytes used by `AVPlayer`.
-- An HLS manifest at `dulcet-stream://fixture/playlist.m3u8` reached the delegate, after which a
-  relative packed-AAC media-segment request separately reached the same delegate. This answers the
-  routing question: media loading does not escape to an unrelated URL-loading path.
+- An HLS manifest at `dulcet-stream://fixture/playlist.m3u8` reached the delegate. Before returning
+  it, the delegate resolved two absolute media URIs on different source origins, stored those
+  original URLs in loader-owned routing state, and rewrote both to `dulcet-stream://` routes.
+  `segment0.aac` and `segment1.aac` then each reached the delegate, and playback advanced beyond the
+  first segment boundary without an `AVPlayerItem` failure.
 
 The checked-in spike synthesizes its tone fixtures at runtime; no audio blob is committed. Before the
-custom-scheme measurement it plays the identical two-segment HLS playlist through a localhost HTTP
-server, observes both HTTP segment requests, and requires playback time to advance, so a malformed
-manifest or unusable segment cannot produce a false negative. The custom-scheme leg stops as soon as
-the first media-segment delegate callback proves the routing outcome. The workflow requires the
-recorded `routed` outcome and errors on drift.
+custom-scheme measurement it plays an equivalent two-segment HLS playlist through a localhost HTTP
+server past the first segment boundary. The custom-scheme leg does not stop on the first callback: it
+requires both named segment callbacks, playback time of at least 1.20 seconds, and no swallowed
+playback error. A fault-injection run kills the second segment after the first routes; `apple-ci`
+requires that invocation to fail before it runs the passing measurement.
 
-Evidence identity: workflow `resource-loader-spike`, job `resource-loader-spike`, tool
-`tools/resource-loader-spike`. This establishes routing behavior only. Multi-segment serving, range
-correctness, seeking, redirect handling, authentication headers, cancellation, and inline envelope
-validation remain production-loader work with their own Phase 1 evidence.
+**Chosen product contract:** Dulcet does not rely on AVFoundation preserving or routing arbitrary
+manifest topology. Before a manifest is returned, the production loader resolves and rewrites every
+fetchable URI — media segments, variant playlists, encryption keys, and initialization maps — into an
+opaque custom-scheme route backed by the loader's table of original absolute URLs. The spike executes
+the absolute, cross-origin media-segment case through `AVPlayer` and separately asserts that the same
+rewriter covers URI-bearing key/map tags and nested-playlist lines.
+
+Evidence identity: workflow `apple-ci`, job `apple-ci`, steps `Prove the measurement rejects
+first-segment-only routing` and `Measure progressive and rewritten HLS resource routing`, tool
+`tools/resource-loader-spike`. Branch protection requires `apple-ci`, so failure blocks merge. This
+does **not** establish the behavior of unrewritten HLS URIs, runtime key retrieval/decryption,
+`URLSession` range correctness, seeking, redirect policy, authentication headers, cancellation, or
+inline envelope validation. Those remain production-loader work with their own Phase 1 evidence.

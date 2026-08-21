@@ -75,3 +75,25 @@ jobs:
           --macos-app "$RUNNER_TEMP/DulcetMacDerivedData/Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
           --ios-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app/Dulcet DEV"
           --tvos-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Dulcet DEV"
+      - name: Install pinned resource-loader fixture encoder
+        run: |
+          brew install lame
+          test "$(brew info --json=v2 lame | jq -r '.formulae[0].installed[0].version')" = 4.0
+      - name: Prove the measurement rejects first-segment-only routing
+        run: |
+          set +e
+          output="$(swift run --package-path tools/resource-loader-spike resource-loader-spike \
+            --expect-hls-segments all-routed --simulate-first-segment-only 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          grep -q 'INJECTED HLS_SECOND_SEGMENT=FAILED_BEFORE_DELEGATE_RESPONSE' <<< "$output"
+          grep -Eq 'playback failed|playback did not become ready' <<< "$output"
+          echo 'NEGATIVE CONTROL PASS first-segment-only state was rejected'
+      - name: Measure progressive and rewritten HLS resource routing
+        run: >-
+          swift run
+          --package-path tools/resource-loader-spike
+          resource-loader-spike
+          --expect-hls-segments all-routed

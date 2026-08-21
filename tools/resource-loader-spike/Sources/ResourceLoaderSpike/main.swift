@@ -26,13 +26,97 @@ private final class EventRecorder {
     }
 }
 
+private final class ManifestRouter {
+    private let lock = NSLock()
+    private var routeToFixture: [String: String] = [:]
+    private var originalURLs: [String] = []
+    private let manifestURL: URL
+
+    init(manifestURL: URL) {
+        self.manifestURL = manifestURL
+    }
+
+    func rewrite(_ data: Data) throws -> Data {
+        guard let source = String(data: data, encoding: .utf8) else {
+            throw SpikeError.invalidManifest("manifest is not UTF-8")
+        }
+        let rewritten = try source.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { try rewriteLine(String($0)) }
+            .joined(separator: "\n")
+        return Data(rewritten.utf8)
+    }
+
+    func fixturePath(for routePath: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return routeToFixture[routePath]
+    }
+
+    var routedOriginalURLs: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return originalURLs
+    }
+
+    private func rewriteLine(_ line: String) throws -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            return line
+        }
+        if !trimmed.hasPrefix("#") {
+            return try route(trimmed)
+        }
+
+        let expression = try NSRegularExpression(pattern: #"URI="([^"]+)""#)
+        let mutable = NSMutableString(string: line)
+        let matches = expression.matches(
+            in: line,
+            range: NSRange(location: 0, length: (line as NSString).length)
+        )
+        for match in matches.reversed() {
+            let uri = (line as NSString).substring(with: match.range(at: 1))
+            let routed = try route(uri)
+            mutable.replaceCharacters(in: match.range(at: 1), with: routed)
+        }
+        return mutable as String
+    }
+
+    private func route(_ reference: String) throws -> String {
+        guard let resolved = URL(string: reference, relativeTo: manifestURL)?.absoluteURL,
+              let scheme = resolved.scheme?.lowercased(),
+              ["http", "https"].contains(scheme)
+        else {
+            throw SpikeError.invalidManifest("could not resolve HTTP(S) manifest URI: \(reference)")
+        }
+        let fixture = resolved.lastPathComponent
+        guard !fixture.isEmpty else {
+            throw SpikeError.invalidManifest("manifest URI has no fixture name: \(reference)")
+        }
+
+        lock.lock()
+        let routePath = "routed/route-\(routeToFixture.count)"
+        routeToFixture[routePath] = fixture
+        originalURLs.append(resolved.absoluteString)
+        lock.unlock()
+        return "dulcet-stream://fixture/\(routePath)"
+    }
+}
+
 private final class FixtureResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
     let recorder = EventRecorder()
     private let fixtureRoot: URL
+    private let router: ManifestRouter
+    private let simulateFirstSegmentOnly: Bool
 
-    init(fixtureRoot: URL) {
+    init(fixtureRoot: URL, simulateFirstSegmentOnly: Bool = false) {
         self.fixtureRoot = fixtureRoot
+        self.router = ManifestRouter(
+            manifestURL: URL(string: "https://playlist-origin.invalid/library/playlist.m3u8")!
+        )
+        self.simulateFirstSegmentOnly = simulateFirstSegmentOnly
     }
+
+    var routedOriginalURLs: [String] { router.routedOriginalURLs }
 
     func resourceLoader(
         _ resourceLoader: AVAssetResourceLoader,
@@ -43,16 +127,31 @@ private final class FixtureResourceLoader: NSObject, AVAssetResourceLoaderDelega
             return true
         }
 
-        let relativePath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard !relativePath.isEmpty, !relativePath.contains("..") else {
+        let requestedPath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !requestedPath.isEmpty, !requestedPath.contains("..") else {
             loadingRequest.finishLoading(with: SpikeError.invalidFixturePath(url.path))
             return true
         }
 
+        let relativePath = router.fixturePath(for: requestedPath) ?? requestedPath
+        if simulateFirstSegmentOnly, relativePath == "segment1.aac" {
+            print("INJECTED HLS_SECOND_SEGMENT=FAILED_BEFORE_DELEGATE_RESPONSE")
+            loadingRequest.finishLoading(with: SpikeError.injectedSecondSegmentFailure)
+            return true
+        }
+
         let fileURL = fixtureRoot.appendingPathComponent(relativePath)
-        guard let data = try? Data(contentsOf: fileURL) else {
+        guard var data = try? Data(contentsOf: fileURL) else {
             loadingRequest.finishLoading(with: SpikeError.missingFixture(relativePath))
             return true
+        }
+        if relativePath == "playlist.m3u8" {
+            do {
+                data = try router.rewrite(data)
+            } catch {
+                loadingRequest.finishLoading(with: error)
+                return true
+            }
         }
 
         if let information = loadingRequest.contentInformationRequest {
@@ -113,6 +212,8 @@ private enum SpikeError: LocalizedError {
     case httpServerDidNotStart
     case invalidByteRange(Int, Int)
     case invalidFixturePath(String)
+    case invalidManifest(String)
+    case injectedSecondSegmentFailure
     case missingFixture(String)
     case missingRequestURL
     case playbackFailed(String, String)
@@ -130,6 +231,10 @@ private enum SpikeError: LocalizedError {
             return "requested byte offset \(offset) exceeds fixture size \(size)"
         case let .invalidFixturePath(path):
             return "invalid fixture path: \(path)"
+        case let .invalidManifest(detail):
+            return "invalid HLS manifest: \(detail)"
+        case .injectedSecondSegmentFailure:
+            return "injected first-segment-only HLS failure"
         case let .missingFixture(path):
             return "missing fixture: \(path)"
         case .missingRequestURL:
@@ -151,11 +256,16 @@ private struct PlaybackObservation {
     let status: AVPlayerItem.Status
 }
 
+private struct SpikeArguments {
+    let expectedSegmentOutcome: String
+    let simulateFirstSegmentOnly: Bool
+}
+
 @main
 private enum ResourceLoaderSpike {
     static func main() {
         do {
-            let expectedSegmentOutcome = try parseArguments()
+            let arguments = try parseArguments()
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("dulcet-resource-loader-spike-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -171,16 +281,18 @@ private enum ResourceLoaderSpike {
 
             let control = try play(
                 label: "HTTP HLS negative control",
-                url: URL(string: "http://127.0.0.1:18765/playlist.m3u8")!,
+                url: URL(string: "http://127.0.0.1:18765/control.m3u8")!,
                 loader: nil,
-                stopWhen: { observation in observation.maximumTime >= 0.20 }
+                stopWhen: { observation in observation.maximumTime >= 1.20 }
             )
-            guard control.maximumTime >= 0.20 else {
+            guard control.maximumTime >= 1.20 else {
                 throw SpikeError.verificationFailed(
-                    "HLS negative control did not advance; custom-scheme absence would be inconclusive"
+                    "HLS negative control did not play past the first segment boundary"
                 )
             }
             print("CONTROL HLS_OVER_HTTP=PLAYED time=\(format(control.maximumTime))s")
+
+            try verifyManifestRewriteContract()
 
             let progressiveLoader = FixtureResourceLoader(fixtureRoot: root)
             _ = try play(
@@ -204,13 +316,22 @@ private enum ResourceLoaderSpike {
             print("OBSERVED PROGRESSIVE_MP3=DELEGATE_BYTE_RANGES count=\(progressiveEvents.count)")
             printEvents(progressiveEvents)
 
-            let hlsLoader = FixtureResourceLoader(fixtureRoot: root)
-            let hlsObservation = try? play(
+            let requiredSegments = Set(["segment0.aac", "segment1.aac"])
+            let hlsLoader = FixtureResourceLoader(
+                fixtureRoot: root,
+                simulateFirstSegmentOnly: arguments.simulateFirstSegmentOnly
+            )
+            let hlsObservation = try play(
                 label: "custom-scheme HLS",
                 url: URL(string: "dulcet-stream://fixture/playlist.m3u8")!,
                 loader: hlsLoader,
-                stopWhen: { _ in
-                    hlsLoader.recorder.events.contains { $0.path.hasPrefix("segment") }
+                stopWhen: { observation in
+                    let seen = Set(
+                        hlsLoader.recorder.events
+                            .filter { $0.path.hasPrefix("segment") }
+                            .map(\.path)
+                    )
+                    return observation.maximumTime >= 1.20 && requiredSegments.isSubset(of: seen)
                 }
             )
             let hlsEvents = hlsLoader.recorder.events
@@ -222,40 +343,62 @@ private enum ResourceLoaderSpike {
                 )
             }
 
-            let observedOutcome = segmentEvents.isEmpty ? "escaped" : "routed"
-            if segmentEvents.isEmpty {
-                print("OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=ESCAPED_DELEGATE")
-                if let hlsObservation {
-                    print("DETAIL custom HLS status=\(statusName(hlsObservation.status)) time=\(format(hlsObservation.maximumTime))s")
-                } else {
-                    print("DETAIL custom HLS could not play after its manifest was supplied")
-                }
-            } else {
-                print("OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=DELEGATE count=\(segmentEvents.count)")
-                printEvents(segmentEvents)
-            }
-
-            guard expectedSegmentOutcome == observedOutcome else {
+            let observedSegments = Set(segmentEvents.map(\.path))
+            let missingSegments = requiredSegments.subtracting(observedSegments).sorted()
+            guard missingSegments.isEmpty else {
                 throw SpikeError.verificationFailed(
-                    "recorded HLS outcome expected \(expectedSegmentOutcome), observed \(observedOutcome)"
+                    "not every HLS media segment reached the delegate; missing \(missingSegments.joined(separator: ","))"
                 )
             }
-            print("VERDICT expected=\(expectedSegmentOutcome) observed=\(observedOutcome) PASS")
+            guard hlsObservation.maximumTime >= 1.20, hlsObservation.status != .failed else {
+                throw SpikeError.verificationFailed(
+                    "custom-scheme HLS did not play past the first segment boundary"
+                )
+            }
+            let expectedOrigins = Set([
+                "https://media-a.invalid/audio/segment0.aac",
+                "https://media-b.invalid/audio/segment1.aac",
+            ])
+            guard expectedOrigins.isSubset(of: Set(hlsLoader.routedOriginalURLs)) else {
+                throw SpikeError.verificationFailed("absolute cross-origin source URIs were not all rewritten")
+            }
+
+            let observedOutcome = "all-routed"
+            print(
+                "OBSERVED HLS_MANIFEST=DELEGATE HLS_MEDIA_SEGMENTS=ALL_DELEGATE "
+                    + "required=2 time=\(format(hlsObservation.maximumTime))s"
+            )
+            printEvents(segmentEvents)
+            guard arguments.expectedSegmentOutcome == observedOutcome else {
+                throw SpikeError.verificationFailed(
+                    "recorded HLS outcome expected \(arguments.expectedSegmentOutcome), observed \(observedOutcome)"
+                )
+            }
+            print("VERDICT expected=\(arguments.expectedSegmentOutcome) observed=\(observedOutcome) PASS")
         } catch {
             FileHandle.standardError.write(Data("resource-loader spike ERROR: \(error.localizedDescription)\n".utf8))
             Foundation.exit(1)
         }
     }
 
-    private static func parseArguments() throws -> String {
+    private static func parseArguments() throws -> SpikeArguments {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard arguments.count == 2, arguments[0] == "--expect-hls-segments" else {
+        guard arguments.count == 2 || arguments.count == 3,
+              arguments[0] == "--expect-hls-segments"
+        else {
             throw SpikeError.unexpectedArgument(arguments.joined(separator: " "))
         }
-        guard ["routed", "escaped"].contains(arguments[1]) else {
+        guard arguments[1] == "all-routed" else {
             throw SpikeError.unexpectedArgument(arguments[1])
         }
-        return arguments[1]
+        let simulate = arguments.count == 3
+        if simulate, arguments[2] != "--simulate-first-segment-only" {
+            throw SpikeError.unexpectedArgument(arguments[2])
+        }
+        return SpikeArguments(
+            expectedSegmentOutcome: arguments[1],
+            simulateFirstSegmentOnly: simulate
+        )
     }
 
     private static func createFixtures(at root: URL) throws {
@@ -287,13 +430,51 @@ private enum ResourceLoaderSpike {
         #EXT-X-TARGETDURATION:1
         #EXT-X-MEDIA-SEQUENCE:0
         #EXTINF:1.0,
+        https://media-a.invalid/audio/segment0.aac
+        #EXTINF:1.0,
+        https://media-b.invalid/audio/segment1.aac
+        #EXT-X-ENDLIST
+
+        """
+        try Data(playlist.utf8).write(to: root.appendingPathComponent("playlist.m3u8"))
+
+        let controlPlaylist = """
+        #EXTM3U
+        #EXT-X-VERSION:3
+        #EXT-X-TARGETDURATION:1
+        #EXT-X-MEDIA-SEQUENCE:0
+        #EXTINF:1.0,
         segment0.aac
         #EXTINF:1.0,
         segment1.aac
         #EXT-X-ENDLIST
 
         """
-        try Data(playlist.utf8).write(to: root.appendingPathComponent("playlist.m3u8"))
+        try Data(controlPlaylist.utf8).write(to: root.appendingPathComponent("control.m3u8"))
+    }
+
+    private static func verifyManifestRewriteContract() throws {
+        let router = ManifestRouter(
+            manifestURL: URL(string: "https://playlist-origin.invalid/master/index.m3u8")!
+        )
+        let source = """
+        #EXTM3U
+        #EXT-X-KEY:METHOD=AES-128,URI="https://keys.invalid/key.bin"
+        #EXT-X-MAP:URI="../init/init.mp4"
+        variants/low.m3u8
+        https://media.invalid/audio/segment.aac
+
+        """
+        let rewritten = try router.rewrite(Data(source.utf8))
+        guard let text = String(data: rewritten, encoding: .utf8),
+              !text.contains("https://"),
+              text.components(separatedBy: "dulcet-stream://").count - 1 == 4
+        else {
+            throw SpikeError.verificationFailed(
+                "manifest rewrite contract did not normalize segment, playlist, key, and map URIs"
+            )
+        }
+        print("REWRITE_CONTRACT media,playlist,key,map=ALL_CUSTOM_SCHEME PASS")
     }
 
     private static func makeWAV(duration: Double, frequency: Double) -> Data {
@@ -366,7 +547,7 @@ private enum ResourceLoaderSpike {
         while Date() < deadline {
             let semaphore = DispatchSemaphore(value: 0)
             var succeeded = false
-            URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:18765/playlist.m3u8")!) {
+            URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:18765/control.m3u8")!) {
                 _, response, _ in
                 succeeded = (response as? HTTPURLResponse)?.statusCode == 200
                 semaphore.signal()
