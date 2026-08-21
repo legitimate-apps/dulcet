@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 35 — required-check drift is explicitly a post-merge detector rather than a pre-merge
-live control; revision 34 made raw internationalized hostnames receive an honest unsupported
+**Revision:** 36 — proxy-auth neutralisation is explicitly ASSUMED and names the exact hosted control
+required to settle it; revision 35 made required-check drift explicitly a post-merge detector rather
+than a pre-merge live control; revision 34 made raw internationalized hostnames receive an honest unsupported
 classification; revision 33 made Darwin report unsupported authentication challenges distinctly and record its
 fail-closed authentication limitation; revision 32 made bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
 cross-origin credential stripping with a closed target-request oracle; revision 30 rejected
@@ -1283,8 +1284,15 @@ challenge maps to `Auth.UnsupportedAuthenticationChallenge`, so the UI can expla
 authentication added by a reverse proxy or intermediary is unsupported instead of reporting a bare
 `Transport.Unreachable`. **OBSERVED:** the hosted Darwin fixture issues an HTTP Basic challenge,
 receives no ambient `Authorization` or `Proxy-Authorization` value, and requires that distinct domain
-error. **ASSUMED:** proxy-auth challenges fail closed through the same handler; the fixture does not
-act as a proxy or return 407, so there is no wire proof for proxy neutralisation.
+error. **ASSUMED:** proxy-auth challenges fail closed through the same handler. No existing hosted run
+settles that claim: `tools/conformance-env/redirect-server` does not act as a forward proxy or return
+407, so the suite has not observed a proxy challenge reaching the connector, the absence of
+`Proxy-Authorization` on that proxy wire, or the resulting domain error. Promotion to **OBSERVED**
+requires a PR-head `.github/workflows/apple-ci.yml` run whose `apple-ci` job executes
+`DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
+against a dedicated loopback forward-proxy fixture that returns `407 Proxy Authentication Required`
+with `Proxy-Authenticate: Basic`, records every received `Proxy-Authorization` value, and asserts both
+zero such values and `Auth.UnsupportedAuthenticationChallenge`.
 
 **Secure storage, specified rather than gestured at:**
 
@@ -2909,6 +2917,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 36 (2026-08-21)** — proxy-auth evidence stopped at the measured boundary.
+
+1. Proxy-auth neutralisation remains **ASSUMED**. The hosted Darwin fixture proves the server-auth
+   path only: it returns 401 and does not perform forward-proxy duties or return 407.
+2. No existing hosted run settles the proxy claim. The unverified links are that a 407 proxy
+   challenge reaches Dulcet's Darwin handler, that the proxy wire receives no `Proxy-Authorization`,
+   and that this path maps to `Auth.UnsupportedAuthenticationChallenge`.
+3. Promotion to **OBSERVED** requires a PR-head `apple-ci` job running
+   `DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
+   against a dedicated loopback forward-proxy fixture that emits 407 with
+   `Proxy-Authenticate: Basic`, records the received proxy-auth channels, and asserts the distinct
+   domain error. A green run without those fixture observations does not settle the claim.
+
 **Revision 35 (2026-08-21)** — required-check timing became explicit.
 
 1. The PR parity gate validates evidence against the reviewed required-checks manifest and does not
@@ -2939,8 +2960,8 @@ argue against the recorded rationale — not as filling in a blank.
    instead of `Transport.Unreachable`; no exception message or Foundation error-code inference is
    involved.
 3. The hosted Basic-auth fixture proves the distinct error and absence of ambient credentials on the
-   receiving wire. Proxy-auth neutralisation remains **ASSUMED** because no fixture returns 407 or
-   performs proxy duties.
+   receiving wire. Proxy-auth neutralisation remains **ASSUMED**; revision 36 names the unverified
+   links and the exact hosted fixture/test contract required to settle them.
 
 **Revision 32 (2026-08-21)** — bracketed IPv6 zones became structurally bounded.
 
