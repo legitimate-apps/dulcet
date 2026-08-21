@@ -385,9 +385,13 @@ public class AccountConnector(
                     return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
                 } catch (failure: Throwable) {
                     AccountConnectionResult.Failed(
-                        tlsTrustFailureOrNull(failure)?.let {
-                            DomainError.Security.TlsUntrusted(it)
-                        } ?: DomainError.Transport.Unreachable,
+                        when {
+                            isUnsupportedAuthenticationChallenge(failure) ->
+                                DomainError.Auth.UnsupportedAuthenticationChallenge
+                            else -> tlsTrustFailureOrNull(failure)?.let {
+                                DomainError.Security.TlsUntrusted(it)
+                            } ?: DomainError.Transport.Unreachable
+                        },
                     )
                 }
                 lastResult = result
