@@ -1,6 +1,6 @@
 import Foundation
 
-public enum DulcetFixtureState: String, CaseIterable, Identifiable, Sendable {
+public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendable {
     case emptyLibraryNoAccount = "empty-library-no-account"
     case libraryBrowse = "library-browse"
     case albumDetailMultiDisc = "album-detail-multi-disc"
@@ -208,7 +208,7 @@ public struct DulcetTLSFailure: Sendable, Hashable {
 }
 
 public struct DulcetSnapshot: Sendable, Hashable {
-    public let state: DulcetFixtureState
+    public let state: DulcetPresentationState
     public let selectedDestination: DulcetSidebarDestination
     public let accountConnected: Bool
     public let connectivity: DulcetConnectivity
@@ -222,7 +222,7 @@ public struct DulcetSnapshot: Sendable, Hashable {
     public let captureDate: Date
 
     public init(
-        state: DulcetFixtureState,
+        state: DulcetPresentationState,
         selectedDestination: DulcetSidebarDestination,
         accountConnected: Bool,
         connectivity: DulcetConnectivity,

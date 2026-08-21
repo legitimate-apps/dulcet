@@ -24,13 +24,15 @@ environment is fixed:
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
 - a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
+- user-facing release name `Dulcet` as the initial fixture title, with the same state navigation
+  titles the SwiftUI views apply in the app; debug target suffixes are intentionally excluded;
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
 byte lengths, and SHA-256 digests. `tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
-control and a mutated JPEG.
+control, a mutated JPEG, an extra JPEG, and extra media with another extension.
 
 ### 1.1 Standard set: 16 JPEGs
 

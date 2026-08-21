@@ -4,7 +4,7 @@ import Testing
 @Test @MainActor
 func fixtureRendersExactlySevenDistinctStates() {
     let source = DulcetDeterministicFixture()
-    let snapshots = DulcetFixtureState.allCases.map(source.snapshot)
+    let snapshots = DulcetPresentationState.allCases.map(source.snapshot)
 
     #expect(snapshots.count == 7)
     #expect(Set(snapshots.map(\.state)).count == 7)
@@ -22,6 +22,8 @@ func fixtureCarriesEveryAwkwardSeedCorpusCase() {
     #expect(tracks.contains { $0.albumTitle == nil })
     #expect(tracks.contains { $0.title.count > 300 })
     #expect(snapshot.albums.first { $0.title == "Paging Atlas" }?.tracks.count == 300)
+    #expect(tracks.contains { $0.durationSeconds == 29 })
+    #expect(tracks.contains { $0.durationSeconds == 31 })
 }
 
 @Test @MainActor
@@ -50,4 +52,52 @@ func tlsFailureIsUserPresentableAndSpecific() {
     #expect(failure?.reason.localizedCaseInsensitiveContains("expired") == true)
     #expect(failure?.technicalDetail.localizedCaseInsensitiveContains("OS-trusted") == true)
     #expect(failure?.technicalDetail.contains("http") == false)
+}
+
+@Test @MainActor
+func storeRoutesSemanticActionsWithoutExposingFixtureSelection() {
+    let source = DulcetDeterministicDataSource(initialState: .libraryBrowse)
+    let store = DulcetPresentationStore(source: source)
+
+    store.selectedDestination = .search
+    #expect(store.snapshot.state == .searchMixedSources)
+
+    store.searchQuery = "東京"
+    #expect(store.snapshot.searchQuery == "東京")
+}
+
+@Test @MainActor
+func storeAcceptsSnapshotsPushedByADataSource() {
+    let fixture = DulcetDeterministicFixture()
+    let source = PushingTestDataSource(
+        initialSnapshot: fixture.snapshot(for: .libraryBrowse)
+    )
+    let store = DulcetPresentationStore(source: source)
+
+    source.publish(fixture.snapshot(for: .offlineMetadataOnly))
+
+    #expect(store.snapshot.state == .offlineMetadataOnly)
+    #expect(store.selectedDestination == .library)
+    #expect(store.snapshot.connectivity == .offline(lastSyncedDescription: "Today at 14:28 UTC"))
+}
+
+@MainActor
+private final class PushingTestDataSource: DulcetDataSource {
+    private var handler: (@MainActor (DulcetSnapshot) -> Void)?
+    private(set) var currentSnapshot: DulcetSnapshot
+
+    init(initialSnapshot: DulcetSnapshot) {
+        currentSnapshot = initialSnapshot
+    }
+
+    func setSnapshotHandler(_ handler: @escaping @MainActor (DulcetSnapshot) -> Void) {
+        self.handler = handler
+    }
+
+    func send(_ action: DulcetPresentationAction) {}
+
+    func publish(_ snapshot: DulcetSnapshot) {
+        currentSnapshot = snapshot
+        handler?(snapshot)
+    }
 }

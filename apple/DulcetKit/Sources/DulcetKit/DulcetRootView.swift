@@ -36,18 +36,6 @@ public struct DulcetRootView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
-        .onChange(of: store.selectedDestination) { _, destination in
-            switch destination {
-            case .library:
-                store.show(.libraryBrowse)
-            case .search:
-                store.show(.searchMixedSources)
-            case .nowPlaying:
-                store.show(.nowPlaying)
-            case .settings:
-                store.show(.tlsUntrusted)
-            }
-        }
     }
 }
 

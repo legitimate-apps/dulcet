@@ -1,10 +1,10 @@
 import Foundation
 
 @MainActor
-public struct DulcetDeterministicFixture: DulcetDataSource {
+public struct DulcetDeterministicFixture {
     public init() {}
 
-    public func snapshot(for state: DulcetFixtureState) -> DulcetSnapshot {
+    public func snapshot(for state: DulcetPresentationState) -> DulcetSnapshot {
         let library = Self.library
         let looseTracks = [Self.trackWithoutAlbum]
         let base = BaseSnapshot(
@@ -49,7 +49,7 @@ public struct DulcetDeterministicFixture: DulcetDataSource {
         }
     }
 
-    private func destination(for state: DulcetFixtureState) -> DulcetSidebarDestination {
+    private func destination(for state: DulcetPresentationState) -> DulcetSidebarDestination {
         switch state {
         case .emptyLibraryNoAccount, .libraryBrowse, .albumDetailMultiDisc, .offlineMetadataOnly:
             .library
@@ -62,7 +62,7 @@ public struct DulcetDeterministicFixture: DulcetDataSource {
         }
     }
 
-    private func connectivity(for state: DulcetFixtureState) -> DulcetConnectivity {
+    private func connectivity(for state: DulcetPresentationState) -> DulcetConnectivity {
         switch state {
         case .emptyLibraryNoAccount:
             .unavailable
@@ -74,9 +74,67 @@ public struct DulcetDeterministicFixture: DulcetDataSource {
     }
 }
 
+/// Test and capture adapter that keeps scenario selection out of ``DulcetDataSource``.
+@MainActor
+public final class DulcetDeterministicDataSource: DulcetDataSource {
+    private let fixture: DulcetDeterministicFixture
+    private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
+
+    public private(set) var currentSnapshot: DulcetSnapshot
+
+    public init(
+        fixture: DulcetDeterministicFixture = DulcetDeterministicFixture(),
+        initialState: DulcetPresentationState = .libraryBrowse
+    ) {
+        self.fixture = fixture
+        currentSnapshot = fixture.snapshot(for: initialState)
+    }
+
+    public func setSnapshotHandler(
+        _ handler: @escaping @MainActor (DulcetSnapshot) -> Void
+    ) {
+        snapshotHandler = handler
+    }
+
+    public func send(_ action: DulcetPresentationAction) {
+        switch action {
+        case let .selectDestination(destination):
+            let state: DulcetPresentationState = switch destination {
+            case .library: .libraryBrowse
+            case .search: .searchMixedSources
+            case .nowPlaying: .nowPlaying
+            case .settings: .tlsUntrusted
+            }
+            currentSnapshot = fixture.snapshot(for: state)
+        case let .updateSearchQuery(query):
+            currentSnapshot = currentSnapshot.replacingSearchQuery(query)
+        }
+        snapshotHandler?(currentSnapshot)
+    }
+}
+
+private extension DulcetSnapshot {
+    func replacingSearchQuery(_ query: String) -> DulcetSnapshot {
+        DulcetSnapshot(
+            state: state,
+            selectedDestination: selectedDestination,
+            accountConnected: accountConnected,
+            connectivity: connectivity,
+            albums: albums,
+            looseTracks: looseTracks,
+            selectedAlbum: selectedAlbum,
+            nowPlaying: nowPlaying,
+            searchQuery: query,
+            searchResults: searchResults,
+            tlsFailure: tlsFailure,
+            captureDate: captureDate
+        )
+    }
+}
+
 private extension DulcetDeterministicFixture {
     struct BaseSnapshot {
-        let state: DulcetFixtureState
+        let state: DulcetPresentationState
         let destination: DulcetSidebarDestination
         let accountConnected: Bool
         let connectivity: DulcetConnectivity
