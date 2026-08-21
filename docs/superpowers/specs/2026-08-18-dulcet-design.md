@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 20 — CONF-01 through CONF-08 now execute on JVM and macOS against the pinned reference
+**Revision:** 21 — `DomainError` retains no server-controlled text or URL; revision 20 made CONF-01
+through CONF-08 execute on JVM and macOS against the pinned reference
 server, with preserved behavior-absent red evidence before the production connector. Revision 18
 narrowed the Phase-2 evidence claims to their measured boundary. Revision 17 gave the macOS
 design-capture boundary measured framing evidence and rejects a translated or resized AppKit theme
@@ -1327,19 +1328,26 @@ Normative policy, enforced in the transport layer and in the resource loader (§
 
 ### 13.4 Redaction as a mechanism, not a discipline
 
-- A single `Redactor` rewrites any URL to `scheme://host/path?<redacted>` before it can reach a
-  `LogSink` or a `DomainError`.
-- `DomainError` carries **`redactedUrl: String`** and has **no field capable of holding a raw URL** — a
-  type-level guarantee.
-- Adapters wrap platform playback errors before surfacing them: `AVFoundation` error `userInfo` and
-  ExoPlayer's `PlaybackException` can both carry the failing URL.
+- A single `Redactor` structurally parses a request URL and renders only its scheme, host, port and
+  path plus a constant query marker before it can reach a `LogSink`. User information, the complete
+  query and the fragment are never copied into the rendered representation.
+- **`DomainError` does not sanitize or retain server-controlled text at all.** Its fields are limited
+  to closed enums, numeric error/version values, and content-free suppression markers whose
+  `toString()` values are constants. A raw server message or URL therefore has no representable field;
+  this is the type-level guarantee.
+- The wire mapper consumes a server message and request URL only at its boundary and discards both.
+  Adapters similarly translate platform playback errors into closed semantic reasons before
+  surfacing them: `AVFoundation` error `userInfo` and ExoPlayer's `PlaybackException` can both carry a
+  failing URL, so neither exception object nor its message enters `DomainError`.
 - Never log the password, token or salt, at any level, in any build.
 - **Tests use canary values, not pattern matching.** Revision 1 proposed failing on any 32-hex run in
   the logs; that would flag ordinary Navidrome item and artwork IDs, which are themselves hash-like.
   Instead the conformance environment uses a known canary password, and the tests assert that the
   canary, its derived tokens, and the exact salts issued during the run appear **nowhere** in captured
-  log output, and that structured log fields carrying URLs are redacted. A second test asserts
-  `DomainError.toString()` on a synthetic signed URL does not contain the token.
+  log output, and that structured log fields carrying URLs are redacted. A separate structural test
+  passes a bare credential in a server message and a credential in URL user information, enumerates
+  every `DomainError` subtype, and checks direct rendering, wrapper rendering, logging, exception
+  messages and the explicit diagnostic-JSON serializer.
 
 ### 13.5 TLS trust and the local-HTTP exception
 
@@ -1840,13 +1848,14 @@ Local, redacted diagnostics are still needed, because the user must be able to r
 
 A sealed hierarchy in the core, mapped from the wire in exactly one place:
 
-- `Input.InvalidServerUrl(reason)` — URL normalization can reject empty input, malformed authority,
+- `Input.InvalidServerUrl(reason)` — `reason` is a closed enum. URL normalization can reject empty input, malformed authority,
   a non-HTTP scheme, embedded user information, or non-local plaintext HTTP before any request. The
   earlier hierarchy omitted every pre-transport failure even though §10.1 normatively requires them.
 - `Transport.Unreachable | Timeout | Cancelled`
-- `Security.TlsUntrusted(reason) | LocalExceptionViolated`
+- `Security.TlsUntrusted(reason) | LocalExceptionViolated` — the TLS reason is a closed enum, never an
+  exception message.
 - `Protocol.MalformedEnvelope | UnexpectedContentType(actual, expected) | UnexpectedBinary`
-- **`Server.Busy(retryAfter: Duration?, message, redactedUrl)`** — **backpressure, and it must be its
+- **`Server.Busy(retryAfter: Duration?)`** — **backpressure, and it must be its
   own class.** **OBSERVED:** the reference server enforces a transcode concurrency cap (a global cap
   plus an optional per-user cap) and rejects over-cap requests with **HTTP 429 and
   `Retry-After: 5`**, carrying a Subsonic envelope whose code is the generic `0`. Without this class,
@@ -1854,18 +1863,22 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   "a generic error" — and becomes indistinguishable from the least retryable.** `Server.Busy` is
   derived from the **HTTP status**, never from the envelope code, precisely because the envelope code
   is uninformative here.
-- `Server.Known(code, message, redactedUrl)` **and `Server.Unknown(code, message, redactedUrl)`** — the
+- `Server.Known(code)` **and `Server.Unknown(code)`** — server messages and request URLs are discarded
+  at the wire boundary. The
   model **must** carry an unrecognized numeric code. **ASSUMED:** the documented Subsonic set is
   expected to be `{0, 10, 20, 30, 40, 41, 50, 60, 70}`; **CONF-06 tests the mappings it can actually
   trigger and tests that an unknown code round-trips**, because one server instance cannot establish a
   closed universe of codes and other compatible servers may return others.
 - `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | RedirectCredentialLoss`
-- `Capability.Unsupported(featureId)` — carries the `FEATURES.yml` id so the UI can say which capability
-  is missing.
-- `Playback.NoPlayableSource | ValidationFailed(detail) | EngineFailed(detail) | CommandRejected(reason)`
+- `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
+  capability is missing.
+- `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
+  — every reason is a closed semantic value rather than retained platform/server text.
 
-Every error is user-presentable: a short user string, a redacted technical detail, and a suggested
-action. "Unknown error" is not a permitted terminal state.
+Every error is user-presentable through a localized mapping from its semantic kind: a short user
+string and a suggested action. Raw technical detail belongs only in non-exported platform diagnostics
+that have independently enforced privacy boundaries; it is never a `DomainError` payload. "Unknown
+error" is not a permitted terminal state.
 
 ---
 
@@ -2821,6 +2834,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 21 (2026-08-21)** — arbitrary server text was removed from the domain-error model.
+
+1. The previous `RedactedText` denylist retained any attacker string that did not match its handful
+   of credential spellings, while `RedactedUrl` retained URL user information. Both types rendered
+   their retained strings through `toString()`, so Kotlin data-class rendering made the values public
+   again. A hosted negative-control commit demonstrated the failure with a bare credential before the
+   production change.
+2. `DomainError` now contains only closed enums, numeric error/version values, and content-free marker
+   objects. The mapper discards server messages and URLs instead of attempting to sanitize arbitrary
+   text. The same property covers generated `toString()`, account-result wrappers, logging, exception
+   messages and the explicit diagnostic-JSON path because none can retrieve text that was never
+   retained.
+3. URL rendering remains necessary for request traces, but it is separate from domain errors and is
+   structural: parse the URL and reconstruct scheme, host, port and path while omitting user
+   information, query contents and fragments. No credential-shape denylist remains.
 
 **Revision 19 (2026-08-21)** — the account-connect conformance identifiers were reconciled before
 their first executable run.

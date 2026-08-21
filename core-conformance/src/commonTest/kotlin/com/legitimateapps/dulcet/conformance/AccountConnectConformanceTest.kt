@@ -5,13 +5,18 @@ import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.AccountConnector
 import com.legitimateapps.dulcet.core.AuthenticationLocation
+import com.legitimateapps.dulcet.core.CapabilityFeature
 import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.core.InvalidServerUrlReason
 import com.legitimateapps.dulcet.core.LogSink
+import com.legitimateapps.dulcet.core.ProtocolVersionLevel
 import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
 import com.legitimateapps.dulcet.core.RedirectRejectionReason
 import com.legitimateapps.dulcet.core.SaltSource
+import com.legitimateapps.dulcet.core.TlsTrustFailure
+import com.legitimateapps.dulcet.core.toDiagnosticJson
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -241,15 +246,49 @@ class AccountConnectConformanceTest {
     fun domainErrorCannotRenderBareServerControlledText() {
         val bareCredential = "opaque-bare-server-credential"
         val userInfoCredential = "userinfo-server-credential"
-        val error = AccountConnectionContract.mapSubsonicError(
+        val mappedError = AccountConnectionContract.mapSubsonicError(
             code = 999,
             message = "authentication rejected: $bareCredential",
             requestUrl = "https://attacker:$userInfoCredential@music.invalid/rest/ping.view",
         )
+        val everySubtype = listOf<DomainError>(
+            DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+            DomainError.Transport.Unreachable,
+            DomainError.Transport.Timeout,
+            DomainError.Transport.Cancelled,
+            DomainError.Security.TlsUntrusted(TlsTrustFailure.CertificateChain),
+            DomainError.Security.LocalExceptionViolated,
+            DomainError.Security.RedirectRejected(RedirectRejectionReason.InvalidLocation),
+            DomainError.Protocol.MalformedEnvelope,
+            DomainError.Protocol.Incompatible(
+                clientVersion = ProtocolVersionLevel(1, 16),
+                serverVersion = ProtocolVersionLevel(2, 0),
+            ),
+            DomainError.Protocol.NotASubsonicServer,
+            DomainError.Server.Known(0),
+            mappedError,
+            DomainError.Auth.InvalidCredentials,
+            DomainError.Auth.TokenAuthUnsupported,
+            DomainError.Auth.Forbidden,
+            DomainError.Auth.RedirectCredentialLoss(),
+            DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
+        )
+        val logging = mutableListOf<String>()
+        val logSink = LogSink(logging::add)
+        val everyRenderingPath = everySubtype.flatMap { error ->
+            logSink.write(error.toString())
+            listOf(
+                error.toString(),
+                AccountConnectionResult.Failed(error).toString(),
+                IllegalStateException(error.toString()).toString(),
+                error.toDiagnosticJson(),
+            )
+        } + logging
 
-        val rendered = error.toString()
-        assertFalse(rendered.contains(bareCredential))
-        assertFalse(rendered.contains(userInfoCredential))
+        everyRenderingPath.forEach { rendered ->
+            assertFalse(rendered.contains(bareCredential))
+            assertFalse(rendered.contains(userInfoCredential))
+        }
     }
 
     @Test
