@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 30 — malformed authorities are rejected as input before transport; revision 29 made
+**Revision:** 31 — cross-origin credential stripping is proved by a closed target-request oracle;
+revision 30 rejected malformed authorities as input before transport; revision 29 made
 structural URL redaction total over malformed input; revision 28 made CONF-07 absence assertions use
 values captured by the receiving wire fixture; revision 27 moved required-check evidence to GitHub's
 protected default branch; revision 26 derived
@@ -1332,10 +1333,11 @@ Normative policy, enforced in the transport layer and in the resource loader (§
   credentials attached.
 - Every request in the chain is inventoried at the Ktor send boundary and at the receiving wire
   fixture as header, query, and form channels. Each observed channel must resolve through an explicit
-  credential-or-metadata classification; an unknown channel fails CONF-08. At a cross-origin target,
-  no credential-classified channel may remain and no value observed in a source credential channel
-  may reappear under a metadata name. This is fail-closed coverage: adding a transport channel changes
-  the observed set and breaks the test until the redirect assertion deliberately accounts for it.
+  credential-or-metadata classification; an unknown channel fails CONF-08. **CONF-08 proves that each
+  cross-origin target request is exactly the fixture-derived credential-free transformation of the
+  validated source request: the permitted channel set, fixed protocol values, target authority, body
+  length, and unchanged transport metadata must match. It does not claim to recognize every reversible
+  encoding of a credential.** Any target-only deviation fails independent of its encoding.
 - A downgrade from `https` to `http` is **rejected outright**, never followed.
 - Same-origin redirects preserve the query string as issued; credentials are not regenerated
   mid-redirect, since a fresh salt would invalidate an already-signed URL for no benefit.
@@ -2188,7 +2190,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
-| CONF-08 | derives a closed header/query/form channel inventory from every request in the chain; rejects any unclassified channel; preserves the exact issued credentials on same-origin hops; strips credential channels and duplicate credential values across scheme, host, or port changes; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
+| CONF-08 | derives a closed header/query/form channel inventory from every request in the chain; validates the fixture's fixed protocol values and bounded transport metadata; preserves the exact issued credentials on same-origin hops; requires a cross-origin target to equal the credential-free transformation of its source request; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2880,6 +2882,21 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 31 (2026-08-21)** — cross-origin verification became a closed oracle.
+
+1. A hosted red control added double-Base64 to the finite representation scanner and demonstrated
+   the inherent next-codec bypass.
+2. The cross-origin target fixture now derives the one permitted request from the already-validated
+   source: credential channels and duplicate credential values are absent, fixed application values
+   remain exact, the authority and byte length are recomputed, and transport metadata is unchanged.
+   The target must equal that expectation as a complete sorted channel tuple.
+3. The finite encoding scanner was removed. Mutation controls place raw, framed, percent-encoded,
+   Base64-family, Base85, hexadecimal, and recursively Base64-encoded values into an otherwise valid
+   target metadata channel; every case fails because it deviates from the expectation, not because a
+   codec was recognized.
+4. The normative claim is narrowed to this equality proof. It explicitly makes no claim to decide
+   whether arbitrary values contain every possible reversible credential encoding.
 
 **Revision 30 (2026-08-21)** — malformed authorities became input failures.
 
