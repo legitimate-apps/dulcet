@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from importlib.machinery import SourceFileLoader
 import json
 from pathlib import Path
@@ -27,6 +28,16 @@ def expect_rejection(root: Path, expected_fragment: str) -> None:
             ) from error
         return
     raise SystemExit(f"negative control unexpectedly passed: {expected_fragment}")
+
+
+def refresh_manifest_file_evidence(root: Path) -> None:
+    manifest_path = root / "standard" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for record in manifest["captures"]:
+        data = (root / "standard" / record["file"]).read_bytes()
+        record["jpegBytes"] = len(data)
+        record["sha256"] = hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
 def main() -> None:
@@ -56,6 +67,25 @@ def main() -> None:
         shutil.copytree(args.root, extra_jpeg_root)
         (extra_jpeg_root / "standard" / "unexpected.jpg").write_bytes(b"extra")
         expect_rejection(extra_jpeg_root, "exact file set mismatch")
+
+        identical_root = Path(temporary) / "all-identical"
+        shutil.copytree(args.root, identical_root)
+        source = identical_root / "standard" / "macos-library-browse-light.jpg"
+        identical_bytes = source.read_bytes()
+        for path in (identical_root / "standard").glob("*.jpg"):
+            path.write_bytes(identical_bytes)
+        refresh_manifest_file_evidence(identical_root)
+        expect_rejection(identical_root, "captures are not pairwise distinct")
+
+        swapped_labels_root = Path(temporary) / "swapped-labels"
+        shutil.copytree(args.root, swapped_labels_root)
+        library = swapped_labels_root / "standard" / "macos-library-browse-light.jpg"
+        search = swapped_labels_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        library_bytes = library.read_bytes()
+        library.write_bytes(search.read_bytes())
+        search.write_bytes(library_bytes)
+        refresh_manifest_file_evidence(swapped_labels_root)
+        expect_rejection(swapped_labels_root, "embedded fixtureState mismatch")
 
         mislabeled_root = Path(temporary) / "mislabeled-dynamic-type"
         shutil.copytree(args.root, mislabeled_root)
@@ -95,7 +125,8 @@ def main() -> None:
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
-        "byte-identical-dynamic-type=true misframed-window=true inactive-control-state=true"
+        "all-identical=true swapped-labels=true byte-identical-dynamic-type=true "
+        "misframed-window=true inactive-control-state=true"
     )
 
 

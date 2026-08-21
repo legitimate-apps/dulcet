@@ -43,6 +43,52 @@ def expected_standard_files() -> set[str]:
     return files
 
 
+def expected_binding(filename: str) -> tuple[str, str, str]:
+    bindings = {
+        f"macos-{state}-{appearance}.jpg": (state, appearance, "reference")
+        for state in STATES
+        for appearance in APPEARANCES
+    }
+    bindings.update({
+        f"macos-CONTROL-DELIBERATELY-BAD-library-browse-{appearance}.jpg": (
+            "library-browse", appearance, "deliberately-bad-control"
+        )
+        for appearance in APPEARANCES
+    })
+    try:
+        return bindings[filename]
+    except KeyError as error:
+        raise CaptureVerificationError(f"unexpected capture filename: {filename}") from error
+
+
+def jpeg_payload_binding(data: bytes) -> tuple[dict[str, str], bytes]:
+    if not data.startswith(b"\xff\xd8\xff\xfe") or len(data) < 8:
+        raise CaptureVerificationError("JPEG is missing its payload binding comment")
+    segment_length = int.from_bytes(data[4:6], "big")
+    segment_end = 4 + segment_length
+    if segment_length < 2 or segment_end > len(data):
+        raise CaptureVerificationError("JPEG payload binding has an invalid segment length")
+    try:
+        lines = data[6:segment_end].decode("ascii").splitlines()
+    except UnicodeDecodeError as error:
+        raise CaptureVerificationError("JPEG payload binding is not ASCII") from error
+    if not lines or lines[0] != "DULCET-CAPTURE-BINDING-V1":
+        raise CaptureVerificationError("JPEG payload binding version mismatch")
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition("=")
+        if not separator or not key or key in fields:
+            raise CaptureVerificationError("JPEG payload binding fields are malformed")
+        fields[key] = value
+    expected_fields = {"fixtureState", "appearance", "variant", "jpegPayloadSha256"}
+    if set(fields) != expected_fields:
+        raise CaptureVerificationError("JPEG payload binding field set mismatch")
+    payload = data[:2] + data[segment_end:]
+    if hashlib.sha256(payload).hexdigest() != fields["jpegPayloadSha256"]:
+        raise CaptureVerificationError("JPEG payload binding SHA-256 mismatch")
+    return fields, payload
+
+
 def jpeg_dimensions(data: bytes) -> tuple[int, int]:
     if not data.startswith(b"\xff\xd8"):
         raise CaptureVerificationError("file does not start with the JPEG SOI marker")
@@ -89,7 +135,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 6,
+        "schemaVersion": 7,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -125,6 +171,16 @@ def verify_set(directory: Path, expected: set[str]) -> None:
     records_by_file = {record.get("file"): record for record in records}
     if set(records_by_file) != expected or len(records_by_file) != len(records):
         raise CaptureVerificationError(f"{directory.name} manifest record set is not exact")
+
+    observed_hashes: dict[str, str] = {}
+    for filename in sorted(expected):
+        digest = hashlib.sha256((directory / filename).read_bytes()).hexdigest()
+        if digest in observed_hashes:
+            raise CaptureVerificationError(
+                "captures are not pairwise distinct: "
+                f"{observed_hashes[digest]} and {filename} are byte-identical"
+            )
+        observed_hashes[digest] = filename
 
     for filename in sorted(expected):
         path = directory / filename
@@ -167,10 +223,23 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                     f"{directory.name}/{filename} {key} mismatch: "
                     f"expected {expected_value}, observed {record.get(key)!r}"
                 )
-        is_control = filename.startswith("macos-CONTROL-DELIBERATELY-BAD-")
-        expected_variant = "deliberately-bad-control" if is_control else "reference"
+        expected_state, expected_appearance, expected_variant = expected_binding(filename)
+        if record.get("fixtureState") != expected_state:
+            raise CaptureVerificationError(f"{directory.name}/{filename} fixtureState mismatch")
+        if record.get("appearance") != expected_appearance:
+            raise CaptureVerificationError(f"{directory.name}/{filename} appearance mismatch")
         if record.get("variant") != expected_variant:
             raise CaptureVerificationError(f"{directory.name}/{filename} variant mismatch")
+        binding, _ = jpeg_payload_binding(data)
+        for field, expected_value in (
+            ("fixtureState", expected_state),
+            ("appearance", expected_appearance),
+            ("variant", expected_variant),
+        ):
+            if binding[field] != expected_value:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} embedded {field} mismatch"
+                )
 
 
 def verify_no_byte_identical_dynamic_type_treatments(root: Path) -> None:
@@ -224,7 +293,7 @@ def main() -> None:
     print(
         "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
-        "dynamic-type-claim=absent"
+        "pairwise-distinct=true payload-label-bindings=true dynamic-type-claim=absent"
     )
 
 

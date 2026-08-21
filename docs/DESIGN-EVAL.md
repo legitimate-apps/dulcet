@@ -40,13 +40,18 @@ environment is fixed:
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
 measured window-frame and capture-bound coordinates, rendered control-active state, byte lengths, and
-SHA-256 digests.
+SHA-256 digests. Each JPEG also carries a binding comment with its canonical fixture state,
+appearance, variant, and the SHA-256 of the original compressed visual payload. The verifier removes
+that comment, reconstructs and hashes the payload, and requires its embedded labels to agree with both
+the filename and manifest. It also requires all 16 final JPEG byte streams to be pairwise distinct.
 `tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
-control, a mutated JPEG, an extra JPEG, extra media with another extension, a byte-identical capture
-mislabeled as a different Dynamic Type treatment, a manifest claiming translated capture bounds,
-and a manifest claiming an inactive rendered control state.
+control, a mutated JPEG, an extra JPEG, extra media with another extension, an artifact whose 16 JPEGs
+were replaced by one image while every manifest hash and byte count was updated, two distinct visual
+payloads swapped between labels with their manifest evidence updated, a byte-identical capture
+mislabeled as a different Dynamic Type treatment, a manifest claiming translated capture bounds, and
+a manifest claiming an inactive rendered control state.
 
 ### 1.1 Standard set: 16 JPEGs
 
