@@ -2900,7 +2900,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 1. The Darwin challenge handler remains deliberately fail-closed: only server-trust challenges use
    default handling; Basic, Digest, client-certificate, proxy-auth, and other challenges are rejected.
-2. Foundation's typed `NSURLErrorUserAuthenticationRequired` failure maps to
+2. Foundation's typed user-cancelled/authentication-required failures map to
    `Auth.UnsupportedAuthenticationChallenge`, giving UI code a closed, explanatory classification
    instead of `Transport.Unreachable`.
 3. The hosted Basic-auth fixture proves the distinct error and absence of ambient credentials on the
