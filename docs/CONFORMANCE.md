@@ -1,9 +1,10 @@
 # Conformance registry
 
-This registry reserves stable identifiers for the tests required by the design. Phase 0 contains no
-protocol implementation, so every item below is planned.
+This registry reserves stable identifiers for the tests required by the design. An identifier remains
+stable when its test moves from planned to executable; the design's representative-test table carries
+the detailed assertion.
 
-| id | planned assertion |
+| id | assertion |
 |---|---|
 | CONF-01 | unauthenticated extension discovery |
 | CONF-02 | reference-server extension set |

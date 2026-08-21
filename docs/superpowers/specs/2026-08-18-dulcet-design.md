@@ -2118,11 +2118,11 @@ gap; it needs no Docker and no fixture-fidelity argument.
 |---|---|
 | CONF-01 | `getOpenSubsonicExtensions` reachable **unauthenticated** |
 | CONF-02 | the advertised extension set **for the pinned image and configuration**; an unknown new extension is informational drift, **not** a failure (a client that must ignore unknown extensions cannot also fail when one appears); a **missing** previously-required extension **is** a failure |
-| CONF-03 | `ping` with a salted token succeeds; a wrong password yields `AuthenticationFailed`, not `ServerUnreachable` |
-| CONF-04 | a fresh salt on every request, from a request recorder |
+| CONF-03 | `ping` with a salted token succeeds; each authenticated request consumes a fresh 16-byte salt; a wrong password yields `AuthenticationFailed`, not `ServerUnreachable` |
+| CONF-04 | the client sends 1.16.1, the pinned server reports 1.16.1, and the compatibility rule accepts matching major/client-minor-at-or-below-server-minor versions |
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | mappings for every error the harness can trigger, **plus** an unknown code round-tripping to `Server.Unknown` |
-| CONF-07 | `formPost` calls succeed and no credential appears in any request line |
+| CONF-07 | advertised `formPost` is used successfully; no credential appears in a request line, structured diagnostic, or `DomainError` rendering; the canary password, its derived tokens, and the exact issued salts are absent |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2209,9 +2209,9 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. Future CONF-xx, parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, and fail-loud conformance precondition self-assertion. Future Apple-only measurements and CONF-xx tests join this job, never a second macOS job |
+| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22): `push` to `main` ships DEV, a `v*` tag ships PROD. The only workflow able to read signing secrets |
 
@@ -2815,6 +2815,22 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 19 (2026-08-21)** — the account-connect conformance identifiers were reconciled before
+their first executable run.
+
+1. `docs/CONFORMANCE.md` had reserved CONF-04 as version compatibility and CONF-07 as diagnostic
+   redaction, while §20.4 assigned CONF-04 only to salt freshness and narrowed CONF-07 to form POST
+   request lines. Stable registry identifiers win: CONF-03 now owns salted-token success plus the
+   per-request fresh-salt rule, CONF-04 owns the 1.16.1 compatibility contract, and CONF-07 covers
+   form POST plus the complete §13.4 redaction mechanism.
+2. The conformance suite is a distinct KMP module rather than part of ordinary unit-test discovery.
+   Its JVM and `macosArm64` tasks run only after the existing fail-loud health gate, inside the same
+   disposable Navidrome lifecycle. A missing environment is an error; there is no skip path.
+3. The first commit deliberately supplies only the typed account-connect contract and an explicit
+   behavior-unavailable result. That makes all seven tests compile and execute, with assertion-level
+   failures attributable to absent production behavior rather than to an unresolved symbol or broken
+   server fixture. Production code follows only after both hosted legs preserve that red evidence.
+
 **Revision 18 (2026-08-21)** — the Phase-2 evidence claims were narrowed to their measured boundary.
 
 1. Capture distinctness is measured on normalized decoded pixels, not JPEG bytes. A negative control
@@ -2863,7 +2879,6 @@ argue against the recorded rationale — not as filling in a blank.
 3. The macOS accessibility score remains unreportable until a platform-applicable text-resizing
    mechanism has its own changed-pixel evidence. The iOS/iPadOS and Android scaling requirements are
    unchanged.
-
 **Revision 15 (2026-08-21)** — the combined Apple workload replaced its timeout assumption.
 
 1. A successful standard-hosted `macos-26` run measured the complete serial `apple-ci` workload at
