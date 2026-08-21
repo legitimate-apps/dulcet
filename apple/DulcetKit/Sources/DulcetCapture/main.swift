@@ -95,6 +95,7 @@ private enum CaptureError: Error, CustomStringConvertible {
     case geometryMismatch(String)
     case bitmapAllocation
     case jpegEncoding
+    case invalidJPEGPayload
 
     var description: String {
         switch self {
@@ -116,6 +117,8 @@ private enum CaptureError: Error, CustomStringConvertible {
             "could not allocate the fixed capture bitmap"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
+        case .invalidJPEGPayload:
+            "could not bind capture labels to the JPEG payload"
         }
     }
 }
@@ -217,7 +220,7 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 6,
+            schemaVersion: 7,
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
@@ -349,8 +352,14 @@ private struct DulcetCaptureMain {
             variantName = "deliberately-bad-control"
             prefix = "macos-CONTROL-DELIBERATELY-BAD"
         }
+        let boundJPEG = try bindJPEGPayload(
+            jpeg,
+            fixtureState: state.rawValue,
+            appearance: appearance.rawValue,
+            variant: variantName
+        )
         let filename = "\(prefix)-\(state.rawValue)-\(appearance.rawValue).jpg"
-        try jpeg.write(to: outputDirectory.appendingPathComponent(filename))
+        try boundJPEG.write(to: outputDirectory.appendingPathComponent(filename))
         window.contentView = nil
         window.close()
 
@@ -363,11 +372,43 @@ private struct DulcetCaptureMain {
             controlActiveState: "key",
             file: filename,
             fixtureState: state.rawValue,
-            jpegBytes: jpeg.count,
-            sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(),
+            jpegBytes: boundJPEG.count,
+            sha256: sha256Hex(boundJPEG),
             variant: variantName,
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
         )
+    }
+
+    private static func bindJPEGPayload(
+        _ jpeg: Data,
+        fixtureState: String,
+        appearance: String,
+        variant: String
+    ) throws -> Data {
+        guard jpeg.starts(with: [0xFF, 0xD8]) else {
+            throw CaptureError.invalidJPEGPayload
+        }
+        let commentText = "DULCET-CAPTURE-BINDING-V1\n"
+                + "fixtureState=\(fixtureState)\n"
+                + "appearance=\(appearance)\n"
+                + "variant=\(variant)\n"
+                + "jpegPayloadSha256=\(sha256Hex(jpeg))\n"
+        let comment = Data(commentText.utf8)
+        let segmentLength = comment.count + 2
+        guard segmentLength <= Int(UInt16.max) else {
+            throw CaptureError.invalidJPEGPayload
+        }
+
+        var bound = Data([0xFF, 0xD8, 0xFF, 0xFE])
+        bound.append(UInt8((segmentLength >> 8) & 0xFF))
+        bound.append(UInt8(segmentLength & 0xFF))
+        bound.append(comment)
+        bound.append(jpeg.dropFirst(2))
+        return bound
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
