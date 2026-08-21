@@ -6,9 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 29 — structural URL redaction is total over malformed input; revision 28 made CONF-07
-absence assertions use values captured by the receiving wire fixture; revision 27 moved required-check
-evidence to GitHub's protected default branch; revision 26 derived
+**Revision:** 30 — malformed authorities are rejected as input before transport; revision 29 made
+structural URL redaction total over malformed input; revision 28 made CONF-07 absence assertions use
+values captured by the receiving wire fixture; revision 27 moved required-check evidence to GitHub's
+protected default branch; revision 26 derived
 credential coverage from every observed header, query parameter, and form field
 and rejects unclassified channels; revision 25 separately observed query/form credential
 keys at the Ktor boundary; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
@@ -1876,8 +1877,11 @@ Local, redacted diagnostics are still needed, because the user must be able to r
 
 A sealed hierarchy in the core, mapped from the wire in exactly one place:
 
-- `Input.InvalidServerUrl(reason)` — `reason` is a closed enum. URL normalization can reject empty input, malformed authority,
-  a non-HTTP scheme, embedded user information, or non-local plaintext HTTP before any request. The
+- `Input.InvalidServerUrl(reason)` — `reason` is a closed enum. URL normalization rejects empty input,
+  malformed authority, a non-HTTP scheme, embedded user information, or non-local plaintext HTTP
+  before client construction or any request. Authority grammar and Ktor parsing both execute inside
+  normalization; bracket errors, ambiguous/empty/non-numeric ports, out-of-range ports, whitespace,
+  and other parser failures therefore produce `MalformedHost`, never `Transport.Unreachable`. The
   earlier hierarchy omitted every pre-transport failure even though §10.1 normatively requires them.
 - `Transport.Unreachable | Timeout | Cancelled`
 - `Security.TlsUntrusted(reason) | LocalExceptionViolated` — the TLS reason is a closed enum, never an
@@ -2876,6 +2880,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 30 (2026-08-21)** — malformed authorities became input failures.
+
+1. URL normalization now applies the same structural authority grammar used by the safe renderer and
+   then invokes Ktor parsing inside the pre-transport boundary.
+2. Embedded user information retains its distinct closed reason; every other structural/parser
+   authority failure returns `Input.InvalidServerUrl(MalformedHost)` before `HttpClient` construction.
+3. Hosted red controls demonstrated that an out-of-range port and unclosed IPv6 bracket previously
+   reached the transport catch-all. A malformed-authority corpus now preserves their input semantics.
 
 **Revision 29 (2026-08-21)** — URL redaction became total.
 
