@@ -47,7 +47,12 @@ if "The parity job reads classic branch protection through GitHub's REST API" in
 
 for marker in (
     "**ASSUMED:** proxy-auth challenges fail closed",
-    "does not act as a proxy or return 407",
+    "No existing hosted run settles that claim",
+    "does not act as a forward proxy or return 407",
+    "DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials",
+    "407 Proxy Authentication Required",
+    "records every received `Proxy-Authorization` value",
+    "zero such values and `Auth.UnsupportedAuthenticationChallenge`",
 ):
     if marker not in normalized_spec:
         errors.append(f"proxy evidence boundary is missing {marker!r}")
