@@ -12,7 +12,7 @@ the detailed assertion.
 | CONF-04 | version compatibility |
 | CONF-05 | OpenSubsonic envelope fields |
 | CONF-06 | transport reachability and server-error mappings |
-| CONF-07 | form credential channels and credential-free diagnostics |
+| CONF-07 | wire-observed credential channels and credential-free diagnostics |
 | CONF-08 | fail-closed request-channel inventory and redirect credential policy |
 | CONF-11 | successful stream signature validation |
 | CONF-12 | legacy stream error-envelope detection |
