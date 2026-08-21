@@ -8,12 +8,12 @@ the detailed assertion.
 |---|---|
 | CONF-01 | unauthenticated extension discovery |
 | CONF-02 | reference-server extension set |
-| CONF-03 | baseline ping authentication |
+| CONF-03 | baseline salted-token authentication and invalid credentials |
 | CONF-04 | version compatibility |
 | CONF-05 | OpenSubsonic envelope fields |
-| CONF-06 | distinguish authentication and transport failures |
-| CONF-07 | redact credentials from diagnostics |
-| CONF-08 | redirect credential policy |
+| CONF-06 | transport reachability and server-error mappings |
+| CONF-07 | form credential channels and credential-free diagnostics |
+| CONF-08 | redirect credential preservation and stripping policy |
 | CONF-11 | successful stream signature validation |
 | CONF-12 | legacy stream error-envelope detection |
 | CONF-13 | ranged stream behavior |

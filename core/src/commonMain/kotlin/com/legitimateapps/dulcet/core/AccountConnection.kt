@@ -45,6 +45,14 @@ public enum class AuthenticationLocation {
     Query,
 }
 
+/** Closed credential-key identities; request traces never retain credential values. */
+public enum class AuthenticationParameter {
+    Username,
+    SaltedToken,
+    Salt,
+    LegacyPassword,
+}
+
 public enum class RequestObservationBoundary {
     KtorSendingRequest,
 }
@@ -68,6 +76,8 @@ public class RequestTrace private constructor(
     public val method: String,
     public val redactedUrl: String,
     public val authenticationLocation: AuthenticationLocation,
+    public val queryAuthenticationParameters: Set<AuthenticationParameter>,
+    public val formAuthenticationParameters: Set<AuthenticationParameter>,
     public val requestedProtocolVersion: String?,
     public val saltFingerprint: String?,
     public val observationBoundary: RequestObservationBoundary,
@@ -75,6 +85,8 @@ public class RequestTrace private constructor(
     override fun toString(): String =
         "RequestTrace(endpoint=$endpoint, method=$method, redactedUrl=$redactedUrl, " +
             "authenticationLocation=$authenticationLocation, " +
+            "queryAuthenticationParameters=$queryAuthenticationParameters, " +
+            "formAuthenticationParameters=$formAuthenticationParameters, " +
             "requestedProtocolVersion=$requestedProtocolVersion, " +
             "saltFingerprint=$saltFingerprint, observationBoundary=$observationBoundary)"
 
@@ -84,6 +96,8 @@ public class RequestTrace private constructor(
             method: String,
             redactedUrl: String,
             authenticationLocation: AuthenticationLocation,
+            queryAuthenticationParameters: Set<AuthenticationParameter>,
+            formAuthenticationParameters: Set<AuthenticationParameter>,
             requestedProtocolVersion: String?,
             saltFingerprint: String?,
         ): RequestTrace = RequestTrace(
@@ -91,6 +105,8 @@ public class RequestTrace private constructor(
             method = method,
             redactedUrl = redactedUrl,
             authenticationLocation = authenticationLocation,
+            queryAuthenticationParameters = queryAuthenticationParameters,
+            formAuthenticationParameters = formAuthenticationParameters,
             requestedProtocolVersion = requestedProtocolVersion,
             saltFingerprint = saltFingerprint,
             observationBoundary = RequestObservationBoundary.KtorSendingRequest,
@@ -692,9 +708,11 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
     fun observe(request: HttpRequestBuilder, content: OutgoingContent) {
         val query = request.url.parameters
         val form = (content as? FormDataContent)?.formData ?: Parameters.Empty
+        val queryAuthenticationParameters = query.authenticationParameters()
+        val formAuthenticationParameters = form.authenticationParameters()
         val authenticationLocation = when {
-            AUTHENTICATION_KEYS.any { query[it] != null } -> AuthenticationLocation.Query
-            AUTHENTICATION_KEYS.any { form[it] != null } -> AuthenticationLocation.FormBody
+            queryAuthenticationParameters.isNotEmpty() -> AuthenticationLocation.Query
+            formAuthenticationParameters.isNotEmpty() -> AuthenticationLocation.FormBody
             else -> AuthenticationLocation.None
         }
         val salt = query["s"] ?: form["s"]
@@ -703,6 +721,8 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
             method = request.method.value,
             redactedUrl = Redactor.redactUrl(request.url.buildString()),
             authenticationLocation = authenticationLocation,
+            queryAuthenticationParameters = queryAuthenticationParameters,
+            formAuthenticationParameters = formAuthenticationParameters,
             requestedProtocolVersion = query["v"] ?: form["v"],
             saltFingerprint = salt?.let { md5Hex("salt:$it") },
         )
@@ -716,10 +736,13 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
         ?: error("Ktor send boundary did not observe the completed request")
 
     fun snapshot(): List<RequestTrace> = traces.toList()
+}
 
-    private companion object {
-        val AUTHENTICATION_KEYS = setOf("u", "t", "s", "p")
-    }
+private fun Parameters.authenticationParameters(): Set<AuthenticationParameter> = buildSet {
+    if (this@authenticationParameters["u"] != null) add(AuthenticationParameter.Username)
+    if (this@authenticationParameters["t"] != null) add(AuthenticationParameter.SaltedToken)
+    if (this@authenticationParameters["s"] != null) add(AuthenticationParameter.Salt)
+    if (this@authenticationParameters["p"] != null) add(AuthenticationParameter.LegacyPassword)
 }
 
 private class RedirectPolicyFailure(val error: DomainError) : Exception()
