@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DulcetKit",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
@@ -10,9 +11,18 @@ let package = Package(
     ],
     products: [
         .library(name: "DulcetKit", targets: ["DulcetKit"]),
+        .executable(name: "DulcetCapture", targets: ["DulcetCapture"]),
     ],
     targets: [
-        .target(name: "DulcetKit"),
+        .target(
+            name: "DulcetKit",
+            resources: [.process("Resources")]
+        ),
+        .executableTarget(
+            name: "DulcetCapture",
+            dependencies: ["DulcetKit"],
+            resources: [.copy("Resources/PinnedControls")]
+        ),
         .testTarget(name: "DulcetKitTests", dependencies: ["DulcetKit"]),
     ]
 )

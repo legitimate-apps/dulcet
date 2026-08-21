@@ -15,12 +15,17 @@ settings:
     DEVELOPMENT_TEAM: 3LTL47SJ8C
     FRAMEWORK_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
     OTHER_LDFLAGS: "$(inherited) -framework DulcetCore"
+packages:
+  DulcetKit:
+    path: DulcetKit
 targets:
   DulcetMac:
     type: application
     platform: macOS
     sources:
       - DulcetMac
+    dependencies:
+      - package: DulcetKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev

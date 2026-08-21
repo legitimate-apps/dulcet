@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		766392F104BA53385E1EDE0A /* DulcetiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */; };
 		A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
+		D1FDC52FA25891E2A0F20D31 /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0A25BB9EEB3AB1E17FEE1738 /* DulcetKit */; };
 		F102F29962BAFAAE1D0152DF /* DulcetTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */; };
 /* End PBXBuildFile section */
 
@@ -16,10 +17,22 @@
 		55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetMacApp.swift; sourceTree = "<group>"; };
 		90F869B5F737FF8CDAA6B182 /* DulcetTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetTVApp.swift; sourceTree = "<group>"; };
+		BEEA9FDD39E4CA2FF12180FC /* DulcetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DulcetKit; path = DulcetKit; sourceTree = SOURCE_ROOT; };
 		C94F682F0DA4A7A7D82934B3 /* DulcetiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetiOSApp.swift; sourceTree = "<group>"; };
 		EBEE55499C6E454B3A373AE1 /* DulcetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DulcetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		07DF35B6C13C0AEA3AB09043 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1FDC52FA25891E2A0F20D31 /* DulcetKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		15B71ACC7A6C2A1F4D9F2CB3 /* DulcetiOS */ = {
@@ -28,6 +41,14 @@
 				D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */,
 			);
 			path = DulcetiOS;
+			sourceTree = "<group>";
+		};
+		1F4CEF14957BC5BEA94552B7 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				BEEA9FDD39E4CA2FF12180FC /* DulcetKit */,
+			);
+			name = Packages;
 			sourceTree = "<group>";
 		};
 		52787862A6A396B435831CF7 /* DulcetMac */ = {
@@ -44,6 +65,7 @@
 				15B71ACC7A6C2A1F4D9F2CB3 /* DulcetiOS */,
 				52787862A6A396B435831CF7 /* DulcetMac */,
 				C4EBD9B8094B6C71B1AA0E93 /* DulcetTV */,
+				1F4CEF14957BC5BEA94552B7 /* Packages */,
 				EF09A798EC470842969DB215 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -93,6 +115,7 @@
 			buildPhases = (
 				806940B958CE99915F933C06 /* Compile Kotlin Framework */,
 				ACE3176774BC5BACE2143179 /* Sources */,
+				07DF35B6C13C0AEA3AB09043 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -100,6 +123,7 @@
 			);
 			name = DulcetMac;
 			packageProductDependencies = (
+				0A25BB9EEB3AB1E17FEE1738 /* DulcetKit */,
 			);
 			productName = DulcetMac;
 			productReference = EBEE55499C6E454B3A373AE1 /* DulcetMac.app */;
@@ -155,6 +179,9 @@
 			);
 			mainGroup = 66490B3250C62ABB4C784B41;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B76C8E8F8C3AF68A5B3F8E67 /* XCLocalSwiftPackageReference "DulcetKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = EF09A798EC470842969DB215 /* Products */;
 			projectDirPath = "";
@@ -524,6 +551,20 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B76C8E8F8C3AF68A5B3F8E67 /* XCLocalSwiftPackageReference "DulcetKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = DulcetKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0A25BB9EEB3AB1E17FEE1738 /* DulcetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DulcetKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 85AB9D651FD2629314AFF46A /* Project object */;
 }

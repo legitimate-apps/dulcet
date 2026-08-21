@@ -57,6 +57,63 @@ jobs:
           -destination 'generic/platform=macOS'
           -derivedDataPath "$RUNNER_TEMP/DulcetMacDerivedData"
           CODE_SIGNING_ALLOWED=NO
+      - name: Prove direct uncataloged foreground modifiers fail the source policy
+        run: python3 tools/test-contrast-foreground-policy-gate
+      - name: Require direct custom foreground modifiers to use the contrast registry
+        run: python3 tools/verify_contrast_foreground_policy.py
+      - name: Test native macOS presentation and registered-pair contrast ratios
+        run: swift test --package-path apple/DulcetKit
+      - name: Prove macOS capture rejects an inapplicable Dynamic Type label
+        run: |
+          swift build --package-path apple/DulcetKit --product DulcetCapture
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
+          test -x "$capture_binary"
+          set +e
+          capture_output="$("$capture_binary" \
+            --output "$RUNNER_TEMP/rejected-dynamic-type" \
+            --state empty-library-no-account --appearance light \
+            --dynamic-type accessibility5 2>&1)"
+          capture_exit_code=$?
+          set -e
+          printf '%s\n' "$capture_output"
+          test "$capture_exit_code" -eq 1
+          grep -Fxq 'DULCET CAPTURE ERROR macOS capture cannot claim Dynamic Type accessibility5: SwiftUI dynamicTypeSize does not affect text size on macOS' <<< "$capture_output"
+          test ! -e "$RUNNER_TEMP/rejected-dynamic-type"
+          echo "DYNAMIC TYPE NEGATIVE CONTROL PASS setup=binary-built exact-diagnostic=true label=accessibility5 rejected=true output-created=false"
+      - name: Capture deterministic macOS design evidence twice
+        env:
+          CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
+        run: |
+          swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$CAPTURE_ROOT/run-a/standard" \
+            --state all --appearance all --include-control
+          swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$CAPTURE_ROOT/run-b/standard" \
+            --state all --appearance all --include-control
+          diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b"
+          for appearance in light dark; do
+            control="macos-CONTROL-DELIBERATELY-BAD-library-browse-${appearance}.jpg"
+            cmp \
+              "apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls/$control" \
+              "$CAPTURE_ROOT/run-a/standard/$control"
+          done
+          python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a"
+          tools/test-design-capture-gates "$CAPTURE_ROOT/run-a"
+          {
+            echo '## macOS design captures'
+            echo
+            echo 'Two complete render runs were byte-identical.'
+            echo
+            echo 'Artifact contains 14 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload macOS design evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-design-captures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-design-captures/run-a
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Build iOS and iPadOS shell
         run: >-
           xcodebuild build
