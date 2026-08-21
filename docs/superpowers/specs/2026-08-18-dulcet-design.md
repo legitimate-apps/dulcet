@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 34 — raw internationalized hostnames receive an honest unsupported classification;
-revision 33 made Darwin report unsupported authentication challenges distinctly and record its
+**Revision:** 35 — required-check drift is explicitly a post-merge detector rather than a pre-merge
+live control; revision 34 made raw internationalized hostnames receive an honest unsupported
+classification; revision 33 made Darwin report unsupported authentication challenges distinctly and record its
 fail-closed authentication limitation; revision 32 made bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
 cross-origin credential stripping with a closed target-request oracle; revision 30 rejected
 malformed authorities as input before transport; revision 29 made
@@ -1966,15 +1967,14 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 **Evidence is a stable identity, not a run id.** Revision 1 required a CI run number in the `evidence`
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
 the number afterwards produces a commit nobody verified. Evidence is therefore
-`{workflow, job, test}` — knowable at commit time. The static gate asserts that (a) the named workflow
-and job exist, (b) the named test exists in the repo, (c) GitHub's branch-protection API reports the
-job as a **required check** on the repository's API-reported default branch, and (d) the named job
-invokes the executed-evidence verifier. The required-check set is never read from a repository file:
-such a declaration is editable by the same pull request it would purport to gate. During that same job,
-after the named test task, the verifier reads the test runner's JUnit XML and requires the exact
-class/method testcase to be present, executed, unskipped, and passing. A source method, log line,
-invented job label, or tuple alone is not evidence. The required check therefore proves both that the
-verifier ran on this commit and that the tuple resolved to an actual successful execution.
+`{workflow, job, test}` — knowable at commit time. The PR static gate asserts that (a) the named
+workflow and job exist, (b) the named test exists in the repo, (c) the job is named by the reviewed
+`.github/required-checks.json` manifest, and (d) the named job invokes the executed-evidence verifier.
+During that same job, after the named test task, the verifier reads the test runner's JUnit XML and
+requires the exact class/method testcase to be present, executed, unskipped, and passing. A source
+method, log line, invented job label, or tuple alone is not evidence. The manifest binding is a
+reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
+records the accepted timing boundary for that live comparison.
 
 **Evidence must match the claim's granularity.** A core unit test does not evidence a platform UI
 capability, and an iPhone simulator run does not evidence iPad navigation, resizing, pointer/keyboard
@@ -2057,13 +2057,21 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
    `conformance:` id exists in `docs/CONFORMANCE.md`; every `blocked_by` id exists.
 4. **Schema validity.** Unknown keys, statuses or platform names fail.
 
-The parity job reads classic branch protection through GitHub's REST API using a repository secret
-with Administration read access. The API credential and response are outside the pull request's
-control. Missing credentials, API errors, malformed responses, duplicate contexts, or disagreement
-between the API's `contexts` and app-bound `checks` forms all fail the job. Test fixtures are accepted
-only outside GitHub Actions; fixture mode in Actions is itself a failure. Pull requests from forks do
-not receive the repository secret and therefore fail closed rather than accepting self-declared
-required checks.
+**Required-check timing, a decided gate property:** the pull-request `parity-gate` reads the
+code-owner-reviewed `.github/required-checks.json` required-checks manifest and performs no live
+branch-protection API call. Live branch protection still enforces its configured contexts at merge,
+but agreement between the manifest and the live rule is **post-merge detection, not pre-merge
+prevention**. The `branch-protection-drift` workflow runs after a push to `main` and then compares the
+manifest with classic branch protection through GitHub's REST API. This timing is accepted: a drifted
+manifest requires review of the protected file, and the live rule remains the merge authority, but a
+new mismatch may reach `main` before the drift job reports it. Future readers must not infer that the
+PR gate itself performs the live comparison.
+
+Only `branch-protection-drift` receives the Administration-read repository secret. Its API credential
+and response are outside the pushed change's control. Missing credentials, API errors, malformed
+responses, duplicate contexts, or disagreement between the API's `contexts` and app-bound `checks`
+forms all fail that post-merge job. Test fixtures are accepted only outside GitHub Actions; fixture
+mode in Actions is itself a failure. Pull-request workflows never reference repository secrets.
 
 There is no source-annotation scheme. (Revision 1 floated one as a "phase 2 extension"; naming it
 invited building an annotation framework before the basic evidence cycle worked.)
@@ -2900,6 +2908,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 35 (2026-08-21)** — required-check timing became explicit.
+
+1. The PR parity gate validates evidence against the reviewed required-checks manifest and does not
+   query live branch protection.
+2. Live protection remains the merge authority. The secret-backed `branch-protection-drift` workflow
+   compares it to the manifest only after a push to `main`, making that comparison post-merge
+   detection rather than pre-merge prevention.
+3. This is an accepted gate property, not an invisible weakening: the manifest is code-owner reviewed,
+   live required contexts still apply at merge, and a new mismatch can nevertheless reach `main`
+   before the drift workflow reports it.
 
 **Revision 34 (2026-08-21)** — internationalized-host classification became honest.
 
