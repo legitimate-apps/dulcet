@@ -57,7 +57,7 @@ def main() -> None:
     if observed_formula != expected_formula:
         raise SystemExit(f"Homebrew ffmpeg pin drift: expected {expected_formula}, observed {observed_formula}")
 
-    run(["brew", "fetch", "--force", "--bottle", ffmpeg["formula"]])
+    run(["brew", "fetch", "--force", "--force-bottle", ffmpeg["formula"]])
     cache = Path(run(["brew", "--cache"], capture=True))
     candidates = list(cache.rglob(f"*ffmpeg--{ffmpeg['version']}*.bottle.tar*"))
     bottle_path = next(
