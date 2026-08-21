@@ -8,6 +8,7 @@ import com.legitimateapps.dulcet.core.AuthenticationLocation
 import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.LogSink
+import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.SaltSource
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -62,6 +63,7 @@ class AccountConnectConformanceTest {
 
         assertEquals("getOpenSubsonicExtensions", discovery.endpoint)
         assertEquals("GET", discovery.method)
+        assertEquals(RequestObservationBoundary.KtorSendingRequest, discovery.observationBoundary)
         assertEquals(AuthenticationLocation.None, discovery.authenticationLocation)
         assertFalse(discovery.redactedUrl.contains("u="))
         assertFalse(discovery.redactedUrl.contains("t="))
@@ -167,6 +169,11 @@ class AccountConnectConformanceTest {
             AccountConnectionContract.saltedToken(ADMIN_PASSWORD, it)
         }
 
+        assertTrue(
+            connected.requests.all {
+                it.observationBoundary == RequestObservationBoundary.KtorSendingRequest
+            },
+        )
         assertTrue(
             connected.requests.filter { it.authenticationLocation != AuthenticationLocation.None }
                 .all { it.method == "POST" && "?<redacted>" in it.redactedUrl },
