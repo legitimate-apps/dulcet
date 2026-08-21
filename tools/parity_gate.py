@@ -12,6 +12,7 @@ LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
 TOP_KEYS = {"schema_version", "accepted_regressions", "features"}
 FEATURE_KEYS = {"id", "title", "spec", "gates", "conformance", "platforms"}
 CELL_KEYS = {"status", "evidence", "reason", "blocked_by"}
+REQUIRED_CHECK_KEYS = {"schema_version", "default_branch", "contexts"}
 
 
 def fail(message: str) -> None:
@@ -65,6 +66,30 @@ def workflow_jobs() -> set[tuple[str, str]]:
     return pairs
 
 
+def required_status_checks(jobs: set[tuple[str, str]]) -> set[str]:
+    path = Path(".github/required-checks.json")
+    document = load_text(path.read_text(), str(path))
+    if set(document) != REQUIRED_CHECK_KEYS:
+        fail(f"{path}: requires exactly {sorted(REQUIRED_CHECK_KEYS)}")
+    if document.get("schema_version") != 1:
+        fail(f"{path}: schema_version must be 1")
+    if document.get("default_branch") != "main":
+        fail(f"{path}: default_branch must be main")
+    contexts = document.get("contexts")
+    if (
+        not isinstance(contexts, list)
+        or not contexts
+        or any(not isinstance(context, str) or not context for context in contexts)
+        or len(contexts) != len(set(contexts))
+    ):
+        fail(f"{path}: contexts must be a non-empty list of unique names")
+    known_jobs = {job for _, job in jobs}
+    unknown = set(contexts) - known_jobs
+    if unknown:
+        fail(f"{path}: required status checks do not resolve to workflow jobs: {sorted(unknown)}")
+    return set(contexts)
+
+
 def test_names() -> set[str]:
     names: set[str] = set()
     for path in Path(".").rglob("*"):
@@ -92,6 +117,7 @@ def validate(document: dict, source: str) -> dict[str, dict]:
     conformance_text = Path("docs/CONFORMANCE.md").read_text()
     conformance_ids = set(re.findall(r"\bCONF-[0-9]+[a-z]?\b", conformance_text))
     jobs = workflow_jobs()
+    required_checks = required_status_checks(jobs)
     tests = test_names()
     by_id: dict[str, dict] = {}
 
@@ -133,14 +159,22 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                 fail(f"{source}: {feature_id}/{platform} n/a requires reason")
             if status == "blocked" and not cell.get("blocked_by"):
                 fail(f"{source}: {feature_id}/{platform} blocked requires blocked_by")
-            if status == "shipped":
-                evidence = cell.get("evidence")
-                if not isinstance(evidence, dict) or set(evidence) != {"workflow", "job", "test"}:
-                    fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
+            evidence = cell.get("evidence")
+            if status == "shipped" and evidence is None:
+                fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
+            if evidence is not None:
+                if (
+                    not isinstance(evidence, dict)
+                    or set(evidence) != {"workflow", "job", "test"}
+                    or any(not isinstance(value, str) or not value for value in evidence.values())
+                ):
+                    fail(f"{source}: {feature_id}/{platform} evidence requires workflow/job/test strings")
                 if (evidence["workflow"], evidence["job"]) not in jobs:
                     fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
                 if evidence["test"].split("/")[-1].split("#")[-1] not in tests:
                     fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
+                if evidence["job"] not in required_checks:
+                    fail(f"{source}: {feature_id}/{platform} evidence job is not a required status check")
     return by_id
 
 
