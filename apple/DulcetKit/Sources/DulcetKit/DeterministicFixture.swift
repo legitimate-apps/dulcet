@@ -1,0 +1,361 @@
+import Foundation
+
+@MainActor
+public struct DulcetDeterministicFixture: DulcetDataSource {
+    public init() {}
+
+    public func snapshot(for state: DulcetFixtureState) -> DulcetSnapshot {
+        let library = Self.library
+        let looseTracks = [Self.trackWithoutAlbum]
+        let base = BaseSnapshot(
+            state: state,
+            destination: destination(for: state),
+            accountConnected: state != .emptyLibraryNoAccount,
+            connectivity: connectivity(for: state),
+            albums: state == .emptyLibraryNoAccount ? [] : library,
+            looseTracks: state == .emptyLibraryNoAccount ? [] : looseTracks
+        )
+
+        switch state {
+        case .emptyLibraryNoAccount, .libraryBrowse:
+            return base.snapshot()
+        case .albumDetailMultiDisc:
+            return base.snapshot(selectedAlbum: Self.doubleLines)
+        case .nowPlaying:
+            return base.snapshot(nowPlaying: Self.nowPlaying)
+        case .searchMixedSources:
+            return base.snapshot(searchQuery: "atlas", searchResults: Self.searchResults)
+        case .tlsUntrusted:
+            return base.snapshot(tlsFailure: Self.tlsFailure)
+        case .offlineMetadataOnly:
+            let offlineAlbums = library.map { album in
+                DulcetAlbum(
+                    id: album.id,
+                    title: album.title,
+                    albumArtists: album.albumArtists,
+                    year: album.year,
+                    artwork: album.artwork,
+                    tracks: album.tracks.map { $0.withAvailability(.metadataOnly) }
+                )
+            }
+            return BaseSnapshot(
+                state: state,
+                destination: .library,
+                accountConnected: true,
+                connectivity: .offline(lastSyncedDescription: "Today at 14:28 UTC"),
+                albums: offlineAlbums,
+                looseTracks: looseTracks.map { $0.withAvailability(.metadataOnly) }
+            ).snapshot()
+        }
+    }
+
+    private func destination(for state: DulcetFixtureState) -> DulcetSidebarDestination {
+        switch state {
+        case .emptyLibraryNoAccount, .libraryBrowse, .albumDetailMultiDisc, .offlineMetadataOnly:
+            .library
+        case .nowPlaying:
+            .nowPlaying
+        case .searchMixedSources:
+            .search
+        case .tlsUntrusted:
+            .settings
+        }
+    }
+
+    private func connectivity(for state: DulcetFixtureState) -> DulcetConnectivity {
+        switch state {
+        case .emptyLibraryNoAccount:
+            .unavailable
+        case .offlineMetadataOnly:
+            .offline(lastSyncedDescription: "Today at 14:28 UTC")
+        default:
+            .online(serverName: "Listening Room")
+        }
+    }
+}
+
+private extension DulcetDeterministicFixture {
+    struct BaseSnapshot {
+        let state: DulcetFixtureState
+        let destination: DulcetSidebarDestination
+        let accountConnected: Bool
+        let connectivity: DulcetConnectivity
+        let albums: [DulcetAlbum]
+        let looseTracks: [DulcetTrack]
+
+        @MainActor
+        func snapshot(
+            selectedAlbum: DulcetAlbum? = nil,
+            nowPlaying: DulcetNowPlaying? = nil,
+            searchQuery: String = "",
+            searchResults: [DulcetSearchResult] = [],
+            tlsFailure: DulcetTLSFailure? = nil
+        ) -> DulcetSnapshot {
+            DulcetSnapshot(
+                state: state,
+                selectedDestination: destination,
+                accountConnected: accountConnected,
+                connectivity: connectivity,
+                albums: albums,
+                looseTracks: looseTracks,
+                selectedAlbum: selectedAlbum,
+                nowPlaying: nowPlaying,
+                searchQuery: searchQuery,
+                searchResults: searchResults,
+                tlsFailure: tlsFailure,
+                captureDate: DulcetDeterministicFixture.captureDate
+            )
+        }
+    }
+
+    static let captureDate: Date = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 8,
+            day: 21,
+            hour: 14,
+            minute: 32
+        ))!
+    }()
+
+    static let doubleLinesArtwork = DulcetArtwork(seed: "double-lines", palette: .indigoCoral)
+    static let pagingArtwork = DulcetArtwork(seed: "paging-atlas", palette: .mossGold)
+    static let unicodeArtwork = DulcetArtwork(seed: "etude-tokyo", palette: .plumIce)
+    static let severalArtistsArtwork = DulcetArtwork(seed: "several-artists", palette: .oceanMint)
+    static let longTitleArtwork = DulcetArtwork(seed: "long-title", palette: .emberRose)
+
+    static let doubleLines: DulcetAlbum = {
+        let tracks = (1...2).flatMap { disc in
+            (1...2).map { track in
+                DulcetTrack(
+                    id: "double-lines-d\(disc)-t\(track)",
+                    title: "Disc \(disc) Track \(track)",
+                    artistNames: ["Dulcet Fixtures"],
+                    albumTitle: "Double Lines",
+                    discNumber: disc,
+                    trackNumber: track,
+                    durationSeconds: 196 + (disc * 13) + (track * 7),
+                    artwork: doubleLinesArtwork,
+                    isFavorite: disc == 1 && track == 2
+                )
+            }
+        }
+        return DulcetAlbum(
+            id: "album-double-lines",
+            title: "Double Lines",
+            albumArtists: ["Dulcet Fixtures"],
+            year: 2026,
+            artwork: doubleLinesArtwork,
+            tracks: tracks
+        )
+    }()
+
+    static let pagingAtlas: DulcetAlbum = {
+        let tracks = (1...300).map { track in
+            DulcetTrack(
+                id: String(format: "paging-%03d", track),
+                title: String(format: "Paging Track %03d", track),
+                artistNames: ["Dulcet Fixtures"],
+                albumTitle: "Paging Atlas",
+                discNumber: 1,
+                trackNumber: track,
+                durationSeconds: 15 + (track % 19),
+                artwork: pagingArtwork
+            )
+        }
+        return DulcetAlbum(
+            id: "album-paging-atlas",
+            title: "Paging Atlas",
+            albumArtists: ["Dulcet Fixtures"],
+            year: 2026,
+            artwork: pagingArtwork,
+            tracks: tracks
+        )
+    }()
+
+    static let unicodeAlbum = album(
+        id: "album-etudes-between-stations",
+        title: "Études Between Stations",
+        artists: ["Aiko Laurent"],
+        year: 2025,
+        artwork: unicodeArtwork,
+        titles: ["Étude 東京", "Après la pluie", "Lueur № 7", "Faint Signals"]
+    )
+
+    static let severalAlbumArtists = DulcetAlbum(
+        id: "album-several-artists",
+        title: "Several Album Artists",
+        albumArtists: ["Alpha Ensemble", "Beta Ensemble", "Gamma Ensemble"],
+        year: 2024,
+        artwork: severalArtistsArtwork,
+        tracks: [
+            DulcetTrack(
+                id: "shared-credit",
+                title: "Shared Credit",
+                artistNames: ["Alpha Ensemble", "Beta Ensemble", "Gamma Ensemble"],
+                albumTitle: "Several Album Artists",
+                trackNumber: 1,
+                durationSeconds: 243,
+                artwork: severalArtistsArtwork
+            )
+        ]
+    )
+
+    static let longTitleAlbum = DulcetAlbum(
+        id: "album-long-titles",
+        title: "Long Titles",
+        albumArtists: ["Dulcet Fixtures"],
+        year: 2026,
+        artwork: longTitleArtwork,
+        tracks: [
+            DulcetTrack(
+                id: "deliberately-long-title",
+                title: "A deliberately long title " + String(repeating: "0123456789", count: 32),
+                artistNames: ["Dulcet Fixtures"],
+                albumTitle: "Long Titles",
+                trackNumber: 1,
+                durationSeconds: 287,
+                artwork: longTitleArtwork
+            )
+        ]
+    )
+
+    static let thresholdBoundary = album(
+        id: "album-threshold-boundary",
+        title: "Threshold Boundary",
+        artists: ["Dulcet Fixtures"],
+        year: 2026,
+        artwork: DulcetArtwork(seed: "threshold-boundary", palette: .slateApricot),
+        titles: ["Twenty Nine Seconds", "Thirty One Seconds"],
+        durations: [29, 31]
+    )
+
+    static let library: [DulcetAlbum] = [
+        unicodeAlbum,
+        doubleLines,
+        pagingAtlas,
+        severalAlbumArtists,
+        longTitleAlbum,
+        thresholdBoundary,
+        album(id: "album-night-glass", title: "Night Glass", artists: ["Rhea Vale"], year: 2026, artwork: DulcetArtwork(seed: "night-glass", palette: .duskLavender), titles: ["Low Orbit", "Soft Relay", "Almost Awake"]),
+        album(id: "album-mosslight", title: "Mosslight", artists: ["Orchard Static"], year: 2023, artwork: DulcetArtwork(seed: "mosslight", palette: .mossGold), titles: ["Verdant Signal", "Open Field"]),
+        album(id: "album-paper-satellites", title: "Paper Satellites", artists: ["Mara North"], year: 2022, artwork: DulcetArtwork(seed: "paper-satellites", palette: .oceanMint), titles: ["Fold", "Transit", "Blue Thread"]),
+        album(id: "album-arcs-embers", title: "Arcs & Embers", artists: ["Juniper Set"], year: 2025, artwork: DulcetArtwork(seed: "arcs-embers", palette: .emberRose), titles: ["Kindling", "Wide Arc"]),
+        album(id: "album-field-notes", title: "Field Notes, Vol. 3", artists: ["Common Hours"], year: 2024, artwork: DulcetArtwork(seed: "field-notes", palette: .tealSun), titles: ["Margin", "Index", "Pressed Flower"]),
+        album(id: "album-quiet-machines", title: "Quiet Machines", artists: ["Nia Form"], year: 2021, artwork: DulcetArtwork(seed: "quiet-machines", palette: .plumIce), titles: ["Idle State", "Copper Sleep"]),
+    ]
+
+    static let trackWithoutAlbum = DulcetTrack(
+        id: "track-no-album",
+        title: "No Album",
+        artistNames: ["Dulcet Fixtures"],
+        albumTitle: nil,
+        durationSeconds: 174,
+        artwork: DulcetArtwork(seed: "no-album", palette: .slateApricot)
+    )
+
+    static let nowPlaying = DulcetNowPlaying(
+        current: unicodeAlbum.tracks[0],
+        queue: [
+            severalAlbumArtists.tracks[0],
+            longTitleAlbum.tracks[0],
+            doubleLines.tracks[0],
+        ],
+        elapsedSeconds: 142,
+        isPlaying: true,
+        outputName: "Studio Display"
+    )
+
+    static let searchResults: [DulcetSearchResult] = [
+        DulcetSearchResult(
+            id: "paging-001",
+            title: "Paging Track 001",
+            subtitle: "Dulcet Fixtures · Paging Atlas",
+            kind: .track,
+            source: .localAndServer,
+            artwork: pagingArtwork,
+            refreshedFromServer: true
+        ),
+        DulcetSearchResult(
+            id: "album-paging-atlas",
+            title: "Paging Atlas",
+            subtitle: "Dulcet Fixtures · 300 tracks",
+            kind: .album,
+            source: .local,
+            artwork: pagingArtwork
+        ),
+        DulcetSearchResult(
+            id: "artist-atlas-rooms",
+            title: "Atlas Rooms",
+            subtitle: "Artist · 4 albums",
+            kind: .artist,
+            source: .server,
+            artwork: DulcetArtwork(seed: "atlas-rooms", palette: .tealSun)
+        ),
+        DulcetSearchResult(
+            id: "track-atlas-after-dark",
+            title: "Atlas After Dark",
+            subtitle: "Rhea Vale · Night Glass",
+            kind: .track,
+            source: .server,
+            artwork: DulcetArtwork(seed: "atlas-after-dark", palette: .duskLavender)
+        ),
+    ]
+
+    static let tlsFailure = DulcetTLSFailure(
+        serverName: "Listening Room",
+        reason: "The certificate expired on 14 August 2026.",
+        technicalDetail: "macOS stopped the connection because it could not establish an OS-trusted certificate chain."
+    )
+
+    static func album(
+        id: String,
+        title: String,
+        artists: [String],
+        year: Int,
+        artwork: DulcetArtwork,
+        titles: [String],
+        durations: [Int]? = nil
+    ) -> DulcetAlbum {
+        let tracks = titles.enumerated().map { index, trackTitle in
+            DulcetTrack(
+                id: "\(id)-track-\(index + 1)",
+                title: trackTitle,
+                artistNames: artists,
+                albumTitle: title,
+                discNumber: 1,
+                trackNumber: index + 1,
+                durationSeconds: durations?[index] ?? 188 + (index * 23),
+                artwork: artwork
+            )
+        }
+        return DulcetAlbum(
+            id: id,
+            title: title,
+            albumArtists: artists,
+            year: year,
+            artwork: artwork,
+            tracks: tracks
+        )
+    }
+}
+
+private extension DulcetTrack {
+    func withAvailability(_ availability: DulcetMediaAvailability) -> DulcetTrack {
+        DulcetTrack(
+            id: id,
+            title: title,
+            artistNames: artistNames,
+            albumTitle: albumTitle,
+            discNumber: discNumber,
+            trackNumber: trackNumber,
+            durationSeconds: durationSeconds,
+            artwork: artwork,
+            availability: availability,
+            isFavorite: isFavorite
+        )
+    }
+}
