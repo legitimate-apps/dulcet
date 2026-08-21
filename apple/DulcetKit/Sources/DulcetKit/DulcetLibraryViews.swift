@@ -80,7 +80,7 @@ struct DulcetLibraryBrowseView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                 DulcetLibraryHeader(
                     title: DulcetStrings.library,
                     subtitle: "\(DulcetStrings.albumCount(snapshot.albums.count)) · \(DulcetStrings.trackCount(totalTracks))"
@@ -91,7 +91,7 @@ struct DulcetLibraryBrowseView: View {
                         .font(.title2.weight(.semibold))
 
                     ScrollView(.horizontal) {
-                        LazyHStack(alignment: .top, spacing: DulcetSpacing.md) {
+                        HStack(alignment: .top, spacing: DulcetSpacing.md) {
                             ForEach(snapshot.albums.prefix(7)) { album in
                                 DulcetAlbumShelfItem(album: album)
                             }
@@ -414,7 +414,7 @@ struct DulcetOfflineLibraryView: View {
                     }
                 } else {
                     ScrollView(.horizontal) {
-                        LazyHStack(alignment: .top, spacing: DulcetSpacing.md) {
+                        HStack(alignment: .top, spacing: DulcetSpacing.md) {
                             ForEach(snapshot.albums.prefix(6)) { album in
                                 DulcetAlbumShelfItem(album: album, offline: true)
                             }

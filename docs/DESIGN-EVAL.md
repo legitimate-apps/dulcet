@@ -26,6 +26,8 @@ environment is fixed:
 - a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
 - user-facing release name `Dulcet` as the initial fixture title, with the same state navigation
   titles the SwiftUI views apply in the app; debug target suffixes are intentionally excluded;
+- one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
+  and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
