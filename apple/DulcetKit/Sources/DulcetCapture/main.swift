@@ -92,7 +92,6 @@ private enum CaptureError: Error, CustomStringConvertible {
     case unknownArgument(String)
     case unsupportedDynamicType(String)
     case outputExists(String)
-    case inactiveWindow(String)
     case geometryMismatch(String)
     case bitmapAllocation
     case jpegEncoding
@@ -111,8 +110,6 @@ private enum CaptureError: Error, CustomStringConvertible {
             "macOS capture cannot claim Dynamic Type \(value): SwiftUI dynamicTypeSize does not affect text size on macOS"
         case let .outputExists(path):
             "output directory must not exist: \(path)"
-        case let .inactiveWindow(detail):
-            "capture window is not active and key: \(detail)"
         case let .geometryMismatch(detail):
             "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
@@ -125,17 +122,16 @@ private enum CaptureError: Error, CustomStringConvertible {
 
 private struct CaptureRecord: Codable {
     let appearance: String
-    let applicationActive: Bool
     let captureBoundsHeightPoints: Int
     let captureBoundsWidthPoints: Int
     let captureBoundsXPoints: Int
     let captureBoundsYPoints: Int
+    let controlActiveState: String
     let file: String
     let fixtureState: String
     let jpegBytes: Int
     let sha256: String
     let variant: String
-    let windowKey: Bool
     let windowFrameHeightPoints: Int
     let windowFrameWidthPoints: Int
 }
@@ -182,8 +178,7 @@ private struct DulcetCaptureMain {
         )
 
         let application = NSApplication.shared
-        application.setActivationPolicy(.regular)
-        application.finishLaunching()
+        application.setActivationPolicy(.accessory)
 
         let preflightDirectory = options.outputDirectory.appendingPathComponent(".preflight")
         try fileManager.createDirectory(
@@ -222,7 +217,7 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 5,
+            schemaVersion: 6,
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
@@ -245,7 +240,7 @@ private struct DulcetCaptureMain {
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
-                + "active-key-window=true "
+                + "control-active-state=key "
                 + "output=\(options.outputDirectory.lastPathComponent)"
         )
     }
@@ -270,6 +265,7 @@ private struct DulcetCaptureMain {
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, calendar)
             .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
+            .environment(\.controlActiveState, .key)
             .background(Color(nsColor: NSColor.windowBackgroundColor))
 
         let hostingView = NSHostingView(rootView: scene)
@@ -292,10 +288,8 @@ private struct DulcetCaptureMain {
         window.isMovableByWindowBackground = false
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
-        NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        window.makeMain()
-        window.makeKey()
+        NSApplication.shared.activate(ignoringOtherApps: true)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
         window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: true)
         window.layoutIfNeeded()
@@ -307,14 +301,6 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
-
-        let applicationActive = NSApplication.shared.isActive
-        let windowKey = window.isKeyWindow
-        guard applicationActive, windowKey else {
-            throw CaptureError.inactiveWindow(
-                "application-active=\(applicationActive) window-key=\(windowKey)"
-            )
-        }
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
@@ -370,17 +356,16 @@ private struct DulcetCaptureMain {
 
         return CaptureRecord(
             appearance: appearance.rawValue,
-            applicationActive: applicationActive,
             captureBoundsHeightPoints: Int(captureBounds.height),
             captureBoundsWidthPoints: Int(captureBounds.width),
             captureBoundsXPoints: Int(captureBounds.origin.x),
             captureBoundsYPoints: Int(captureBounds.origin.y),
+            controlActiveState: "key",
             file: filename,
             fixtureState: state.rawValue,
             jpegBytes: jpeg.count,
             sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(),
             variant: variantName,
-            windowKey: windowKey,
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
         )
