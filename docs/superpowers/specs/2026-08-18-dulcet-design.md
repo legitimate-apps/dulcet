@@ -6,11 +6,13 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 14 — the strengthened hosted measurement rejected complete custom-scheme HLS routing,
-so Apple now takes the specified progressive-container fallback. Revision 13 attempted to narrow the
-claim to a manifest-rewrite contract, but the hosted result did not establish that contract. Revision
-12 recorded the original, insufficient first-segment observation. Revision 11 recorded Phase 0
-completion from hosted CI and repository API evidence. Revision
+**Revision:** 17 — the macOS design-capture boundary now has measured framing evidence and rejects a
+translated or resized AppKit theme frame before encoding. Revision 16 removed invalid macOS Dynamic
+Type evidence. Revision 15 replaced the Apple workload timeout assumption with hosted measurement.
+Revision 14 recorded the progressive-container fallback selected by the strengthened hosted media
+measurement. Revision 13 attempted to narrow the claim to a manifest-rewrite contract, but the hosted
+result did not establish that contract. Revision 12 recorded the original, insufficient first-segment
+observation. Revision 11 recorded Phase 0 completion from hosted CI and repository API evidence. Revision
 10 removed the remaining identifiers of unrelated applications. Revision 9 verified the Apple signing path by API and promoted it from ASSUMED to OBSERVED; the
 only remaining unknown is the API key's CREATE permission, now the Phase-2 dry run's first act.
 Revision 8 re-confirmed and closed OQ-3's OS floors and removed the last private context from the
@@ -2812,6 +2814,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 17 (2026-08-21)** — the macOS screenshot framing contract became measured evidence.
+
+1. The capture harness previously applied its 1180 × 760 frame before installing the SwiftUI content
+   view. AppKit could then recalculate the titled theme frame, while a separately fixed-size bitmap
+   still encoded 1180 × 760 bytes; dimensions alone therefore did not prove that the window filled the
+   evidence boundary.
+2. The content view is now installed first and the fixed window frame second. Before any JPEG is
+   encoded, the executable requires both an 1180 × 760 window and zero-origin 1180 × 760 theme-frame
+   capture bounds.
+3. Every manifest record carries the observed frame and capture-bound coordinates. The verifier
+   enforces them, and its negative control proves that a translated capture-bound claim is rejected.
 
 **Revision 16 (2026-08-21)** — invalid macOS Dynamic Type evidence was removed.
 

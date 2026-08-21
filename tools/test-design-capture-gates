@@ -76,10 +76,18 @@ def main() -> None:
         shutil.copyfile(source, target)
         expect_rejection(mislabeled_root, "dynamicType treatment is byte-identical")
 
+        misframed_root = Path(temporary) / "misframed"
+        shutil.copytree(args.root, misframed_root)
+        manifest_path = misframed_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["captures"][0]["captureBoundsYPoints"] = 90
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(misframed_root, "captureBoundsYPoints mismatch")
+
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
-        "byte-identical-dynamic-type=true"
+        "byte-identical-dynamic-type=true misframed-window=true"
     )
 
 
