@@ -23,9 +23,19 @@ public enum DulcetSidebarDestination: String, CaseIterable, Identifiable, Sendab
 
 public enum DulcetConnectivity: Sendable, Hashable {
     case online(serverName: String)
-    case connectionFailed(serverName: String)
+    case connectionFailed(DulcetConnectionFailure)
     case offline(lastSyncedDescription: String)
     case unavailable
+}
+
+public enum DulcetConnectionFailure: Sendable, Hashable {
+    case tlsUntrusted(DulcetTLSFailure)
+
+    public var serverName: String {
+        switch self {
+        case let .tlsUntrusted(failure): failure.serverName
+        }
+    }
 }
 
 public enum DulcetMediaAvailability: String, Sendable, Hashable {
@@ -219,7 +229,6 @@ public struct DulcetSnapshot: Sendable, Hashable {
     public let nowPlaying: DulcetNowPlaying?
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
-    public let tlsFailure: DulcetTLSFailure?
     public let captureDate: Date
 
     public init(
@@ -233,7 +242,6 @@ public struct DulcetSnapshot: Sendable, Hashable {
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
-        tlsFailure: DulcetTLSFailure? = nil,
         captureDate: Date
     ) {
         self.state = state
@@ -246,7 +254,6 @@ public struct DulcetSnapshot: Sendable, Hashable {
         self.nowPlaying = nowPlaying
         self.searchQuery = searchQuery
         self.searchResults = searchResults
-        self.tlsFailure = tlsFailure
         self.captureDate = captureDate
     }
 }
