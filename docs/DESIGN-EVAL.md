@@ -42,13 +42,13 @@ environment is fixed:
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
-per-record window-frame and capture-bound coordinates, rendered control-active state, provenance,
-byte lengths, and SHA-256 digests. Current-run references carry measured geometry; pinned controls
-carry the reviewed baseline geometry. Each JPEG also carries a self-authored consistency comment with
-a fixture-state label, appearance, variant, and the SHA-256 of the original compressed payload. The
-verifier removes that comment, reconstructs and hashes the payload, and requires the embedded labels,
-filename, and manifest record to agree. It separately decodes every JPEG through the platform image
-decoder and requires all 16 normalized pixel rasters to be pairwise distinct.
+per-record window-frame and capture-bound coordinates, rendered control-active state, a provenance
+declaration, byte lengths, and SHA-256 digests. Current-run references carry measured geometry; pinned
+controls carry the reviewed baseline geometry. Each JPEG also carries a self-authored consistency
+comment with a fixture-state label, appearance, variant, and the SHA-256 of the original compressed
+payload. The verifier removes that comment, reconstructs and hashes the payload, and requires the
+embedded labels, filename, and manifest record to agree. It separately decodes every JPEG through the
+platform image decoder and requires all 16 normalized pixel rasters to be pairwise distinct.
 
 This is **internal consistency plus pixel distinctness**, not proof that the pixels depict the named
 fixture state. An artifact author can swap two compressed payloads, regenerate each embedded comment,
@@ -109,13 +109,20 @@ product design.
 The two bad-control JPEGs are reviewed, checked-in resources under
 `apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls`. A normal capture with
 `--include-control` does not render `DulcetDeliberatelyBadControlView`; it copies those bundled bytes
-verbatim. The capture executable and artifact verifier each hold the reviewed SHA-256 values, manifest
-schema 8 records `controlBaselinePolicy` and `pinnedControlSha256`, and the verifier rejects a
-`captureProvenance` of `bundled-pinned-resource` rather than `rendered-current-run`, and the verifier
-rejects a substituted valid JPEG even when its ordinary manifest hash and byte count have been
-updated. Thus UI, fixture, renderer, font, or runner changes cannot silently move the calibration
-reference. Geometry and active-control fields on a pinned record describe the reviewed baseline
-image; they are not a claim that the control was re-rendered in the current run.
+verbatim. The capture executable and artifact verifier each hold the reviewed SHA-256 values, the
+workflow compares the artifact controls byte-for-byte with the checked-in resources, and manifest
+schema 8 records `controlBaselinePolicy` and `pinnedControlSha256`. The verifier rejects a substituted
+valid JPEG even when its ordinary manifest hash and byte count have been updated. Decoded-pixel
+distinctness also rejects an attempt to place the pinned control pixels in a reference slot while the
+required pinned control remains in the artifact, including when the reference uses a different JPEG
+encoding.
+
+`captureProvenance` is only a self-declared classification. The verifier requires the expected literal
+(`bundled-pinned-resource` for controls and `rendered-current-run` for references) as an internal
+consistency check; it does not measure how an arbitrary file was produced. The fixed control digests,
+resource comparison, and pixel-distinctness gate are the protections described above. Geometry and
+active-control fields on a pinned record describe the reviewed baseline image; they are not a claim
+that the control was re-rendered in the current run.
 
 Control regeneration is an explicit candidate-producing act:
 
@@ -154,7 +161,8 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
 - actual AppKit window-frame size and zero-origin theme-frame capture bounds for the 14 current-run
-  reference JPEGs, plus reviewed baseline geometry and explicit pinned provenance for the two controls;
+  reference JPEGs, plus reviewed baseline geometry and a pinned-resource provenance declaration for
+  the two controls;
 - the explicitly rendered key control state. This is not a claim that the hosted command-line process
   became the desktop's active application;
 - visible focus and contrast cues;

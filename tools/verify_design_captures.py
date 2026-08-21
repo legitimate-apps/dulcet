@@ -300,7 +300,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         if expected_variant == "deliberately-bad-control":
             if record.get("captureProvenance") != "bundled-pinned-resource":
                 raise CaptureVerificationError(
-                    f"{directory.name}/{filename} pinned control provenance mismatch"
+                    f"{directory.name}/{filename} pinned control provenance declaration mismatch"
                 )
             pinned_hash = PINNED_CONTROL_SHA256[expected_appearance]
             if expected_hash != pinned_hash:
@@ -314,7 +314,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         else:
             if record.get("captureProvenance") != "rendered-current-run":
                 raise CaptureVerificationError(
-                    f"{directory.name}/{filename} reference capture provenance mismatch"
+                    f"{directory.name}/{filename} reference provenance declaration mismatch"
                 )
             if "pinnedControlSha256" in record:
                 raise CaptureVerificationError(
@@ -385,7 +385,8 @@ def main() -> None:
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
         "decoded-pixels-pairwise-distinct=true "
         "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "
-        "pinned-controls=true control-provenance=verified"
+        "pinned-control-bytes-match-reviewed-sha256=true "
+        "capture-provenance-declarations-consistent=true"
     )
 
 

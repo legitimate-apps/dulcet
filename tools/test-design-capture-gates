@@ -212,6 +212,28 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(substituted_control_root, "pinned control bytes mismatch")
 
+        relabeled_control_root = Path(temporary) / "pinned-control-as-reference"
+        shutil.copytree(args.root, relabeled_control_root)
+        control = (
+            relabeled_control_root
+            / "standard"
+            / "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg"
+        )
+        reference = relabeled_control_root / "standard" / "macos-library-browse-light.jpg"
+        _, control_payload = verifier.jpeg_payload_binding(control.read_bytes())
+        if not control_payload.endswith(b"\xff\xd9"):
+            raise SystemExit("pinned-control relabel probe is missing a final JPEG EOI")
+        reference.write_bytes(
+            bind_payload(
+                control_payload + b"decoder-ignored-reference-encoding",
+                "library-browse",
+                "light",
+                "reference",
+            )
+        )
+        refresh_manifest_file_evidence(relabeled_control_root)
+        expect_rejection(relabeled_control_root, "decoded pixels are not pairwise distinct")
+
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
@@ -220,7 +242,8 @@ def main() -> None:
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
-        "substituted-pinned-control=true"
+        "substituted-pinned-control=true "
+        "reencoded-pinned-control-as-reference-pixel-duplicate=true"
     )
 
 
