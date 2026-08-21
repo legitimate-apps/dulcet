@@ -1837,6 +1837,9 @@ Local, redacted diagnostics are still needed, because the user must be able to r
 
 A sealed hierarchy in the core, mapped from the wire in exactly one place:
 
+- `Input.InvalidServerUrl(reason)` — URL normalization can reject empty input, malformed authority,
+  a non-HTTP scheme, embedded user information, or non-local plaintext HTTP before any request. The
+  earlier hierarchy omitted every pre-transport failure even though §10.1 normatively requires them.
 - `Transport.Unreachable | Timeout | Cancelled`
 - `Security.TlsUntrusted(reason) | LocalExceptionViolated`
 - `Protocol.MalformedEnvelope | UnexpectedContentType(actual, expected) | UnexpectedBinary`
@@ -2830,6 +2833,9 @@ their first executable run.
    behavior-unavailable result. That makes all seven tests compile and execute, with assertion-level
    failures attributable to absent production behavior rather than to an unresolved symbol or broken
    server fixture. Production code follows only after both hosted legs preserve that red evidence.
+4. §18.12 previously had no error capable of representing §10.1 URL-normalization rejection. Added
+   `Input.InvalidServerUrl(reason)` rather than misclassifying malformed user input as a transport or
+   server failure.
 
 **Revision 18 (2026-08-21)** — the Phase-2 evidence claims were narrowed to their measured boundary.
 
