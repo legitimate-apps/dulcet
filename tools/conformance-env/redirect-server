@@ -64,6 +64,8 @@ class RedirectState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.issued: dict[tuple[str, str], tuple[str, tuple[ObservedChannel, ...]]] = {}
+        self.ambient_auth_challenges = 0
+        self.ambient_authentication_observed = False
 
     def remember(
         self,
@@ -102,6 +104,22 @@ class RedirectState:
                 if observed_scenario == scenario
                 for channel in channels
             )
+
+    def record_ambient_auth_challenge(self, channels: tuple[ObservedChannel, ...]) -> None:
+        with self.lock:
+            self.ambient_auth_challenges += 1
+            self.ambient_authentication_observed = (
+                self.ambient_authentication_observed or
+                any(
+                    channel.location == "header" and
+                    channel.name in {"authorization", "proxy-authorization"}
+                    for channel in channels
+                )
+            )
+
+    def ambient_auth_outcome(self) -> tuple[int, bool]:
+        with self.lock:
+            return self.ambient_auth_challenges, self.ambient_authentication_observed
 
 
 STATE = RedirectState()
@@ -203,11 +221,33 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if parsed.path == "/observations/ambient-auth":
+            challenge_count, authentication_observed = STATE.ambient_auth_outcome()
+            if challenge_count == 0:
+                self._send_json(409, {"error": "ambient authentication challenge was not reached"})
+                return
+            if authentication_observed:
+                self._send_json(409, {"error": "ambient authentication reached the wire"})
+                return
+            self._send_json(200, {"challenge_count": challenge_count, "authentication_observed": False})
+            return
 
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b""
         endpoint = parsed.path.rsplit("/", 1)[-1].removesuffix(".view")
         channels = self._observed_channels(parsed.query, body)
+
+        if parsed.path.startswith("/ambient-auth/rest/"):
+            STATE.record_ambient_auth_challenge(channels)
+            if any(
+                channel.location == "header" and
+                channel.name in {"authorization", "proxy-authorization"}
+                for channel in channels
+            ):
+                self._send_json(500, {"error": "ambient authentication reached the wire"})
+                return
+            self._authentication_challenge()
+            return
 
         if parsed.path.startswith("/observe/rest/"):
             if not self._observes_expected_channels(endpoint, channels):
@@ -360,6 +400,12 @@ class RedirectHandler(BaseHTTPRequestHandler):
     def _redirect(self, location: str) -> None:
         self.send_response(307)
         self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _authentication_challenge(self) -> None:
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="dulcet-ambient-auth"')
         self.send_header("Content-Length", "0")
         self.end_headers()
 
