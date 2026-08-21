@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import urllib.request
+
+
+def run(arguments: list[str], *, capture: bool = False) -> str:
+    process = subprocess.run(arguments, text=True, capture_output=capture, env={
+        **os.environ,
+        "HOMEBREW_NO_AUTO_UPDATE": "1",
+    })
+    if process.returncode != 0:
+        detail = ((process.stdout or "") + (process.stderr or "")).strip()
+        raise SystemExit(f"{' '.join(arguments)} failed ({process.returncode}): {detail}")
+    return process.stdout.strip() if capture else ""
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def main() -> None:
+    pins = json.loads((Path(__file__).parent / "pins.json").read_text())
+    ffmpeg = pins["ffmpeg"]["darwin"]
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        raise SystemExit(f"Darwin ffmpeg pin requires Darwin/arm64, observed {platform.system()}/{platform.machine()}")
+
+    with urllib.request.urlopen("https://formulae.brew.sh/api/formula/ffmpeg.json", timeout=30) as response:
+        formula = json.load(response)
+    bottle = formula["bottle"]["stable"]["files"][ffmpeg["bottle_tag"]]
+    observed_formula = {
+        "version": formula["versions"]["stable"],
+        "url": bottle["url"],
+        "sha256": bottle["sha256"],
+    }
+    expected_formula = {
+        "version": ffmpeg["version"],
+        "url": ffmpeg["url"],
+        "sha256": ffmpeg["sha256"],
+    }
+    if observed_formula != expected_formula:
+        raise SystemExit(f"Homebrew ffmpeg pin drift: expected {expected_formula}, observed {observed_formula}")
+
+    run(["brew", "fetch", "--force", "--bottle", f"--bottle-tag={ffmpeg['bottle_tag']}", ffmpeg["formula"]])
+    bottle_path = Path(run([
+        "brew", "--cache", f"--bottle-tag={ffmpeg['bottle_tag']}", ffmpeg["formula"]
+    ], capture=True))
+    if not bottle_path.is_file():
+        raise SystemExit(f"Homebrew did not fetch the expected bottle: {bottle_path}")
+    observed_checksum = file_sha256(bottle_path)
+    if observed_checksum != ffmpeg["sha256"]:
+        raise SystemExit(
+            f"ffmpeg bottle checksum mismatch: expected {ffmpeg['sha256']}, observed {observed_checksum}"
+        )
+
+    run(["brew", "install", "--force-bottle", ffmpeg["formula"]])
+    version = run([ffmpeg["path"], "-version"], capture=True).splitlines()[0]
+    if not version.startswith(f"ffmpeg version {ffmpeg['version']}"):
+        raise SystemExit(f"installed ffmpeg version mismatch: {version}")
+    print(
+        f"DARWIN FFMPEG PASS version={ffmpeg['version']} bottle_tag={ffmpeg['bottle_tag']} "
+        f"sha256={ffmpeg['sha256']}"
+    )
+
+
+if __name__ == "__main__":
+    main()

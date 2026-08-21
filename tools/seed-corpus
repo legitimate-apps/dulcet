@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+
+"""Generate Dulcet's deterministic, copyright-free conformance media corpus."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+
+FORMATS = {".flac", ".m4a", ".mp3", ".ogg"}
+
+
+class MediaTools:
+    def __init__(self, root: Path, runtime: str, ffmpeg: str, image: str | None):
+        self.root = root.resolve()
+        self.runtime = runtime
+        self.ffmpeg = ffmpeg
+        self.image = image
+        if runtime == "docker" and (not image or "@sha256:" not in image):
+            raise SystemExit("docker corpus generation requires an image pinned by digest")
+
+    def ffmpeg_run(self, arguments: list[str]) -> None:
+        self._run("ffmpeg", arguments)
+
+    def ffprobe_json(self, path: Path) -> dict:
+        result = self._run(
+            "ffprobe",
+            [
+                "-v", "error",
+                "-show_entries", "format=format_name,duration:format_tags",
+                "-of", "json",
+                str(path),
+            ],
+            capture=True,
+        )
+        return json.loads(result)
+
+    def _run(self, tool: str, arguments: list[str], capture: bool = False) -> str:
+        mapped = [self._map_path(argument) for argument in arguments]
+        if self.runtime == "native":
+            executable = self.ffmpeg if tool == "ffmpeg" else str(Path(self.ffmpeg).with_name("ffprobe"))
+            command = [executable, *mapped]
+        else:
+            command = [
+                "docker", "run", "--rm", "--platform", "linux/amd64",
+                "--user", f"{os.getuid()}:{os.getgid()}",
+                "--entrypoint", f"/usr/bin/{tool}",
+                "-v", f"{self.root}:/corpus",
+                self.image,
+                *mapped,
+            ]
+        process = subprocess.run(command, text=True, capture_output=True)
+        if process.returncode != 0:
+            detail = (process.stderr or process.stdout).strip()
+            raise SystemExit(f"{tool} failed ({process.returncode}): {detail}")
+        return process.stdout if capture else ""
+
+    def _map_path(self, argument: str) -> str:
+        if self.runtime != "docker":
+            return argument
+        try:
+            path = Path(argument).resolve()
+            relative = path.relative_to(self.root)
+        except (OSError, ValueError):
+            return argument
+        return str(Path("/corpus") / relative)
+
+
+def encode(
+    tools: MediaTools,
+    output: Path,
+    *,
+    duration: float,
+    frequency: int,
+    title: str | None,
+    artist: str = "Dulcet Fixtures",
+    album: str | None = "Dulcet Conformance",
+    album_artist: str | None = "Dulcet Fixtures",
+    track: str | None = None,
+    disc: str | None = None,
+    silence: bool = False,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    source = (
+        f"anullsrc=r=44100:cl=mono:d={duration}"
+        if silence
+        else f"sine=frequency={frequency}:sample_rate=44100:duration={duration}"
+    )
+    arguments = [
+        "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-f", "lavfi", "-i", source,
+        "-map_metadata", "-1", "-vn", "-threads", "1",
+    ]
+    metadata = {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "album_artist": album_artist,
+        "track": track,
+        "disc": disc,
+        "date": "2026",
+    }
+    for key, value in metadata.items():
+        if value is not None:
+            arguments.extend(["-metadata", f"{key}={value}"])
+
+    codec_arguments = {
+        ".flac": ["-c:a", "flac", "-compression_level", "5"],
+        ".mp3": ["-c:a", "libmp3lame", "-b:a", "96k"],
+        ".ogg": ["-c:a", "libvorbis", "-q:a", "3"],
+        ".m4a": ["-c:a", "aac", "-b:a", "96k"],
+    }
+    if output.suffix not in codec_arguments:
+        raise SystemExit(f"unsupported corpus format: {output.suffix}")
+    tools.ffmpeg_run([*arguments, *codec_arguments[output.suffix], str(output)])
+
+
+def validate_probe(tools: MediaTools, path: Path, title: str, duration: float) -> None:
+    probe = tools.ffprobe_json(path)
+    format_data = probe.get("format", {})
+    tags = {str(key).lower(): str(value) for key, value in format_data.get("tags", {}).items()}
+    observed_title = tags.get("title", "")
+    if observed_title != title:
+        raise SystemExit(f"ffprobe title mismatch for {path.name}: {observed_title!r}")
+    observed_duration = float(format_data.get("duration", 0))
+    if abs(observed_duration - duration) > 0.20:
+        raise SystemExit(
+            f"ffprobe duration mismatch for {path.name}: expected {duration}, observed {observed_duration}"
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--runtime", choices=("native", "docker"), required=True)
+    parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--image")
+    args = parser.parse_args()
+
+    root = Path(args.output).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    if any(root.iterdir()):
+        raise SystemExit(f"seed output must be empty: {root}")
+    tools = MediaTools(root, args.runtime, args.ffmpeg, args.image)
+
+    health_probe = root / "Health Probe" / "01 - Dulcet Health Probe.flac"
+    unicode_probe = root / "Unicode" / "01 - Étude 東京.mp3"
+    ogg_probe = root / "Formats" / "01 - Ogg Probe.ogg"
+    m4a_probe = root / "Formats" / "02 - M4A Probe.m4a"
+    encode(tools, health_probe, duration=2.0, frequency=440, title="Dulcet Health Probe", track="1")
+    encode(tools, unicode_probe, duration=1.0, frequency=494, title="Étude 東京", track="1")
+    encode(tools, ogg_probe, duration=1.0, frequency=523, title="Ogg Probe", track="1")
+    encode(tools, m4a_probe, duration=1.0, frequency=587, title="M4A Probe", track="2")
+
+    for disc in (1, 2):
+        for track in (1, 2):
+            encode(
+                tools,
+                root / "Double Lines" / f"Disc {disc}" / f"{track:02d} - Disc {disc} Track {track}.mp3",
+                duration=0.5,
+                frequency=600 + disc * 40 + track * 10,
+                title=f"Disc {disc} Track {track}",
+                album="Double Lines",
+                track=str(track),
+                disc=str(disc),
+            )
+
+    encode(
+        tools,
+        root / "Several Album Artists" / "01 - Shared Credit.flac",
+        duration=0.5,
+        frequency=720,
+        title="Shared Credit",
+        album="Several Album Artists",
+        album_artist="Alpha Ensemble;Beta Ensemble;Gamma Ensemble",
+        track="1",
+    )
+    encode(
+        tools,
+        root / "Singles" / "No Album.ogg",
+        duration=0.5,
+        frequency=760,
+        title="No Album",
+        album=None,
+        album_artist=None,
+    )
+    long_title = "A deliberately long title " + ("0123456789" * 32)
+    encode(
+        tools,
+        root / "Long Titles" / "01 - Long Title.m4a",
+        duration=0.5,
+        frequency=800,
+        title=long_title,
+        album="Long Titles",
+        track="1",
+    )
+    boundary_29 = root / "Threshold Boundary" / "01 - Twenty Nine Seconds.flac"
+    boundary_31 = root / "Threshold Boundary" / "02 - Thirty One Seconds.flac"
+    encode(
+        tools, boundary_29, duration=29.0, frequency=0, title="Twenty Nine Seconds",
+        album="Threshold Boundary", track="1", silence=True,
+    )
+    encode(
+        tools, boundary_31, duration=31.0, frequency=0, title="Thirty One Seconds",
+        album="Threshold Boundary", track="2", silence=True,
+    )
+
+    template = root / ".templates" / "paging-template.mp3"
+    encode(
+        tools, template, duration=0.25, frequency=880, title=None,
+        album="Paging Atlas", track=None,
+    )
+    paging = root / "Paging Atlas"
+    paging.mkdir()
+    for track in range(1, 301):
+        destination = paging / f"{track:03d} - Paging Track {track:03d}.mp3"
+        try:
+            os.link(template, destination)
+        except OSError:
+            shutil.copyfile(template, destination)
+
+    validate_probe(tools, health_probe, "Dulcet Health Probe", 2.0)
+    validate_probe(tools, unicode_probe, "Étude 東京", 1.0)
+    validate_probe(tools, ogg_probe, "Ogg Probe", 1.0)
+    validate_probe(tools, m4a_probe, "M4A Probe", 1.0)
+    validate_probe(tools, boundary_29, "Twenty Nine Seconds", 29.0)
+    validate_probe(tools, boundary_31, "Thirty One Seconds", 31.0)
+
+    scanner_files = [
+        path for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in FORMATS and ".templates" not in path.parts
+    ]
+    if len(scanner_files) != 313:
+        raise SystemExit(f"expected 313 scanner-visible media files, generated {len(scanner_files)}")
+
+    manifest = {
+        "schema_version": 1,
+        "copyrighted_audio": False,
+        "generated_media_files": len(scanner_files),
+        "formats": ["flac", "m4a", "mp3", "ogg"],
+        "known_probe": {"title": "Dulcet Health Probe", "format": "flac", "duration_seconds": 2.0},
+        "awkward_cases": {
+            "unicode_title": True,
+            "multi_disc_album": {"discs": 2, "tracks": 4},
+            "album_artists": 3,
+            "track_without_album": True,
+            "very_long_title_characters": len(long_title),
+            "paging_album_tracks": 300,
+            "threshold_durations_seconds": [29, 31]
+        }
+    }
+    (root / "corpus-manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    print("SEED CORPUS PASS files=313 formats=flac,m4a,mp3,ogg paging_tracks=300 thresholds=29,31")
+
+
+if __name__ == "__main__":
+    main()

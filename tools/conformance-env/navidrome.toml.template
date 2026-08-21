@@ -1,0 +1,48 @@
+MusicFolder = "@MUSIC_FOLDER@"
+DataFolder = "@DATA_FOLDER@"
+CacheFolder = "@CACHE_FOLDER@"
+Address = "@ADDRESS@"
+Port = 4533
+BaseURL = ""
+LogLevel = "info"
+SessionTimeout = "1h"
+FFmpegPath = "@FFMPEG_PATH@"
+EnableTranscodingConfig = false
+TranscodingCacheSize = "64MB"
+ImageCacheSize = "32MB"
+EnableDownloads = true
+EnableSharing = false
+EnableExternalServices = false
+EnableInsightsCollector = false
+EnableArtworkPrecache = false
+EnableGravatar = false
+EnableLogRedacting = true
+AuthRequestLimit = 0
+PasswordEncryptionKey = "dulcet-ci-fixture-key-not-a-secret"
+Agents = ""
+
+[Scanner]
+Enabled = true
+Schedule = "0"
+ScanOnStartup = true
+Extractor = "taglib"
+FollowSymlinks = false
+IgnoreDotFolders = true
+PurgeMissing = "always"
+
+[Transcoding]
+MaxConcurrent = 2
+MaxConcurrentPerUser = 2
+EnableCancellation = true
+
+[LastFM]
+Enabled = false
+
+[ListenBrainz]
+Enabled = false
+
+[Deezer]
+Enabled = false
+
+[Tags.AlbumArtist]
+Split = [";", "/"]

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "navidrome": {
+    "version": "0.63.2",
+    "linux": {
+      "image": "deluan/navidrome@sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce",
+      "index_digest": "sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40",
+      "manifest_digest": "sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce",
+      "architecture": "amd64"
+    },
+    "darwin": {
+      "asset": "navidrome_0.63.2_darwin_arm64.tar.gz",
+      "url": "https://github.com/navidrome/navidrome/releases/download/v0.63.2/navidrome_0.63.2_darwin_arm64.tar.gz",
+      "sha256": "f621f1b730af93d200d3400e549f60b34dd796d27801ebf9b6ab219df6ac7048",
+      "architecture": "arm64"
+    }
+  },
+  "ffmpeg": {
+    "linux": {
+      "version": "6.1.1",
+      "path": "/usr/bin/ffmpeg",
+      "pin": "navidrome-linux-manifest"
+    },
+    "darwin": {
+      "version": "9.0.1",
+      "formula": "ffmpeg",
+      "bottle_tag": "arm64_tahoe",
+      "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080",
+      "sha256": "ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080",
+      "path": "/opt/homebrew/bin/ffmpeg"
+    }
+  }
+}

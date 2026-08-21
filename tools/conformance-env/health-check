@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+RESTRICTED_USER = "dulcet-restricted"
+RESTRICTED_PASSWORD = "dulcet-ci-restricted-password"
+CLIENT = "dulcet-conformance"
+
+
+def redacted(value: str) -> str:
+    return value.replace(ADMIN_PASSWORD, "<redacted>").replace(RESTRICTED_PASSWORD, "<redacted>")
+
+
+class ServerClient:
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+
+    def json_request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        query: dict[str, str] | None = None,
+        body: dict | None = None,
+        jwt: str | None = None,
+        timeout: float = 10,
+    ) -> dict:
+        url = self.base_url + path
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        headers = {"Accept": "application/json"}
+        if jwt:
+            headers["X-ND-Authorization"] = f"Bearer {jwt}"
+        payload = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            payload = json.dumps(body).encode()
+        request = urllib.request.Request(url, data=payload, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode(errors="replace")
+            raise RuntimeError(redacted(f"{method} {path} returned HTTP {error.code}: {detail}")) from error
+
+    def subsonic(
+        self,
+        endpoint: str,
+        *,
+        parameters: dict[str, str] | None = None,
+        body: dict | None = None,
+    ) -> dict:
+        salt = secrets.token_hex(8)
+        token = hashlib.md5((ADMIN_PASSWORD + salt).encode(), usedforsecurity=False).hexdigest()
+        query = {
+            "u": ADMIN_USER,
+            "t": token,
+            "s": salt,
+            "v": "1.16.1",
+            "c": CLIENT,
+            "f": "json",
+            **(parameters or {}),
+        }
+        payload = self.json_request(
+            f"/rest/{endpoint}.view",
+            method="POST" if body is not None else "GET",
+            query=query,
+            body=body,
+        )
+        response = payload.get("subsonic-response")
+        if not isinstance(response, dict):
+            raise RuntimeError(f"{endpoint} returned no Subsonic envelope")
+        if response.get("status") != "ok":
+            raise RuntimeError(f"{endpoint} returned error envelope: {response.get('error')}")
+        return response
+
+
+def wait_for_server(client: ServerClient, deadline: float) -> None:
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(client.base_url + "/ping", timeout=2) as response:
+                if response.status == 200:
+                    return
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(0.2)
+    raise RuntimeError("Navidrome did not become reachable before the explicit timeout")
+
+
+def find_probe(response: dict, title: str) -> dict | None:
+    songs = response.get("searchResult3", {}).get("song", [])
+    return next((song for song in songs if song.get("title") == title), None)
+
+
+def append_summary(lines: list[str]) -> None:
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    with open(summary_path, "a", encoding="utf-8") as summary:
+        summary.write("## Dulcet conformance preconditions\n\n")
+        for line in lines:
+            summary.write(f"- {line}\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Fail-loud precondition gate for the real Navidrome conformance environment."
+    )
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--runtime", required=True)
+    parser.add_argument("--expected-server-version", required=True)
+    parser.add_argument("--expected-ffmpeg-version", required=True)
+    parser.add_argument("--ffmpeg-command-json", required=True)
+    parser.add_argument("--corpus-manifest", required=True)
+    parser.add_argument("--timeout-seconds", type=int, default=120)
+    args = parser.parse_args()
+
+    if os.environ.get("TZ") != "UTC":
+        raise SystemExit("conformance environment must set TZ=UTC")
+    manifest = json.loads(Path(args.corpus_manifest).read_text())
+    if manifest.get("copyrighted_audio") is not False:
+        raise SystemExit("corpus manifest must assert copyrighted_audio=false")
+    if manifest.get("generated_media_files") != 313:
+        raise SystemExit("corpus manifest must contain exactly 313 scanner-visible media files")
+    if manifest.get("formats") != ["flac", "m4a", "mp3", "ogg"]:
+        raise SystemExit("corpus manifest format set drifted")
+
+    deadline = time.monotonic() + args.timeout_seconds
+    client = ServerClient(args.base_url)
+    wait_for_server(client, deadline)
+
+    admin = client.json_request(
+        "/auth/createAdmin",
+        method="POST",
+        body={"username": ADMIN_USER, "password": ADMIN_PASSWORD},
+    )
+    jwt = admin.get("token")
+    if not jwt or admin.get("isAdmin") is not True or admin.get("username") != ADMIN_USER:
+        raise SystemExit("fresh database did not create the fixed admin role")
+
+    restricted = client.json_request(
+        "/api/user",
+        method="POST",
+        jwt=jwt,
+        body={
+            "userName": RESTRICTED_USER,
+            "name": "Dulcet Restricted Fixture",
+            "email": "",
+            "password": RESTRICTED_PASSWORD,
+            "isAdmin": False,
+        },
+    )
+    if not restricted.get("id"):
+        raise SystemExit("restricted fixture user was not created")
+
+    ping = client.subsonic("ping")
+    observed_server_version = str(ping.get("serverVersion", "")).removeprefix("v")
+    if observed_server_version != args.expected_server_version:
+        raise SystemExit(
+            f"Navidrome version mismatch: expected {args.expected_server_version}, observed {observed_server_version}"
+        )
+
+    probe_title = manifest["known_probe"]["title"]
+    scan_status = None
+    probe = None
+    while time.monotonic() < deadline:
+        scan_status = client.subsonic("getScanStatus").get("scanStatus", {})
+        search = client.subsonic(
+            "search3",
+            parameters={
+                "query": probe_title,
+                "artistCount": "0",
+                "albumCount": "0",
+                "songCount": "20",
+            },
+        )
+        probe = find_probe(search, probe_title)
+        if not scan_status.get("scanning", True) and scan_status.get("lastScan") and probe:
+            break
+        time.sleep(0.25)
+    if not scan_status or scan_status.get("scanning", True):
+        raise SystemExit("scanner did not report complete before the explicit timeout")
+    if scan_status.get("error"):
+        raise SystemExit(f"scanner completed with an error: {scan_status['error']}")
+    if not probe:
+        raise SystemExit("scanner completed but the known health-probe item was not retrievable")
+    if int(scan_status.get("count", 0)) < manifest["generated_media_files"]:
+        raise SystemExit(
+            f"scanner count is below the generated corpus: {scan_status.get('count')} < {manifest['generated_media_files']}"
+        )
+
+    extensions_response = client.subsonic("getOpenSubsonicExtensions")
+    extension_names = {
+        extension.get("name") for extension in extensions_response.get("openSubsonicExtensions", [])
+    }
+    if "transcoding" not in extension_names:
+        raise SystemExit("pinned server did not advertise the transcoding extension")
+    if "sonicSimilarity" in extension_names:
+        raise SystemExit("similarity provider must not be configured in the conformance environment")
+
+    ffmpeg_command = json.loads(args.ffmpeg_command_json)
+    if not isinstance(ffmpeg_command, list) or not all(isinstance(value, str) for value in ffmpeg_command):
+        raise SystemExit("--ffmpeg-command-json must be a JSON string array")
+    ffmpeg = subprocess.run(
+        [*ffmpeg_command, "-version"], text=True, capture_output=True, timeout=20
+    )
+    if ffmpeg.returncode != 0:
+        raise SystemExit(f"pinned ffmpeg command failed: {redacted(ffmpeg.stderr.strip())}")
+    ffmpeg_line = ffmpeg.stdout.splitlines()[0] if ffmpeg.stdout else ""
+    if not ffmpeg_line.startswith(f"ffmpeg version {args.expected_ffmpeg_version}"):
+        raise SystemExit(
+            f"ffmpeg version mismatch: expected {args.expected_ffmpeg_version}, observed {ffmpeg_line}"
+        )
+
+    decision_response = client.subsonic(
+        "getTranscodeDecision",
+        parameters={"mediaId": probe["id"], "mediaType": "song"},
+        body={
+            "name": "Dulcet Conformance",
+            "platform": args.runtime,
+            "maxAudioBitrate": 128000,
+            "maxTranscodingAudioBitrate": 128000,
+            "directPlayProfiles": [],
+            "transcodingProfiles": [
+                {
+                    "container": "mp3",
+                    "audioCodec": "mp3",
+                    "protocol": "http",
+                    "maxAudioChannels": 2,
+                }
+            ],
+            "codecProfiles": [],
+        },
+    )
+    decision = decision_response.get("transcodeDecision", {})
+    if decision.get("canTranscode") is not True:
+        raise SystemExit(f"known FLAC probe did not report canTranscode=true: {decision}")
+
+    lines = [
+        f"OBSERVED runtime={args.runtime} timezone=UTC fresh_database=true",
+        f"OBSERVED navidrome={observed_server_version} reachable=true subsonic=1.16.1",
+        (
+            f"OBSERVED scan_complete=true scanned={scan_status.get('count')} "
+            f"known_probe_retrievable=true"
+        ),
+        f"OBSERVED ffmpeg={args.expected_ffmpeg_version} present=true version_match=true",
+        "OBSERVED roles=admin,restricted fixed_fixture_users=true",
+        "OBSERVED transcoding_extension=true canTranscode=true",
+        "OBSERVED similarity_provider=absent",
+        "OBSERVED corpus_files=313 formats=flac,m4a,mp3,ogg paging_tracks=300 thresholds=29,31",
+    ]
+    print("CONFORMANCE PRECONDITIONS PASS")
+    for line in lines:
+        print(line)
+    append_summary(lines)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        message = redacted(str(error))
+        append_summary([f"ERROR {message}"])
+        raise SystemExit(f"CONFORMANCE PRECONDITIONS ERROR: {message}") from error
