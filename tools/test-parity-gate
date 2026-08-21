@@ -130,8 +130,8 @@ expect_rejection(
 
 passing_report = """\
 <testsuite tests="1" failures="0" errors="0" skipped="0">
-  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest"
-            name="conf01UnauthenticatedExtensionDiscovery" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
 </testsuite>
 """
 with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
