@@ -407,6 +407,49 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun outOfRangePortIsInvalidServerUrlNotTransportFailure() = runTest {
+        assertEquals(
+            DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+            assertIs<AccountConnectionResult.Failed>(
+                fixture().connect(serverUrl = "https://127.0.0.1:70000", allowLocalHttp = false),
+            ).error,
+        )
+    }
+
+    @Test
+    fun unclosedIpv6AuthorityIsInvalidServerUrlNotTransportFailure() = runTest {
+        assertEquals(
+            DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+            assertIs<AccountConnectionResult.Failed>(
+                fixture().connect(serverUrl = "https://[::1", allowLocalHttp = false),
+            ).error,
+        )
+    }
+
+    @Test
+    fun everyMalformedAuthorityIsInvalidBeforeTransport() = runTest {
+        val malformedAuthorities = listOf(
+            "empty-host" to "https://:443",
+            "empty-ipv6-literal" to "https://[]",
+            "unclosed-ipv6-literal" to "https://[::1",
+            "nonnumeric-port" to "https://127.0.0.1:not-a-port",
+            "empty-port" to "https://127.0.0.1:",
+            "out-of-range-port" to "https://127.0.0.1:70000",
+            "ambiguous-port" to "https://127.0.0.1:443:444",
+            "authority-whitespace" to "https://127.0.0.1 :443",
+        )
+        malformedAuthorities.forEach { (caseName, serverUrl) ->
+            assertEquals(
+                DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+                assertIs<AccountConnectionResult.Failed>(
+                    fixture().connect(serverUrl = serverUrl, allowLocalHttp = false),
+                ).error,
+                caseName,
+            )
+        }
+    }
+
+    @Test
     fun localHttpRequiresExplicitConsent() = runTest {
         val result = fixture().connect(allowLocalHttp = false)
         val error = assertIs<AccountConnectionResult.Failed>(
