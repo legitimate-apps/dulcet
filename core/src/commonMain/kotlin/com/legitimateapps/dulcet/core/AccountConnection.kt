@@ -165,6 +165,7 @@ public sealed interface AccountConnectionResult {
 public enum class InvalidServerUrlReason {
     Empty,
     MalformedHost,
+    UnsupportedInternationalizedHost,
     UnsupportedScheme,
     EmbeddedUserInfo,
 }
