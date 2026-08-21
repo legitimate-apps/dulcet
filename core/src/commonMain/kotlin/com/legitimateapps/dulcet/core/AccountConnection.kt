@@ -952,12 +952,41 @@ private fun String.isStructurallyValidUrlAuthority(): Boolean {
     if ('[' in this || ']' in this || count { it == ':' } > 1) return false
     val host = substringBefore(':')
     if (host.isBlank()) return false
+    if (!host.isValidUrlRegName()) return false
     if ('.' in host && host.all { it == '.' || it in '0'..'9' } && host.parseIpv4() == null) {
         return false
     }
     val suffix = removePrefix(host)
     return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
 }
+
+private fun String.isValidUrlRegName(): Boolean {
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        when {
+            character in 'a'..'z' || character in 'A'..'Z' || character in '0'..'9' ||
+                character in "-._~!$&'()*+,;=" -> index += 1
+
+            character == '%' -> {
+                if (
+                    index + 2 >= length ||
+                    !this[index + 1].isAsciiHexDigit() ||
+                    !this[index + 2].isAsciiHexDigit()
+                ) {
+                    return false
+                }
+                index += 3
+            }
+
+            else -> return false
+        }
+    }
+    return true
+}
+
+private fun Char.isAsciiHexDigit(): Boolean =
+    this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
 private fun String.isValidExplicitUrlPort(): Boolean {
     if (!startsWith(':')) return false
