@@ -336,24 +336,34 @@ class AccountConnectConformanceTest {
     @Test
     fun structuralUrlRendererIsTotalForMalformedInputs() {
         val malformed = listOf(
-            "",
-            ":",
-            "://",
-            "https://",
-            "https:///missing-authority",
-            "https://[",
-            "https://[]/rest/ping.view?u=credential-canary",
-            "https://[::1",
-            "https://music.invalid:not-a-port/rest/ping.view?u=credential-canary",
-            "https://music.invalid:70000/rest/ping.view?u=credential-canary",
-            "https://music invalid/rest/ping.view?u=credential-canary",
-            "\u0000https://music.invalid/rest/ping.view?u=credential-canary",
+            "empty" to "",
+            "delimiter-only" to "://",
+            "colon-only" to ":",
+            "empty-authority" to "https://",
+            "missing-authority" to "https:///missing-authority",
+            "opening-bracket-only" to "https://[",
+            "empty-ipv6-brackets" to "https://[]/rest/ping.view?u=credential-canary",
+            "unclosed-ipv6-bracket" to "https://[::1",
+            "nonnumeric-port" to
+                "https://music.invalid:not-a-port/rest/ping.view?u=credential-canary",
+            "out-of-range-port" to
+                "https://music.invalid:70000/rest/ping.view?u=credential-canary",
+            "authority-whitespace" to
+                "https://music invalid/rest/ping.view?u=credential-canary",
+            "leading-control-character" to
+                "\u0000https://music.invalid/rest/ping.view?u=credential-canary",
         )
-        malformed.forEach { input ->
-            val rendered = Redactor.redactUrl(input)
-            assertEquals("<unrenderable-url>", rendered, "malformed URL must use the safe rendering")
-            assertFalse(rendered.contains("credential-canary"))
+        val unsafeCases = malformed.mapNotNull { (caseName, input) ->
+            val outcome = runCatching { Redactor.redactUrl(input) }
+            val rendered = outcome.getOrNull()
+            when {
+                outcome.isFailure -> "$caseName:threw"
+                rendered != "<unrenderable-url>" -> "$caseName:rendered"
+                rendered?.contains("credential-canary") == true -> "$caseName:leaked"
+                else -> null
+            }
         }
+        assertEquals(emptyList(), unsafeCases, "every malformed case must use the safe rendering")
 
         val alphabet = charArrayOf(':', '/', '?', '#', '@', '[', ']', '%', 'a', '0', ' ', '\u0000')
         val generated = buildList {
