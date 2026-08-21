@@ -72,10 +72,32 @@ public sealed interface AccountConnectionResult {
     public data class Failed(val error: DomainError) : AccountConnectionResult
 }
 
-/** User-presentable failures. URL-bearing variants accept and retain redacted URLs only. */
+/** Text that has crossed the central redaction boundary and is therefore safe to render. */
+public class RedactedText private constructor(public val value: String) {
+    override fun equals(other: Any?): Boolean = other is RedactedText && value == other.value
+    override fun hashCode(): Int = value.hashCode()
+    override fun toString(): String = value
+
+    public companion object {
+        public fun from(rawValue: String): RedactedText = RedactedText(Redactor.redactText(rawValue))
+    }
+}
+
+/** URL that has crossed the central redaction boundary and is therefore safe to render. */
+public class RedactedUrl private constructor(public val value: String) {
+    override fun equals(other: Any?): Boolean = other is RedactedUrl && value == other.value
+    override fun hashCode(): Int = value.hashCode()
+    override fun toString(): String = value
+
+    public companion object {
+        public fun from(rawValue: String): RedactedUrl = RedactedUrl(Redactor.redactUrl(rawValue))
+    }
+}
+
+/** User-presentable failures. Every rendered string is redacted before it can be retained. */
 public sealed interface DomainError {
     public sealed interface Input : DomainError {
-        public data class InvalidServerUrl(val reason: String) : Input
+        public data class InvalidServerUrl(val reason: RedactedText) : Input
     }
 
     public sealed interface Transport : DomainError {
@@ -85,15 +107,15 @@ public sealed interface DomainError {
     }
 
     public sealed interface Security : DomainError {
-        public data class TlsUntrusted(val reason: String) : Security
+        public data class TlsUntrusted(val reason: RedactedText) : Security
         public data object LocalExceptionViolated : Security
     }
 
     public sealed interface Protocol : DomainError {
         public data object MalformedEnvelope : Protocol
         public data class Incompatible(
-            val clientVersion: String,
-            val serverVersion: String?,
+            val clientVersion: RedactedText,
+            val serverVersion: RedactedText?,
         ) : Protocol
         public data object NotASubsonicServer : Protocol
     }
@@ -101,14 +123,14 @@ public sealed interface DomainError {
     public sealed interface Server : DomainError {
         public data class Known(
             val code: Int,
-            val message: String,
-            val redactedUrl: String,
+            val message: RedactedText,
+            val redactedUrl: RedactedUrl,
         ) : Server
 
         public data class Unknown(
             val code: Int,
-            val message: String,
-            val redactedUrl: String,
+            val message: RedactedText,
+            val redactedUrl: RedactedUrl,
         ) : Server
     }
 
@@ -119,7 +141,7 @@ public sealed interface DomainError {
         public data object RedirectCredentialLoss : Auth
     }
 
-    public data class CapabilityUnsupported(val featureId: String) : DomainError
+    public data class CapabilityUnsupported(val featureId: RedactedText) : DomainError
 }
 
 public fun interface LogSink {
@@ -228,8 +250,8 @@ public class AccountConnector(
         if (!isCompatibleVersion(AccountConnectionContract.protocolVersion, serverProtocolVersion)) {
             return AccountConnectionResult.Failed(
                 DomainError.Protocol.Incompatible(
-                    clientVersion = AccountConnectionContract.protocolVersion,
-                    serverVersion = serverProtocolVersion,
+                    clientVersion = RedactedText.from(AccountConnectionContract.protocolVersion),
+                    serverVersion = RedactedText.from(serverProtocolVersion),
                 ),
             )
         }
@@ -375,8 +397,8 @@ public class AccountConnector(
         val message = error?.string("message").orEmpty()
         return when (code) {
             30 -> DomainError.Protocol.Incompatible(
-                clientVersion = AccountConnectionContract.protocolVersion,
-                serverVersion = envelope.string("version"),
+                clientVersion = RedactedText.from(AccountConnectionContract.protocolVersion),
+                serverVersion = envelope.string("version")?.let(RedactedText::from),
             )
             else -> AccountConnectionContract.mapSubsonicError(code, message, requestUrl)
         }
@@ -415,13 +437,14 @@ public object AccountConnectionContract {
         message: String,
         requestUrl: String,
     ): DomainError {
-        val redactedUrl = Redactor.redactUrl(requestUrl)
+        val redactedMessage = RedactedText.from(message)
+        val redactedUrl = RedactedUrl.from(requestUrl)
         return when (code) {
             40 -> DomainError.Auth.InvalidCredentials
             41 -> DomainError.Auth.TokenAuthUnsupported
             50 -> DomainError.Auth.Forbidden
-            in KNOWN_SUBSONIC_ERROR_CODES -> DomainError.Server.Known(code, message, redactedUrl)
-            else -> DomainError.Server.Unknown(code, message, redactedUrl)
+            in KNOWN_SUBSONIC_ERROR_CODES -> DomainError.Server.Known(code, redactedMessage, redactedUrl)
+            else -> DomainError.Server.Unknown(code, redactedMessage, redactedUrl)
         }
     }
 
@@ -430,6 +453,11 @@ public object AccountConnectionContract {
 
 /** The only URL representation allowed into logs and URL-bearing domain errors. */
 public object Redactor {
+    private val URL_IN_TEXT = Regex("""(?i)https?://[^\s<>\"']+""")
+    private val CREDENTIAL_TUPLE = Regex(
+        """(?i)(?:^|[?&\s])(?:u|t|s|p|password|token|salt)=[^\s]+""",
+    )
+
     public fun redactUrl(url: String): String {
         val queryIndex = url.indexOf('?')
         val fragmentIndex = url.indexOf('#')
@@ -437,6 +465,14 @@ public object Redactor {
             ?: return url
         val prefix = url.substring(0, end)
         return if (queryIndex >= 0 && queryIndex == end) "$prefix?<redacted>" else prefix
+    }
+
+    public fun redactText(text: String): String {
+        val withoutUrls = URL_IN_TEXT.replace(text) { match -> redactUrl(match.value) }
+        return CREDENTIAL_TUPLE.replace(withoutUrls) { match ->
+            val prefix = match.value.firstOrNull()?.takeIf { it == '?' || it == '&' || it.isWhitespace() }
+            (prefix?.toString() ?: "") + "<redacted>"
+        }
     }
 }
 
@@ -452,30 +488,38 @@ private sealed interface NormalizedServerUrl {
 private fun normalizeServerUrl(input: String): NormalizedServerUrl {
     val trimmed = input.trim()
     if (trimmed.isEmpty()) {
-        return NormalizedServerUrl.Invalid(DomainError.Input.InvalidServerUrl("Server URL is empty"))
+        return NormalizedServerUrl.Invalid(
+            DomainError.Input.InvalidServerUrl(RedactedText.from("Server URL is empty")),
+        )
     }
     val suppliedScheme = SCHEME_PATTERN.containsMatchIn(trimmed)
     val withScheme = if (suppliedScheme) trimmed else "https://$trimmed"
     val match = URL_PATTERN.matchEntire(withScheme)
         ?: return NormalizedServerUrl.Invalid(
-            DomainError.Input.InvalidServerUrl("Server URL must contain a valid host"),
+            DomainError.Input.InvalidServerUrl(
+                RedactedText.from("Server URL must contain a valid host"),
+            ),
         )
     val scheme = match.groupValues[1].lowercase()
     if (scheme != "https" && scheme != "http") {
         return NormalizedServerUrl.Invalid(
-            DomainError.Input.InvalidServerUrl("Only HTTP and HTTPS server URLs are supported"),
+            DomainError.Input.InvalidServerUrl(
+                RedactedText.from("Only HTTP and HTTPS server URLs are supported"),
+            ),
         )
     }
     val authority = match.groupValues[2]
     if (authority.isBlank() || '@' in authority) {
         return NormalizedServerUrl.Invalid(
-            DomainError.Input.InvalidServerUrl("Server URL must contain a host and no user info"),
+            DomainError.Input.InvalidServerUrl(
+                RedactedText.from("Server URL must contain a host and no user info"),
+            ),
         )
     }
     val host = authority.hostWithoutPort()
     if (host.isBlank()) {
         return NormalizedServerUrl.Invalid(
-            DomainError.Input.InvalidServerUrl("Server URL must contain a host"),
+            DomainError.Input.InvalidServerUrl(RedactedText.from("Server URL must contain a host")),
         )
     }
     if (scheme == "http" && !host.isLocalHttpHost()) {
