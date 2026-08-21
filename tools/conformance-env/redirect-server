@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import dataclass
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, quote_plus, urlsplit
 
 
 CHANNEL_CLASSIFICATIONS = {
@@ -104,6 +105,36 @@ class RedirectState:
 
 
 STATE = RedirectState()
+
+
+def credential_representations(value: str) -> frozenset[str]:
+    """Return reversible wire representations that must remain origin-bound."""
+    encoded = value.encode("utf-8")
+    representations = {
+        value,
+        quote(value, safe=""),
+        quote_plus(value, safe=""),
+        base64.b64encode(encoded).decode("ascii"),
+        base64.urlsafe_b64encode(encoded).decode("ascii"),
+        base64.b32encode(encoded).decode("ascii"),
+        base64.b85encode(encoded).decode("ascii"),
+        encoded.hex(),
+        encoded.hex().upper(),
+    }
+    representations.update(
+        representation.rstrip("=")
+        for representation in tuple(representations)
+        if representation.endswith("=")
+    )
+    return frozenset(representation for representation in representations if representation)
+
+
+def contains_source_credential(value: str, source_credentials: set[str]) -> bool:
+    return any(
+        representation in value
+        for credential in source_credentials
+        for representation in credential_representations(credential)
+    )
 
 
 def envelope(endpoint: str) -> dict[str, object]:
@@ -240,7 +271,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 for value in channel.values
             }
             if any(
-                value in source_credentials
+                contains_source_credential(value, source_credentials)
                 for channel in channels
                 for value in channel.values
             ):
