@@ -89,7 +89,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -148,6 +148,10 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         if "dynamicType" in record:
             raise CaptureVerificationError(
                 f"{directory.name}/{filename} claims unsupported macOS dynamicType evidence"
+            )
+        if record.get("applicationActive") is not True or record.get("windowKey") is not True:
+            raise CaptureVerificationError(
+                f"{directory.name}/{filename} was not captured from an active key window"
             )
         geometry_contract = {
             "windowFrameWidthPoints": WIDTH,
@@ -219,7 +223,8 @@ def main() -> None:
         raise SystemExit(f"DESIGN CAPTURE FAIL {error}") from error
     print(
         "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
-        "frame=1180x760 capture-bounds=0,0,1180x760 dynamic-type-claim=absent"
+        "frame=1180x760 capture-bounds=0,0,1180x760 active-key-window=true "
+        "dynamic-type-claim=absent"
     )
 
 

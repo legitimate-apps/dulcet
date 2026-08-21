@@ -84,10 +84,18 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(misframed_root, "captureBoundsYPoints mismatch")
 
+        inactive_root = Path(temporary) / "inactive-window"
+        shutil.copytree(args.root, inactive_root)
+        manifest_path = inactive_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["captures"][0]["windowKey"] = False
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(inactive_root, "was not captured from an active key window")
+
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
-        "byte-identical-dynamic-type=true misframed-window=true"
+        "byte-identical-dynamic-type=true misframed-window=true inactive-window=true"
     )
 
 
