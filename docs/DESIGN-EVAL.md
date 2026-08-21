@@ -29,8 +29,9 @@ environment is fixed:
   desktop; content is installed and the window ordered before the fixed frame is applied, followed by
   a runtime geometry guard requiring an 1180 × 760 window frame and a zero-origin 1180 × 760 AppKit
   theme-frame capture boundary;
-- a regular activated AppKit application and key capture window, guarded at runtime and recorded per
-  manifest entry so active-state button fills and their computed label contrast are present in pixels;
+- SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
+  button fills and their computed label contrast are present in pixels even though a hosted command-
+  line process cannot become the desktop's active application;
 - redundant window-title text hidden while retaining standard AppKit title-bar chrome; each content
   surface carries its own visible state heading and debug target suffixes are excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
@@ -38,14 +39,14 @@ environment is fixed:
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
-measured window-frame and capture-bound coordinates, active/key-window state, byte lengths, and
+measured window-frame and capture-bound coordinates, rendered control-active state, byte lengths, and
 SHA-256 digests.
 `tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
 control, a mutated JPEG, an extra JPEG, extra media with another extension, a byte-identical capture
 mislabeled as a different Dynamic Type treatment, a manifest claiming translated capture bounds,
-and a manifest claiming an inactive capture window.
+and a manifest claiming an inactive rendered control state.
 
 ### 1.1 Standard set: 16 JPEGs
 
@@ -91,8 +92,9 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
 - actual AppKit window-frame size and zero-origin theme-frame capture bounds recorded for every JPEG;
-- active application and key-window state, which makes the prominent-control fill in the pixels match
-  the computed foreground/background contrast pair;
+- the explicitly rendered key control state, which makes the prominent-control fill in the pixels
+  match the computed foreground/background contrast pair. This is not a claim that the hosted command-
+  line process became the desktop's active application;
 - visible focus and contrast cues;
 - the standard AppKit window frame and chrome surrounding both reference and control content.
 
