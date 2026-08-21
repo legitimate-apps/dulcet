@@ -272,6 +272,32 @@ workflow, job and test that prove it."* Batch the whole ask into one brief rathe
 follow-ups — a reviewer or implementer who sees the whole job decides coherently across it, where
 isolated asks produce locally-sensible answers that do not fit together.
 
+### Merging
+
+`main` requires a code-owner review and its required status checks, admin bypass is off, and an
+approval must post-date the last push by a different actor.
+
+**GitHub will not accept an approving review from a pull request's own author** — OBSERVED
+2026-08-20, `422 Unprocessable Entity — "Review Can not approve your own pull request"`. `CODEOWNERS`
+therefore names **both maintainer accounts**: the account doing the work opens the pull request, the
+other approves it.
+
+**Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
+commit to the *pull request's* author, not to the commit author. Opening from an account whose
+address is not a `noreply` one writes that address into a public commit on `main` — it happened once,
+commit `0e3566e`. **Open pull requests as `new-usemame`.**
+
+Pull-request authorship and commit authorship are separate fields. Commits are authored
+`new-usemame` by the convention in *Identity* above; that is an instruction here, not something
+GitHub enforces.
+
+`@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams —
+`CODEOWNERS` entries must resolve to individual collaborators while ownership stays as it is.
+
+⚠️ **This is not independent review.** One person holds both accounts, so the required approval
+records an account switch. The adversarial review demanded above is a separate obligation and is not
+discharged by approving from the second account.
+
 ## Definition of done
 
 A feature is done when the real trigger has been driven to the real observed effect on a real device or

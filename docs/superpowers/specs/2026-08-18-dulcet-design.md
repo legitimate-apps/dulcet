@@ -1911,12 +1911,36 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
       PR-body text and labels are not inputs to the gate at all, because a contributor can author both.
 
    b. **`FEATURES.yml` is CODEOWNER-protected, and that IS enforced.** `CODEOWNERS` assigns
-      `/FEATURES.yml` to the maintainers team, and the branch rule enables **"Require review from Code
-      Owners"**. **OBSERVED** (GitHub, About protected branches), verbatim: *"any pull request that
+      `/FEATURES.yml` to the **maintainer accounts**, and the branch rule enables **"Require review
+      from Code Owners"**. ⚠️ **Corrected 2026-08-20 — revision 5 said "the maintainers team", and
+      there is no team to assign to:** the repository owner is a GitHub **User** account, not an
+      Organization, so `CODEOWNERS` entries must resolve to individual collaborators unless ownership
+      changes. **OBSERVED** (GitHub, About protected branches), verbatim: *"any pull request that
       affects code with a code owner **must be approved by that code owner** before the pull request can
       be merged into the protected branch."* So declaring a regression **requires touching a
       CODEOWNER-protected file**, and the PR cannot merge without a maintainer's approving review.
       The authorization is a review, which GitHub actually gates on — not a label, which it does not.
+
+      ⚠️ **Why two code owners, stated without overstatement.** GitHub will not accept an approving
+      review from a pull request's own author — **OBSERVED 2026-08-20**, `422 Unprocessable Entity —
+      "Review Can not approve your own pull request"`, and GitHub documents the same rule. With a
+      single code owner, that account can never merge a pull request it opened, and it is the account
+      that does the work. **A pull request opened by the other admin collaborator and approved by the
+      sole code owner does merge** — that path was used for PR #1 and was never blocked, so "one code
+      owner is unmergeable" would be false. It was abandoned for a different, measured reason:
+      **GitHub attributes a squash-merge commit to the pull request's author**, so merging that way
+      wrote that account's non-`noreply` address into a public commit on `main` (**OBSERVED**, commit
+      `0e3566e`). Naming both accounts lets the working account open the pull request and the other
+      approve it, which keeps commit authorship and contact addresses where §24.1 wants them.
+
+      ⚠️ **And state the cost: this broadens the gate.** Where a path has several owners, an approval
+      from **any one** of them satisfies the requirement — so the credentials able to approve a
+      `FEATURES.yml` change went from one account to two. `require_last_push_approval` is enabled to
+      partly offset that: the approval must come from an actor other than whoever made the last push.
+      **With one person holding both accounts this records an account switch, not an independent
+      human review.** What (b) actually buys is that declaring a regression is a deliberate step
+      against a protected file. The independent adversarial review required by §25 is a separate
+      obligation and is **not** discharged by approving from the second account.
 
    c. **`parity-gate` is a required status check** on the default branch, so the gate cannot be skipped
       by merging around it: *"Required status checks must have a `successful`, `skipped`, or `neutral`
