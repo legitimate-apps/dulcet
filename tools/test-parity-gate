@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation tests proving the parity gate validates partial evidence tuples."""
+"""Mutation tests proving parity evidence resolves to an executed passing test."""
 
 from __future__ import annotations
 
@@ -17,7 +17,12 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 
 
 def materialize(root: Path) -> None:
-    for relative in ("FEATURES.yml", ".github/required-checks.json", "tools/parity_gate.py"):
+    for relative in (
+        "FEATURES.yml",
+        ".github/required-checks.json",
+        "tools/parity_gate.py",
+        "tools/verify-parity-evidence",
+    ):
         source = REPOSITORY / relative
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -31,6 +36,23 @@ def invoke(root: Path) -> subprocess.CompletedProcess[str]:
     environment.pop("GITHUB_BASE_REF", None)
     return subprocess.run(
         [sys.executable, "tools/parity_gate.py"],
+        cwd=root,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+def invoke_execution(root: Path, report: str) -> subprocess.CompletedProcess[str]:
+    results = root / "results"
+    results.mkdir()
+    (results / "TEST-evidence.xml").write_text(report)
+    environment = os.environ.copy()
+    environment.update(GITHUB_WORKFLOW="apple-ci", GITHUB_JOB="apple-ci")
+    return subprocess.run(
+        [sys.executable, "tools/verify-parity-evidence", str(results)],
         cwd=root,
         env=environment,
         text=True,
@@ -100,5 +122,57 @@ expect_rejection(
     lambda document: macos_evidence(document).update(test="MissingTest/missingTest"),
     "evidence test does not exist",
 )
+expect_rejection(
+    "required aggregator that never verifies executed tests",
+    lambda document: macos_evidence(document).update(workflow="core-ci", job="core-ci"),
+    "evidence job is not wired to executed-test verification",
+)
 
-print("parity-gate mutation tests pass")
+passing_report = """\
+<testsuite tests="1" failures="0" errors="0" skipped="0">
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest"
+            name="conf01UnauthenticatedExtensionDiscovery" time="0.1" />
+</testsuite>
+"""
+with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
+    root = Path(directory)
+    materialize(root)
+    result = invoke_execution(root, passing_report)
+    if result.returncode != 0:
+        raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
+
+execution_rejections = {
+    "existing but unexecuted source test": (
+        """<testsuite><testcase classname="AccountConnectConformanceTest"
+        name="conf02RedirectPolicy" /></testsuite>""",
+        "evidence test did not execute",
+    ),
+    "self-declared text without a testcase": (
+        """<testsuite><system-out>
+        AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery passed
+        </system-out></testsuite>""",
+        "evidence test did not execute",
+    ),
+    "failed testcase": (
+        """<testsuite><testcase classname="AccountConnectConformanceTest"
+        name="conf01UnauthenticatedExtensionDiscovery"><failure /></testcase></testsuite>""",
+        "evidence test did not pass",
+    ),
+    "skipped testcase": (
+        """<testsuite><testcase classname="AccountConnectConformanceTest"
+        name="conf01UnauthenticatedExtensionDiscovery"><skipped /></testcase></testsuite>""",
+        "evidence test did not pass",
+    ),
+}
+for label, (report, expected) in execution_rejections.items():
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
+        root = Path(directory)
+        materialize(root)
+        result = invoke_execution(root, report)
+        if result.returncode == 0 or expected not in result.stdout:
+            raise AssertionError(
+                f"{label}: expected rejection containing {expected!r}, "
+                f"returncode={result.returncode}, output={result.stdout!r}"
+            )
+
+print("parity-gate mutation and executed-evidence tests pass")

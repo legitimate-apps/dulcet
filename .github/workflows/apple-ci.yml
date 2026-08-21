@@ -230,3 +230,5 @@ jobs:
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
+          python3 tools/verify-parity-evidence \
+            core-conformance/build/test-results/macosArm64Test
