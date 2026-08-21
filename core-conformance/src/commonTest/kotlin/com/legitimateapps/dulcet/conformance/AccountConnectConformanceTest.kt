@@ -354,6 +354,14 @@ class AccountConnectConformanceTest {
                 "https://credential-canary|evil.invalid/rest/ping.view?u=credential-canary",
             "invalid-percent-escape" to
                 "https://credential-canary%zz.invalid/rest/ping.view?u=credential-canary",
+            "invalid-bracketed-zone-escape" to
+                "https://[fe80::1%25zone%zz]/rest/ping.view?u=credential-canary",
+            "illegal-bracketed-zone-character" to
+                "https://[fe80::1%zone|metadata]/rest/ping.view?u=credential-canary",
+            "empty-bracketed-zone" to
+                "https://[fe80::1%]/rest/ping.view?u=credential-canary",
+            "empty-encoded-bracketed-zone" to
+                "https://[fe80::1%25]/rest/ping.view?u=credential-canary",
             "leading-control-character" to
                 "\u0000https://music.invalid/rest/ping.view?u=credential-canary",
         )
@@ -401,6 +409,23 @@ class AccountConnectConformanceTest {
                 Redactor.redactUrl(input),
                 input,
             )
+        }
+
+        val bracketedZoneSuffixes = listOf(
+            "%",
+            "%25",
+            "%zone|metadata",
+            "%25zone%zz",
+            "%zone%other",
+            "%%25zone",
+        )
+        bracketedZoneSuffixes.forEach { zoneSuffix ->
+            listOf("", ":443", ":443:444").forEach { portSuffix ->
+                val input =
+                    "https://[fe80::1$zoneSuffix]$portSuffix/" +
+                        "rest/ping.view?u=credential-canary"
+                assertEquals("<unrenderable-url>", Redactor.redactUrl(input), input)
+            }
         }
 
         assertEquals(
@@ -462,6 +487,10 @@ class AccountConnectConformanceTest {
             "authority-whitespace" to "https://127.0.0.1 :443",
             "illegal-reg-name-character" to "https://bad|host.invalid",
             "invalid-percent-escape" to "https://bad%zz.invalid",
+            "invalid-bracketed-zone-escape" to "https://[fe80::1%25zone%zz]",
+            "illegal-bracketed-zone-character" to "https://[fe80::1%zone|metadata]",
+            "empty-bracketed-zone" to "https://[fe80::1%]",
+            "empty-encoded-bracketed-zone" to "https://[fe80::1%25]",
         )
         malformedAuthorities.forEach { (caseName, serverUrl) ->
             assertEquals(
