@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 25 — credential channels are separately observed at the Ktor boundary and enforced by
-disposable servers; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
+**Revision:** 26 — credential coverage is derived from every observed header, query parameter, and
+form field and rejects unclassified channels; revision 25 separately observed query/form credential
+keys at the Ktor boundary; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
 a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
 job's JUnit results; revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
 revision 21 made `DomainError` retain no server-controlled text or URL; revision 20 made CONF-01
@@ -1325,6 +1326,12 @@ Normative policy, enforced in the transport layer and in the resource loader (§
   redirected request. If the target then returns 401 the request fails with
   `Auth.RedirectCredentialLoss`, with the URL surfaced redacted, rather than being retried with
   credentials attached.
+- Every request in the chain is inventoried at the Ktor send boundary and at the receiving wire
+  fixture as header, query, and form channels. Each observed channel must resolve through an explicit
+  credential-or-metadata classification; an unknown channel fails CONF-08. At a cross-origin target,
+  no credential-classified channel may remain and no value observed in a source credential channel
+  may reappear under a metadata name. This is fail-closed coverage: adding a transport channel changes
+  the observed set and breaks the test until the redirect assertion deliberately accounts for it.
 - A downgrade from `https` to `http` is **rejected outright**, never followed.
 - Same-origin redirects preserve the query string as issued; credentials are not regenerated
   mid-redirect, since a fresh salt would invalidate an already-signed URL for no benefit.
@@ -2161,7 +2168,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; no credential appears in a request line, structured diagnostic, or `DomainError` rendering; the canary password, its derived tokens, and the exact issued salts are absent |
-| CONF-08 | account connection follows at most five redirects; preserves the exact issued credentials on same-origin hops; strips them across scheme, host, or port changes; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
+| CONF-08 | derives a closed header/query/form channel inventory from every request in the chain; rejects any unclassified channel; preserves the exact issued credentials on same-origin hops; strips credential channels and duplicate credential values across scheme, host, or port changes; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2853,6 +2860,21 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 26 (2026-08-21)** — request-channel coverage became fail-closed.
+
+1. A hosted negative-control commit carried the observed salted token in an `Authorization` header
+   only after an origin-changing redirect. The Linux conformance job ran eleven tests and only CONF-08
+   failed; the ordinary core build remained green.
+2. `RequestTrace` now derives a value-free set of every header, query parameter, and form field name
+   from the completed request. CONF-07 and CONF-08 classify every observed name and reject unknowns.
+3. The wire fixture independently performs the same complete inventory, including engine-added
+   headers. Same-origin hops compare the complete method-and-channel observation. Cross-origin targets
+   reject credential-classified channels and scan every target value against values observed in source
+   credential channels, so a token cannot hide under a permitted metadata header.
+4. Cross-origin stripping also removes non-authentication parameters whose values duplicate an
+   observed authentication value. This closes the `getUser` endpoint's separate `username` parameter
+   without teaching the redirect policy a second list of credential-like field names.
 
 **Revision 25 (2026-08-21)** — credential-channel claims became directly observable.
 

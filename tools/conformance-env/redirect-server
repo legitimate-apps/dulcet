@@ -11,7 +11,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 
-AUTHENTICATION_KEYS = {"u", "t", "s", "p"}
 CHANNEL_CLASSIFICATIONS = {
     "header": {
         "accept": "metadata",
@@ -84,6 +83,15 @@ class RedirectState:
     ) -> bool:
         with self.lock:
             return self.issued.get((scenario, endpoint)) == (method, channels)
+
+    def source_channels(
+        self,
+        scenario: str,
+        endpoint: str,
+    ) -> tuple[ObservedChannel, ...] | None:
+        with self.lock:
+            observation = self.issued.get((scenario, endpoint))
+            return observation[1] if observation is not None else None
 
 
 STATE = RedirectState()
@@ -177,6 +185,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not self._observes_expected_channels(endpoint, channels):
                 self._send_json(500, {"error": "cross-origin source credential channels failed"})
                 return
+            STATE.remember("cross-observe", endpoint, self.command, channels)
             target_port = self.server.target_port  # type: ignore[attr-defined]
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
             return
@@ -186,6 +195,23 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 return
             if self._has_authentication(channels):
                 self._send_json(500, {"error": "credentials crossed an origin boundary"})
+                return
+            source_channels = STATE.source_channels("cross-observe", endpoint)
+            if source_channels is None:
+                self._send_json(500, {"error": "cross-origin target had no observed source"})
+                return
+            source_credentials = {
+                value
+                for channel in source_channels
+                if channel.classification == "credential"
+                for value in channel.values
+            }
+            if any(
+                value in source_credentials
+                for channel in channels
+                for value in channel.values
+            ):
+                self._send_json(500, {"error": "credential value crossed in a non-credential channel"})
                 return
             if endpoint == "getOpenSubsonicExtensions":
                 self._send_json(200, envelope(endpoint))
