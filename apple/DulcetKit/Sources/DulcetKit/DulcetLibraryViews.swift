@@ -330,6 +330,7 @@ struct DulcetAlbumDetailView: View {
                 albumIdentity
                 Spacer(minLength: DulcetSpacing.md)
                 albumActions
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -412,11 +413,15 @@ struct DulcetOfflineLibraryView: View {
                         }
                     }
                 } else {
-                    HStack(alignment: .top, spacing: DulcetSpacing.md) {
-                        ForEach(snapshot.albums.prefix(6)) { album in
-                            DulcetAlbumShelfItem(album: album, offline: true)
+                    ScrollView(.horizontal) {
+                        LazyHStack(alignment: .top, spacing: DulcetSpacing.md) {
+                            ForEach(snapshot.albums.prefix(6)) { album in
+                                DulcetAlbumShelfItem(album: album, offline: true)
+                            }
                         }
+                        .padding(.bottom, DulcetSpacing.xs)
                     }
+                    .scrollIndicators(.hidden)
                 }
 
                 VStack(spacing: 0) {
