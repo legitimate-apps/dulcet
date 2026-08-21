@@ -1911,8 +1911,18 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
       PR-body text and labels are not inputs to the gate at all, because a contributor can author both.
 
    b. **`FEATURES.yml` is CODEOWNER-protected, and that IS enforced.** `CODEOWNERS` assigns
-      `/FEATURES.yml` to the maintainers team, and the branch rule enables **"Require review from Code
-      Owners"**. **OBSERVED** (GitHub, About protected branches), verbatim: *"any pull request that
+      `/FEATURES.yml` to **both maintainer accounts**, and the branch rule enables **"Require review
+      from Code Owners"**. ⚠️ **Corrected 2026-08-20 — revision 5 said "the maintainers team", and
+      there is no team to assign to:** the repository owner is a GitHub **User** account, not an
+      Organization, so named accounts are the only mechanism available here.
+
+      🚨 **And it takes TWO code owners to be satisfiable at all.** **OBSERVED 2026-08-20**,
+      approving a pull request with its own author's token: `422 Unprocessable Entity — "Review Can
+      not approve your own pull request"`. With one code owner and (d) below enabled, *no change
+      could ever merge* — the rule would read as strict and behave as a deadlock. A pull request is
+      therefore opened as one maintainer account and approved by the other.
+
+      **OBSERVED** (GitHub, About protected branches), verbatim: *"any pull request that
       affects code with a code owner **must be approved by that code owner** before the pull request can
       be merged into the protected branch."* So declaring a regression **requires touching a
       CODEOWNER-protected file**, and the PR cannot merge without a maintainer's approving review.
