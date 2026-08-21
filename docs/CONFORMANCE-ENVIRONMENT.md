@@ -49,13 +49,16 @@ writes `corpus-manifest.json`. Generation errors fail the job.
 proves all of the following:
 
 - the fresh server is reachable and reports Navidrome 0.63.2 / Subsonic 1.16.1;
-- the scan reports complete, reports no scanner error, covers the generated file count, and returns the
+- the scan reports complete, reports no scanner error, equals the generated file count exactly, and returns the
   known FLAC health-probe item through `search3`;
 - the leg's ffmpeg command exists and its first version line matches the pin;
-- fixed admin and restricted fixture roles were created in the new database;
+- fixed admin and restricted fixture roles are read back from the server with the expected persisted
+  `isAdmin` values;
 - the server advertises the `transcoding` extension but not `sonicSimilarity`;
 - `getTranscodeDecision` returns `canTranscode: true` for the known FLAC probe and an MP3-only client;
-- the time zone is UTC and the generated-corpus manifest matches the contract.
+- the process runtime and effective time zone match the requested leg and UTC;
+- every successful Subsonic response envelope reports version 1.16.1, rather than merely receiving
+  that version as a request parameter.
 
 There is no skip path. A missing precondition is an error, and every successful assertion is printed
 to both the job log and the GitHub Actions job summary.
