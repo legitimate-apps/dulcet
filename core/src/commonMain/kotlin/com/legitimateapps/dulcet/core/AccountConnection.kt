@@ -9,6 +9,7 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -34,6 +35,7 @@ public data class AccountConnectionRequest(
     val serverUrl: String,
     val username: String,
     val password: String,
+    val allowLocalHttp: Boolean = false,
 )
 
 /** Authentication placement observed at the transport boundary, without retaining credential values. */
@@ -112,6 +114,7 @@ public data class CapabilitySet(
 
 public data class ConnectedAccount(
     val normalizedBaseUrl: String,
+    val allowsLocalHttp: Boolean,
     val protocolVersion: String,
     val openSubsonic: Boolean,
     val serverType: String,
@@ -303,9 +306,12 @@ public fun interface SaltSource {
 public class AccountConnector(
     private val saltSource: SaltSource? = null,
     private val logSink: LogSink? = null,
+    hostResolver: HostResolver = systemHostResolver(),
 ) {
+    private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
+
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult {
-        val normalized = normalizeServerUrl(request.serverUrl)
+        val normalized = normalizeServerUrl(request.serverUrl, request.allowLocalHttp)
         if (normalized is NormalizedServerUrl.Invalid) {
             return AccountConnectionResult.Failed(normalized.error)
         }
@@ -332,6 +338,8 @@ public class AccountConnector(
                 val result = try {
                     connectNormalized(client, baseUrl, request, traceRecorder)
                 } catch (failure: RedirectPolicyFailure) {
+                    AccountConnectionResult.Failed(failure.error)
+                } catch (failure: LocalHttpPolicyFailure) {
                     AccountConnectionResult.Failed(failure.error)
                 } catch (_: HttpRequestTimeoutException) {
                     AccountConnectionResult.Failed(DomainError.Transport.Timeout)
@@ -367,6 +375,7 @@ public class AccountConnector(
             endpointParameters = emptyMap(),
             credentials = null,
             formPost = false,
+            allowLocalHttp = request.allowLocalHttp,
             traceRecorder = traceRecorder,
         )
         val extensionEnvelope = parseEnvelope(extensionResponse.body)
@@ -437,6 +446,7 @@ public class AccountConnector(
         return AccountConnectionResult.Connected(
             ConnectedAccount(
                 normalizedBaseUrl = baseUrl,
+                allowsLocalHttp = request.allowLocalHttp,
                 protocolVersion = serverProtocolVersion,
                 openSubsonic = pingEnvelope.boolean("openSubsonic") ?: false,
                 serverType = pingEnvelope.string("type").orEmpty(),
@@ -481,6 +491,7 @@ public class AccountConnector(
                 salt = salt,
             ),
             formPost = formPost,
+            allowLocalHttp = credentials.allowLocalHttp,
             traceRecorder = traceRecorder,
         )
     }
@@ -492,6 +503,7 @@ public class AccountConnector(
         endpointParameters: Map<String, String>,
         credentials: AuthenticationParameters?,
         formPost: Boolean,
+        allowLocalHttp: Boolean,
         traceRecorder: RequestTraceRecorder,
     ): WireResponse {
         val endpointUrl = "$baseUrl/rest/$endpoint.view"
@@ -528,6 +540,7 @@ public class AccountConnector(
                 queryParameters = queryParameters,
                 formParameters = formParameters,
                 useForm = useForm,
+                allowLocalHttp = allowLocalHttp,
             )
             if (response.status.value !in REDIRECT_STATUS_CODES) {
                 if (response.status.value == 401 && credentialsStripped) {
@@ -558,6 +571,14 @@ public class AccountConnector(
                         SuppressedRedirectUrl,
                     ),
                 )
+            if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
+                throw RedirectPolicyFailure(
+                    DomainError.Security.RedirectRejected(
+                        RedirectRejectionReason.LocalToPublic,
+                        SuppressedRedirectUrl,
+                    ),
+                )
+            }
             when (
                 val decision = AccountConnectionContract.redirectDecision(
                     currentUrl = currentUrl,
@@ -591,20 +612,26 @@ public class AccountConnector(
         queryParameters: Parameters,
         formParameters: Parameters,
         useForm: Boolean,
-    ): HttpResponse = if (useForm) {
-        client.submitForm(
-            url = url,
-            formParameters = formParameters,
-            encodeInQuery = false,
-        ) {
-            queryParameters.entries().forEach { (key, values) ->
-                values.forEach { value -> parameter(key, value) }
+        allowLocalHttp: Boolean,
+    ): HttpResponse {
+        val target = localHttpPolicy.targetFor(url, allowLocalHttp)
+        return if (useForm) {
+            client.submitForm(
+                url = target.url,
+                formParameters = formParameters,
+                encodeInQuery = false,
+            ) {
+                target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                queryParameters.entries().forEach { (key, values) ->
+                    values.forEach { value -> parameter(key, value) }
+                }
             }
-        }
-    } else {
-        client.get(url) {
-            queryParameters.entries().forEach { (key, values) ->
-                values.forEach { value -> parameter(key, value) }
+        } else {
+            client.get(target.url) {
+                target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                queryParameters.entries().forEach { (key, values) ->
+                    values.forEach { value -> parameter(key, value) }
+                }
             }
         }
     }
@@ -762,7 +789,10 @@ public object AccountConnectionContract {
         if (current.protocol.name == "https" && target.protocol.name == "http") {
             return RedirectPolicyDecision.Reject(RedirectRejectionReason.HttpsDowngrade)
         }
-        if (current.host.isLocalHttpHost() && !target.host.isLocalHttpHost()) {
+        if (
+            current.host.isPermittedLocalHttpAddress() &&
+            !target.host.isPermittedLocalHttpAddress()
+        ) {
             return RedirectPolicyDecision.Reject(RedirectRejectionReason.LocalToPublic)
         }
         val sameOrigin = current.protocol == target.protocol &&
@@ -791,6 +821,9 @@ public object AccountConnectionContract {
         }
     }
 
+    public fun isPermittedLocalHttpAddress(address: String): Boolean =
+        address.isPermittedLocalHttpAddress()
+
     private const val MAX_REDIRECTS = 5
     private val KNOWN_SUBSONIC_ERROR_CODES = setOf(0, 10, 20, 30, 40, 41, 50, 60, 70)
 }
@@ -818,7 +851,7 @@ private sealed interface NormalizedServerUrl {
     data class Invalid(val error: DomainError) : NormalizedServerUrl
 }
 
-private fun normalizeServerUrl(input: String): NormalizedServerUrl {
+private fun normalizeServerUrl(input: String, allowLocalHttp: Boolean): NormalizedServerUrl {
     val trimmed = input.trim()
     if (trimmed.isEmpty()) {
         return NormalizedServerUrl.Invalid(
@@ -855,7 +888,7 @@ private fun normalizeServerUrl(input: String): NormalizedServerUrl {
             DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
         )
     }
-    if (scheme == "http" && !host.isLocalHttpHost()) {
+    if (scheme == "http" && !allowLocalHttp) {
         return NormalizedServerUrl.Invalid(DomainError.Security.LocalExceptionViolated)
     }
 
@@ -868,7 +901,7 @@ private fun normalizeServerUrl(input: String): NormalizedServerUrl {
         path = path.dropLast(5).trimEnd('/')
     }
     val secureBaseUrl = "$scheme://$authority$path"
-    val candidates = if (!suppliedScheme && host.isLocalHttpHost()) {
+    val candidates = if (!suppliedScheme && allowLocalHttp) {
         listOf(secureBaseUrl, "http://$authority$path")
     } else {
         listOf(secureBaseUrl)
@@ -880,16 +913,6 @@ private fun String.hostWithoutPort(): String = when {
     startsWith("[") -> substringAfter('[').substringBefore(']')
     else -> substringBefore(':')
 }.lowercase()
-
-private fun String.isLocalHttpHost(): Boolean {
-    if (this == "localhost" || this == "::1") return true
-    val octets = split('.').mapNotNull(String::toIntOrNull)
-    if (octets.size != 4 || octets.any { it !in 0..255 }) return false
-    return octets[0] == 127 ||
-        octets[0] == 10 ||
-        (octets[0] == 172 && octets[1] in 16..31) ||
-        (octets[0] == 192 && octets[1] == 168)
-}
 
 private fun String.parseProtocolVersion(): ProtocolVersionLevel? {
     val parts = split('.')
