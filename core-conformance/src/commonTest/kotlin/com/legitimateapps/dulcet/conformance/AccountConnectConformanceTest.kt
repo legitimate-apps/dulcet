@@ -176,7 +176,7 @@ class AccountConnectConformanceTest {
         )
         assertTrue(
             connected.requests.filter { it.authenticationLocation != AuthenticationLocation.None }
-                .all { it.method == "POST" && "?<redacted>" in it.redactedUrl },
+                .all { it.method == "POST" && '?' !in it.redactedUrl },
         )
         assertFalse(diagnosticText.contains(ADMIN_PASSWORD))
         assertFalse(diagnosticText.contains(ADMIN_USER))
