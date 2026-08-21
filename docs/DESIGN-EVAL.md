@@ -24,9 +24,10 @@ environment is fixed:
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
 - a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
-- content installed before the fixed window frame is applied, followed by a runtime geometry guard
-  requiring an 1180 × 760 window frame and a zero-origin 1180 × 760 AppKit theme-frame capture
-  boundary;
+- content installed and the window ordered before the fixed frame is applied, preventing AppKit's
+  initial on-screen constraint from shrinking the evidence surface on a narrower hosted desktop,
+  followed by a runtime geometry guard requiring an 1180 × 760 window frame and a zero-origin
+  1180 × 760 AppKit theme-frame capture boundary;
 - redundant window-title text hidden while retaining standard AppKit title-bar chrome; each content
   surface carries its own visible state heading and debug target suffixes are excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
