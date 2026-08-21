@@ -103,7 +103,9 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 - Swift package tests, app build success, capture-verifier negative controls;
 - computed [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18) for
   every Dulcet-defined adjacent foreground/background pair in Aqua and Dark Aqua: prominent button
-  labels, selected-sidebar labels, offline labels, and danger icons. The native test prints
+  labels against their dedicated action fill, selected-sidebar labels, offline labels, and danger
+  icons. Link/accent color is deliberately separate from the darker prominent-action fill because
+  native macOS prominent controls render a white label in both appearances. The native test prints
   each ratio and proves that a known low-contrast pair is rejected;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
