@@ -8,6 +8,8 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import tempfile
 
 
 STATES = (
@@ -128,6 +130,60 @@ def jpeg_dimensions(data: bytes) -> tuple[int, int]:
     raise CaptureVerificationError("JPEG dimensions were not found")
 
 
+def decoded_pixel_digest(path: Path) -> str:
+    """Return a digest of the normalized top-to-bottom decoded BGR pixel rows."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-decoded-pixels-") as temporary:
+        bitmap_path = Path(temporary) / "decoded.bmp"
+        result = subprocess.run(
+            ["/usr/bin/sips", "-s", "format", "bmp", str(path), "--out", str(bitmap_path)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0 or not bitmap_path.is_file():
+            raise CaptureVerificationError(f"could not decode JPEG pixels: {path.name}")
+        bitmap = bitmap_path.read_bytes()
+
+    if len(bitmap) < 54 or bitmap[:2] != b"BM":
+        raise CaptureVerificationError(f"decoded pixel bitmap is malformed: {path.name}")
+    pixel_offset = int.from_bytes(bitmap[10:14], "little")
+    dib_size = int.from_bytes(bitmap[14:18], "little")
+    width = int.from_bytes(bitmap[18:22], "little", signed=True)
+    height = int.from_bytes(bitmap[22:26], "little", signed=True)
+    planes = int.from_bytes(bitmap[26:28], "little")
+    bits_per_pixel = int.from_bytes(bitmap[28:30], "little")
+    compression = int.from_bytes(bitmap[30:34], "little")
+    if (
+        dib_size < 40
+        or width <= 0
+        or height == 0
+        or planes != 1
+        or bits_per_pixel != 24
+        or compression != 0
+    ):
+        raise CaptureVerificationError(f"decoded pixel bitmap format is unsupported: {path.name}")
+
+    row_bytes = width * 3
+    stride = (row_bytes + 3) & ~3
+    row_count = abs(height)
+    pixel_end = pixel_offset + stride * row_count
+    if pixel_offset < 14 + dib_size or pixel_end > len(bitmap):
+        raise CaptureVerificationError(f"decoded pixel bitmap is truncated: {path.name}")
+
+    rows = [
+        bitmap[pixel_offset + row * stride:pixel_offset + row * stride + row_bytes]
+        for row in range(row_count)
+    ]
+    if height > 0:
+        rows.reverse()
+    digest = hashlib.sha256()
+    digest.update(width.to_bytes(4, "big"))
+    digest.update(row_count.to_bytes(4, "big"))
+    for row in rows:
+        digest.update(row)
+    return digest.hexdigest()
+
+
 def verify_set(directory: Path, expected: set[str]) -> None:
     if not directory.is_dir():
         raise CaptureVerificationError(f"missing capture directory: {directory.name}")
@@ -177,27 +233,20 @@ def verify_set(directory: Path, expected: set[str]) -> None:
     if set(records_by_file) != expected or len(records_by_file) != len(records):
         raise CaptureVerificationError(f"{directory.name} manifest record set is not exact")
 
-    observed_hashes: dict[str, str] = {}
-    observed_payload_hashes: dict[str, str] = {}
+    observed_pixel_hashes: dict[str, str] = {}
     bindings_by_file: dict[str, dict[str, str]] = {}
     for filename in sorted(expected):
-        data = (directory / filename).read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        if digest in observed_hashes:
+        path = directory / filename
+        data = path.read_bytes()
+        binding, _ = jpeg_payload_binding(data)
+        pixel_digest = decoded_pixel_digest(path)
+        if pixel_digest in observed_pixel_hashes:
             raise CaptureVerificationError(
-                "captures are not pairwise distinct: "
-                f"{observed_hashes[digest]} and {filename} are byte-identical"
+                "capture decoded pixels are not pairwise distinct: "
+                f"{observed_pixel_hashes[pixel_digest]} and {filename} "
+                "decode to identical pixel content"
             )
-        observed_hashes[digest] = filename
-        binding, payload = jpeg_payload_binding(data)
-        payload_digest = hashlib.sha256(payload).hexdigest()
-        if payload_digest in observed_payload_hashes:
-            raise CaptureVerificationError(
-                "capture visual payloads are not pairwise distinct: "
-                f"{observed_payload_hashes[payload_digest]} and {filename} "
-                "contain the same compressed image bytes"
-            )
-        observed_payload_hashes[payload_digest] = filename
+        observed_pixel_hashes[pixel_digest] = filename
         bindings_by_file[filename] = binding
 
     for filename in sorted(expected):
@@ -334,7 +383,7 @@ def main() -> None:
     print(
         "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
-        "pairwise-distinct=true visual-payloads-distinct=true "
+        "decoded-pixels-pairwise-distinct=true "
         "payload-label-bindings=true dynamic-type-claim=absent "
         "pinned-controls=true control-provenance=verified"
     )

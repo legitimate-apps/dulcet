@@ -93,7 +93,7 @@ def main() -> None:
         for path in (identical_root / "standard").glob("*.jpg"):
             path.write_bytes(identical_bytes)
         refresh_manifest_file_evidence(identical_root)
-        expect_rejection(identical_root, "captures are not pairwise distinct")
+        expect_rejection(identical_root, "decoded pixels are not pairwise distinct")
 
         rebound_identical_root = Path(temporary) / "rebound-identical-visuals"
         shutil.copytree(args.root, rebound_identical_root)
@@ -105,7 +105,28 @@ def main() -> None:
         refresh_manifest_file_evidence(rebound_identical_root)
         expect_rejection(
             rebound_identical_root,
-            "capture visual payloads are not pairwise distinct",
+            "decoded pixels are not pairwise distinct",
+        )
+
+        different_encoding_root = Path(temporary) / "identical-pixels-different-encoding"
+        shutil.copytree(args.root, different_encoding_root)
+        source = different_encoding_root / "standard" / "macos-library-browse-light.jpg"
+        target = different_encoding_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        _, source_payload = verifier.jpeg_payload_binding(source.read_bytes())
+        if not source_payload.endswith(b"\xff\xd9"):
+            raise SystemExit("pixel-distinct negative control source is missing a final JPEG EOI")
+        different_payload = source_payload + b"decoder-ignored-after-eoi"
+        target.write_bytes(
+            bind_payload(different_payload, "search-mixed-sources", "light", "reference")
+        )
+        refresh_manifest_file_evidence(different_encoding_root)
+        if hashlib.sha256(source_payload).digest() == hashlib.sha256(different_payload).digest():
+            raise SystemExit("pixel-distinct negative control did not change the encoding")
+        if verifier.decoded_pixel_digest(source) != verifier.decoded_pixel_digest(target):
+            raise SystemExit("pixel-distinct negative control changed decoded pixels")
+        expect_rejection(
+            different_encoding_root,
+            "decoded pixels are not pairwise distinct",
         )
 
         swapped_labels_root = Path(temporary) / "swapped-labels"
@@ -180,6 +201,7 @@ def main() -> None:
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
         "all-identical=true rebound-identical-visuals=true swapped-labels=true "
+        "identical-pixels-different-encoding=true "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
         "substituted-pinned-control=true"
