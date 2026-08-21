@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+
+"""Negative control for the Darwin fresh-pour observation gate."""
+
+from importlib.machinery import SourceFileLoader
+import json
+from pathlib import Path
+import sys
+import tempfile
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        keg = Path(temporary_directory) / "1.0.0"
+        keg.mkdir()
+        (keg / "INSTALL_RECEIPT.json").write_text(json.dumps({"time": 1}))
+
+        preinstall = installer.observe_keg(keg)
+        before_pour = installer.observe_keg(keg)
+        after_pour = installer.observe_keg(keg)
+        observed_rejected = False
+        observed_detail = ""
+        try:
+            installer.assert_fresh_pour(
+                "negative-control",
+                preinstall,
+                before_pour,
+                after_pour,
+            )
+        except SystemExit as error:
+            observed_rejected = True
+            observed_detail = str(error)
+
+        if not observed_rejected:
+            raise SystemExit("fresh-pour negative control failed open")
+        print(
+            "NEGATIVE CONTROL PASS fresh_pour "
+            f"expected_rejected=true observed_rejected={str(observed_rejected).lower()} "
+            f"preinstall_receipt={preinstall['receipt_sha256']} "
+            f"before_pour_receipt={before_pour['receipt_sha256']} "
+            f"after_pour_receipt={after_pour['receipt_sha256']} "
+            f"detail={observed_detail}"
+        )
+
+
+if __name__ == "__main__":
+    main()

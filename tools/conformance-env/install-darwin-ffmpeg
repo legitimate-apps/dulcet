@@ -9,7 +9,6 @@ from pathlib import Path
 import platform
 import stat
 import subprocess
-import time
 import urllib.parse
 import urllib.request
 
@@ -76,6 +75,60 @@ def keg_payload_sha256(root: Path) -> tuple[str, int]:
     if entries == 0:
         raise SystemExit(f"installed keg has no payload entries: {root}")
     return digest.hexdigest(), entries
+
+
+def observe_keg(root: Path) -> dict[str, int | str] | None:
+    """Retain the filesystem and receipt evidence that identifies one poured keg."""
+    if not root.exists():
+        return None
+    if not root.is_dir():
+        raise SystemExit(f"Homebrew keg path is not a directory: {root}")
+    receipt_path = root / "INSTALL_RECEIPT.json"
+    try:
+        receipt = json.loads(receipt_path.read_text())
+        receipt_time = int(receipt["time"])
+        root_stat = root.stat()
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid Homebrew pour receipt: {receipt_path}") from error
+    return {
+        "root_device": root_stat.st_dev,
+        "root_inode": root_stat.st_ino,
+        "receipt_sha256": file_sha256(receipt_path),
+        "receipt_time": receipt_time,
+    }
+
+
+def assert_fresh_pour(
+    name: str,
+    preinstall: dict[str, int | str] | None,
+    before_pour: dict[str, int | str] | None,
+    after_pour: dict[str, int | str] | None,
+) -> dict[str, bool]:
+    """Require an observed absence checkpoint and a new post-install keg observation."""
+    observed_absent_before_pour = before_pour is None
+    observed_present_after_pour = after_pour is not None
+    observed_changed = preinstall != after_pour
+    if not observed_absent_before_pour:
+        raise SystemExit(
+            f"fresh-pour gate rejected retained keg {name}: "
+            "expected_absent_before_pour=true observed_absent_before_pour=false"
+        )
+    if not observed_present_after_pour:
+        raise SystemExit(
+            f"fresh-pour gate rejected missing keg {name}: "
+            "expected_present_after_pour=true observed_present_after_pour=false"
+        )
+    if not observed_changed:
+        raise SystemExit(
+            f"fresh-pour gate rejected unchanged keg {name}: "
+            "expected_observation_changed=true observed_observation_changed=false"
+        )
+    return {
+        "preinstall_present": preinstall is not None,
+        "absent_before_pour": observed_absent_before_pour,
+        "present_after_pour": observed_present_after_pour,
+        "observation_changed": observed_changed,
+    }
 
 
 def formula_shape(formula: dict, bottle_tag: str) -> dict:
@@ -177,20 +230,34 @@ def main() -> None:
                 f"expected {expected['sha256']}, observed {observed_sha256}"
             )
 
-    # A root install does not necessarily upgrade already-installed nested
-    # dependencies. Converge every locked keg explicitly, in dependency order.
-    pour_started_at = int(time.time()) - 1
-    for expected in closure:
-        name = expected["formula"]
-        installed_versions = installed_formula_versions(name)
-        if expected["version"] in installed_versions:
-            verb = "reinstall"
-        else:
-            verb = "upgrade" if installed_versions else "install"
-        run(["brew", verb, "--force-bottle", name])
+    keg_paths = {
+        expected["formula"]: (
+            Path(run(["brew", "--cellar", expected["formula"]], capture=True))
+            / expected["version"]
+        )
+        for expected in closure
+    }
+    preinstall_kegs = {name: observe_keg(path) for name, path in keg_paths.items()}
+
+    # Remove every installed member first, in reverse dependency order. The
+    # explicit absence checkpoint makes a retained pre-existing keg fail closed.
+    for name in reversed(names):
+        if installed_formula_versions(name):
+            run(["brew", "uninstall", "--force", "--ignore-dependencies", name])
+    absent_before_pour = {name: observe_keg(path) for name, path in keg_paths.items()}
+    retained = [name for name, observation in absent_before_pour.items() if observation is not None]
+    if retained:
+        raise SystemExit(
+            f"fresh-pour absence checkpoint retained locked kegs: {','.join(retained)}"
+        )
+
+    # Pour every checksum-verified locked bottle in dependency order.
+    for name in names:
+        run(["brew", "install", "--force-bottle", name])
 
     installed_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
     installed_by_name = {formula["name"]: formula for formula in installed_info["formulae"]}
+    observed_pour_attestations: dict[str, dict[str, bool]] = {}
     for expected in closure:
         name = expected["formula"]
         installed = [
@@ -209,21 +276,23 @@ def main() -> None:
                 f"active Homebrew keg drift for {name}: expected {expected['version']}, "
                 f"observed {active_prefix.name}"
             )
-        receipt_path = active_prefix / "INSTALL_RECEIPT.json"
-        try:
-            receipt = json.loads(receipt_path.read_text())
-            receipt_time = int(receipt["time"])
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            raise SystemExit(f"invalid Homebrew pour receipt for {name}: {receipt_path}") from error
-        if receipt_time < pour_started_at:
-            raise SystemExit(
-                f"Homebrew keg was not poured during this verification run: {name} "
-                f"receipt_time={receipt_time} verifier_start={pour_started_at}"
-            )
+        postinstall_keg = observe_keg(active_prefix)
+        attestation = assert_fresh_pour(
+            name,
+            preinstall_kegs[name],
+            absent_before_pour[name],
+            postinstall_keg,
+        )
+        observed_pour_attestations[name] = attestation
         keg_sha256, keg_entries = keg_payload_sha256(active_prefix)
         observed_keg_hashes[name] = keg_sha256
         print(
-            f"DARWIN KEG PAYLOAD formula={name} sha256={keg_sha256} entries={keg_entries}"
+            f"DARWIN KEG PAYLOAD formula={name} sha256={keg_sha256} entries={keg_entries} "
+            f"preinstall_present={str(attestation['preinstall_present']).lower()} "
+            f"absent_before_pour={str(attestation['absent_before_pour']).lower()} "
+            f"present_after_pour={str(attestation['present_after_pour']).lower()} "
+            f"observation_changed={str(attestation['observation_changed']).lower()} "
+            f"receipt_time={postinstall_keg['receipt_time']}"
         )
 
     rehashed_kegs = {
@@ -238,9 +307,15 @@ def main() -> None:
     installed_digest = hashlib.sha256(
         json.dumps(observed_keg_hashes, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    poured_this_run = all(
+        attestation["absent_before_pour"]
+        and attestation["present_after_pour"]
+        and attestation["observation_changed"]
+        for attestation in observed_pour_attestations.values()
+    )
     print(
-        f"DARWIN KEG PAYLOAD PASS formulas={len(observed_keg_hashes)} "
-        f"poured_this_run=true aggregate_sha256={installed_digest}"
+        f"DARWIN KEG PAYLOAD PASS formulas={len(observed_pour_attestations)} "
+        f"poured_this_run={str(poured_this_run).lower()} aggregate_sha256={installed_digest}"
     )
 
     root_record = next(
