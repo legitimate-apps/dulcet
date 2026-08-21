@@ -74,6 +74,13 @@ while carrying online detail data, or vice versa.
 
 The filenames are `macos-<state>-<appearance>.jpg`.
 
+The search fixture contains ten mixed-source results to exercise real scrolling and stable source
+annotation. The reference design does not compress those ten rows into one viewport: it preserves
+48-point artwork, subheadline metadata, caption source labels, and 12-point row padding, allowing the
+native scroll surface to reveal the remaining results. Lazy rendering remains in place for a real
+result set; legibility and hierarchy are not traded away to make the fixed evidence frame look
+artificially complete.
+
 The two negative-control files are:
 
 - `macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg`

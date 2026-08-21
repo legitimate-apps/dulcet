@@ -179,7 +179,7 @@ struct DulcetSearchView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: DulcetSpacing.md) {
+            LazyVStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                     Text(DulcetStrings.searchTitle)
                         .font(.largeTitle.weight(.bold))
@@ -208,7 +208,7 @@ struct DulcetSearchView: View {
                     ForEach(snapshot.searchResults) { result in
                         DulcetSearchResultRow(result: result)
                         if result.id != snapshot.searchResults.last?.id {
-                            Divider().padding(.leading, 60)
+                            Divider().padding(.leading, 76)
                         }
                     }
                 }
@@ -218,7 +218,7 @@ struct DulcetSearchView: View {
                         .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
                 }
             }
-            .padding(DulcetSpacing.lg)
+            .padding(DulcetSpacing.xl)
         }
         .background(Color.dulcetWindow)
         .navigationTitle(DulcetStrings.search)
@@ -231,26 +231,26 @@ private struct DulcetSearchResultRow: View {
 
     var body: some View {
         Button(action: {}) {
-            HStack(alignment: .center, spacing: DulcetSpacing.sm) {
-                DulcetArtworkView(artwork: result.artwork, size: 36)
+            HStack(alignment: .center, spacing: DulcetSpacing.md) {
+                DulcetArtworkView(artwork: result.artwork, size: 48)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                     HStack(spacing: DulcetSpacing.xs) {
                         Text(result.title)
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         Text(kindTitle)
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundStyle(Color.dulcetSecondaryText)
                     }
                     Text(result.subtitle)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     if result.refreshedFromServer {
                         Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundStyle(Color.dulcetSecondaryText)
                     }
                 }
@@ -262,8 +262,7 @@ private struct DulcetSearchResultRow: View {
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, DulcetSpacing.sm)
-            .padding(.vertical, 6)
+            .padding(DulcetSpacing.sm)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
