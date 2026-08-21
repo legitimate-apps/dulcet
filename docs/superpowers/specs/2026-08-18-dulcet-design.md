@@ -2188,17 +2188,17 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
    `macos-<version>` when a toolchain pin demands it, §4.4) and never a larger-runner label. A CI lint
    step asserts this, because the failure mode is a silent bill rather than a broken build.
 2. **Hosted macOS concurrency is capped well below Linux**, so a wide Apple matrix **queues rather than
-   fans out** and a broad matrix makes CI slower, not faster. **The Apple matrix is deliberately
-   narrow:** one job per surface that actually needs its own destination (macOS, iOS simulator, iPad
-   simulator, tvOS simulator), sharing one framework build, and never a cross-product over
-   configurations, Xcode versions or OS versions. Adding an Apple matrix axis is a design decision that
-   belongs in this section, not a convenience in a workflow file.
+   fans out** and a broad matrix makes CI slower, not faster. **There is one serial `apple-ci` job:** it
+   shares one framework build across the macOS, iOS/iPadOS-simulator, and tvOS destinations, then runs
+   every Apple-only measurement and the native Darwin conformance self-assertion in that same slot.
+   There is no Apple matrix and no second conformance or measurement job. Adding an Apple job or
+   matrix axis is a design decision that belongs in this section, not a workflow convenience.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | Gradle build of `common` + `jvm` + `androidTarget`; unit tests; ktlint/detekt; `verifySqlDelightMigration` plus the migration fixture databases (§11.4); **conformance suite** against the Navidrome service container; parser-parity and wire-pathology layers on the JVM target |
+| `core-ci.yml` | `ubuntu-latest` | Gradle build/test/licence baseline plus the Linux pinned-Navidrome environment self-assertion; future CONF-xx, parser-parity, wire-pathology, lint, and migration gates join this Linux workflow as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | `macos-latest` (standard) | one serial macOS job: the Phase-0 Kotlin/Native and Xcode shell build, OS-floor assertion, then the §12.4 resource-loader negative canary and strengthened measurement. Native Navidrome conformance joins this same job with the §20.2 environment; it never creates a second hosted-macOS job. |
+| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, and fail-loud conformance precondition self-assertion. Future Apple-only measurements and CONF-xx tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22): `push` to `main` ships DEV, a `v*` tag ships PROD. The only workflow able to read signing secrets |
 
@@ -2214,10 +2214,12 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 15 `apple-ci`, 5 `parity-gate`, 60
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 25 `apple-ci`, 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-20:** the first complete standard-hosted `macos-26` job ran from
-`22:11:30Z` to `22:14:37Z`, 187 seconds wall-clock. The 15-minute budget is the next five-minute
-boundary above four times that cold duration; `docs/TOOLCHAIN.md` links the run. The hosted macOS
+`22:11:30Z` to `22:14:37Z`, 187 seconds wall-clock. That calibrated the former 15-minute scaffold
+budget. **ASSUMED pending the first combined run:** 25 minutes is the initial cap after serial Darwin
+conformance was added; this PR must replace the assumption with the observed combined duration before
+it is merge-ready. The hosted macOS
 runner is **3 vCPU / 7 GB**, and a cold Gradle KMP build producing five
 Kotlin/Native targets plus four Xcode targets plus simulator tests is a lot for that machine. Run one
 complete build and set the number from the measurement — a timeout that is too low fails green builds,

@@ -74,6 +74,7 @@ to both the job log and the GitHub Actions job summary.
 
 ## CI identities
 
-The environment is wired into `.github/workflows/core-ci.yml` as jobs `conformance-env-linux` and
-`conformance-env-darwin`. Both use standard GitHub-hosted runners, explicit job timeouts, and the
-workflow's cancel-in-progress concurrency rule.
+The Linux self-assertion is job `conformance-env-linux` in `.github/workflows/core-ci.yml`. The Darwin
+self-assertion is a serial tail of the sole `apple-ci` job in `.github/workflows/apple-ci.yml`; it does
+not allocate a second hosted-macOS job. Both workflows use standard hosted runners, explicit job
+timeouts, and cancel-in-progress concurrency.

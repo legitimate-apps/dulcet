@@ -17,7 +17,10 @@ jobs:
   apple-ci:
     name: apple-ci
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -99,3 +102,52 @@ jobs:
           --package-path tools/resource-loader-spike
           resource-loader-spike
           --expect-hls-segments first-only-playback-failed
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Install checksum-pinned Darwin conformance tools
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - name: Generate deterministic Darwin corpus
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/seed-corpus
+          --output "$ROOT/music"
+          --runtime native
+          --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Render Darwin Navidrome configuration
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/conformance-env/render-config
+          --output "$ROOT/config/navidrome.toml"
+          --music-folder "$ROOT/music"
+          --data-folder "$ROOT/data"
+          --cache-folder "$ROOT/cache"
+          --address 127.0.0.1
+          --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Assert Darwin conformance preconditions
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          cleanup() {
+            kill "$navidrome_pid" >/dev/null 2>&1 || true
+            wait "$navidrome_pid" 2>/dev/null || true
+            tail -200 "$ROOT/logs/navidrome.log" || true
+          }
+          trap cleanup EXIT
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 \
+            --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+             --corpus-manifest "$ROOT/music/corpus-manifest.json"
