@@ -33,6 +33,7 @@ struct DulcetEmptyLibraryView: View {
             VStack(spacing: DulcetSpacing.sm) {
                 Button(DulcetStrings.connectServer, systemImage: "plus") {}
                     .buttonStyle(.borderedProminent)
+                    .tint(.dulcetAccent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.connectServer)
@@ -150,6 +151,7 @@ struct DulcetLibraryHeader: View {
             HStack(spacing: DulcetSpacing.xs) {
                 Button(DulcetStrings.playAll, systemImage: "play.fill") {}
                     .buttonStyle(.borderedProminent)
+                    .tint(.dulcetAccent)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.playAll)
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
@@ -355,6 +357,7 @@ struct DulcetAlbumDetailView: View {
         HStack(spacing: DulcetSpacing.xs) {
             Button(DulcetStrings.play, systemImage: "play.fill") {}
                 .buttonStyle(.borderedProminent)
+                .tint(.dulcetAccent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel(DulcetStrings.play)
@@ -371,6 +374,7 @@ struct DulcetAlbumDetailView: View {
 }
 
 struct DulcetOfflineLibraryView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let snapshot: DulcetSnapshot
 
     var body: some View {
@@ -392,18 +396,28 @@ struct DulcetOfflineLibraryView: View {
                     Spacer()
                     Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
                         .buttonStyle(.borderedProminent)
+                        .tint(.dulcetOffline)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.tryAgain)
                 }
 
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: DulcetSpacing.md) {
-                        ForEach(snapshot.albums.prefix(7)) { album in
+                if dynamicTypeSize.isAccessibilitySize {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 190), spacing: DulcetSpacing.md, alignment: .top)],
+                        alignment: .leading,
+                        spacing: DulcetSpacing.md
+                    ) {
+                        ForEach(snapshot.albums.prefix(6)) { album in
+                            DulcetAlbumShelfItem(album: album, offline: true)
+                        }
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: DulcetSpacing.md) {
+                        ForEach(snapshot.albums.prefix(6)) { album in
                             DulcetAlbumShelfItem(album: album, offline: true)
                         }
                     }
                 }
-                .scrollIndicators(.hidden)
 
                 VStack(spacing: 0) {
                     let tracks = Array(snapshot.albums.prefix(3).flatMap(\.tracks).prefix(5))

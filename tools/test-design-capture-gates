@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+
+"""Prove the design-capture verifier rejects missing and mutated evidence."""
+
+from __future__ import annotations
+
+import argparse
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+import shutil
+import tempfile
+
+
+VERIFIER_PATH = Path(__file__).with_name("verify_design_captures.py")
+verifier = SourceFileLoader("verify_design_captures", str(VERIFIER_PATH)).load_module()
+
+
+def expect_rejection(root: Path, expected_fragment: str) -> None:
+    try:
+        verifier.verify_capture_root(root)
+    except verifier.CaptureVerificationError as error:
+        if expected_fragment not in str(error):
+            raise SystemExit(
+                f"negative control rejected for the wrong reason: "
+                f"expected {expected_fragment!r}, observed {str(error)!r}"
+            ) from error
+        return
+    raise SystemExit(f"negative control unexpectedly passed: {expected_fragment}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    args = parser.parse_args()
+
+    with tempfile.TemporaryDirectory(prefix="dulcet-capture-gates-") as temporary:
+        missing_root = Path(temporary) / "missing"
+        shutil.copytree(args.root, missing_root)
+        control = missing_root / "standard" / "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg"
+        control.unlink()
+        expect_rejection(missing_root, "JPEG set mismatch")
+
+        mutated_root = Path(temporary) / "mutated"
+        shutil.copytree(args.root, mutated_root)
+        target = mutated_root / "standard" / "macos-library-browse-light.jpg"
+        target.write_bytes(target.read_bytes() + b"mutation")
+        expect_rejection(mutated_root, "SHA-256 mismatch")
+
+    print("DESIGN CAPTURE NEGATIVE CONTROLS PASS missing-control=true mutated-jpeg=true")
+
+
+if __name__ == "__main__":
+    main()
