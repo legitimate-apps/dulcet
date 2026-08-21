@@ -25,14 +25,17 @@ def run(arguments: list[str], *, capture: bool = False) -> str:
     return process.stdout.strip() if capture else ""
 
 
-def formula_is_installed(name: str) -> bool:
+def installed_formula_versions(name: str) -> list[str]:
     process = subprocess.run(
         ["brew", "list", "--versions", name],
         text=True,
         capture_output=True,
         env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
     )
-    return process.returncode == 0
+    if process.returncode != 0:
+        return []
+    fields = process.stdout.split()
+    return fields[1:] if fields and fields[0] == name else []
 
 
 def file_sha256(path: Path) -> str:
@@ -144,8 +147,12 @@ def main() -> None:
     # A root install does not necessarily upgrade already-installed nested
     # dependencies. Converge every locked keg explicitly, in dependency order.
     for expected in closure:
-        verb = "reinstall" if formula_is_installed(expected["formula"]) else "install"
-        run(["brew", verb, "--force-bottle", expected["formula"]])
+        name = expected["formula"]
+        installed_versions = installed_formula_versions(name)
+        if expected["version"] in installed_versions:
+            continue
+        verb = "upgrade" if installed_versions else "install"
+        run(["brew", verb, "--force-bottle", name])
 
     installed_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
     installed_by_name = {formula["name"]: formula for formula in installed_info["formulae"]}

@@ -16,8 +16,9 @@ The Darwin installer does not accept a name-only resolution. It first compares t
 official formula API graph to the lock. Only after that succeeds does it update Homebrew's possibly
 stale runner metadata, and the refreshed local resolver must match the same lock before any bottle is
 fetched or installed. It hashes every bottle and fails on any extra, missing, or changed dependency.
-It then installs or reinstalls every locked formula in dependency order; installing only the root is
-insufficient because Homebrew can leave an already-installed nested dependency at an older version.
+It then installs every missing formula and explicitly upgrades every stale formula in dependency
+order; installing only the root is insufficient because Homebrew can leave an already-installed
+nested dependency at an older version.
 After installation it verifies every active keg, every bottle receipt, ffmpeg's recorded runtime
 closure, and the `libmp3lame` and `libopus` encoders used by the corpus.
 
