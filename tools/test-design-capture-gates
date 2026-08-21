@@ -153,12 +153,36 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(inactive_root, "controlActiveState is not key")
 
+        substituted_control_root = Path(temporary) / "substituted-pinned-control"
+        shutil.copytree(args.root, substituted_control_root)
+        control = (
+            substituted_control_root
+            / "standard"
+            / "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg"
+        )
+        _, payload = verifier.jpeg_payload_binding(control.read_bytes())
+        candidate = bind_payload(
+            payload + b"unreviewed-control-candidate",
+            "library-browse",
+            "light",
+            "deliberately-bad-control",
+        )
+        control.write_bytes(candidate)
+        refresh_manifest_file_evidence(substituted_control_root)
+        manifest_path = substituted_control_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        record = next(item for item in manifest["captures"] if item["file"] == control.name)
+        record["pinnedControlSha256"] = hashlib.sha256(candidate).hexdigest()
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(substituted_control_root, "pinned control bytes mismatch")
+
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
         "all-identical=true rebound-identical-visuals=true swapped-labels=true "
         "byte-identical-dynamic-type=true "
-        "misframed-window=true inactive-control-state=true"
+        "misframed-window=true inactive-control-state=true "
+        "substituted-pinned-control=true"
     )
 
 

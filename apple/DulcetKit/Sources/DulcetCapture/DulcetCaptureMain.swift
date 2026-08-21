@@ -22,6 +22,17 @@ private enum CaptureAppearance: String, CaseIterable {
         case .dark: .darkAqua
         }
     }
+
+    var pinnedControlFilename: String {
+        "macos-CONTROL-DELIBERATELY-BAD-library-browse-\(rawValue).jpg"
+    }
+
+    var pinnedControlSHA256: String {
+        switch self {
+        case .light: "3c46bfa842033834d417f276c43ee29ce85e1f4eefd8cbea17faedecf1d6c60f"
+        case .dark: "ba23a4b9b8f257a747cf9050a03b54e5fb2e1f8f18ecca97ec1db8fce2cc74f6"
+        }
+    }
 }
 
 private struct CaptureOptions {
@@ -29,12 +40,15 @@ private struct CaptureOptions {
     let states: [DulcetPresentationState]
     let appearances: [CaptureAppearance]
     let includeControl: Bool
+    let generateControlCandidates: Bool
 
     init(arguments: [String]) throws {
         var outputDirectory: URL?
         var states = DulcetPresentationState.allCases
         var appearances = CaptureAppearance.allCases
         var includeControl = false
+        var generateControlCandidates = false
+        var usedCaptureSelectionOption = false
         var index = 0
 
         while index < arguments.count {
@@ -45,6 +59,7 @@ private struct CaptureOptions {
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 outputDirectory = URL(fileURLWithPath: arguments[index], isDirectory: true)
             case "--state":
+                usedCaptureSelectionOption = true
                 index += 1
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 let value = arguments[index]
@@ -56,6 +71,7 @@ private struct CaptureOptions {
                     throw CaptureError.invalidValue(argument, value)
                 }
             case "--appearance":
+                usedCaptureSelectionOption = true
                 index += 1
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 let value = arguments[index]
@@ -71,7 +87,10 @@ private struct CaptureOptions {
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 throw CaptureError.unsupportedDynamicType(arguments[index])
             case "--include-control":
+                usedCaptureSelectionOption = true
                 includeControl = true
+            case "--generate-control-candidates":
+                generateControlCandidates = true
             default:
                 throw CaptureError.unknownArgument(argument)
             }
@@ -79,10 +98,14 @@ private struct CaptureOptions {
         }
 
         guard let outputDirectory else { throw CaptureError.outputRequired }
+        if generateControlCandidates && usedCaptureSelectionOption {
+            throw CaptureError.incompatibleControlGenerationOptions
+        }
         self.outputDirectory = outputDirectory
         self.states = states
         self.appearances = appearances
         self.includeControl = includeControl
+        self.generateControlCandidates = generateControlCandidates
     }
 }
 
@@ -92,11 +115,14 @@ private enum CaptureError: Error, CustomStringConvertible {
     case invalidValue(String, String)
     case unknownArgument(String)
     case unsupportedDynamicType(String)
+    case incompatibleControlGenerationOptions
     case outputExists(String)
     case geometryMismatch(String)
     case bitmapAllocation
     case jpegEncoding
     case invalidJPEGPayload
+    case pinnedControlMissing(String)
+    case pinnedControlHashMismatch(String, String, String)
 
     var description: String {
         switch self {
@@ -110,6 +136,8 @@ private enum CaptureError: Error, CustomStringConvertible {
             "unknown argument: \(argument)"
         case let .unsupportedDynamicType(value):
             "macOS capture cannot claim Dynamic Type \(value): SwiftUI dynamicTypeSize does not affect text size on macOS"
+        case .incompatibleControlGenerationOptions:
+            "--generate-control-candidates cannot be combined with --state, --appearance, or --include-control"
         case let .outputExists(path):
             "output directory must not exist: \(path)"
         case let .geometryMismatch(detail):
@@ -120,12 +148,17 @@ private enum CaptureError: Error, CustomStringConvertible {
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
             "could not bind capture labels to the JPEG payload"
+        case let .pinnedControlMissing(filename):
+            "pinned control resource is missing: \(filename)"
+        case let .pinnedControlHashMismatch(filename, expected, observed):
+            "pinned control resource hash mismatch: \(filename) expected=\(expected) observed=\(observed)"
         }
     }
 }
 
 private struct CaptureRecord: Codable {
     let appearance: String
+    let captureProvenance: String
     let captureBoundsHeightPoints: Int
     let captureBoundsWidthPoints: Int
     let captureBoundsXPoints: Int
@@ -134,6 +167,7 @@ private struct CaptureRecord: Codable {
     let file: String
     let fixtureState: String
     let jpegBytes: Int
+    let pinnedControlSha256: String?
     let sha256: String
     let variant: String
     let windowFrameHeightPoints: Int
@@ -154,6 +188,7 @@ private struct CaptureManifest: Codable {
     let timeZone: String
     let fixedClock: String
     let network: String
+    let controlBaselinePolicy: String
     let captures: [CaptureRecord]
 }
 
@@ -207,6 +242,22 @@ private struct DulcetCaptureMain {
         )
         try fileManager.removeItem(at: preflightDirectory)
 
+        if options.generateControlCandidates {
+            for appearance in CaptureAppearance.allCases {
+                _ = try render(
+                    state: .libraryBrowse,
+                    appearance: appearance,
+                    variant: .deliberatelyBadControl,
+                    outputDirectory: options.outputDirectory
+                )
+            }
+            print(
+                "DULCET CONTROL CANDIDATES PASS images=2 policy=review-candidates-only "
+                    + "output=\(options.outputDirectory.lastPathComponent)"
+            )
+            return
+        }
+
         var records: [CaptureRecord] = []
         for state in options.states {
             for appearance in options.appearances {
@@ -221,17 +272,15 @@ private struct DulcetCaptureMain {
 
         if options.includeControl {
             for appearance in options.appearances {
-                records.append(try render(
-                    state: .libraryBrowse,
+                records.append(try copyPinnedControl(
                     appearance: appearance,
-                    variant: .deliberatelyBadControl,
                     outputDirectory: options.outputDirectory
                 ))
             }
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 7,
+            schemaVersion: 8,
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
@@ -244,6 +293,7 @@ private struct DulcetCaptureMain {
             timeZone: "UTC",
             fixedClock: "2026-08-21T14:32:00Z",
             network: "disabled-by-fixture-source",
+            controlBaselinePolicy: "bundled-reviewed-resources-explicit-regeneration-only",
             captures: records.sorted { $0.file < $1.file }
         )
         let encoder = JSONEncoder()
@@ -255,6 +305,7 @@ private struct DulcetCaptureMain {
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
                 + "control-active-state=key "
+                + "control-baseline=pinned-resource "
                 + "output=\(options.outputDirectory.lastPathComponent)"
         )
     }
@@ -376,6 +427,7 @@ private struct DulcetCaptureMain {
 
         return CaptureRecord(
             appearance: appearance.rawValue,
+            captureProvenance: "rendered-current-run",
             captureBoundsHeightPoints: Int(captureBounds.height),
             captureBoundsWidthPoints: Int(captureBounds.width),
             captureBoundsXPoints: Int(captureBounds.origin.x),
@@ -384,10 +436,53 @@ private struct DulcetCaptureMain {
             file: filename,
             fixtureState: state.rawValue,
             jpegBytes: boundJPEG.count,
+            pinnedControlSha256: nil,
             sha256: sha256Hex(boundJPEG),
             variant: variantName,
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
+        )
+    }
+
+    private static func copyPinnedControl(
+        appearance: CaptureAppearance,
+        outputDirectory: URL
+    ) throws -> CaptureRecord {
+        let filename = appearance.pinnedControlFilename
+        guard let resourceURL = Bundle.module.url(
+            forResource: filename,
+            withExtension: nil,
+            subdirectory: "PinnedControls"
+        ) else {
+            throw CaptureError.pinnedControlMissing(filename)
+        }
+        let data = try Data(contentsOf: resourceURL)
+        let observedHash = sha256Hex(data)
+        guard observedHash == appearance.pinnedControlSHA256 else {
+            throw CaptureError.pinnedControlHashMismatch(
+                filename,
+                appearance.pinnedControlSHA256,
+                observedHash
+            )
+        }
+        try data.write(to: outputDirectory.appendingPathComponent(filename))
+
+        return CaptureRecord(
+            appearance: appearance.rawValue,
+            captureProvenance: "bundled-pinned-resource",
+            captureBoundsHeightPoints: height,
+            captureBoundsWidthPoints: width,
+            captureBoundsXPoints: 0,
+            captureBoundsYPoints: 0,
+            controlActiveState: "key",
+            file: filename,
+            fixtureState: DulcetPresentationState.libraryBrowse.rawValue,
+            jpegBytes: data.count,
+            pinnedControlSha256: observedHash,
+            sha256: observedHash,
+            variant: "deliberately-bad-control",
+            windowFrameHeightPoints: height,
+            windowFrameWidthPoints: width
         )
     }
 

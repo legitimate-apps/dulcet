@@ -91,6 +91,12 @@ jobs:
             --output "$CAPTURE_ROOT/run-b/standard" \
             --state all --appearance all --include-control
           diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b"
+          for appearance in light dark; do
+            control="macos-CONTROL-DELIBERATELY-BAD-library-browse-${appearance}.jpg"
+            cmp \
+              "apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls/$control" \
+              "$CAPTURE_ROOT/run-a/standard/$control"
+          done
           python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a"
           tools/test-design-capture-gates "$CAPTURE_ROOT/run-a"
           {
@@ -98,7 +104,7 @@ jobs:
             echo
             echo 'Two complete render runs were byte-identical.'
             echo
-            echo 'Artifact contains 16 standard/control JPEGs and makes no inapplicable Dynamic Type claim.'
+            echo 'Artifact contains 14 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload macOS design evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

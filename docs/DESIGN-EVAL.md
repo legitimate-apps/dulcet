@@ -42,8 +42,9 @@ environment is fixed:
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
-measured window-frame and capture-bound coordinates, rendered control-active state, byte lengths, and
-SHA-256 digests. Each JPEG also carries a binding comment with its canonical fixture state,
+per-record window-frame and capture-bound coordinates, rendered control-active state, provenance,
+byte lengths, and SHA-256 digests. Current-run references carry measured geometry; pinned controls
+carry the reviewed baseline geometry. Each JPEG also carries a binding comment with its canonical fixture state,
 appearance, variant, and the SHA-256 of the original compressed visual payload. The verifier removes
 that comment, reconstructs and hashes the payload, and requires its embedded labels to agree with both
 the filename and manifest. It also requires all 16 final JPEG byte streams and all 16 compressed
@@ -56,7 +57,9 @@ were replaced by one image while every manifest hash and byte count was updated,
 payloads swapped between labels with their manifest evidence updated, one visual payload rebound to
 16 distinct valid label comments with every manifest hash and byte count updated, a byte-identical capture
 mislabeled as a different Dynamic Type treatment, a manifest claiming translated capture bounds, and
-a manifest claiming an inactive rendered control state.
+a manifest claiming an inactive rendered control state. It also substitutes a different valid,
+correctly rebound control JPEG and updates that file's ordinary manifest evidence; the pinned digest
+must still reject it.
 
 ### 1.1 Standard set: 16 JPEGs
 
@@ -93,7 +96,33 @@ They intentionally contain broken spacing, a clashing accent, inconsistent typog
 contrast, arbitrary card styling, and mismatched hierarchy. They are calibration evidence, never a
 product design.
 
-### 1.2 No macOS Dynamic Type capture
+### 1.2 Pinned negative-control baseline
+
+The two bad-control JPEGs are reviewed, checked-in resources under
+`apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls`. A normal capture with
+`--include-control` does not render `DulcetDeliberatelyBadControlView`; it copies those bundled bytes
+verbatim. The capture executable and artifact verifier each hold the reviewed SHA-256 values, manifest
+schema 8 records `controlBaselinePolicy` and `pinnedControlSha256`, and the verifier rejects a
+`captureProvenance` of `bundled-pinned-resource` rather than `rendered-current-run`, and the verifier
+rejects a substituted valid JPEG even when its ordinary manifest hash and byte count have been
+updated. Thus UI, fixture, renderer, font, or runner changes cannot silently move the calibration
+reference. Geometry and active-control fields on a pinned record describe the reviewed baseline
+image; they are not a claim that the control was re-rendered in the current run.
+
+Control regeneration is an explicit candidate-producing act:
+
+```sh
+tools/regenerate-design-control-baseline <new-candidate-directory>
+```
+
+The command renders both appearances, prints pinned and candidate SHA-256 values, and never modifies
+the checked-in resources. Accepting a change requires reviewing both candidate images, replacing both
+resources as one reviewable commit, and updating the expected hashes in `DulcetCapture` and
+`tools/verify_design_captures.py`. **Any accepted control change creates a new calibration baseline:
+every previously recorded score must be re-run with two fresh raters. Scores from before and after the
+control change must never be compared, averaged, or presented as a trend.**
+
+### 1.3 No macOS Dynamic Type capture
 
 **OBSERVED 2026-08-21 ([Apple SwiftUI API reference](https://developer.apple.com/documentation/swiftui/environmentvalues/dynamictypesize)):**
 `EnvironmentValues.dynamicTypeSize` does not affect text size on macOS. The earlier `accessibility5`
@@ -116,7 +145,8 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   differentiation;
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
-- actual AppKit window-frame size and zero-origin theme-frame capture bounds recorded for every JPEG;
+- actual AppKit window-frame size and zero-origin theme-frame capture bounds for the 14 current-run
+  reference JPEGs, plus reviewed baseline geometry and explicit pinned provenance for the two controls;
 - the explicitly rendered key control state. This is not a claim that the hosted command-line process
   became the desktop's active application;
 - visible focus and contrast cues;
@@ -245,8 +275,10 @@ action is clipped, when any control lacks a label, or when WCAG AA contrast has 
 
 ## 6. Lens calibration and negative-control gate — failure voids the run
 
-Each rater scores each bad-control appearance using the same taste rubric as the corresponding good
-`library-browse` image. The bad controls are excluded from the product average.
+Each rater scores each pinned bad-control appearance using the same taste rubric as the corresponding
+good `library-browse` image. The bad controls are excluded from the product average. A rating run must
+record the two pinned control SHA-256 values; only runs with the same two values share a baseline and
+may be compared.
 
 For **each rater** and **each appearance**, all five conditions must hold:
 

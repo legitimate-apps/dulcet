@@ -24,6 +24,10 @@ WIDTH = 1180
 HEIGHT = 760
 MIN_JPEG_BYTES = 5_000
 MAX_JPEG_BYTES = 350_000
+PINNED_CONTROL_SHA256 = {
+    "light": "3c46bfa842033834d417f276c43ee29ce85e1f4eefd8cbea17faedecf1d6c60f",
+    "dark": "ba23a4b9b8f257a747cf9050a03b54e5fb2e1f8f18ecca97ec1db8fce2cc74f6",
+}
 
 
 class CaptureVerificationError(RuntimeError):
@@ -135,7 +139,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 7,
+        "schemaVersion": 8,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -148,6 +152,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "timeZone": "UTC",
         "fixedClock": "2026-08-21T14:32:00Z",
         "network": "disabled-by-fixture-source",
+        "controlBaselinePolicy": "bundled-reviewed-resources-explicit-regeneration-only",
     }
     for key, expected_value in contract.items():
         if manifest.get(key) != expected_value:
@@ -243,6 +248,29 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             raise CaptureVerificationError(f"{directory.name}/{filename} appearance mismatch")
         if record.get("variant") != expected_variant:
             raise CaptureVerificationError(f"{directory.name}/{filename} variant mismatch")
+        if expected_variant == "deliberately-bad-control":
+            if record.get("captureProvenance") != "bundled-pinned-resource":
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} pinned control provenance mismatch"
+                )
+            pinned_hash = PINNED_CONTROL_SHA256[expected_appearance]
+            if expected_hash != pinned_hash:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} pinned control bytes mismatch"
+                )
+            if record.get("pinnedControlSha256") != pinned_hash:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} pinnedControlSha256 mismatch"
+                )
+        else:
+            if record.get("captureProvenance") != "rendered-current-run":
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} reference capture provenance mismatch"
+                )
+            if "pinnedControlSha256" in record:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} reference capture claims a pinned control hash"
+                )
         binding = bindings_by_file[filename]
         for field, expected_value in (
             ("fixtureState", expected_state),
@@ -307,7 +335,8 @@ def main() -> None:
         "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
         "pairwise-distinct=true visual-payloads-distinct=true "
-        "payload-label-bindings=true dynamic-type-claim=absent"
+        "payload-label-bindings=true dynamic-type-claim=absent "
+        "pinned-controls=true control-provenance=verified"
     )
 
 

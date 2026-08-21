@@ -20,7 +20,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "DulcetCapture",
-            dependencies: ["DulcetKit"]
+            dependencies: ["DulcetKit"],
+            resources: [.copy("Resources/PinnedControls")]
         ),
         .testTarget(name: "DulcetKitTests", dependencies: ["DulcetKit"]),
     ]
