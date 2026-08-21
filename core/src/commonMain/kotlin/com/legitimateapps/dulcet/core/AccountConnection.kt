@@ -311,7 +311,11 @@ public class AccountConnector(
         }
         val serverProtocolVersion = pingEnvelope.string("version")
             ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
-        if (!isCompatibleVersion(AccountConnectionContract.protocolVersion, serverProtocolVersion)) {
+        val protocolCompatible = AccountConnectionContract.isCompatibleVersion(
+            AccountConnectionContract.protocolVersion,
+            serverProtocolVersion,
+        )
+        if (!protocolCompatible) {
             return AccountConnectionResult.Failed(
                 DomainError.Protocol.Incompatible(
                     clientVersion = RedactedText.from(AccountConnectionContract.protocolVersion),
@@ -640,6 +644,12 @@ public object AccountConnectionContract {
     public fun saltedToken(password: String, salt: String): String =
         md5Hex(password + salt)
 
+    public fun isCompatibleVersion(clientVersion: String, serverVersion: String): Boolean {
+        val client = clientVersion.parseProtocolVersion() ?: return false
+        val server = serverVersion.parseProtocolVersion() ?: return false
+        return client.first == server.first && client.second <= server.second
+    }
+
     public fun redirectDecision(
         currentUrl: String,
         targetUrl: String,
@@ -799,12 +809,6 @@ private fun String.isLocalHttpHost(): Boolean {
         octets[0] == 10 ||
         (octets[0] == 172 && octets[1] in 16..31) ||
         (octets[0] == 192 && octets[1] == 168)
-}
-
-private fun isCompatibleVersion(clientVersion: String, serverVersion: String): Boolean {
-    val client = clientVersion.parseProtocolVersion() ?: return false
-    val server = serverVersion.parseProtocolVersion() ?: return false
-    return client.first == server.first && client.second <= server.second
 }
 
 private fun String.parseProtocolVersion(): Pair<Int, Int>? {
