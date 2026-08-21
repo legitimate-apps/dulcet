@@ -148,6 +148,6 @@ jobs:
             --base-url http://127.0.0.1:4533 \
             --runtime darwin/arm64 \
             --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
-             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
-             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
-             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
