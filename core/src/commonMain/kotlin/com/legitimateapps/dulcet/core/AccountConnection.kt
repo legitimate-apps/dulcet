@@ -3,12 +3,17 @@ package com.legitimateapps.dulcet.core
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.api.SendingRequest
+import io.ktor.client.plugins.api.createClientPlugin
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Parameters
+import io.ktor.http.content.OutgoingContent
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -33,15 +38,45 @@ public enum class AuthenticationLocation {
     Query,
 }
 
+public enum class RequestObservationBoundary {
+    KtorSendingRequest,
+}
+
 /** Redacted request evidence retained for diagnostics and conformance assertions. */
-public data class RequestTrace(
-    val endpoint: String,
-    val method: String,
-    val redactedUrl: String,
-    val authenticationLocation: AuthenticationLocation,
-    val requestedProtocolVersion: String?,
-    val saltFingerprint: String?,
-)
+public class RequestTrace private constructor(
+    public val endpoint: String,
+    public val method: String,
+    public val redactedUrl: String,
+    public val authenticationLocation: AuthenticationLocation,
+    public val requestedProtocolVersion: String?,
+    public val saltFingerprint: String?,
+    public val observationBoundary: RequestObservationBoundary,
+) {
+    override fun toString(): String =
+        "RequestTrace(endpoint=$endpoint, method=$method, redactedUrl=$redactedUrl, " +
+            "authenticationLocation=$authenticationLocation, " +
+            "requestedProtocolVersion=$requestedProtocolVersion, " +
+            "saltFingerprint=$saltFingerprint, observationBoundary=$observationBoundary)"
+
+    public companion object {
+        internal fun observed(
+            endpoint: String,
+            method: String,
+            redactedUrl: String,
+            authenticationLocation: AuthenticationLocation,
+            requestedProtocolVersion: String?,
+            saltFingerprint: String?,
+        ): RequestTrace = RequestTrace(
+            endpoint = endpoint,
+            method = method,
+            redactedUrl = redactedUrl,
+            authenticationLocation = authenticationLocation,
+            requestedProtocolVersion = requestedProtocolVersion,
+            saltFingerprint = saltFingerprint,
+            observationBoundary = RequestObservationBoundary.KtorSendingRequest,
+        )
+    }
+}
 
 public data class UserPermissions(
     val download: Boolean,
@@ -164,9 +199,13 @@ public class AccountConnector(
         }
         normalized as NormalizedServerUrl.Valid
 
+        val traceRecorder = RequestTraceRecorder(logSink)
         val client = HttpClient {
             expectSuccess = false
             followRedirects = false
+            install(RequestTracePlugin) {
+                observe = traceRecorder::observe
+            }
             install(HttpTimeout) {
                 connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
                 requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
@@ -177,8 +216,9 @@ public class AccountConnector(
             var lastResult: AccountConnectionResult =
                 AccountConnectionResult.Failed(DomainError.Transport.Unreachable)
             normalized.candidates.forEachIndexed { index, baseUrl ->
+                traceRecorder.clear()
                 val result = try {
-                    connectNormalized(client, baseUrl, request)
+                    connectNormalized(client, baseUrl, request, traceRecorder)
                 } catch (_: HttpRequestTimeoutException) {
                     AccountConnectionResult.Failed(DomainError.Transport.Timeout)
                 } catch (_: CancellationException) {
@@ -204,8 +244,8 @@ public class AccountConnector(
         client: HttpClient,
         baseUrl: String,
         request: AccountConnectionRequest,
+        traceRecorder: RequestTraceRecorder,
     ): AccountConnectionResult {
-        val traces = mutableListOf<RequestTrace>()
         val extensionResponse = request(
             client = client,
             baseUrl = baseUrl,
@@ -213,7 +253,7 @@ public class AccountConnector(
             endpointParameters = emptyMap(),
             credentials = null,
             formPost = false,
-            traces = traces,
+            traceRecorder = traceRecorder,
         )
         val extensionEnvelope = parseEnvelope(extensionResponse.body)
         val extensions = extensionEnvelope?.takeIf { it.status == "ok" }
@@ -230,7 +270,7 @@ public class AccountConnector(
             endpointParameters = emptyMap(),
             credentials = request,
             formPost = formPost,
-            traces = traces,
+            traceRecorder = traceRecorder,
         )
         val pingEnvelope = parseEnvelope(ping.body)
             ?: return AccountConnectionResult.Failed(
@@ -263,7 +303,7 @@ public class AccountConnector(
             endpointParameters = mapOf("username" to request.username),
             credentials = request,
             formPost = formPost,
-            traces = traces,
+            traceRecorder = traceRecorder,
         )
         val userEnvelope = parseEnvelope(userResponse.body)
             ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
@@ -294,7 +334,7 @@ public class AccountConnector(
                     ),
                     legacySubsonic = extensionListUnavailable,
                 ),
-                requests = traces.toList(),
+                requests = traceRecorder.snapshot(),
             ),
         )
     }
@@ -306,7 +346,7 @@ public class AccountConnector(
         endpointParameters: Map<String, String>,
         credentials: AccountConnectionRequest,
         formPost: Boolean,
-        traces: MutableList<RequestTrace>,
+        traceRecorder: RequestTraceRecorder,
     ): WireResponse {
         val source = saltSource ?: AccountConnectionContract.secureSaltSource()
         val salt = source.nextSalt()
@@ -323,7 +363,7 @@ public class AccountConnector(
                 salt = salt,
             ),
             formPost = formPost,
-            traces = traces,
+            traceRecorder = traceRecorder,
         )
     }
 
@@ -334,7 +374,7 @@ public class AccountConnector(
         endpointParameters: Map<String, String>,
         credentials: AuthenticationParameters?,
         formPost: Boolean,
-        traces: MutableList<RequestTrace>,
+        traceRecorder: RequestTraceRecorder,
     ): WireResponse {
         val endpointUrl = "$baseUrl/rest/$endpoint.view"
         val commonParameters = linkedMapOf(
@@ -347,7 +387,6 @@ public class AccountConnector(
             linkedMapOf("u" to it.username, "t" to it.token, "s" to it.salt)
         }.orEmpty()
         val useForm = credentials != null && formPost
-        val method = if (useForm) "POST" else "GET"
         val response: HttpResponse = if (useForm) {
             client.submitForm(
                 url = endpointUrl,
@@ -363,31 +402,10 @@ public class AccountConnector(
                 authentication.forEach { (key, value) -> parameter(key, value) }
             }
         }
-        val diagnosticUrl = if (credentials == null) {
-            Redactor.redactUrl("$endpointUrl?v=${AccountConnectionContract.protocolVersion}")
-        } else {
-            Redactor.redactUrl("$endpointUrl?authentication=present")
-        }
-        val trace = RequestTrace(
-            endpoint = endpoint,
-            method = method,
-            redactedUrl = diagnosticUrl,
-            authenticationLocation = when {
-                credentials == null -> AuthenticationLocation.None
-                useForm -> AuthenticationLocation.FormBody
-                else -> AuthenticationLocation.Query
-            },
-            requestedProtocolVersion = AccountConnectionContract.protocolVersion,
-            saltFingerprint = credentials?.salt?.let { md5Hex("salt:$it") },
-        )
-        traces += trace
-        logSink?.write(
-            "account.connect endpoint=${trace.endpoint} method=${trace.method} url=${trace.redactedUrl}",
-        )
         return WireResponse(
             statusCode = response.status.value,
             body = response.bodyAsText(),
-            logicalRequestUrl = diagnosticUrl,
+            logicalRequestUrl = traceRecorder.latestRedactedUrl(),
         )
     }
 
@@ -420,6 +438,55 @@ public class AccountConnector(
         const val CLIENT_NAME = "Dulcet"
         const val REQUEST_TIMEOUT_MILLIS = 10_000L
         val SALT_PATTERN = Regex("[0-9a-f]{32}")
+    }
+}
+
+private class RequestTracePluginConfig {
+    lateinit var observe: (HttpRequestBuilder, OutgoingContent) -> Unit
+}
+
+private val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
+    val observe = pluginConfig.observe
+    on(SendingRequest) { request, content -> observe(request, content) }
+}
+
+private class RequestTraceRecorder(private val logSink: LogSink?) {
+    private val traces = mutableListOf<RequestTrace>()
+
+    fun clear() {
+        traces.clear()
+    }
+
+    fun observe(request: HttpRequestBuilder, content: OutgoingContent) {
+        val query = request.url.parameters
+        val form = (content as? FormDataContent)?.formData ?: Parameters.Empty
+        val authenticationLocation = when {
+            AUTHENTICATION_KEYS.any { query[it] != null } -> AuthenticationLocation.Query
+            AUTHENTICATION_KEYS.any { form[it] != null } -> AuthenticationLocation.FormBody
+            else -> AuthenticationLocation.None
+        }
+        val salt = query["s"] ?: form["s"]
+        val trace = RequestTrace.observed(
+            endpoint = request.url.encodedPath.substringAfterLast('/').removeSuffix(".view"),
+            method = request.method.value,
+            redactedUrl = Redactor.redactUrl(request.url.buildString()),
+            authenticationLocation = authenticationLocation,
+            requestedProtocolVersion = query["v"] ?: form["v"],
+            saltFingerprint = salt?.let { md5Hex("salt:$it") },
+        )
+        traces += trace
+        logSink?.write(
+            "account.connect endpoint=${trace.endpoint} method=${trace.method} url=${trace.redactedUrl}",
+        )
+    }
+
+    fun latestRedactedUrl(): String = traces.lastOrNull()?.redactedUrl
+        ?: error("Ktor send boundary did not observe the completed request")
+
+    fun snapshot(): List<RequestTrace> = traces.toList()
+
+    private companion object {
+        val AUTHENTICATION_KEYS = setOf("u", "t", "s", "p")
     }
 }
 
