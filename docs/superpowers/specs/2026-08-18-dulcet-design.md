@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 36 — proxy-auth neutralisation is explicitly ASSUMED and names the exact hosted control
-required to settle it; revision 35 made required-check drift explicitly a post-merge detector rather
+**Revision:** 37 — CONF-08 now exercises both advertised form authentication and legacy query
+authentication across an origin-changing redirect; revision 36 made proxy-auth neutralisation explicitly
+ASSUMED and named the exact hosted control required to settle it; revision 35 made required-check drift explicitly a post-merge detector rather
 than a pre-merge live control; revision 34 made raw internationalized hostnames receive an honest unsupported
 classification; revision 33 made Darwin report unsupported authentication challenges distinctly and record its
 fail-closed authentication limitation; revision 32 made bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
@@ -1356,7 +1357,9 @@ Normative policy, enforced in the transport layer and in the resource loader (§
   credentials attached.
 - Every request in the chain is inventoried at the Ktor send boundary and at the receiving wire
   fixture as header, query, and form channels. Each observed channel must resolve through an explicit
-  credential-or-metadata classification; an unknown channel fails CONF-08. **CONF-08 proves that each
+  credential-or-metadata classification; an unknown channel fails CONF-08. CONF-08 runs this policy
+  once with advertised `formPost` and again with a source that advertises no `formPost`, requiring the
+  authenticated source request to use GET/query placement in the latter scenario. **CONF-08 proves that each
   cross-origin target request is exactly the fixture-derived credential-free transformation of the
   validated source request: the permitted channel set, fixed protocol values, target authority, body
   length, and unchanged transport metadata must match. It does not claim to recognize every reversible
@@ -2225,7 +2228,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
-| CONF-08 | derives a closed header/query/form channel inventory from every request in the chain; validates the fixture's fixed protocol values and bounded transport metadata; preserves the exact issued credentials on same-origin hops; requires a cross-origin target to equal the credential-free transformation of its source request; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
+| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; derives a closed header/query/form channel inventory from every request in each chain; validates the fixture's fixed protocol values and bounded transport metadata; preserves the exact issued credentials on same-origin hops; requires a cross-origin target to equal the credential-free transformation of its source request; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2917,6 +2920,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 37 (2026-08-21)** — authenticated query redirects entered CONF-08's reachable set.
+
+1. A hosted red control added `conf08EnforcesQueryAuthenticationRedirectCredentialPolicy`; 19 JVM
+   conformance tests ran and only that test failed because the second fixture scenario did not exist.
+2. `/cross-observe-query` advertises no `formPost`, requires the authenticated source request to be a
+   GET with the exact salted-token tuple in its query and no form body, and redirects to a separately
+   observed target route.
+3. The target expectation is derived from that observed query-authenticated source request. Credential
+   channels and metadata channels whose values duplicate a credential are removed; the remaining query
+   metadata must reach the target unchanged before its intentional 401 becomes
+   `Auth.RedirectCredentialLoss`.
 
 **Revision 36 (2026-08-21)** — proxy-auth evidence stopped at the measured boundary.
 

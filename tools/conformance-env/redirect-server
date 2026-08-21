@@ -165,13 +165,17 @@ def cross_origin_target_matches_expectation(
     )
 
 
-def envelope(endpoint: str) -> dict[str, object]:
+def envelope(endpoint: str, *, advertise_form_post: bool = True) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": "ok",
         "version": "1.16.1",
     }
     if endpoint == "getOpenSubsonicExtensions":
-        payload["openSubsonicExtensions"] = [{"name": "formPost", "versions": [1]}]
+        payload["openSubsonicExtensions"] = (
+            [{"name": "formPost", "versions": [1]}]
+            if advertise_form_post
+            else []
+        )
     elif endpoint == "ping":
         payload.update(
             {
@@ -296,12 +300,20 @@ class RedirectHandler(BaseHTTPRequestHandler):
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/cross-observe/rest/"):
-            if not self._observes_expected_channels(endpoint, channels, body):
+            if not self._observes_expected_channels(endpoint, channels, body, "form"):
                 self._send_json(500, {"error": "cross-origin source credential channels failed"})
                 return
             STATE.remember("cross-observe", endpoint, self.command, channels)
             target_port = self.server.target_port  # type: ignore[attr-defined]
             self._redirect(f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/cross-observe-query/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body, "query"):
+                self._send_json(500, {"error": "cross-origin query source channels failed"})
+                return
+            STATE.remember("cross-observe-query", endpoint, self.command, channels)
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            self._redirect(f"http://127.0.0.1:{target_port}/cross-target-query/rest/{endpoint}.view")
             return
         if parsed.path.startswith("/cross-target/rest/"):
             if not self._all_channels_accounted_for(channels):
@@ -325,6 +337,31 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 return
             if endpoint == "getOpenSubsonicExtensions":
                 self._send_json(200, envelope(endpoint))
+            else:
+                self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+        if parsed.path.startswith("/cross-target-query/rest/"):
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted cross-origin query target channel"})
+                return
+            if self._has_authentication(channels):
+                self._send_json(500, {"error": "query credentials crossed an origin boundary"})
+                return
+            source_channels = STATE.source_channels("cross-observe-query", endpoint)
+            if source_channels is None:
+                self._send_json(500, {"error": "cross-origin query target had no observed source"})
+                return
+            target_authority = f"127.0.0.1:{self.server.server_port}"
+            if not cross_origin_target_matches_expectation(
+                source_channels,
+                channels,
+                body,
+                target_authority,
+            ):
+                self._send_json(500, {"error": "cross-origin query target differed from expectation"})
+                return
+            if endpoint == "getOpenSubsonicExtensions":
+                self._send_json(200, envelope(endpoint, advertise_form_post=False))
             else:
                 self._send_json(401, {"error": "authentication intentionally absent"})
             return
@@ -384,6 +421,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
         endpoint: str,
         channels: tuple[ObservedChannel, ...],
         body: bytes,
+        authentication_location: str = "form",
     ) -> bool:
         if not self._all_channels_accounted_for(channels):
             self._oracle_mismatch("source-unaccounted-channel", channels)
@@ -407,25 +445,37 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not matches:
                 self._oracle_mismatch("source-extension-application-channels", channels)
             return matches
-        expected_form = {
+        application_channels = query if authentication_location == "query" else form
+        expected_application_channels = {
             "c": ("Dulcet",),
             "f": ("json",),
-            "s": tuple(value for value in form.get("s", ()) if re.fullmatch(r"[0-9a-f]{32}", value)),
-            "t": tuple(value for value in form.get("t", ()) if re.fullmatch(r"[0-9a-f]{32}", value)),
+            "s": tuple(
+                value
+                for value in application_channels.get("s", ())
+                if re.fullmatch(r"[0-9a-f]{32}", value)
+            ),
+            "t": tuple(
+                value
+                for value in application_channels.get("t", ())
+                if re.fullmatch(r"[0-9a-f]{32}", value)
+            ),
             "u": ("dulcet-admin",),
             "v": ("1.16.1",),
         }
         if endpoint == "getUser":
-            expected_form["username"] = ("dulcet-admin",)
+            expected_application_channels["username"] = ("dulcet-admin",)
+        expected_method = "GET" if authentication_location == "query" else "POST"
+        expected_query_authentication = {"u", "t", "s"} if authentication_location == "query" else set()
+        expected_form_authentication = {"u", "t", "s"} if authentication_location == "form" else set()
         matches = (
-            self.command == "POST"
+            self.command == expected_method
             and not header_authentication
-            and not query_authentication
-            and form_authentication == {"u", "t", "s"}
-            and not query
-            and form == expected_form
-            and len(form["s"]) == 1
-            and len(form["t"]) == 1
+            and query_authentication == expected_query_authentication
+            and form_authentication == expected_form_authentication
+            and query == (expected_application_channels if authentication_location == "query" else {})
+            and form == (expected_application_channels if authentication_location == "form" else {})
+            and len(application_channels["s"]) == 1
+            and len(application_channels["t"]) == 1
         )
         if not matches:
             self._oracle_mismatch(f"source-{endpoint}-application-channels", channels)
