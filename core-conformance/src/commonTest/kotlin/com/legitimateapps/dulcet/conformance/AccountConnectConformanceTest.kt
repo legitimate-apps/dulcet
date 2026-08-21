@@ -661,6 +661,15 @@ class AccountConnectConformanceTest {
         )
     }
 
+    @Test
+    fun conf08EnforcesQueryAuthenticationRedirectCredentialPolicy() = runTest {
+        val crossOrigin = fixture().connect("${redirectConformanceRoot()}/cross-observe-query")
+        val credentialLoss = assertIs<DomainError.Auth.RedirectCredentialLoss>(
+            assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
+        )
+        assertFalse(credentialLoss.redactedUrl.value.contains('?'))
+    }
+
     private fun assertEveryRequestChannelAccountedFor(trace: RequestTrace) {
         val accountedNames = mapOf(
             RequestChannelLocation.Header to setOf(
