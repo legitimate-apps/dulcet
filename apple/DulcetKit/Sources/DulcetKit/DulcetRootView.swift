@@ -60,18 +60,27 @@ public struct DulcetCaptureView: View {
         if variant == .deliberatelyBadControl {
             DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
         } else {
-            HStack(spacing: 0) {
-                DulcetSidebar(store: store)
-                    .frame(width: 232)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .layoutPriority(10)
-                    .zIndex(1)
-                Divider()
-                DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
-                    .id(store.snapshot.state.rawValue)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .zIndex(0)
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    DulcetSidebar(store: store)
+                        .frame(width: 232)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .zIndex(1)
+                    Divider()
+                    DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
+                        .id(store.snapshot.state.rawValue)
+                        .frame(
+                            width: max(0, geometry.size.width - 233),
+                            height: geometry.size.height
+                        )
+                        .clipped()
+                        .zIndex(0)
+                }
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    alignment: .leading
+                )
             }
             .background(Color.dulcetWindow)
         }
