@@ -259,6 +259,11 @@ private struct PlaybackObservation {
     let status: AVPlayerItem.Status
 }
 
+private struct HTTPFixtureServer {
+    let process: Process
+    let controlManifestURL: URL
+}
+
 private struct SpikeArguments {
     let expectedSegmentOutcome: String
     let simulateFirstSegmentOnly: Bool
@@ -277,14 +282,13 @@ private enum ResourceLoaderSpike {
             try createFixtures(at: root)
             let server = try startHTTPServer(root: root)
             defer {
-                server.terminate()
-                server.waitUntilExit()
+                server.process.terminate()
+                server.process.waitUntilExit()
             }
-            try waitForHTTPServer()
 
             let control = try play(
                 label: "HTTP HLS negative control",
-                url: URL(string: "http://127.0.0.1:18765/control.m3u8")!,
+                url: server.controlManifestURL,
                 loader: nil,
                 stopWhen: { observation in observation.maximumTime >= 1.20 }
             )
@@ -556,31 +560,51 @@ private enum ResourceLoaderSpike {
         ])
     }
 
-    private static func startHTTPServer(root: URL) throws -> Process {
+    private static func startHTTPServer(root: URL) throws -> HTTPFixtureServer {
+        let portFile = root.appendingPathComponent("http-port")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [
-            "-m", "http.server", "18765", "--bind", "127.0.0.1", "--directory", root.path,
+            "-c",
+            """
+            import http.server, os, pathlib, sys
+            os.chdir(sys.argv[1])
+            server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), http.server.SimpleHTTPRequestHandler)
+            pathlib.Path(sys.argv[2]).write_text(str(server.server_address[1]), encoding='ascii')
+            server.serve_forever()
+            """,
+            root.path,
+            portFile.path,
         ]
         process.standardOutput = FileHandle.standardError
         process.standardError = FileHandle.standardError
         try process.run()
-        return process
-    }
-
-    private static func waitForHTTPServer() throws {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
+            guard let portText = try? String(contentsOf: portFile, encoding: .ascii),
+                  let port = Int(portText)
+            else {
+                if !process.isRunning { throw SpikeError.httpServerDidNotStart }
+                Thread.sleep(forTimeInterval: 0.1)
+                continue
+            }
+            let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
             let semaphore = DispatchSemaphore(value: 0)
             var succeeded = false
-            URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:18765/control.m3u8")!) {
+            URLSession.shared.dataTask(with: controlURL) {
                 _, response, _ in
                 succeeded = (response as? HTTPURLResponse)?.statusCode == 200
                 semaphore.signal()
             }.resume()
             _ = semaphore.wait(timeout: .now() + 1)
-            if succeeded { return }
+            if succeeded {
+                return HTTPFixtureServer(process: process, controlManifestURL: controlURL)
+            }
             Thread.sleep(forTimeInterval: 0.1)
+        }
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
         }
         throw SpikeError.httpServerDidNotStart
     }
