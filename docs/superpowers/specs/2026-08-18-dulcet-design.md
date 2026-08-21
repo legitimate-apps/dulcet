@@ -6,8 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 38 — CONF-08 now derives and compares the full cross-origin target request, including
-method, exact path and raw query, and byte-exact body; revision 37 added both advertised form
+**Revision:** 39 — raw and percent-encoded internationalized hosts now share the honest unsupported
+classification, and §10.1 no longer promises unimplemented IDNA conversion; revision 38 made CONF-08
+derive and compare the full cross-origin target request, including method, exact path and raw query,
+and byte-exact body; revision 37 added both advertised form
 authentication and legacy query authentication scenarios; revision 36 made proxy-auth neutralisation explicitly
 ASSUMED and named the exact hosted control required to settle it; revision 35 made required-check drift explicitly a post-merge detector rather
 than a pre-merge live control; revision 34 made raw internationalized hostnames receive an honest unsupported
@@ -789,8 +791,10 @@ to the implementation. Given user input, Dulcet:
 2. if no scheme, tries **`https` first**. It adds an `http` candidate only after the user explicitly
    opts into the local exception; the candidate is still unusable until its resolved address passes
    §13.5 immediately before each request.
-3. accepts `host`, `host:port`, IPv6 literals in brackets, IDNs (converted to punycode for the
-   request, displayed as entered), and an arbitrary base path.
+3. accepts ASCII `host`, `host:port`, IPv6 literals in brackets, and an arbitrary base path.
+   Internationalized reg-name hosts are not converted through IDNA in Phase 1: otherwise bounded raw
+   or percent-encoded UTF-8 spellings fail before transport as
+   `Input.InvalidServerUrl(UnsupportedInternationalizedHost)`, distinct from `MalformedHost`.
 4. **strips a trailing `/rest`, `/rest/`, or a trailing `.view` component** if the user pasted an
    endpoint URL, and says so in the UI.
 5. normalizes the base path to have no trailing slash; endpoint URLs are built as
@@ -2923,6 +2927,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 39 (2026-08-21)** — percent-encoded internationalized hosts became honestly unsupported.
+
+1. A hosted red control showed that `https://m%C3%BCsic.example` bypassed revision 34's raw non-ASCII
+   classifier and reached transport rather than returning the distinct unsupported classification.
+2. URL normalization now decodes one structurally present reg-name percent-encoding layer as strict
+   UTF-8 solely for classification. If the decoded, otherwise bounded reg-name contains non-ASCII,
+   it returns `Input.InvalidServerUrl(UnsupportedInternationalizedHost)` before transport, matching
+   the raw spelling. This is classification, not IDNA conversion or hostname acceptance.
+3. §10.1's older promise that IDNs are converted to punycode contradicted both revision 34 and the
+   implementation. It is replaced by the decided Phase 1 limitation; malformed ASCII authorities
+   remain `MalformedHost`.
 
 **Revision 38 (2026-08-21)** — the cross-origin oracle became request-exact, not only channel-exact.
 
