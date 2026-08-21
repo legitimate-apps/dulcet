@@ -68,11 +68,6 @@ enum DulcetContrastColor {
         light: NSColor(red: 0.68, green: 0.10, blue: 0.14, alpha: 1),
         dark: NSColor(red: 1.00, green: 0.46, blue: 0.49, alpha: 1)
     )
-    static let combinedSource = adaptive(
-        name: "DulcetCombinedSource",
-        light: NSColor(red: 0.34, green: 0.16, blue: 0.43, alpha: 1),
-        dark: NSColor(red: 0.82, green: 0.63, blue: 0.91, alpha: 1)
-    )
 
     private static func adaptive(name: String, light: NSColor, dark: NSColor) -> NSColor {
         NSColor(name: NSColor.Name(name)) { appearance in
@@ -99,9 +94,6 @@ enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
     case secondaryTextOnOfflineTint = "secondary-text/offline-tint"
     case offlineIconOnTint = "offline-icon/offline-tint"
     case dangerIconOnTint = "danger-icon/danger-tint"
-    case localSourceLabelOnTint = "local-source-label/local-source-tint"
-    case serverSourceLabelOnTint = "server-source-label/server-source-tint"
-    case combinedSourceLabelOnTint = "combined-source-label/combined-source-tint"
 
     var foreground: Color {
         switch self {
@@ -112,17 +104,14 @@ enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
              .selectedSidebarLabelOnSelectionFill:
             .primary
         case .secondaryTextOnWindow, .secondaryTextOnControl, .secondaryTextOnOfflineTint,
-             .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial,
-             .localSourceLabelOnTint:
+             .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial:
             .dulcetSecondaryText
-        case .accentIconOnWindow, .accentIconOnTint, .serverSourceLabelOnTint:
+        case .accentIconOnWindow, .accentIconOnTint:
             .dulcetAccent
         case .offlineLabelOnControl, .offlineIconOnTint:
             .dulcetOffline
         case .dangerIconOnTint:
             .dulcetDanger
-        case .combinedSourceLabelOnTint:
-            Color(nsColor: DulcetContrastColor.combinedSource)
         }
     }
 
@@ -152,17 +141,7 @@ enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
         case .dangerIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetDanger.opacity(0.11))]
-        case .localSourceLabelOnTint, .serverSourceLabelOnTint, .combinedSourceLabelOnTint:
-            [
-                AnyShapeStyle(Color.dulcetWindow),
-                AnyShapeStyle(Color.dulcetControl.opacity(0.52)),
-                AnyShapeStyle(foreground.opacity(0.11)),
-            ]
         }
-    }
-
-    var immediateBackground: AnyShapeStyle {
-        backgroundLayers[backgroundLayers.index(before: backgroundLayers.endIndex)]
     }
 
     var minimumRatio: Double {
@@ -254,44 +233,6 @@ struct DulcetStatusDot: View {
             .frame(width: 8, height: 8)
             .overlay(Circle().stroke(.white.opacity(0.45), lineWidth: 1))
             .accessibilityHidden(true)
-    }
-}
-
-struct DulcetSourceBadge: View {
-    let source: DulcetSearchSource
-
-    var body: some View {
-        Label(title, systemImage: symbol)
-            .font(.caption.weight(.medium))
-            .dulcetForeground(contrastPair)
-            .padding(.horizontal, DulcetSpacing.xs)
-            .padding(.vertical, DulcetSpacing.xxs)
-            .background(contrastPair.immediateBackground, in: Capsule())
-            .accessibilityLabel(title)
-    }
-
-    private var title: String {
-        switch source {
-        case .local: DulcetStrings.local
-        case .server: DulcetStrings.server
-        case .localAndServer: DulcetStrings.localAndServer
-        }
-    }
-
-    private var symbol: String {
-        switch source {
-        case .local: "laptopcomputer"
-        case .server: "server.rack"
-        case .localAndServer: "arrow.triangle.2.circlepath"
-        }
-    }
-
-    private var contrastPair: DulcetRenderedContrastPair {
-        switch source {
-        case .local: .localSourceLabelOnTint
-        case .server: .serverSourceLabelOnTint
-        case .localAndServer: .combinedSourceLabelOnTint
-        }
     }
 }
 

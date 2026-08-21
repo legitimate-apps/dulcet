@@ -77,11 +77,12 @@ while carrying online detail data, or vice versa.
 The filenames are `macos-<state>-<appearance>.jpg`.
 
 The search fixture contains ten mixed-source results to exercise real scrolling and stable source
-annotation. The reference design does not compress those ten rows into one viewport: it preserves
-48-point artwork, subheadline metadata, caption source labels, and 12-point row padding, allowing the
-native scroll surface to reveal the remaining results. Lazy rendering remains in place for a real
-result set; legibility and hierarchy are not traded away to make the fixed evidence frame look
-artificially complete.
+annotation. Search uses SwiftUI's native macOS `Table`, with Result, Type, and Source columns and
+native row selection/scrolling. Source provenance is a plain label plus an SF Symbol in the Source
+column—not a custom capsule or status tag—and therefore aligns at the top of the same native row as
+the 40-point artwork and result identity. The table presents substantially more results in the fixed
+evidence frame while retaining title, subtitle, refresh status, kind, and source; the remaining rows
+stay available through the table's native scroll surface.
 
 The two negative-control files are:
 

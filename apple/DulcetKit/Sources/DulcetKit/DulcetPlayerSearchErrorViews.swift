@@ -172,122 +172,123 @@ struct DulcetNowPlayingView: View {
 }
 
 struct DulcetSearchView: View {
+    @State private var selectedResultID: DulcetSearchResult.ID?
     let snapshot: DulcetSnapshot
     @Binding var searchQuery: String
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    Text(DulcetStrings.searchTitle)
-                        .font(.largeTitle.weight(.bold))
-                        .accessibilityAddTraits(.isHeader)
-                    TextField(DulcetStrings.searchPrompt, text: $searchQuery)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.title3)
-                        .accessibilityLabel(DulcetStrings.searchPrompt)
-                    Text(DulcetStrings.searchSummary)
-                        .font(.subheadline)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(nil)
-                }
-
-                HStack(alignment: .firstTextBaseline) {
-                    Text(DulcetStrings.bestMatches)
-                        .font(.title2.weight(.semibold))
-                        .accessibilityAddTraits(.isHeader)
-                    Spacer()
-                    Text(DulcetStrings.trackCount(snapshot.searchResults.count))
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                }
-
-                LazyVStack(spacing: 0) {
-                    ForEach(snapshot.searchResults) { result in
-                        DulcetSearchResultRow(result: result)
-                        if result.id != snapshot.searchResults.last?.id {
-                            Divider().padding(.leading, 76)
-                        }
-                    }
-                }
-                .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .dulcetForeground(.primaryTextOnControl)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
-                }
+        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                Text(DulcetStrings.searchTitle)
+                    .font(.largeTitle.weight(.bold))
+                    .accessibilityAddTraits(.isHeader)
+                TextField(DulcetStrings.searchPrompt, text: $searchQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3)
+                    .accessibilityLabel(DulcetStrings.searchPrompt)
+                Text(DulcetStrings.searchSummary)
+                    .font(.subheadline)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(nil)
             }
-            .padding(DulcetSpacing.xl)
+
+            HStack(alignment: .firstTextBaseline) {
+                Text(DulcetStrings.bestMatches)
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Text(DulcetStrings.trackCount(snapshot.searchResults.count))
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+            }
+
+            Table(snapshot.searchResults, selection: $selectedResultID) {
+                TableColumn(DulcetStrings.resultColumn) { result in
+                    DulcetSearchResultIdentity(result: result)
+                }
+                .width(min: 320, ideal: 500)
+
+                TableColumn(DulcetStrings.typeColumn) { result in
+                    Text(result.kind.displayTitle)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                }
+                .width(min: 72, ideal: 90, max: 110)
+
+                TableColumn(DulcetStrings.sourceColumn) { result in
+                    Label(result.source.displayTitle, systemImage: result.source.symbolName)
+                        .labelStyle(.titleAndIcon)
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .accessibilityLabel(result.source.displayTitle)
+                }
+                .width(min: 132, ideal: 150, max: 180)
+            }
+            .tableStyle(.inset(alternatesRowBackgrounds: false))
         }
+        .padding(DulcetSpacing.xl)
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.search)
     }
 }
 
-private struct DulcetSearchResultRow: View {
+private struct DulcetSearchResultIdentity: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let result: DulcetSearchResult
 
     var body: some View {
-        Button(action: {}) {
-            HStack(alignment: .center, spacing: DulcetSpacing.md) {
-                DulcetArtworkView(artwork: result.artwork, size: 48)
+        HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+            DulcetArtworkView(artwork: result.artwork, size: 40)
 
-                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                    HStack(spacing: DulcetSpacing.xs) {
-                        Text(result.title)
-                            .font(.headline)
-                            .dulcetForeground(.primaryTextOnControl)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                        Text(kindTitle)
-                            .font(.caption)
-                            .dulcetForeground(.secondaryTextOnControl)
-                    }
-                    Text(result.subtitle)
-                        .font(.subheadline)
-                        .dulcetForeground(.secondaryTextOnControl)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    if result.refreshedFromServer {
-                        Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
-                            .font(.caption)
-                            .dulcetForeground(.secondaryTextOnControl)
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.title)
+                    .font(.headline)
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                Text(result.subtitle)
+                    .font(.subheadline)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                if result.refreshedFromServer {
+                    Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
                 }
-
-                Spacer(minLength: DulcetSpacing.sm)
-                DulcetSourceBadge(source: result.source)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .dulcetForeground(.secondaryTextOnControl)
-                    .accessibilityHidden(true)
             }
-            .padding(DulcetSpacing.sm)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 2)
         .accessibilityLabel(DulcetStrings.searchResultAccessibility(
             title: result.title,
             subtitle: result.subtitle,
-            kind: kindTitle,
-            source: sourceTitle
+            kind: result.kind.displayTitle,
+            source: result.source.displayTitle
         ))
-        .accessibilityHint(DulcetStrings.play)
     }
+}
 
-    private var kindTitle: String {
-        switch result.kind {
+extension DulcetSearchResultKind {
+    var displayTitle: String {
+        switch self {
         case .track: DulcetStrings.track
         case .album: DulcetStrings.album
         case .artist: DulcetStrings.artist
         }
     }
+}
 
-    private var sourceTitle: String {
-        switch result.source {
+extension DulcetSearchSource {
+    var displayTitle: String {
+        switch self {
         case .local: DulcetStrings.local
         case .server: DulcetStrings.server
         case .localAndServer: DulcetStrings.localAndServer
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .local: "laptopcomputer"
+        case .server: "server.rack"
+        case .localAndServer: "arrow.triangle.2.circlepath"
         }
     }
 }

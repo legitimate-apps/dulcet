@@ -46,6 +46,10 @@ func searchFixtureMakesMergedSourcesExplicitWithoutDuplicates() {
     #expect(Set(snapshot.searchResults.map(\.id)).count == snapshot.searchResults.count)
     #expect(snapshot.searchResults.contains { $0.refreshedFromServer })
     #expect(snapshot.searchResults.count == 10)
+    #expect(DulcetSearchSource.local.displayTitle == DulcetStrings.local)
+    #expect(DulcetSearchSource.server.displayTitle == DulcetStrings.server)
+    #expect(DulcetSearchSource.localAndServer.displayTitle == DulcetStrings.localAndServer)
+    #expect(Set(DulcetSearchSource.allCases.map(\.symbolName)).count == 3)
 }
 
 @Test @MainActor

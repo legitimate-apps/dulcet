@@ -40,6 +40,9 @@
 "search.prompt" = "Artists, albums, and tracks";
 "search.summary" = "Local results appear immediately. Server matches refresh the same row instead of creating a duplicate.";
 "search.bestMatches" = "Best Matches";
+"search.column.result" = "Result";
+"search.column.type" = "Type";
+"search.column.source" = "Source";
 "search.source.local" = "On this Mac";
 "search.source.server" = "Server";
 "search.source.both" = "Mac + Server";
