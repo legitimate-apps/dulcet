@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 import DulcetKit
 import Foundation
 import SwiftUI
@@ -169,7 +170,17 @@ private struct DulcetCaptureMain {
     private static let jpegCompression = 0.72
 
     @MainActor
-    static func main() throws {
+    static func main() {
+        do {
+            try run()
+        } catch {
+            FileHandle.standardError.write(Data("DULCET CAPTURE ERROR \(error)\n".utf8))
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    @MainActor
+    private static func run() throws {
         let options = try CaptureOptions(arguments: Array(CommandLine.arguments.dropFirst()))
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: options.outputDirectory.path) {

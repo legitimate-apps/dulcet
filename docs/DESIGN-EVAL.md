@@ -87,8 +87,11 @@ product design.
 set injected that environment value and then labeled the output as scaled even when the rendered
 bytes were unchanged. Those files were not evidence and are no longer emitted. The capture executable
 rejects `--dynamic-type` on macOS, and the artifact verifier rejects a byte-identical
-standard/treatment pair before accepting an evidence set. A future macOS text-resizing claim requires
-a platform-applicable mechanism and visibly changed rendered evidence first.
+standard/treatment pair before accepting an evidence set. CI first builds and locates the capture
+binary under normal fail-fast behavior, then invokes that binary and requires exit code 1, the exact
+unsupported-Dynamic-Type diagnostic, and no output directory. A setup or compilation failure cannot
+satisfy the negative control. A future macOS text-resizing claim requires a platform-applicable
+mechanism and visibly changed rendered evidence first.
 
 ## 2. What can and cannot be concluded
 

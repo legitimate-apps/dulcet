@@ -61,18 +61,21 @@ jobs:
         run: swift test --package-path apple/DulcetKit
       - name: Prove macOS capture rejects an inapplicable Dynamic Type label
         run: |
+          swift build --package-path apple/DulcetKit --product DulcetCapture
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
+          test -x "$capture_binary"
           set +e
-          output="$(swift run --package-path apple/DulcetKit DulcetCapture \
+          capture_output="$("$capture_binary" \
             --output "$RUNNER_TEMP/rejected-dynamic-type" \
             --state empty-library-no-account --appearance light \
             --dynamic-type accessibility5 2>&1)"
-          status=$?
+          capture_exit_code=$?
           set -e
-          printf '%s\n' "$output"
-          test "$status" -ne 0
-          grep -q 'macOS capture cannot claim Dynamic Type accessibility5' <<< "$output"
+          printf '%s\n' "$capture_output"
+          test "$capture_exit_code" -eq 1
+          grep -Fxq 'DULCET CAPTURE ERROR macOS capture cannot claim Dynamic Type accessibility5: SwiftUI dynamicTypeSize does not affect text size on macOS' <<< "$capture_output"
           test ! -e "$RUNNER_TEMP/rejected-dynamic-type"
-          echo "DYNAMIC TYPE NEGATIVE CONTROL PASS label=accessibility5 rejected=true output-created=false"
+          echo "DYNAMIC TYPE NEGATIVE CONTROL PASS setup=binary-built exact-diagnostic=true label=accessibility5 rejected=true output-created=false"
       - name: Capture deterministic macOS design evidence twice
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
