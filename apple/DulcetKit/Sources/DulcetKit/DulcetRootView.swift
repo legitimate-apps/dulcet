@@ -175,11 +175,11 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(DulcetStrings.serverStatus(serverName))
-        case let .connectionFailed(serverName):
+        case let .connectionFailed(failure):
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetStatusDot(color: .dulcetDanger)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(serverName)
+                    Text(failure.serverName)
                         .font(.subheadline.weight(.medium))
                     Text(DulcetStrings.connectionFailed)
                         .font(.caption)
@@ -188,7 +188,7 @@ private struct DulcetSidebar: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(DulcetStrings.serverConnectionFailed(serverName))
+            .accessibilityLabel(DulcetStrings.serverConnectionFailed(failure.serverName))
         case let .offline(lastSyncedDescription):
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetStatusDot(color: .dulcetOffline)
@@ -238,7 +238,7 @@ private struct DulcetStateSurface: View {
         case .searchMixedSources:
             DulcetSearchView(snapshot: snapshot, searchQuery: $searchQuery)
         case .tlsUntrusted:
-            if let failure = snapshot.tlsFailure {
+            if case let .connectionFailed(.tlsUntrusted(failure)) = snapshot.connectivity {
                 DulcetTLSUntrustedView(failure: failure)
             }
         case .offlineMetadataOnly:

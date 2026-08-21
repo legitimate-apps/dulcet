@@ -65,6 +65,10 @@ Each reference state appears in light and dark:
 6. `error-tls-untrusted`
 7. `offline-metadata-only`
 
+The TLS detail surface and sidebar footer both derive from the same typed
+`DulcetConnectionFailure.tlsUntrusted` value. A snapshot cannot independently claim a failed footer
+while carrying online detail data, or vice versa.
+
 The filenames are `macos-<state>-<appearance>.jpg`.
 
 The two negative-control files are:

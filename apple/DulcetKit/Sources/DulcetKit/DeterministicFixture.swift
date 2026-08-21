@@ -26,7 +26,7 @@ public struct DulcetDeterministicFixture {
         case .searchMixedSources:
             return base.snapshot(searchQuery: "atlas", searchResults: Self.searchResults)
         case .tlsUntrusted:
-            return base.snapshot(tlsFailure: Self.tlsFailure)
+            return base.snapshot()
         case .offlineMetadataOnly:
             let offlineAlbums = library.map { album in
                 DulcetAlbum(
@@ -67,7 +67,7 @@ public struct DulcetDeterministicFixture {
         case .emptyLibraryNoAccount:
             .unavailable
         case .tlsUntrusted:
-            .connectionFailed(serverName: Self.tlsFailure.serverName)
+            .connectionFailed(.tlsUntrusted(Self.tlsFailure))
         case .offlineMetadataOnly:
             .offline(lastSyncedDescription: "Today at 14:28 UTC")
         default:
@@ -128,7 +128,6 @@ private extension DulcetSnapshot {
             nowPlaying: nowPlaying,
             searchQuery: query,
             searchResults: searchResults,
-            tlsFailure: tlsFailure,
             captureDate: captureDate
         )
     }
@@ -148,8 +147,7 @@ private extension DulcetDeterministicFixture {
             selectedAlbum: DulcetAlbum? = nil,
             nowPlaying: DulcetNowPlaying? = nil,
             searchQuery: String = "",
-            searchResults: [DulcetSearchResult] = [],
-            tlsFailure: DulcetTLSFailure? = nil
+            searchResults: [DulcetSearchResult] = []
         ) -> DulcetSnapshot {
             DulcetSnapshot(
                 state: state,
@@ -162,7 +160,6 @@ private extension DulcetDeterministicFixture {
                 nowPlaying: nowPlaying,
                 searchQuery: searchQuery,
                 searchResults: searchResults,
-                tlsFailure: tlsFailure,
                 captureDate: DulcetDeterministicFixture.captureDate
             )
         }

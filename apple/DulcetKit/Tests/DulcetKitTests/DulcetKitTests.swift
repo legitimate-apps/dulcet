@@ -51,12 +51,15 @@ func searchFixtureMakesMergedSourcesExplicitWithoutDuplicates() {
 @Test @MainActor
 func tlsFailureIsUserPresentableAndSpecific() {
     let snapshot = DulcetDeterministicFixture().snapshot(for: .tlsUntrusted)
-    let failure = snapshot.tlsFailure
+    guard case let .connectionFailed(.tlsUntrusted(failure)) = snapshot.connectivity else {
+        Issue.record("TLS fixture did not derive both surfaces from one connection failure")
+        return
+    }
 
-    #expect(failure?.reason.localizedCaseInsensitiveContains("expired") == true)
-    #expect(failure?.technicalDetail.localizedCaseInsensitiveContains("OS-trusted") == true)
-    #expect(failure?.technicalDetail.contains("http") == false)
-    #expect(snapshot.connectivity == .connectionFailed(serverName: "Listening Room"))
+    #expect(failure.reason.localizedCaseInsensitiveContains("expired"))
+    #expect(failure.technicalDetail.localizedCaseInsensitiveContains("OS-trusted"))
+    #expect(!failure.technicalDetail.contains("http"))
+    #expect(failure.serverName == "Listening Room")
     #expect(DulcetStrings.tlsRemedyBody.contains("System keychain"))
     #expect(DulcetLinks.certificateInstallationGuide.host == "support.apple.com")
     #expect(DulcetLinks.certificateInstallationGuide.path.contains("add-certificates-to-a-keychain"))
