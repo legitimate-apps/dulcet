@@ -1049,8 +1049,9 @@ canary for exactly that powerless-test shape.
 
 **OBSERVED — the strengthened measurement closes only a narrower, enforced contract.** A progressive
 MP3 produces delegate byte-range requests. For HLS, the delegate resolves two absolute media URIs on
-different source origins, records their original URLs, and rewrites both into `dulcet-stream://`
-routes before returning the manifest. `AVPlayer` then requests **both named segments through the
+different source origins, records their original URLs, and rewrites both into opaque relative routes
+that resolve under the manifest's `dulcet-stream://` URL before returning it. `AVPlayer` then requests
+**both named segments through the
 delegate and plays beyond the first segment boundary without a swallowed error**. A fault-injection
 invocation lets the first segment route and fails the second; `apple-ci` proves that the measurement
 rejects that state before running the passing case.
@@ -1059,7 +1060,8 @@ This does **not** establish what AVFoundation does with arbitrary **unrewritten*
 cross-origin, redirected, or key URIs, and Dulcet does not make that behavior a product dependency.
 The production loader resolves every fetchable manifest URI — media segment, nested playlist,
 encryption key, and initialization map — before returning the manifest, stores the original absolute
-URL in loader-owned routing state, and substitutes an opaque custom-scheme route. Redirects then occur
+URL in loader-owned routing state, and substitutes an opaque route that resolves under the manifest's
+custom scheme. Redirects then occur
 inside the loader's `URLSession` request and remain subject to §13.3 rather than AVFoundation's
 unobserved behavior.
 
@@ -1085,7 +1087,8 @@ forces Path A to a progressive container.
 - **HLS** (`deliveryProtocol == Hls`, possible under the transcoding extension) is validated as a
   **manifest**, not as audio: the loader checks it parses as an M3U8, resolves every fetchable URI,
   applies the redirect/origin policy of §13.3, stores the approved absolute URL in its routing table,
-  and rewrites the manifest reference to an opaque `dulcet-stream://` route. Audio magic-byte rules
+  and rewrites the manifest reference to an opaque route token that resolves under the manifest's
+  `dulcet-stream://` URL. Audio magic-byte rules
   do not apply to the manifest.
 
 **The validator table is normative.** Prose bullets are not implementable; the implementation carries a

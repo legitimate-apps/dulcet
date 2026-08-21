@@ -16,7 +16,9 @@ strengthened Phase 1 spike established these deliberately bounded results:
   bytes used by `AVPlayer`.
 - An HLS manifest at `dulcet-stream://fixture/playlist.m3u8` reached the delegate. Before returning
   it, the delegate resolved two absolute media URIs on different source origins, stored those
-  original URLs in loader-owned routing state, and rewrote both to `dulcet-stream://` routes.
+  original URLs in loader-owned routing state, and rewrote both to opaque relative route tokens.
+  Resolved against the manifest's `dulcet-stream://` URL, every token remains under that custom
+  scheme and returns to the same delegate.
   `segment0.aac` and `segment1.aac` then each reached the delegate, and playback advanced beyond the
   first segment boundary without an `AVPlayerItem` failure.
 
@@ -30,7 +32,8 @@ requires that invocation to fail before it runs the passing measurement.
 **Chosen product contract:** Dulcet does not rely on AVFoundation preserving or routing arbitrary
 manifest topology. Before a manifest is returned, the production loader resolves and rewrites every
 fetchable URI — media segments, variant playlists, encryption keys, and initialization maps — into an
-opaque custom-scheme route backed by the loader's table of original absolute URLs. The spike executes
+opaque route token that resolves under the manifest's custom scheme and is backed by the loader's
+table of original absolute URLs. The spike executes
 the absolute, cross-origin media-segment case through `AVPlayer` and separately asserts that the same
 rewriter covers URI-bearing key/map tags and nested-playlist lines.
 

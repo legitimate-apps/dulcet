@@ -98,7 +98,10 @@ private final class ManifestRouter {
         routeToFixture[routePath] = fixture
         originalURLs.append(resolved.absoluteString)
         lock.unlock()
-        return "dulcet-stream://fixture/\(routePath)"
+        // AVFoundation rejects literal custom-scheme child URLs in an HLS
+        // manifest. A relative opaque route resolves against the manifest's
+        // custom-scheme URL and therefore still returns to this delegate.
+        return routePath
     }
 }
 
@@ -321,19 +324,27 @@ private enum ResourceLoaderSpike {
                 fixtureRoot: root,
                 simulateFirstSegmentOnly: arguments.simulateFirstSegmentOnly
             )
-            let hlsObservation = try play(
-                label: "custom-scheme HLS",
-                url: URL(string: "dulcet-stream://fixture/playlist.m3u8")!,
-                loader: hlsLoader,
-                stopWhen: { observation in
-                    let seen = Set(
-                        hlsLoader.recorder.events
-                            .filter { $0.path.hasPrefix("segment") }
-                            .map(\.path)
-                    )
-                    return observation.maximumTime >= 1.20 && requiredSegments.isSubset(of: seen)
-                }
-            )
+            let hlsObservation: PlaybackObservation
+            do {
+                hlsObservation = try play(
+                    label: "custom-scheme HLS",
+                    url: URL(string: "dulcet-stream://fixture/playlist.m3u8")!,
+                    loader: hlsLoader,
+                    stopWhen: { observation in
+                        let seen = Set(
+                            hlsLoader.recorder.events
+                                .filter { $0.path.hasPrefix("segment") }
+                                .map(\.path)
+                        )
+                        return observation.maximumTime >= 1.20 && requiredSegments.isSubset(of: seen)
+                    }
+                )
+            } catch {
+                print("HLS_FAILURE_EVENTS_BEGIN")
+                printEvents(hlsLoader.recorder.events)
+                print("HLS_FAILURE_EVENTS_END")
+                throw error
+            }
             let hlsEvents = hlsLoader.recorder.events
             let manifestSeen = hlsEvents.contains { $0.path == "playlist.m3u8" }
             let segmentEvents = hlsEvents.filter { $0.path.hasPrefix("segment") }
@@ -467,14 +478,29 @@ private enum ResourceLoaderSpike {
         """
         let rewritten = try router.rewrite(Data(source.utf8))
         guard let text = String(data: rewritten, encoding: .utf8),
-              !text.contains("https://"),
-              text.components(separatedBy: "dulcet-stream://").count - 1 == 4
+              !text.contains("https://")
         else {
             throw SpikeError.verificationFailed(
                 "manifest rewrite contract did not normalize segment, playlist, key, and map URIs"
             )
         }
-        print("REWRITE_CONTRACT media,playlist,key,map=ALL_CUSTOM_SCHEME PASS")
+        let routeExpression = try NSRegularExpression(pattern: #"routed/route-[0-9]+"#)
+        let routeStrings = routeExpression.matches(
+            in: text,
+            range: NSRange(location: 0, length: (text as NSString).length)
+        ).map { (text as NSString).substring(with: $0.range) }
+        let deliveryManifestURL = URL(string: "dulcet-stream://fixture/playlist.m3u8")!
+        let resolvedRoutes = routeStrings.compactMap {
+            URL(string: $0, relativeTo: deliveryManifestURL)?.absoluteURL
+        }
+        guard resolvedRoutes.count == 4,
+              resolvedRoutes.allSatisfy({ $0.scheme == "dulcet-stream" })
+        else {
+            throw SpikeError.verificationFailed(
+                "rewritten manifest routes did not all resolve under the delegate's custom scheme"
+            )
+        }
+        print("REWRITE_CONTRACT media,playlist,key,map=ALL_RESOLVE_TO_CUSTOM_SCHEME PASS")
     }
 
     private static func makeWAV(duration: Double, frequency: Double) -> Data {
