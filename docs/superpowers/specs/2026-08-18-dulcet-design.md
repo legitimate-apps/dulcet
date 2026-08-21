@@ -1947,8 +1947,15 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
 
       ⚠️ **And state the cost: this broadens the gate.** Where a path has several owners, an approval
       from **any one** of them satisfies the requirement — so the credentials able to approve a
-      `FEATURES.yml` change went from one account to two. `require_last_push_approval` is enabled to
-      partly offset that: the approval must come from an actor other than whoever made the last push.
+      `FEATURES.yml` change went from one account to two. ⚠️ **`require_last_push_approval` was enabled on
+      2026-08-20 to offset that, and turned off again on 2026-08-21 because it makes this repository
+      unmergeable.** **OBSERVED:** with it on, PR #3 sat at `reviewDecision: REVIEW_REQUIRED` while
+      carrying an approving review from the non-pushing code owner, every required check green and no
+      unresolved threads; setting it to `false` produced `APPROVED` / `CLEAN` within seconds. GraphQL
+      reports `pushedDate: null` for the head commit, so GitHub appears unable to attribute the last
+      push here, which would make the requirement permanently unsatisfiable rather than merely strict.
+      **So the broadening is not offset by anything mechanical** — do not re-enable this setting
+      without re-running that test.
       **With one person holding both accounts this records an account switch, not an independent
       human review.** What (b) actually buys is that declaring a regression is a deliberate step
       against a protected file. The independent adversarial review required by §25 is a separate
