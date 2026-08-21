@@ -69,29 +69,29 @@ def expected_binding(filename: str) -> tuple[str, str, str]:
 
 def jpeg_payload_binding(data: bytes) -> tuple[dict[str, str], bytes]:
     if not data.startswith(b"\xff\xd8\xff\xfe") or len(data) < 8:
-        raise CaptureVerificationError("JPEG is missing its payload binding comment")
+        raise CaptureVerificationError("JPEG is missing its embedded consistency comment")
     segment_length = int.from_bytes(data[4:6], "big")
     segment_end = 4 + segment_length
     if segment_length < 2 or segment_end > len(data):
-        raise CaptureVerificationError("JPEG payload binding has an invalid segment length")
+        raise CaptureVerificationError("JPEG consistency comment has an invalid segment length")
     try:
         lines = data[6:segment_end].decode("ascii").splitlines()
     except UnicodeDecodeError as error:
-        raise CaptureVerificationError("JPEG payload binding is not ASCII") from error
+        raise CaptureVerificationError("JPEG consistency comment is not ASCII") from error
     if not lines or lines[0] != "DULCET-CAPTURE-BINDING-V1":
-        raise CaptureVerificationError("JPEG payload binding version mismatch")
+        raise CaptureVerificationError("JPEG consistency comment version mismatch")
     fields: dict[str, str] = {}
     for line in lines[1:]:
         key, separator, value = line.partition("=")
         if not separator or not key or key in fields:
-            raise CaptureVerificationError("JPEG payload binding fields are malformed")
+            raise CaptureVerificationError("JPEG consistency comment fields are malformed")
         fields[key] = value
     expected_fields = {"fixtureState", "appearance", "variant", "jpegPayloadSha256"}
     if set(fields) != expected_fields:
-        raise CaptureVerificationError("JPEG payload binding field set mismatch")
+        raise CaptureVerificationError("JPEG consistency comment field set mismatch")
     payload = data[:2] + data[segment_end:]
     if hashlib.sha256(payload).hexdigest() != fields["jpegPayloadSha256"]:
-        raise CaptureVerificationError("JPEG payload binding SHA-256 mismatch")
+        raise CaptureVerificationError("JPEG consistency comment SHA-256 mismatch")
     return fields, payload
 
 
@@ -384,7 +384,7 @@ def main() -> None:
         "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
         "decoded-pixels-pairwise-distinct=true "
-        "payload-label-bindings=true dynamic-type-claim=absent "
+        "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "
         "pinned-controls=true control-provenance=verified"
     )
 

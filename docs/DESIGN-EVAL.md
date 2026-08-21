@@ -44,22 +44,30 @@ environment is fixed:
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
 per-record window-frame and capture-bound coordinates, rendered control-active state, provenance,
 byte lengths, and SHA-256 digests. Current-run references carry measured geometry; pinned controls
-carry the reviewed baseline geometry. Each JPEG also carries a binding comment with its canonical fixture state,
-appearance, variant, and the SHA-256 of the original compressed visual payload. The verifier removes
-that comment, reconstructs and hashes the payload, and requires its embedded labels to agree with both
-the filename and manifest. It also requires all 16 final JPEG byte streams and all 16 compressed
-visual payloads (after removing the binding comments) to be pairwise distinct.
+carry the reviewed baseline geometry. Each JPEG also carries a self-authored consistency comment with
+a fixture-state label, appearance, variant, and the SHA-256 of the original compressed payload. The
+verifier removes that comment, reconstructs and hashes the payload, and requires the embedded labels,
+filename, and manifest record to agree. It separately decodes every JPEG through the platform image
+decoder and requires all 16 normalized pixel rasters to be pairwise distinct.
+
+This is **internal consistency plus pixel distinctness**, not proof that the pixels depict the named
+fixture state. An artifact author can swap two compressed payloads, regenerate each embedded comment,
+and refresh the manifest; the verifier will accept the self-consistent swap because this repository
+has no independent visual oracle for what either state must look like. Human or model evaluation of
+the visible content remains the external semantic check.
+
 `tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
 control, a mutated JPEG, an extra JPEG, extra media with another extension, an artifact whose 16 JPEGs
-were replaced by one image while every manifest hash and byte count was updated, two distinct visual
-payloads swapped between labels with their manifest evidence updated, one visual payload rebound to
-16 distinct valid label comments with every manifest hash and byte count updated, a byte-identical capture
-mislabeled as a different Dynamic Type treatment, a manifest claiming translated capture bounds, and
-a manifest claiming an inactive rendered control state. It also substitutes a different valid,
-correctly rebound control JPEG and updates that file's ordinary manifest evidence; the pinned digest
-must still reject it.
+were replaced by one image while every manifest hash and byte count was updated, two payloads swapped
+without updating their embedded labels, one payload rebound to 16 distinct consistent labels, and two
+different JPEG encodings that decode to identical pixels. It also demonstrates the semantic boundary
+by accepting a two-payload swap after both embedded comments and the manifest are made internally
+consistent. Further negative controls cover a byte-identical capture mislabeled as a different Dynamic
+Type treatment, translated capture bounds, an inactive rendered control state, and a substituted valid
+control JPEG whose ordinary manifest evidence was updated; the pinned digest must still reject the
+control substitution.
 
 ### 1.1 Standard set: 16 JPEGs
 

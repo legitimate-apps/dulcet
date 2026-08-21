@@ -139,6 +139,21 @@ def main() -> None:
         refresh_manifest_file_evidence(swapped_labels_root)
         expect_rejection(swapped_labels_root, "embedded fixtureState mismatch")
 
+        self_consistent_swap_root = Path(temporary) / "self-consistent-payload-swap"
+        shutil.copytree(args.root, self_consistent_swap_root)
+        library = self_consistent_swap_root / "standard" / "macos-library-browse-light.jpg"
+        search = self_consistent_swap_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        _, library_payload = verifier.jpeg_payload_binding(library.read_bytes())
+        _, search_payload = verifier.jpeg_payload_binding(search.read_bytes())
+        library.write_bytes(
+            bind_payload(search_payload, "library-browse", "light", "reference")
+        )
+        search.write_bytes(
+            bind_payload(library_payload, "search-mixed-sources", "light", "reference")
+        )
+        refresh_manifest_file_evidence(self_consistent_swap_root)
+        verifier.verify_capture_root(self_consistent_swap_root)
+
         mislabeled_root = Path(temporary) / "mislabeled-dynamic-type"
         shutil.copytree(args.root, mislabeled_root)
         manifest_path = mislabeled_root / "standard" / "manifest.json"
@@ -202,6 +217,7 @@ def main() -> None:
         "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
         "all-identical=true rebound-identical-visuals=true swapped-labels=true "
         "identical-pixels-different-encoding=true "
+        "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
         "substituted-pinned-control=true"
