@@ -167,6 +167,43 @@ def main() -> None:
         raise SystemExit("corpus manifest must contain exactly 313 scanner-visible media files")
     if manifest.get("formats") != ["flac", "m4a", "mp3", "ogg"]:
         raise SystemExit("corpus manifest format set drifted")
+    expected_known_probe = {
+        "title": "Dulcet Health Probe",
+        "format": "flac",
+        "duration_seconds": 2.0,
+    }
+    if manifest.get("known_probe") != expected_known_probe:
+        raise SystemExit(
+            f"corpus known-probe evidence drifted: expected {expected_known_probe}, "
+            f"observed {manifest.get('known_probe')}"
+        )
+    expected_awkward_cases = {
+        "unicode_title": "Étude 東京",
+        "multi_disc_tracks": [
+            {"disc": disc, "track": track}
+            for disc in (1, 2)
+            for track in (1, 2)
+        ],
+        "album_artists": ["Alpha Ensemble", "Beta Ensemble", "Gamma Ensemble"],
+        "track_without_album": {
+            "title": "No Album",
+            "album_tag_present": False,
+            "album_artist_tag_present": False,
+        },
+        "very_long_title_characters": len("A deliberately long title " + ("0123456789" * 32)),
+        "paging_album": {
+            "tracks_id3_verified": 300,
+            "ffprobe_verified_tracks": [1, 150, 300],
+        },
+        "threshold_durations_seconds": [29, 31],
+    }
+    if manifest.get("awkward_cases") != expected_awkward_cases:
+        raise SystemExit(
+            f"corpus awkward-case evidence drifted: expected {expected_awkward_cases}, "
+            f"observed {manifest.get('awkward_cases')}"
+        )
+    if manifest.get("verification") != "ffprobe-plus-id3v24-round-trip":
+        raise SystemExit("corpus manifest does not identify the required media probes")
 
     deadline = time.monotonic() + args.timeout_seconds
     client = ServerClient(args.base_url)
@@ -317,6 +354,10 @@ def main() -> None:
         "OBSERVED users=dulcet-admin,dulcet-restricted roles_persisted=admin,restricted",
         "OBSERVED transcoding_extension=true canTranscode=true",
         "OBSERVED similarity_provider=absent",
+        (
+            "OBSERVED corpus_files=313 formats=flac,m4a,mp3,ogg "
+            "awkward_metadata=probed paging_id3=300 paging_ffprobe=1,150,300 thresholds=29,31"
+        ),
     ]
     print("CONFORMANCE PRECONDITIONS PASS")
     for line in lines:

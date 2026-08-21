@@ -40,12 +40,17 @@ class runner owns that lifecycle; until then it is a normative caller contract.
 ## Generated corpus
 
 `tools/seed-corpus` invokes the leg's selected ffmpeg and creates 313 scanner-visible files. It covers
-FLAC, MP3, Ogg, and M4A; Unicode metadata; two discs; multiple album artists; a track without an album;
-a title longer than 300 characters; a 300-track paging album; and 29- and 31-second threshold tracks.
-All samples are synthesized tone or silence. No audio file or copyrighted recording is committed.
+FLAC, MP3, Ogg, and M4A; Unicode metadata; two discs; a semicolon-delimited album-artist set; a track
+with no album or album-artist tag; a title longer than 300 characters; a 300-track paging album; and
+29- and 31-second threshold tracks. All samples are synthesized tone or silence. No audio file or
+copyrighted recording is committed.
 
-The generator runs `ffprobe` against representative files, verifies their titles and durations, and
-writes `corpus-manifest.json`. Generation errors fail the job.
+The generator runs `ffprobe` against every non-paging awkward fixture and validates exact tag values,
+absent tags, and threshold durations. Paging tracks are not filename-only copies: each of all 300 gets
+a distinct deterministic ID3v2.4 title and track number. The generator parses all 300 tags back and
+also requires ffprobe to interpret tracks 1, 150, and 300 correctly. Only those observed values are
+written to `corpus-manifest.json`; the health check compares the complete evidence structure to the
+contract. Any encoding, parsing, tag, duration, count, or format mismatch errors the job.
 
 ## Fail-loud precondition gate
 
