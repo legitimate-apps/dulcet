@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 32 — bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
+**Revision:** 33 — Darwin reports unsupported authentication challenges distinctly and records its
+fail-closed authentication limitation; revision 32 made bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
 cross-origin credential stripping with a closed target-request oracle; revision 30 rejected
 malformed authorities as input before transport; revision 29 made
 structural URL redaction total over malformed input; revision 28 made CONF-07 absence assertions use
@@ -1273,6 +1274,16 @@ the UTF-8 password concatenated with the salt.
 - **No API-key auth** (§2.3), and no speculative API-key attempts.
 - Plaintext-password auth (`p=`) is never used, even where a server accepts it.
 
+**Decided Phase-1 Darwin limitation:** the URL session challenge handler performs default handling
+only for server-trust challenges. It rejects HTTP Basic, Digest, client-certificate, proxy-auth, and
+every other non-server-trust challenge rather than consulting ambient credentials. A rejected
+challenge maps to `Auth.UnsupportedAuthenticationChallenge`, so the UI can explain that
+authentication added by a reverse proxy or intermediary is unsupported instead of reporting a bare
+`Transport.Unreachable`. **OBSERVED:** the hosted Darwin fixture issues an HTTP Basic challenge,
+receives no ambient `Authorization` or `Proxy-Authorization` value, and requires that distinct domain
+error. **ASSUMED:** proxy-auth challenges fail closed through the same handler; the fixture does not
+act as a proxy or return 407, so there is no wire proof for proxy neutralisation.
+
 **Secure storage, specified rather than gestured at:**
 
 | | Apple | Android |
@@ -1905,7 +1916,8 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   mapping, while CONF-06 tests transport reachability and that an unknown code round-trips**, because
   one server instance cannot establish a closed universe of codes and other compatible servers may
   return others.
-- `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | RedirectCredentialLoss`
+- `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | UnsupportedAuthenticationChallenge |
+  RedirectCredentialLoss`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
@@ -2883,6 +2895,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 33 (2026-08-21)** — unsupported Darwin authentication became legible.
+
+1. The Darwin challenge handler remains deliberately fail-closed: only server-trust challenges use
+   default handling; Basic, Digest, client-certificate, proxy-auth, and other challenges are rejected.
+2. Foundation's typed `NSURLErrorUserAuthenticationRequired` failure maps to
+   `Auth.UnsupportedAuthenticationChallenge`, giving UI code a closed, explanatory classification
+   instead of `Transport.Unreachable`.
+3. The hosted Basic-auth fixture proves the distinct error and absence of ambient credentials on the
+   receiving wire. Proxy-auth neutralisation remains **ASSUMED** because no fixture returns 407 or
+   performs proxy duties.
 
 **Revision 32 (2026-08-21)** — bracketed IPv6 zones became structurally bounded.
 

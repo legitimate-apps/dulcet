@@ -23,8 +23,23 @@ internal actual fun tlsTrustFailureOrNull(failure: Throwable): TlsTrustFailure? 
     return null
 }
 
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun isUnsupportedAuthenticationChallenge(failure: Throwable): Boolean {
+    var current: Throwable? = failure
+    repeat(MAX_CAUSE_DEPTH) {
+        val candidate = current ?: return false
+        val origin = (candidate as? DarwinHttpRequestException)?.origin
+        if (origin?.domain == NSURLErrorDomain && origin.code == USER_AUTHENTICATION_REQUIRED) {
+            return true
+        }
+        current = candidate.cause
+    }
+    return false
+}
+
 private const val SERVER_CERTIFICATE_HAS_BAD_DATE = -1201L
 private const val SERVER_CERTIFICATE_UNTRUSTED = -1202L
 private const val SERVER_CERTIFICATE_HAS_UNKNOWN_ROOT = -1203L
 private const val SERVER_CERTIFICATE_NOT_YET_VALID = -1204L
+private const val USER_AUTHENTICATION_REQUIRED = -1013L
 private const val MAX_CAUSE_DEPTH = 16
