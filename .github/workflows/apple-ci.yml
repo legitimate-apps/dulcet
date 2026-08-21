@@ -89,10 +89,18 @@ jobs:
           --macos-app "$RUNNER_TEMP/DulcetMacDerivedData/Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
           --ios-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app/Dulcet DEV"
           --tvos-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Dulcet DEV"
-      - name: Install pinned resource-loader fixture encoder
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Install and verify checksum-pinned Darwin conformance closure
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CALIBRATE_KEG_HASHES: "1"
         run: |
-          brew install lame
-          test "$(brew info --json=v2 lame | jq -r '.formulae[0].installed[0].version')" = 4.0
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
       - name: Prove the measurement rejects the observed first-only state
         run: |
           set +e
@@ -113,17 +121,6 @@ jobs:
           --package-path tools/resource-loader-spike
           resource-loader-spike
           --expect-hls-segments first-only-playback-failed
-      - name: Create isolated Darwin conformance root
-        id: conformance_root
-        run: >-
-          echo "path=$(tools/conformance-env/new-class-root
-          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
-      - name: Install checksum-pinned Darwin conformance tools
-        env:
-          ROOT: ${{ steps.conformance_root.outputs.path }}
-        run: |
-          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
-          tools/conformance-env/install-darwin-ffmpeg
       - name: Generate deterministic Darwin corpus
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}

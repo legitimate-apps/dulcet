@@ -16,11 +16,17 @@ The Darwin installer does not accept a name-only resolution. It first compares t
 official formula API graph to the lock. Only after that succeeds does it update Homebrew's possibly
 stale runner metadata, and the refreshed local resolver must match the same lock before any bottle is
 fetched or installed. It hashes every bottle and fails on any extra, missing, or changed dependency.
-It then installs every missing formula and explicitly upgrades every stale formula in dependency
-order; installing only the root is insufficient because Homebrew can leave an already-installed
-nested dependency at an older version.
+It then installs every missing formula, explicitly upgrades every stale formula, and reinstalls every
+already-matching formula from the verified bottle cache in dependency order. Installing only the root
+is insufficient because Homebrew can leave an already-installed nested dependency at an older
+version, while accepting an existing matching-version keg would not bind its payload to the verified
+archive.
 After installation it verifies every active keg, every bottle receipt, ffmpeg's recorded runtime
-closure, and the `libmp3lame` and `libopus` encoders used by the corpus.
+closure, and the `libmp3lame` and `libopus` encoders used by the corpus. The installer also computes a
+deterministic hash of every installed keg payload; an explicit calibration run records those hashes
+after a fresh pour from the verified archives, and the merge-ready gate compares every payload to the
+recorded lock. This complete verification runs before either the resource-loader fixture encoder or
+the corpus encoder; both therefore come from the same verified closure.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external

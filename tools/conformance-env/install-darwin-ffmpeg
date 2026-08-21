@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import stat
 import subprocess
 import urllib.parse
 import urllib.request
@@ -46,6 +47,34 @@ def file_sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def keg_payload_sha256(root: Path) -> tuple[str, int]:
+    """Hash every installed payload path except Homebrew's mutable pour receipt."""
+    digest = hashlib.sha256()
+    entries = 0
+    for path in sorted(root.rglob("*"), key=lambda candidate: candidate.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        if relative == "INSTALL_RECEIPT.json":
+            continue
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            kind = b"directory"
+            payload = b""
+        elif stat.S_ISLNK(mode):
+            kind = b"symlink"
+            payload = os.readlink(path).encode()
+        elif stat.S_ISREG(mode):
+            kind = b"file"
+            payload = bytes.fromhex(file_sha256(path))
+        else:
+            raise SystemExit(f"unsupported installed keg entry: {path}")
+        digest.update(kind + b"\0" + relative.encode() + b"\0")
+        digest.update(f"{stat.S_IMODE(mode):04o}".encode() + b"\0" + payload + b"\0")
+        entries += 1
+    if entries == 0:
+        raise SystemExit(f"installed keg has no payload entries: {root}")
+    return digest.hexdigest(), entries
 
 
 def formula_shape(formula: dict, bottle_tag: str) -> dict:
@@ -110,6 +139,7 @@ def main() -> None:
     assert_locked_graph(closure, ffmpeg["formula"])
 
     names = [entry["formula"] for entry in closure]
+    observed_keg_hashes: dict[str, str] = {}
     for expected in closure:
         name = expected["formula"]
         quoted_name = urllib.parse.quote(name, safe="")
@@ -152,8 +182,9 @@ def main() -> None:
         name = expected["formula"]
         installed_versions = installed_formula_versions(name)
         if expected["version"] in installed_versions:
-            continue
-        verb = "upgrade" if installed_versions else "install"
+            verb = "reinstall"
+        else:
+            verb = "upgrade" if installed_versions else "install"
         run(["brew", verb, "--force-bottle", name])
 
     installed_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
@@ -176,6 +207,24 @@ def main() -> None:
                 f"active Homebrew keg drift for {name}: expected {expected['version']}, "
                 f"observed {active_prefix.name}"
             )
+        keg_sha256, keg_entries = keg_payload_sha256(active_prefix)
+        observed_keg_hashes[name] = keg_sha256
+        print(
+            f"DARWIN KEG PAYLOAD formula={name} sha256={keg_sha256} entries={keg_entries}"
+        )
+
+    locked_keg_hashes = ffmpeg.get("installed_keg_sha256")
+    if locked_keg_hashes is not None:
+        if observed_keg_hashes != locked_keg_hashes:
+            raise SystemExit(
+                f"installed Homebrew keg payload drift: expected {locked_keg_hashes}, "
+                f"observed {observed_keg_hashes}"
+            )
+        print(f"DARWIN KEG PAYLOAD LOCK PASS formulas={len(observed_keg_hashes)}")
+    elif os.environ.get("DULCET_CALIBRATE_KEG_HASHES") == "1":
+        print("DARWIN KEG PAYLOAD CALIBRATION required=true")
+    else:
+        raise SystemExit("Darwin installed-keg payload hashes are not locked")
 
     root_record = next(
         record
