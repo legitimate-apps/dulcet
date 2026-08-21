@@ -66,6 +66,8 @@ public struct DulcetDeterministicFixture {
         switch state {
         case .emptyLibraryNoAccount:
             .unavailable
+        case .tlsUntrusted:
+            .connectionFailed(serverName: Self.tlsFailure.serverName)
         case .offlineMetadataOnly:
             .offline(lastSyncedDescription: "Today at 14:28 UTC")
         default:

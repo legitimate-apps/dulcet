@@ -7,6 +7,7 @@
 "sidebar.accountSection" = "Account";
 "sidebar.noServer" = "No server connected";
 "status.online" = "Online";
+"status.connectionFailed" = "Connection failed";
 "status.offline" = "Offline";
 "library.albums" = "Albums";
 "library.recentlyAdded" = "Recently Added";
@@ -60,3 +61,4 @@
 "library.trackCount" = "%d tracks";
 "album.discNumber" = "Disc %d";
 "status.server" = "%@ · Online";
+"status.serverConnectionFailed" = "%@ · Connection failed";

@@ -23,6 +23,7 @@ public enum DulcetSidebarDestination: String, CaseIterable, Identifiable, Sendab
 
 public enum DulcetConnectivity: Sendable, Hashable {
     case online(serverName: String)
+    case connectionFailed(serverName: String)
     case offline(lastSyncedDescription: String)
     case unavailable
 }
