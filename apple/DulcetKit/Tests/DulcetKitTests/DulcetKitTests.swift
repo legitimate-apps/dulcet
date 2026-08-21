@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import DulcetKit
 
@@ -105,75 +106,71 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 @Test @MainActor
 func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
-        let appearance = try #require(NSAppearance(named: appearanceName))
-        let window = try resolved(.windowBackgroundColor, appearance: appearance)
-        let primaryActionFill = try resolved(
-            DulcetContrastColor.primaryActionFill,
-            appearance: appearance
-        )
-        let primaryActionLabel = try resolved(
-            DulcetContrastColor.primaryActionLabel,
-            appearance: appearance
-        )
-        let selectionBackground = try resolved(
-            DulcetContrastColor.selectionBackground,
-            appearance: appearance
-        )
-        let offline = try resolved(DulcetContrastColor.offline, appearance: appearance)
-        let danger = try resolved(DulcetContrastColor.danger, appearance: appearance)
-        let label = try resolved(.labelColor, appearance: appearance)
-
         let pairs = [
-            ContrastRequirement(
+            RenderedContrastRequirement(
                 name: "primary-button-label/primary-action-fill",
-                foreground: primaryActionLabel,
-                background: primaryActionFill,
+                foreground: .dulcetPrimaryActionLabel,
+                background: .dulcetPrimaryActionFill,
                 minimum: 4.5
             ),
-            ContrastRequirement(
+            RenderedContrastRequirement(
                 name: "selected-sidebar-label/selection-fill",
-                foreground: label,
-                background: selectionBackground,
+                foreground: .primary,
+                background: .dulcetSelectionBackground,
                 minimum: 4.5
             ),
-            ContrastRequirement(
+            RenderedContrastRequirement(
+                name: "secondary-text/window",
+                foreground: .dulcetSecondaryText,
+                background: .dulcetWindow,
+                minimum: 4.5
+            ),
+            RenderedContrastRequirement(
                 name: "offline-label/window",
-                foreground: offline,
-                background: window,
+                foreground: .dulcetOffline,
+                background: .dulcetWindow,
                 minimum: 4.5
             ),
-            ContrastRequirement(
+            RenderedContrastRequirement(
                 name: "danger-icon/window",
-                foreground: danger,
-                background: window,
+                foreground: .dulcetDanger,
+                background: .dulcetWindow,
                 minimum: 3.0
             ),
         ]
 
         for pair in pairs {
-            let ratio = contrastRatio(pair.foreground, pair.background)
+            let sample = try renderedContrastSample(
+                foreground: pair.foreground,
+                background: pair.background,
+                appearanceName: appearanceName
+            )
             print(
-                "WCAG CONTRAST pair=\(pair.name) appearance=\(appearanceName.rawValue) "
-                    + "ratio=\(String(format: "%.3f", ratio)) minimum=\(pair.minimum)"
+                "WCAG RENDERED CONTRAST pair=\(pair.name) appearance=\(appearanceName.rawValue) "
+                    + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
+                    + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=\(pair.minimum)"
             )
             #expect(
-                ratio >= pair.minimum,
-                "\(pair.name) in \(appearanceName.rawValue) is \(ratio):1, below \(pair.minimum):1"
+                sample.ratio >= pair.minimum,
+                "\(pair.name) in \(appearanceName.rawValue) is \(sample.ratio):1, below \(pair.minimum):1"
             )
         }
     }
 }
 
-@Test
-func contrastGateRejectsKnownFailure() {
-    let lowContrastText = NSColor(srgbRed: 0.72, green: 0.72, blue: 0.72, alpha: 1)
-    let ratio = contrastRatio(lowContrastText, .white)
+@Test @MainActor
+func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
+    let sample = try renderedContrastSample(
+        foreground: .secondary,
+        background: .white,
+        appearanceName: .aqua
+    )
 
-    #expect(ratio < 4.5)
-    #expect(!meetsContrastMinimum(lowContrastText, .white, minimum: 4.5))
+    #expect(sample.ratio < 4.5)
     print(
-        "WCAG CONTRAST NEGATIVE CONTROL PASS pair=gray-text/white "
-            + "ratio=\(String(format: "%.3f", ratio)) minimum=4.5 rejected=true"
+        "WCAG RENDERED CONTRAST NEGATIVE CONTROL PASS pair=native-secondary/white "
+            + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
+            + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=4.5 rejected=true"
     )
 }
 
@@ -198,33 +195,86 @@ private final class PushingTestDataSource: DulcetDataSource {
     }
 }
 
-private struct ContrastRequirement {
+private struct RenderedContrastRequirement {
     let name: String
-    let foreground: NSColor
-    let background: NSColor
+    let foreground: Color
+    let background: Color
     let minimum: Double
 }
 
-private func meetsContrastMinimum(
-    _ foreground: NSColor,
-    _ background: NSColor,
-    minimum: Double
-) -> Bool {
-    contrastRatio(foreground, background) >= minimum
+private struct RenderedContrastSample {
+    let foreground: NSColor
+    let background: NSColor
+
+    var ratio: Double {
+        contrastRatio(foreground, background)
+    }
 }
 
-private func contrastRatio(_ first: NSColor, _ second: NSColor) -> Double {
-    let lighter = max(relativeLuminance(first), relativeLuminance(second))
-    let darker = min(relativeLuminance(first), relativeLuminance(second))
+private struct RenderedContrastProbe: View {
+    let foreground: Color
+    let background: Color
+
+    var body: some View {
+        ZStack {
+            background
+            Rectangle()
+                .foregroundStyle(foreground)
+                .frame(width: 24, height: 24)
+        }
+        .frame(width: 64, height: 64)
+    }
+}
+
+@MainActor
+private func renderedContrastSample(
+    foreground: Color,
+    background: Color,
+    appearanceName: NSAppearance.Name
+) throws -> RenderedContrastSample {
+    let colorScheme: ColorScheme = appearanceName == .darkAqua ? .dark : .light
+    let view = NSHostingView(rootView: RenderedContrastProbe(
+        foreground: foreground,
+        background: background
+    ).environment(\.colorScheme, colorScheme))
+    view.frame = NSRect(x: 0, y: 0, width: 64, height: 64)
+    view.appearance = NSAppearance(named: appearanceName)
+    view.layoutSubtreeIfNeeded()
+    view.displayIfNeeded()
+
+    let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    let renderedForeground = try #require(bitmap.colorAt(
+        x: bitmap.pixelsWide / 2,
+        y: bitmap.pixelsHigh / 2
+    ))
+    let renderedBackground = try #require(bitmap.colorAt(x: 4, y: 4))
+    return RenderedContrastSample(
+        foreground: renderedForeground,
+        background: renderedBackground
+    )
+}
+
+private func contrastRatio(_ foreground: NSColor, _ background: NSColor) -> Double {
+    let opaqueBackground = composite(background, over: .white)
+    let opaqueForeground = composite(foreground, over: opaqueBackground)
+    let lighter = max(relativeLuminance(opaqueForeground), relativeLuminance(opaqueBackground))
+    let darker = min(relativeLuminance(opaqueForeground), relativeLuminance(opaqueBackground))
     return (lighter + 0.05) / (darker + 0.05)
 }
 
-private func resolved(_ color: NSColor, appearance: NSAppearance) throws -> NSColor {
-    var resolvedColor: NSColor?
-    appearance.performAsCurrentDrawingAppearance {
-        resolvedColor = color.usingColorSpace(.sRGB)
+private func composite(_ foreground: NSColor, over background: NSColor) -> NSColor {
+    guard let foreground = foreground.usingColorSpace(.sRGB),
+          let background = background.usingColorSpace(.sRGB) else {
+        return foreground
     }
-    return try #require(resolvedColor)
+    let alpha = foreground.alphaComponent
+    return NSColor(
+        srgbRed: foreground.redComponent * alpha + background.redComponent * (1 - alpha),
+        green: foreground.greenComponent * alpha + background.greenComponent * (1 - alpha),
+        blue: foreground.blueComponent * alpha + background.blueComponent * (1 - alpha),
+        alpha: 1
+    )
 }
 
 private func relativeLuminance(_ color: NSColor) -> Double {
@@ -238,4 +288,16 @@ private func relativeLuminance(_ color: NSColor) -> Double {
     return 0.2126 * linear(rgb.redComponent)
         + 0.7152 * linear(rgb.greenComponent)
         + 0.0722 * linear(rgb.blueComponent)
+}
+
+private extension NSColor {
+    var hexRGB: String {
+        guard let rgb = usingColorSpace(.sRGB) else { return "unavailable" }
+        return String(
+            format: "#%02X%02X%02X",
+            Int((rgb.redComponent * 255).rounded()),
+            Int((rgb.greenComponent * 255).rounded()),
+            Int((rgb.blueComponent * 255).rounded())
+        )
+    }
 }

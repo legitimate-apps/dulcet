@@ -92,21 +92,22 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
 - actual AppKit window-frame size and zero-origin theme-frame capture bounds recorded for every JPEG;
-- the explicitly rendered key control state, which makes the prominent-control fill in the pixels
-  match the computed foreground/background contrast pair. This is not a claim that the hosted command-
-  line process became the desktop's active application;
+- the explicitly rendered key control state. This is not a claim that the hosted command-line process
+  became the desktop's active application;
 - visible focus and contrast cues;
 - the standard AppKit window frame and chrome surrounding both reference and control content.
 
 `OBSERVED` from CI or source evidence, but not from pixels alone:
 
 - Swift package tests, app build success, capture-verifier negative controls;
-- computed [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18) for
-  every Dulcet-defined adjacent foreground/background pair in Aqua and Dark Aqua: prominent button
-  labels against their dedicated action fill, selected-sidebar labels, offline labels, and danger
-  icons. Link/accent color is deliberately separate from the darker prominent-action fill because
-  native macOS prominent controls render a white label in both appearances. The native test prints
-  each ratio and proves that a known low-contrast pair is rejected;
+- sampled rendered-pixel [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18)
+  for each declared adjacent foreground/background pair in Aqua and Dark Aqua: prominent button
+  labels against their dedicated action fill, selected-sidebar labels, normal secondary text,
+  offline labels, and danger icons. A SwiftUI probe renders each production semantic style through
+  AppKit, samples the composited center and background pixels, and computes luminance after alpha
+  compositing. Link/accent color is deliberately separate from the darker prominent-action fill
+  because native macOS prominent controls render a white label in both appearances. The negative
+  control renders native `.secondary` over white and requires its below-4.5:1 result to be rejected;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
 
