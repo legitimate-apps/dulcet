@@ -11,7 +11,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.test.runTest
 import platform.Foundation.NSURLAuthenticationMethodHTTPBasic
 import platform.Foundation.NSURLCredential
-import platform.Foundation.NSURLCredentialPersistenceForSession
+import platform.Foundation.NSURLCredentialPersistence
 import platform.Foundation.NSURLCredentialStorage
 import platform.Foundation.NSURLProtectionSpace
 import platform.Foundation.create
@@ -33,7 +33,7 @@ class DarwinAmbientCredentialConformanceTest {
         val credential = NSURLCredential.create(
             user = "ambient-auth-user",
             password = "ambient-auth-password",
-            persistence = NSURLCredentialPersistenceForSession,
+            persistence = NSURLCredentialPersistence.NSURLCredentialPersistenceForSession,
         )
         val storage = NSURLCredentialStorage.sharedCredentialStorage
         storage.setCredential(credential, protectionSpace)
