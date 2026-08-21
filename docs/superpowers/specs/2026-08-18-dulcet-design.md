@@ -2817,13 +2817,14 @@ argue against the recorded rationale — not as filling in a blank.
 
 **Revision 17 (2026-08-21)** — the macOS screenshot framing contract became measured evidence.
 
-1. The capture harness previously applied its 1180 × 760 frame before installing the SwiftUI content
-   view. AppKit could then recalculate the titled theme frame, while a separately fixed-size bitmap
-   still encoded 1180 × 760 bytes; dimensions alone therefore did not prove that the window filled the
-   evidence boundary.
-2. The content view is now installed first and the fixed window frame second. Before any JPEG is
-   encoded, the executable requires both an 1180 × 760 window and zero-origin 1180 × 760 theme-frame
-   capture bounds.
+1. The capture harness previously applied its 1180 × 760 frame before installing and ordering the
+   SwiftUI window. AppKit could then recalculate or constrain the titled theme frame, while a
+   separately fixed-size bitmap still encoded 1180 × 760 bytes; dimensions alone therefore did not
+   prove that the window filled the evidence boundary. The first guarded hosted run rejected an
+   observed 1024 × 674 frame, the runner desktop's constrained size, before writing any evidence.
+2. The content view is now installed and the window ordered first, then the fixed evidence frame is
+   applied and laid out. Before any JPEG is encoded, the executable requires both an 1180 × 760
+   window and zero-origin 1180 × 760 theme-frame capture bounds.
 3. Every manifest record carries the observed frame and capture-bound coordinates. The verifier
    enforces them, and its negative control proves that a translated capture-bound claim is rejected.
 

@@ -278,11 +278,11 @@ private struct DulcetCaptureMain {
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
         window.contentView = hostingView
-        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
+        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: true)
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
