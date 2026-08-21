@@ -30,6 +30,9 @@
 "action.volume" = "Volume";
 "player.queue" = "Up Next";
 "player.playingOn" = "Playing on";
+"player.playingOnOutput" = "Playing on %@";
+"player.progress" = "%1$@ of %2$@";
+"player.audioFormat" = "%1$@ · %2$@ kHz";
 "empty.title" = "Your music, on this Mac";
 "empty.body" = "Connect an OpenSubsonic server to browse your library and listen with native Mac controls.";
 "empty.footnote" = "Dulcet keeps account credentials in the system Keychain and sends no analytics.";
@@ -44,6 +47,7 @@
 "search.kind.album" = "Album";
 "search.kind.artist" = "Artist";
 "search.kind.track" = "Track";
+"search.result.accessibility" = "%1$@, %2$@, %3$@, %4$@";
 "tls.title" = "This server’s certificate isn’t trusted";
 "tls.body" = "Dulcet stopped before sending account credentials. There is no “continue anyway” option.";
 "tls.why" = "Why macOS stopped the connection";
@@ -53,6 +57,7 @@
 "offline.body" = "Album and track details are available. Music remains on your server, so playback returns when the connection does.";
 "offline.unavailable" = "Unavailable offline";
 "offline.lastSynced" = "Last synced";
+"offline.lastSyncedValue" = "Last synced %@";
 "album.disc" = "Disc";
 "track.duration" = "Duration";
 "track.withoutAlbum" = "Single · no album";
@@ -62,3 +67,9 @@
 "album.discNumber" = "Disc %d";
 "status.server" = "%@ · Online";
 "status.serverConnectionFailed" = "%@ · Connection failed";
+"library.summary" = "%1$@ · %2$@";
+"album.accessibility" = "%1$@, %2$@, %3$@";
+"album.metadata" = "%1$d · %2$@ · %3$@";
+"track.subtitle" = "%1$@ · %2$@";
+"track.accessibility" = "%1$@, %2$@, %3$@";
+"track.accessibility.unavailable" = "%1$@, %2$@, %3$@, %4$@";

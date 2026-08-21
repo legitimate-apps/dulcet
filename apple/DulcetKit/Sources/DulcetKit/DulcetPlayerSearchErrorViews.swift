@@ -53,7 +53,7 @@ struct DulcetNowPlayingView: View {
                     .font(.largeTitle.weight(.bold))
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
-                Text(player.current.artistNames.joined(separator: ", "))
+                Text(DulcetStrings.artistNames(player.current.artistNames))
                     .font(.title3)
                     .foregroundStyle(Color.dulcetSecondaryText)
                     .multilineTextAlignment(.center)
@@ -72,7 +72,10 @@ struct DulcetNowPlayingView: View {
                     in: 0...Double(player.current.durationSeconds)
                 )
                 .accessibilityLabel(DulcetStrings.nowPlaying)
-                .accessibilityValue("\(player.elapsedSeconds.dulcetDuration) / \(player.current.durationSeconds.dulcetDuration)")
+                .accessibilityValue(DulcetStrings.playbackProgress(
+                    elapsed: player.elapsedSeconds.dulcetDuration,
+                    duration: player.current.durationSeconds.dulcetDuration
+                ))
 
                 HStack {
                     Text(player.elapsedSeconds.dulcetDuration)
@@ -120,11 +123,14 @@ struct DulcetNowPlayingView: View {
                 Image(systemName: "speaker.wave.2")
                     .foregroundStyle(Color.dulcetSecondaryText)
                     .accessibilityHidden(true)
-                Slider(value: .constant(0.68), in: 0...1)
+                Slider(value: .constant(player.volume), in: 0...1)
                     .frame(maxWidth: 180)
                     .accessibilityLabel(DulcetStrings.volume)
-                    .accessibilityValue("68%")
-                Text("FLAC · 44.1 kHz")
+                    .accessibilityValue(DulcetStrings.volumeValue(player.volume))
+                Text(DulcetStrings.audioFormat(
+                    codec: player.audioFormat.codec,
+                    sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
+                ))
                     .font(.caption.monospaced())
                     .foregroundStyle(Color.dulcetSecondaryText)
                     .padding(.horizontal, DulcetSpacing.xs)
@@ -132,7 +138,7 @@ struct DulcetNowPlayingView: View {
                     .background(.regularMaterial, in: Capsule())
             }
 
-            Label("\(DulcetStrings.playingOn) \(player.outputName)", systemImage: "hifispeaker.2")
+            Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
                 .font(.caption)
                 .foregroundStyle(Color.dulcetSecondaryText)
         }
@@ -261,7 +267,12 @@ private struct DulcetSearchResultRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(result.title), \(result.subtitle), \(kindTitle), \(sourceTitle)")
+        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
+            title: result.title,
+            subtitle: result.subtitle,
+            kind: kindTitle,
+            source: sourceTitle
+        ))
         .accessibilityHint(DulcetStrings.play)
     }
 

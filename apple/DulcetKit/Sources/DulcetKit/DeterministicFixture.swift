@@ -13,7 +13,10 @@ public struct DulcetDeterministicFixture {
             accountConnected: state != .emptyLibraryNoAccount,
             connectivity: connectivity(for: state),
             albums: state == .emptyLibraryNoAccount ? [] : library,
-            looseTracks: state == .emptyLibraryNoAccount ? [] : looseTracks
+            looseTracks: state == .emptyLibraryNoAccount ? [] : looseTracks,
+            recentlyAddedTracks: state == .emptyLibraryNoAccount
+                ? []
+                : Self.recentlyAddedTracks(in: library, looseTracks: looseTracks)
         )
 
         switch state {
@@ -44,7 +47,11 @@ public struct DulcetDeterministicFixture {
                 accountConnected: true,
                 connectivity: .offline(lastSyncedDescription: "Today at 14:28 UTC"),
                 albums: offlineAlbums,
-                looseTracks: looseTracks.map { $0.withAvailability(.metadataOnly) }
+                looseTracks: looseTracks.map { $0.withAvailability(.metadataOnly) },
+                recentlyAddedTracks: Self.recentlyAddedTracks(
+                    in: offlineAlbums,
+                    looseTracks: looseTracks.map { $0.withAvailability(.metadataOnly) }
+                )
             ).snapshot()
         }
     }
@@ -124,6 +131,7 @@ private extension DulcetSnapshot {
             connectivity: connectivity,
             albums: albums,
             looseTracks: looseTracks,
+            recentlyAddedTracks: recentlyAddedTracks,
             selectedAlbum: selectedAlbum,
             nowPlaying: nowPlaying,
             searchQuery: query,
@@ -141,6 +149,7 @@ private extension DulcetDeterministicFixture {
         let connectivity: DulcetConnectivity
         let albums: [DulcetAlbum]
         let looseTracks: [DulcetTrack]
+        let recentlyAddedTracks: [DulcetTrack]
 
         @MainActor
         func snapshot(
@@ -156,6 +165,7 @@ private extension DulcetDeterministicFixture {
                 connectivity: connectivity,
                 albums: albums,
                 looseTracks: looseTracks,
+                recentlyAddedTracks: recentlyAddedTracks,
                 selectedAlbum: selectedAlbum,
                 nowPlaying: nowPlaying,
                 searchQuery: searchQuery,
@@ -323,8 +333,26 @@ private extension DulcetDeterministicFixture {
         ],
         elapsedSeconds: 142,
         isPlaying: true,
-        outputName: "Studio Display"
+        outputName: "Studio Display",
+        volume: 0.68,
+        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1)
     )
+
+    static func recentlyAddedTracks(
+        in albums: [DulcetAlbum],
+        looseTracks: [DulcetTrack]
+    ) -> [DulcetTrack] {
+        let requestedIDs = [
+            "album-etudes-between-stations-track-1",
+            "double-lines-d1-t2",
+            "shared-credit",
+            "track-no-album",
+            "deliberately-long-title",
+            "paging-150",
+        ]
+        let all = albums.flatMap(\.tracks) + looseTracks
+        return requestedIDs.compactMap { id in all.first { $0.id == id } }
+    }
 
     static let searchResults: [DulcetSearchResult] = [
         DulcetSearchResult(

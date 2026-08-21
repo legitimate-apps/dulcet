@@ -190,19 +190,35 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let elapsedSeconds: Int
     public let isPlaying: Bool
     public let outputName: String
+    public let volume: Double
+    public let audioFormat: DulcetAudioFormat
 
     public init(
         current: DulcetTrack,
         queue: [DulcetTrack],
         elapsedSeconds: Int,
         isPlaying: Bool,
-        outputName: String
+        outputName: String,
+        volume: Double,
+        audioFormat: DulcetAudioFormat
     ) {
         self.current = current
         self.queue = queue
         self.elapsedSeconds = elapsedSeconds
         self.isPlaying = isPlaying
         self.outputName = outputName
+        self.volume = volume
+        self.audioFormat = audioFormat
+    }
+}
+
+public struct DulcetAudioFormat: Sendable, Hashable {
+    public let codec: String
+    public let sampleRateKilohertz: Double
+
+    public init(codec: String, sampleRateKilohertz: Double) {
+        self.codec = codec
+        self.sampleRateKilohertz = sampleRateKilohertz
     }
 }
 
@@ -225,6 +241,7 @@ public struct DulcetSnapshot: Sendable, Hashable {
     public let connectivity: DulcetConnectivity
     public let albums: [DulcetAlbum]
     public let looseTracks: [DulcetTrack]
+    public let recentlyAddedTracks: [DulcetTrack]
     public let selectedAlbum: DulcetAlbum?
     public let nowPlaying: DulcetNowPlaying?
     public let searchQuery: String
@@ -238,6 +255,7 @@ public struct DulcetSnapshot: Sendable, Hashable {
         connectivity: DulcetConnectivity,
         albums: [DulcetAlbum],
         looseTracks: [DulcetTrack],
+        recentlyAddedTracks: [DulcetTrack],
         selectedAlbum: DulcetAlbum? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
@@ -250,6 +268,7 @@ public struct DulcetSnapshot: Sendable, Hashable {
         self.connectivity = connectivity
         self.albums = albums
         self.looseTracks = looseTracks
+        self.recentlyAddedTracks = recentlyAddedTracks
         self.selectedAlbum = selectedAlbum
         self.nowPlaying = nowPlaying
         self.searchQuery = searchQuery

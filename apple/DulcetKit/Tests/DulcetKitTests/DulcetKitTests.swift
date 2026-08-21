@@ -93,6 +93,40 @@ func storeAcceptsSnapshotsPushedByADataSource() {
 }
 
 @Test @MainActor
+func replaceableSourceControlsRecentlyAddedOrdering() {
+    let fixture = DulcetDeterministicFixture()
+    let original = fixture.snapshot(for: .libraryBrowse)
+    let reversed = Array(original.recentlyAddedTracks.reversed())
+    let source = PushingTestDataSource(initialSnapshot: original)
+    let store = DulcetPresentationStore(source: source)
+
+    source.publish(DulcetSnapshot(
+        state: original.state,
+        selectedDestination: original.selectedDestination,
+        accountConnected: original.accountConnected,
+        connectivity: original.connectivity,
+        albums: original.albums,
+        looseTracks: original.looseTracks,
+        recentlyAddedTracks: reversed,
+        selectedAlbum: original.selectedAlbum,
+        nowPlaying: original.nowPlaying,
+        searchQuery: original.searchQuery,
+        searchResults: original.searchResults,
+        captureDate: original.captureDate
+    ))
+
+    #expect(store.snapshot.recentlyAddedTracks.map(\.id) == reversed.map(\.id))
+}
+
+@Test
+func localizedPresentationFormattingOwnsFormerViewLiterals() {
+    #expect(DulcetStrings.playbackProgress(elapsed: "2:22", duration: "3:45") == "2:22 of 3:45")
+    #expect(DulcetStrings.volumeValue(0.68) == "68%")
+    #expect(DulcetStrings.audioFormat(codec: "FLAC", sampleRateKilohertz: 44.1) == "FLAC · 44.1 kHz")
+    #expect(DulcetStrings.playingOn("Studio Display") == "Playing on Studio Display")
+}
+
+@Test @MainActor
 func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
     let source = DulcetDeterministicDataSource(initialState: .albumDetailMultiDisc)
     let store = DulcetPresentationStore(source: source)
