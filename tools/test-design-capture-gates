@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+
+"""Prove the design-capture verifier rejects missing, mutated, and extra evidence."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+from importlib.machinery import SourceFileLoader
+import json
+from pathlib import Path
+import shutil
+import tempfile
+
+
+VERIFIER_PATH = Path(__file__).with_name("verify_design_captures.py")
+verifier = SourceFileLoader("verify_design_captures", str(VERIFIER_PATH)).load_module()
+
+
+def expect_rejection(root: Path, expected_fragment: str) -> None:
+    try:
+        verifier.verify_capture_root(root)
+    except verifier.CaptureVerificationError as error:
+        if expected_fragment not in str(error):
+            raise SystemExit(
+                f"negative control rejected for the wrong reason: "
+                f"expected {expected_fragment!r}, observed {str(error)!r}"
+            ) from error
+        return
+    raise SystemExit(f"negative control unexpectedly passed: {expected_fragment}")
+
+
+def refresh_manifest_file_evidence(root: Path) -> None:
+    manifest_path = root / "standard" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for record in manifest["captures"]:
+        data = (root / "standard" / record["file"]).read_bytes()
+        record["jpegBytes"] = len(data)
+        record["sha256"] = hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+def bind_payload(payload: bytes, fixture_state: str, appearance: str, variant: str) -> bytes:
+    comment = (
+        "DULCET-CAPTURE-BINDING-V1\n"
+        f"fixtureState={fixture_state}\n"
+        f"appearance={appearance}\n"
+        f"variant={variant}\n"
+        f"jpegPayloadSha256={hashlib.sha256(payload).hexdigest()}\n"
+    ).encode("ascii")
+    segment_length = len(comment) + 2
+    return (
+        payload[:2]
+        + b"\xff\xfe"
+        + segment_length.to_bytes(2, "big")
+        + comment
+        + payload[2:]
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    args = parser.parse_args()
+
+    with tempfile.TemporaryDirectory(prefix="dulcet-capture-gates-") as temporary:
+        missing_root = Path(temporary) / "missing"
+        shutil.copytree(args.root, missing_root)
+        control = missing_root / "standard" / "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg"
+        control.unlink()
+        expect_rejection(missing_root, "exact file set mismatch")
+
+        mutated_root = Path(temporary) / "mutated"
+        shutil.copytree(args.root, mutated_root)
+        target = mutated_root / "standard" / "macos-library-browse-light.jpg"
+        target.write_bytes(target.read_bytes() + b"mutation")
+        expect_rejection(mutated_root, "SHA-256 mismatch")
+
+        extra_media_root = Path(temporary) / "extra-media"
+        shutil.copytree(args.root, extra_media_root)
+        (extra_media_root / "standard" / "unreviewed-control.webp").write_bytes(b"extra")
+        expect_rejection(extra_media_root, "exact file set mismatch")
+
+        extra_jpeg_root = Path(temporary) / "extra-jpeg"
+        shutil.copytree(args.root, extra_jpeg_root)
+        (extra_jpeg_root / "standard" / "unexpected.jpg").write_bytes(b"extra")
+        expect_rejection(extra_jpeg_root, "exact file set mismatch")
+
+        identical_root = Path(temporary) / "all-identical"
+        shutil.copytree(args.root, identical_root)
+        source = identical_root / "standard" / "macos-library-browse-light.jpg"
+        identical_bytes = source.read_bytes()
+        for path in (identical_root / "standard").glob("*.jpg"):
+            path.write_bytes(identical_bytes)
+        refresh_manifest_file_evidence(identical_root)
+        expect_rejection(identical_root, "decoded pixels are not pairwise distinct")
+
+        rebound_identical_root = Path(temporary) / "rebound-identical-visuals"
+        shutil.copytree(args.root, rebound_identical_root)
+        source = rebound_identical_root / "standard" / "macos-library-browse-light.jpg"
+        _, identical_payload = verifier.jpeg_payload_binding(source.read_bytes())
+        for path in (rebound_identical_root / "standard").glob("*.jpg"):
+            state, appearance, variant = verifier.expected_binding(path.name)
+            path.write_bytes(bind_payload(identical_payload, state, appearance, variant))
+        refresh_manifest_file_evidence(rebound_identical_root)
+        expect_rejection(
+            rebound_identical_root,
+            "decoded pixels are not pairwise distinct",
+        )
+
+        different_encoding_root = Path(temporary) / "identical-pixels-different-encoding"
+        shutil.copytree(args.root, different_encoding_root)
+        source = different_encoding_root / "standard" / "macos-library-browse-light.jpg"
+        target = different_encoding_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        _, source_payload = verifier.jpeg_payload_binding(source.read_bytes())
+        if not source_payload.endswith(b"\xff\xd9"):
+            raise SystemExit("pixel-distinct negative control source is missing a final JPEG EOI")
+        different_payload = source_payload + b"decoder-ignored-after-eoi"
+        target.write_bytes(
+            bind_payload(different_payload, "search-mixed-sources", "light", "reference")
+        )
+        refresh_manifest_file_evidence(different_encoding_root)
+        if hashlib.sha256(source_payload).digest() == hashlib.sha256(different_payload).digest():
+            raise SystemExit("pixel-distinct negative control did not change the encoding")
+        if verifier.decoded_pixel_digest(source) != verifier.decoded_pixel_digest(target):
+            raise SystemExit("pixel-distinct negative control changed decoded pixels")
+        expect_rejection(
+            different_encoding_root,
+            "decoded pixels are not pairwise distinct",
+        )
+
+        swapped_labels_root = Path(temporary) / "swapped-labels"
+        shutil.copytree(args.root, swapped_labels_root)
+        library = swapped_labels_root / "standard" / "macos-library-browse-light.jpg"
+        search = swapped_labels_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        library_bytes = library.read_bytes()
+        library.write_bytes(search.read_bytes())
+        search.write_bytes(library_bytes)
+        refresh_manifest_file_evidence(swapped_labels_root)
+        expect_rejection(swapped_labels_root, "embedded fixtureState mismatch")
+
+        self_consistent_swap_root = Path(temporary) / "self-consistent-payload-swap"
+        shutil.copytree(args.root, self_consistent_swap_root)
+        library = self_consistent_swap_root / "standard" / "macos-library-browse-light.jpg"
+        search = self_consistent_swap_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        _, library_payload = verifier.jpeg_payload_binding(library.read_bytes())
+        _, search_payload = verifier.jpeg_payload_binding(search.read_bytes())
+        library.write_bytes(
+            bind_payload(search_payload, "library-browse", "light", "reference")
+        )
+        search.write_bytes(
+            bind_payload(library_payload, "search-mixed-sources", "light", "reference")
+        )
+        refresh_manifest_file_evidence(self_consistent_swap_root)
+        verifier.verify_capture_root(self_consistent_swap_root)
+
+        mislabeled_root = Path(temporary) / "mislabeled-dynamic-type"
+        shutil.copytree(args.root, mislabeled_root)
+        manifest_path = mislabeled_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        original = next(
+            record for record in manifest["captures"]
+            if record["file"] == "macos-empty-library-no-account-light.jpg"
+        )
+        original["dynamicType"] = "standard"
+        duplicate = dict(original)
+        duplicate["dynamicType"] = "accessibility5"
+        duplicate["file"] = "macos-empty-library-no-account-light-accessibility5.jpg"
+        manifest["captures"].append(duplicate)
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        source = mislabeled_root / "standard" / original["file"]
+        target = mislabeled_root / "standard" / duplicate["file"]
+        shutil.copyfile(source, target)
+        expect_rejection(mislabeled_root, "dynamicType treatment is byte-identical")
+
+        misframed_root = Path(temporary) / "misframed"
+        shutil.copytree(args.root, misframed_root)
+        manifest_path = misframed_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["captures"][0]["captureBoundsYPoints"] = 90
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(misframed_root, "captureBoundsYPoints mismatch")
+
+        inactive_root = Path(temporary) / "inactive-control-state"
+        shutil.copytree(args.root, inactive_root)
+        manifest_path = inactive_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["captures"][0]["controlActiveState"] = "inactive"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(inactive_root, "controlActiveState is not key")
+
+        substituted_control_root = Path(temporary) / "substituted-pinned-control"
+        shutil.copytree(args.root, substituted_control_root)
+        control = (
+            substituted_control_root
+            / "standard"
+            / "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg"
+        )
+        _, payload = verifier.jpeg_payload_binding(control.read_bytes())
+        candidate = bind_payload(
+            payload + b"unreviewed-control-candidate",
+            "library-browse",
+            "light",
+            "deliberately-bad-control",
+        )
+        control.write_bytes(candidate)
+        refresh_manifest_file_evidence(substituted_control_root)
+        manifest_path = substituted_control_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        record = next(item for item in manifest["captures"] if item["file"] == control.name)
+        record["pinnedControlSha256"] = hashlib.sha256(candidate).hexdigest()
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(substituted_control_root, "pinned control bytes mismatch")
+
+        relabeled_control_root = Path(temporary) / "pinned-control-as-reference"
+        shutil.copytree(args.root, relabeled_control_root)
+        control = (
+            relabeled_control_root
+            / "standard"
+            / "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg"
+        )
+        reference = relabeled_control_root / "standard" / "macos-library-browse-light.jpg"
+        _, control_payload = verifier.jpeg_payload_binding(control.read_bytes())
+        if not control_payload.endswith(b"\xff\xd9"):
+            raise SystemExit("pinned-control relabel probe is missing a final JPEG EOI")
+        reference.write_bytes(
+            bind_payload(
+                control_payload + b"decoder-ignored-reference-encoding",
+                "library-browse",
+                "light",
+                "reference",
+            )
+        )
+        refresh_manifest_file_evidence(relabeled_control_root)
+        expect_rejection(relabeled_control_root, "decoded pixels are not pairwise distinct")
+
+    print(
+        "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
+        "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
+        "all-identical=true rebound-identical-visuals=true swapped-labels=true "
+        "identical-pixels-different-encoding=true "
+        "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
+        "byte-identical-dynamic-type=true "
+        "misframed-window=true inactive-control-state=true "
+        "substituted-pinned-control=true "
+        "reencoded-pinned-control-as-reference-pixel-duplicate=true"
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -6,11 +6,13 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 14 — the strengthened hosted measurement rejected complete custom-scheme HLS routing,
-so Apple now takes the specified progressive-container fallback. Revision 13 attempted to narrow the
-claim to a manifest-rewrite contract, but the hosted result did not establish that contract. Revision
-12 recorded the original, insufficient first-segment observation. Revision 11 recorded Phase 0
-completion from hosted CI and repository API evidence. Revision
+**Revision:** 17 — the macOS design-capture boundary now has measured framing evidence and rejects a
+translated or resized AppKit theme frame before encoding. Revision 16 removed invalid macOS Dynamic
+Type evidence. Revision 15 replaced the Apple workload timeout assumption with hosted measurement.
+Revision 14 recorded the progressive-container fallback selected by the strengthened hosted media
+measurement. Revision 13 attempted to narrow the claim to a manifest-rewrite contract, but the hosted
+result did not establish that contract. Revision 12 recorded the original, insufficient first-segment
+observation. Revision 11 recorded Phase 0 completion from hosted CI and repository API evidence. Revision
 10 removed the remaining identifiers of unrelated applications. Revision 9 verified the Apple signing path by API and promoted it from ASSUMED to OBSERVED; the
 only remaining unknown is the API key's CREATE permission, now the Phase-2 dry run's first act.
 Revision 8 re-confirmed and closed OQ-3's OS floors and removed the last private context from the
@@ -1797,8 +1799,12 @@ Set now, because six shells that diverge first cannot be retrofitted cheaply.
 
 - **Every interactive element has an accessible label and a stated role**; playback controls announce
   state changes. VoiceOver on Apple, TalkBack on Android, verified per surface.
-- **Dynamic Type / font scaling honored** up to the platform's accessibility sizes; no fixed-height rows
-  containing scalable text.
+- **Font scaling is platform-specific; no fixed-height rows contain scalable text.** iOS and iPadOS
+  must honor Dynamic Type through the platform accessibility sizes; Android must honor system font
+  scaling. **OBSERVED 2026-08-21 ([Apple SwiftUI API reference](https://developer.apple.com/documentation/swiftui/environmentvalues/dynamictypesize)):**
+  `EnvironmentValues.dynamicTypeSize` does not affect text size on macOS. Dulcet therefore does not
+  label a macOS capture with an iOS Dynamic Type category. A platform-applicable macOS text-resizing
+  mechanism remains required before the macOS design can claim text-scaling evidence.
 - **Full keyboard operability on macOS and iPadOS**, with a visible focus ring and media-key support.
   **Full D-pad operability on tvOS and Android TV** with a visible focus indicator on every focusable
   element (§3).
@@ -2808,6 +2814,55 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 18 (2026-08-21)** — the Phase-2 evidence claims were narrowed to their measured boundary.
+
+1. Capture distinctness is measured on normalized decoded pixels, not JPEG bytes. A negative control
+   changes a JPEG encoding with decoder-ignored post-EOI bytes while preserving the raster, and the
+   verifier rejects the duplicate pixels.
+2. Filename, manifest and embedded labels are an internal-consistency check. A fully self-consistent
+   payload swap remains acceptable because the artifact has no independent oracle for what a named
+   fixture state must depict.
+3. `captureProvenance` is a declaration, not measured origin. The control protections are exact
+   checked-in byte digests plus decoded-pixel distinctness, which prevents the required pinned control
+   pixels from also occupying a reference slot under a different encoding.
+4. Automated contrast evidence covers the explicit `DulcetRegisteredContrastPair` registry and a
+   direct-foreground-modifier source policy. Native-control, tint, selection, focus, hover and disabled
+   pairs remain outside that registry and are evaluated from the artifact; no exhaustive automated
+   contrast claim is made. Likewise, the TLS assertion is about the checked-in deterministic fixture,
+   not a type invariant across publicly constructible `DulcetSnapshot` values.
+
+**Revision 17 (2026-08-21)** — the macOS screenshot framing contract became measured evidence.
+
+1. The capture harness previously applied its 1180 × 760 frame before installing and ordering the
+   SwiftUI window. AppKit could then recalculate or constrain the titled theme frame, while a
+   separately fixed-size bitmap still encoded 1180 × 760 bytes; dimensions alone therefore did not
+   prove that the window filled the evidence boundary. The first guarded hosted run rejected an
+   observed 1024 × 674 frame, the runner desktop's constrained size, before writing any evidence.
+2. A capture-only `NSWindow` subclass keeps standard titled chrome while overriding AppKit's
+   visible-screen frame constraint. The content view is installed and the window ordered first, then
+   the fixed evidence frame is applied and laid out. Before any JPEG is encoded, the executable
+   requires both an 1180 × 760 window and zero-origin 1180 × 760 theme-frame capture bounds.
+3. Every manifest record carries the observed frame and capture-bound coordinates. The verifier
+   enforces them, and its negative control proves that a translated capture-bound claim is rejected.
+4. Hosted command-line processes cannot become the runner desktop's active application. The capture
+   therefore fixes SwiftUI's rendered `controlActiveState` to `key` and records that treatment per
+   JPEG rather than falsely labeling the process active. This prevents inactive control rendering
+   from suppressing prominent-button fills while the pixels are evaluated. Native-control surface
+   pairs are outside the registered automated contrast set; the manifest field has a consistency
+   negative control, not an exhaustive contrast guarantee.
+
+**Revision 16 (2026-08-21)** — invalid macOS Dynamic Type evidence was removed.
+
+1. Apple documents that SwiftUI's `dynamicTypeSize` environment value does not affect text size on
+   macOS. The capture harness had nevertheless labeled seven files `accessibility5`; two were
+   byte-identical to their standard counterparts, proving that the label was not rendered evidence.
+2. The macOS capture executable now rejects the inapplicable option, the manifest carries no
+   `dynamicType` field, and the verifier's negative control proves that a byte-identical pair carrying
+   different Dynamic Type labels fails.
+3. The macOS accessibility score remains unreportable until a platform-applicable text-resizing
+   mechanism has its own changed-pixel evidence. The iOS/iPadOS and Android scaling requirements are
+   unchanged.
 
 **Revision 15 (2026-08-21)** — the combined Apple workload replaced its timeout assumption.
 

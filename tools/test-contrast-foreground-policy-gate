@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+
+"""Prove direct uncataloged foregrounds and unapproved waivers fail the source policy."""
+
+from __future__ import annotations
+
+import argparse
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+import shutil
+import tempfile
+
+
+VERIFIER_PATH = Path(__file__).with_name("verify_contrast_foreground_policy.py")
+verifier = SourceFileLoader("verify_contrast_foreground_policy", str(VERIFIER_PATH)).load_module()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=Path("apple/DulcetKit/Sources/DulcetKit"),
+    )
+    args = parser.parse_args()
+
+    with tempfile.TemporaryDirectory(prefix="dulcet-contrast-foreground-policy-") as temporary:
+        source_root = Path(temporary) / "DulcetKit"
+        shutil.copytree(args.source_root, source_root)
+        probe = source_root / "UncatalogedForeground.swift"
+        probe.write_text(
+            "import SwiftUI\n"
+            "struct UncatalogedForeground: View {\n"
+            "    var body: some View { Text(\"probe\").foregroundStyle(Color.orange) }\n"
+            "}\n"
+        )
+        waiver_probe = source_root / "UnapprovedContrastWaiver.swift"
+        waiver_probe.write_text(
+            "import SwiftUI\n"
+            "struct UnapprovedContrastWaiver: View {\n"
+            "    var body: some View {\n"
+            "        Text(\"probe\").foregroundStyle(Color.orange) "
+            "// dulcet-contrast-waiver: convenient\n"
+            "    }\n"
+            "}\n"
+        )
+        try:
+            verifier.verify_source_root(source_root)
+        except verifier.ContrastForegroundPolicyError as error:
+            observed = str(error)
+            expected = (
+                "UncatalogedForeground.swift:3",
+                "UnapprovedContrastWaiver.swift:4: unapproved contrast waiver: convenient",
+            )
+            if any(fragment not in observed for fragment in expected):
+                raise SystemExit(
+                    f"foreground policy probes rejected for the wrong reason: {error}"
+                ) from error
+        else:
+            raise SystemExit("foreground policy unexpectedly accepted its negative controls")
+
+    print(
+        "CONTRAST FOREGROUND POLICY NEGATIVE CONTROL PASS "
+        "direct-uncataloged-foreground-rejected=true unapproved-waiver-rejected=true"
+    )
+
+
+if __name__ == "__main__":
+    main()
