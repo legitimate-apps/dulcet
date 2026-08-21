@@ -9,7 +9,15 @@
       "gates": ["protocol:subsonic-1.16.1"],
       "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "macos": {
+          "status": "partial",
+          "evidence": {
+            "workflow": "apple-ci",
+            "job": "apple-ci",
+            "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"
+          },
+          "reason": "CONF-01..07 prove the macOS core and Darwin transport; account UI and credential persistence are not wired."
+        }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }

@@ -6,9 +6,12 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 17 — the macOS design-capture boundary now has measured framing evidence and rejects a
-translated or resized AppKit theme frame before encoding. Revision 16 removed invalid macOS Dynamic
-Type evidence. Revision 15 replaced the Apple workload timeout assumption with hosted measurement.
+**Revision:** 19 — CONF-01 through CONF-07 now execute on JVM and macOS against the pinned reference
+server, with preserved behavior-absent red evidence before the production connector. Revision 18
+narrowed the Phase-2 evidence claims to their measured boundary. Revision 17 gave the macOS
+design-capture boundary measured framing evidence and rejects a translated or resized AppKit theme
+frame before encoding. Revision 16 removed invalid macOS Dynamic Type evidence. Revision 15 replaced
+the Apple workload timeout assumption with hosted measurement.
 Revision 14 recorded the progressive-container fallback selected by the strengthened hosted media
 measurement. Revision 13 attempted to narrow the claim to a manifest-rewrite contract, but the hosted
 result did not establish that contract. Revision 12 recorded the original, insufficient first-segment
