@@ -708,8 +708,18 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
     fun observe(request: HttpRequestBuilder, content: OutgoingContent) {
         val query = request.url.parameters
         val form = (content as? FormDataContent)?.formData ?: Parameters.Empty
-        val queryAuthenticationParameters = query.authenticationParameters()
-        val formAuthenticationParameters = form.authenticationParameters()
+        val queryAuthenticationParameters = authenticationParameters(
+            username = query["u"],
+            saltedToken = query["t"],
+            salt = query["s"],
+            legacyPassword = query["p"],
+        )
+        val formAuthenticationParameters = authenticationParameters(
+            username = form["u"],
+            saltedToken = form["t"],
+            salt = form["s"],
+            legacyPassword = form["p"],
+        )
         val authenticationLocation = when {
             queryAuthenticationParameters.isNotEmpty() -> AuthenticationLocation.Query
             formAuthenticationParameters.isNotEmpty() -> AuthenticationLocation.FormBody
@@ -738,11 +748,16 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
     fun snapshot(): List<RequestTrace> = traces.toList()
 }
 
-private fun Parameters.authenticationParameters(): Set<AuthenticationParameter> = buildSet {
-    if (this@authenticationParameters["u"] != null) add(AuthenticationParameter.Username)
-    if (this@authenticationParameters["t"] != null) add(AuthenticationParameter.SaltedToken)
-    if (this@authenticationParameters["s"] != null) add(AuthenticationParameter.Salt)
-    if (this@authenticationParameters["p"] != null) add(AuthenticationParameter.LegacyPassword)
+private fun authenticationParameters(
+    username: String?,
+    saltedToken: String?,
+    salt: String?,
+    legacyPassword: String?,
+): Set<AuthenticationParameter> = buildSet {
+    if (username != null) add(AuthenticationParameter.Username)
+    if (saltedToken != null) add(AuthenticationParameter.SaltedToken)
+    if (salt != null) add(AuthenticationParameter.Salt)
+    if (legacyPassword != null) add(AuthenticationParameter.LegacyPassword)
 }
 
 private class RedirectPolicyFailure(val error: DomainError) : Exception()
