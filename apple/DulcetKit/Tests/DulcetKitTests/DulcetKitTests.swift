@@ -196,18 +196,21 @@ func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
 }
 
 @Test @MainActor
-func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
+func proofNativeSecondaryOverWhiteMustMeetWCAGAA() throws {
     let sample = try renderedContrastSample(
         foreground: .secondary,
         background: .white,
         appearanceName: .aqua
     )
 
-    #expect(sample.ratio < 4.5)
     print(
-        "WCAG RENDERED CONTRAST NEGATIVE CONTROL PASS pair=native-secondary/white "
+        "WCAG RED PROOF pair=native-secondary/white "
             + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
-            + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=4.5 rejected=true"
+            + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=4.5"
+    )
+    #expect(
+        sample.ratio >= 4.5,
+        "Real rendered native secondary over white must meet WCAG AA for normal text"
     )
 }
 
