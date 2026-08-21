@@ -16,6 +16,9 @@ parity_workflow = Path(".github/workflows/parity-gate.yml").read_text()
 drift_workflow = Path(".github/workflows/branch-protection-drift.yml").read_text()
 evidence_schema = section(spec, "### 19.2 Row schema", "### 19.3 The gate")
 gate = section(spec, "### 19.3 The gate", "### 19.4 As a delegate brief")
+normalized_spec = " ".join(spec.split())
+normalized_evidence_schema = " ".join(evidence_schema.split())
+normalized_gate = " ".join(gate.split())
 
 errors: list[str] = []
 
@@ -34,19 +37,19 @@ for marker in (
     "branch-protection-drift",
     "required-checks manifest",
 ):
-    if marker not in gate:
+    if marker not in normalized_gate:
         errors.append(f"§19.3 must state the gate timing boundary with {marker!r}")
 
-if "GitHub's branch-protection API reports the job as a **required check**" in evidence_schema:
+if "GitHub's branch-protection API reports the job as a **required check**" in normalized_evidence_schema:
     errors.append("§19.2 still attributes a live branch-protection API query to the PR static gate")
-if "The parity job reads classic branch protection through GitHub's REST API" in gate:
+if "The parity job reads classic branch protection through GitHub's REST API" in normalized_gate:
     errors.append("§19.3 still claims the PR parity job reads live branch protection")
 
 for marker in (
     "**ASSUMED:** proxy-auth challenges fail closed",
     "does not act as a proxy or return 407",
 ):
-    if marker not in spec:
+    if marker not in normalized_spec:
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 if errors:
