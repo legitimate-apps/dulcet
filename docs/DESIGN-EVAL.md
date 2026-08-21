@@ -3,7 +3,10 @@
 This document defines the reproducible evidence and scoring contract for Dulcet's native macOS
 fixture UI. It evaluates design quality; it does not claim that the network, cache, playback engine,
 or account flow is implemented. The views are driven by an in-repository deterministic fixture so a
-later data source can replace it without changing the visual layer.
+later data source can replace it without changing the visual layer. The presentation source owns
+content and ordering, including the Recently Added selection; view code contains no deterministic
+fixture identifiers. All human-facing view copy and compound formatting route through the localized
+`DulcetStrings` resource boundary.
 
 ## 1. Evidence contract
 
@@ -30,7 +33,7 @@ environment is fixed:
   a runtime geometry guard requiring an 1180 × 760 window frame and a zero-origin 1180 × 760 AppKit
   theme-frame capture boundary;
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
-  button fills and their computed label contrast are present in pixels even though a hosted command-
+  button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
 - redundant window-title text hidden while retaining standard AppKit title-bar chrome; each content
   surface carries its own visible state heading and debug target suffixes are excluded;

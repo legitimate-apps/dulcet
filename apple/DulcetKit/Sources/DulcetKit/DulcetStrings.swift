@@ -62,23 +62,118 @@ enum DulcetStrings {
     static let controlBad = text("control.bad", "DELIBERATELY BAD CONTROL")
 
     static func albumCount(_ count: Int) -> String {
-        String(format: text("library.albumCount", "%d albums"), count)
+        formatted("library.albumCount", "%d albums", count)
     }
 
     static func trackCount(_ count: Int) -> String {
-        String(format: text("library.trackCount", "%d tracks"), count)
+        formatted("library.trackCount", "%d tracks", count)
     }
 
     static func discTitle(_ number: Int) -> String {
-        String(format: text("album.discNumber", "Disc %d"), number)
+        formatted("album.discNumber", "Disc %d", number)
     }
 
     static func serverStatus(_ name: String) -> String {
-        String(format: text("status.server", "%@ · Online"), name)
+        formatted("status.server", "%@ · Online", name)
     }
 
     static func serverConnectionFailed(_ name: String) -> String {
-        String(format: text("status.serverConnectionFailed", "%@ · Connection failed"), name)
+        formatted("status.serverConnectionFailed", "%@ · Connection failed", name)
+    }
+
+    static func artistNames(_ names: [String]) -> String {
+        ListFormatter.localizedString(byJoining: names)
+    }
+
+    static func librarySummary(albumCount: Int, trackCount: Int) -> String {
+        formatted(
+            "library.summary",
+            "%1$@ · %2$@",
+            self.albumCount(albumCount),
+            self.trackCount(trackCount)
+        )
+    }
+
+    static func albumAccessibility(_ title: String, artists: String, tracks: String) -> String {
+        formatted("album.accessibility", "%1$@, %2$@, %3$@", title, artists, tracks)
+    }
+
+    static func albumMetadata(year: Int, tracks: String, duration: String) -> String {
+        formatted("album.metadata", "%1$d · %2$@ · %3$@", year, tracks, duration)
+    }
+
+    static func trackSubtitle(artists: String, album: String) -> String {
+        formatted("track.subtitle", "%1$@ · %2$@", artists, album)
+    }
+
+    static func trackAccessibility(title: String, subtitle: String, duration: String) -> String {
+        formatted("track.accessibility", "%1$@, %2$@, %3$@", title, subtitle, duration)
+    }
+
+    static func unavailableTrackAccessibility(
+        title: String,
+        subtitle: String,
+        duration: String
+    ) -> String {
+        formatted(
+            "track.accessibility.unavailable",
+            "%1$@, %2$@, %3$@, %4$@",
+            title,
+            subtitle,
+            duration,
+            offlineUnavailable
+        )
+    }
+
+    static func playbackProgress(elapsed: String, duration: String) -> String {
+        formatted("player.progress", "%1$@ of %2$@", elapsed, duration)
+    }
+
+    static func volumeValue(_ volume: Double) -> String {
+        volume.formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    static func audioFormat(codec: String, sampleRateKilohertz: Double) -> String {
+        let rate = sampleRateKilohertz.formatted(
+            .number.precision(.fractionLength(0...1))
+        )
+        return formatted("player.audioFormat", "%1$@ · %2$@ kHz", codec, rate)
+    }
+
+    static func playingOn(_ outputName: String) -> String {
+        formatted("player.playingOnOutput", "Playing on %@", outputName)
+    }
+
+    static func searchResultAccessibility(
+        title: String,
+        subtitle: String,
+        kind: String,
+        source: String
+    ) -> String {
+        formatted(
+            "search.result.accessibility",
+            "%1$@, %2$@, %3$@, %4$@",
+            title,
+            subtitle,
+            kind,
+            source
+        )
+    }
+
+    static func lastSynced(_ description: String) -> String {
+        formatted("offline.lastSyncedValue", "Last synced %@", description)
+    }
+
+    private static func formatted(
+        _ key: StaticString,
+        _ fallback: String.LocalizationValue,
+        _ arguments: CVarArg...
+    ) -> String {
+        String(
+            format: text(key, fallback),
+            locale: Locale.current,
+            arguments: arguments
+        )
     }
 
     private static func text(

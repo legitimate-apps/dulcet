@@ -65,25 +65,15 @@ struct DulcetLibraryBrowseView: View {
         snapshot.albums.reduce(0) { $0 + $1.tracks.count } + snapshot.looseTracks.count
     }
 
-    private var recentTracks: [DulcetTrack] {
-        let requestedIDs = [
-            "album-etudes-between-stations-track-1",
-            "double-lines-d1-t2",
-            "shared-credit",
-            "track-no-album",
-            "deliberately-long-title",
-            "paging-150",
-        ]
-        let all = snapshot.albums.flatMap(\.tracks) + snapshot.looseTracks
-        return requestedIDs.compactMap { id in all.first { $0.id == id } }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                 DulcetLibraryHeader(
                     title: DulcetStrings.library,
-                    subtitle: "\(DulcetStrings.albumCount(snapshot.albums.count)) · \(DulcetStrings.trackCount(totalTracks))"
+                    subtitle: DulcetStrings.librarySummary(
+                        albumCount: snapshot.albums.count,
+                        trackCount: totalTracks
+                    )
                 )
 
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -112,9 +102,9 @@ struct DulcetLibraryBrowseView: View {
                     }
 
                     VStack(spacing: 0) {
-                        ForEach(Array(recentTracks.enumerated()), id: \.element.id) { index, track in
+                        ForEach(Array(snapshot.recentlyAddedTracks.enumerated()), id: \.element.id) { index, track in
                             DulcetTrackRow(track: track, showAlbum: true, index: index + 1)
-                            if track.id != recentTracks.last?.id {
+                            if track.id != snapshot.recentlyAddedTracks.last?.id {
                                 Divider().padding(.leading, 52)
                             }
                         }
@@ -188,7 +178,7 @@ struct DulcetAlbumShelfItem: View {
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                Text(album.albumArtists.joined(separator: ", "))
+                Text(DulcetStrings.artistNames(album.albumArtists))
                     .font(.subheadline)
                     .foregroundStyle(Color.dulcetSecondaryText)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
@@ -200,7 +190,11 @@ struct DulcetAlbumShelfItem: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(album.title), \(album.albumArtists.joined(separator: ", ")), \(DulcetStrings.trackCount(album.tracks.count))")
+        .accessibilityLabel(DulcetStrings.albumAccessibility(
+            album.title,
+            artists: DulcetStrings.artistNames(album.albumArtists),
+            tracks: DulcetStrings.trackCount(album.tracks.count)
+        ))
         .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
     }
 }
@@ -268,19 +262,29 @@ struct DulcetTrackRow: View {
     }
 
     private var trackSubtitle: String {
-        let artists = track.artistNames.joined(separator: ", ")
+        let artists = DulcetStrings.artistNames(track.artistNames)
         if showAlbum, let album = track.albumTitle {
-            return "\(artists) · \(album)"
+            return DulcetStrings.trackSubtitle(artists: artists, album: album)
         }
         if track.albumTitle == nil {
-            return "\(artists) · \(DulcetStrings.withoutAlbum)"
+            return DulcetStrings.trackSubtitle(artists: artists, album: DulcetStrings.withoutAlbum)
         }
         return artists
     }
 
     private var accessibilityLabel: String {
-        let availability = offline ? ", \(DulcetStrings.offlineUnavailable)" : ""
-        return "\(track.title), \(trackSubtitle), \(track.durationSeconds.dulcetDuration)\(availability)"
+        if offline {
+            return DulcetStrings.unavailableTrackAccessibility(
+                title: track.title,
+                subtitle: trackSubtitle,
+                duration: track.durationSeconds.dulcetDuration
+            )
+        }
+        return DulcetStrings.trackAccessibility(
+            title: track.title,
+            subtitle: trackSubtitle,
+            duration: track.durationSeconds.dulcetDuration
+        )
     }
 }
 
@@ -344,11 +348,15 @@ struct DulcetAlbumDetailView: View {
             Text(album.title)
                 .font(.largeTitle.weight(.bold))
                 .lineLimit(nil)
-            Text(album.albumArtists.joined(separator: ", "))
+            Text(DulcetStrings.artistNames(album.albumArtists))
                 .font(.title3)
                 .foregroundStyle(Color.dulcetSecondaryText)
                 .lineLimit(nil)
-            Text("\(album.year) · \(DulcetStrings.trackCount(album.tracks.count)) · \(album.totalDurationSeconds.dulcetDuration)")
+            Text(DulcetStrings.albumMetadata(
+                year: album.year,
+                tracks: DulcetStrings.trackCount(album.tracks.count),
+                duration: album.totalDurationSeconds.dulcetDuration
+            ))
                 .font(.subheadline)
                 .foregroundStyle(Color.dulcetSecondaryText)
                 .lineLimit(nil)
@@ -387,7 +395,7 @@ struct DulcetOfflineLibraryView: View {
                         Text(DulcetStrings.library)
                             .font(.largeTitle.weight(.bold))
                         if case let .offline(lastSynced) = snapshot.connectivity {
-                            Text("\(DulcetStrings.lastSynced) \(lastSynced)")
+                            Text(DulcetStrings.lastSynced(lastSynced))
                                 .font(.subheadline)
                                 .foregroundStyle(Color.dulcetSecondaryText)
                                 .lineLimit(nil)

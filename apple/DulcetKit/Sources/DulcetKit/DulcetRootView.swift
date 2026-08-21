@@ -195,7 +195,7 @@ private struct DulcetSidebar: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(DulcetStrings.offline)
                         .font(.subheadline.weight(.medium))
-                    Text("\(DulcetStrings.lastSynced) \(lastSyncedDescription)")
+                    Text(DulcetStrings.lastSynced(lastSyncedDescription))
                         .font(.caption)
                         .foregroundStyle(Color.dulcetSecondaryText)
                         .lineLimit(nil)
