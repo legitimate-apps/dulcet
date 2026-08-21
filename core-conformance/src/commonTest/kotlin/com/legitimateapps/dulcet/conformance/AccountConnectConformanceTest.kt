@@ -238,6 +238,21 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun domainErrorCannotRenderBareServerControlledText() {
+        val bareCredential = "opaque-bare-server-credential"
+        val userInfoCredential = "userinfo-server-credential"
+        val error = AccountConnectionContract.mapSubsonicError(
+            code = 999,
+            message = "authentication rejected: $bareCredential",
+            requestUrl = "https://attacker:$userInfoCredential@music.invalid/rest/ping.view",
+        )
+
+        val rendered = error.toString()
+        assertFalse(rendered.contains(bareCredential))
+        assertFalse(rendered.contains(userInfoCredential))
+    }
+
+    @Test
     fun conf08EnforcesRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val sameOrigin = fixture().requireConnected("CONF-08", "$redirectRoot/same")
