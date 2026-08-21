@@ -911,7 +911,7 @@ public object Redactor {
         }.let { if (it < 0) url.length else it }
         if (authorityEnd == authorityStart) return UNRENDERABLE_URL
         val authority = url.substring(authorityStart, authorityEnd)
-        if (!authority.isStructurallyRenderableUrlAuthority()) return UNRENDERABLE_URL
+        if (!authority.isStructurallyValidUrlAuthority()) return UNRENDERABLE_URL
         val parsed = try {
             Url(url)
         } catch (_: Exception) {
@@ -926,7 +926,7 @@ public object Redactor {
     private const val UNRENDERABLE_URL = "<unrenderable-url>"
 }
 
-private fun String.isStructurallyRenderableUrlAuthority(): Boolean {
+private fun String.isStructurallyValidUrlAuthority(): Boolean {
     if (
         isBlank() || any { it.isWhitespace() || it.isISOControl() } ||
         '@' in this || '\\' in this
@@ -937,12 +937,19 @@ private fun String.isStructurallyRenderableUrlAuthority(): Boolean {
         val closingBracket = indexOf(']')
         if (closingBracket <= 1 || indexOf('[', startIndex = 1) >= 0) return false
         if (indexOf(']', startIndex = closingBracket + 1) >= 0) return false
+        val literal = substring(1, closingBracket)
+        val address = literal.substringBefore('%').lowercase()
+        if (!address.isValidIpv6Literal()) return false
+        if ('%' in literal && literal.substringAfter('%').isEmpty()) return false
         val suffix = substring(closingBracket + 1)
         return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
     }
     if ('[' in this || ']' in this || count { it == ':' } > 1) return false
     val host = substringBefore(':')
     if (host.isBlank()) return false
+    if ('.' in host && host.all { it == '.' || it in '0'..'9' } && host.parseIpv4() == null) {
+        return false
+    }
     val suffix = removePrefix(host)
     return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
 }
@@ -995,15 +1002,26 @@ private fun normalizeServerUrl(input: String, allowLocalHttp: Boolean): Normaliz
         )
     }
     val authority = match.groupValues[2]
-    if (authority.isBlank() || '@' in authority) {
+    if ('@' in authority) {
         return NormalizedServerUrl.Invalid(
             DomainError.Input.InvalidServerUrl(
                 InvalidServerUrlReason.EmbeddedUserInfo,
             ),
         )
     }
-    val host = authority.hostWithoutPort()
-    if (host.isBlank()) {
+    if (!authority.isStructurallyValidUrlAuthority()) {
+        return NormalizedServerUrl.Invalid(
+            DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+        )
+    }
+    val parsed = try {
+        Url(withScheme)
+    } catch (_: Exception) {
+        return NormalizedServerUrl.Invalid(
+            DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+        )
+    }
+    if (parsed.host.isBlank()) {
         return NormalizedServerUrl.Invalid(
             DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
         )
@@ -1028,11 +1046,6 @@ private fun normalizeServerUrl(input: String, allowLocalHttp: Boolean): Normaliz
     }
     return NormalizedServerUrl.Valid(candidates)
 }
-
-private fun String.hostWithoutPort(): String = when {
-    startsWith("[") -> substringAfter('[').substringBefore(']')
-    else -> substringBefore(':')
-}.lowercase()
 
 private fun String.parseProtocolVersion(): ProtocolVersionLevel? {
     val parts = split('.')
@@ -1088,4 +1101,4 @@ private fun JsonObject.int(name: String): Int? =
     (get(name) as? JsonPrimitive)?.intOrNull
 
 private val SCHEME_PATTERN = Regex("^[A-Za-z][A-Za-z0-9+.-]*://")
-private val URL_PATTERN = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://([^/]+)(/.*)?$")
+private val URL_PATTERN = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]+)([/?#].*)?$")

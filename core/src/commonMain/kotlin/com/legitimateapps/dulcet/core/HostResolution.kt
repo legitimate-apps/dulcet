@@ -91,24 +91,32 @@ internal fun String.isPermittedLocalHttpAddress(): Boolean {
 
 private fun String.isIpAddressLiteral(): Boolean = parseIpv4() != null || ':' in this
 
-private fun String.parseIpv4(): List<Int>? {
+internal fun String.parseIpv4(): List<Int>? {
     val octets = split('.')
     if (octets.size != 4) return null
     return octets.map { it.toIntOrNull() ?: return null }
         .takeIf { values -> values.all { it in 0..255 } }
 }
 
-private fun String.isValidIpv6Literal(): Boolean {
-    if ('.' in this || count { it == ':' } < 2) return false
-    val compressionIndex = indexOf("::")
-    if (compressionIndex >= 0 && indexOf("::", compressionIndex + 2) >= 0) return false
-    val groups = split(':').filter(String::isNotEmpty)
+internal fun String.isValidIpv6Literal(): Boolean {
+    val normalized = if ('.' in this) {
+        val ipv4Tail = substringAfterLast(':')
+        if (ipv4Tail.parseIpv4() == null) return false
+        "${substringBeforeLast(':')}:0:0"
+    } else {
+        this
+    }
+    if (normalized.count { it == ':' } < 2) return false
+    val compressionIndex = normalized.indexOf("::")
+    if (compressionIndex >= 0 && normalized.indexOf("::", compressionIndex + 2) >= 0) return false
+    val groups = normalized.split(':').filter(String::isNotEmpty)
     if (groups.any { it.length !in 1..4 || it.any { character -> !character.isHexDigit() } }) {
         return false
     }
     return if (compressionIndex >= 0) groups.size < 8 else groups.size == 8
 }
 
-private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f'
+private fun Char.isHexDigit(): Boolean =
+    this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
 private fun String.asUrlHost(): String = if (':' in this) "[$this]" else this
