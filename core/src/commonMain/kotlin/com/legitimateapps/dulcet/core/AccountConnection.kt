@@ -978,10 +978,45 @@ private fun String.isStructurallyValidInternationalizedHostAuthority(): Boolean 
         return false
     }
     val host = substringBefore(':')
-    if (host.isBlank() || host.none { it.code > 0x7f }) return false
-    if (!host.isValidUrlRegName(allowNonAscii = true)) return false
+    if (host.isBlank()) return false
+    val decodedHost = host.decodePercentEncodedAsciiRegName() ?: return false
+    if (decodedHost.none { it.code > 0x7f }) return false
+    if (!decodedHost.isValidUrlRegName(allowNonAscii = true)) return false
     val suffix = removePrefix(host)
     return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
+}
+
+private fun String.decodePercentEncodedAsciiRegName(): String? {
+    if (any { it.code > 0x7f }) return this
+    val bytes = ByteArray(length)
+    var byteCount = 0
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        if (character == '%') {
+            if (
+                index + 2 >= length ||
+                !this[index + 1].isAsciiHexDigit() ||
+                !this[index + 2].isAsciiHexDigit()
+            ) {
+                return null
+            }
+            bytes[byteCount] = (
+                this[index + 1].asciiHexValue() * 16 + this[index + 2].asciiHexValue()
+                ).toByte()
+            byteCount += 1
+            index += 3
+        } else {
+            bytes[byteCount] = character.code.toByte()
+            byteCount += 1
+            index += 1
+        }
+    }
+    return try {
+        bytes.decodeToString(endIndex = byteCount, throwOnInvalidSequence = true)
+    } catch (_: Exception) {
+        null
+    }
 }
 
 private fun String.isValidIpv6ZoneSuffix(): Boolean {
@@ -1043,6 +1078,12 @@ private fun String.isValidUrlRegName(allowNonAscii: Boolean = false): Boolean {
 
 private fun Char.isAsciiHexDigit(): Boolean =
     this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+
+private fun Char.asciiHexValue(): Int = when (this) {
+    in '0'..'9' -> code - '0'.code
+    in 'a'..'f' -> code - 'a'.code + 10
+    else -> code - 'A'.code + 10
+}
 
 private fun String.isValidExplicitUrlPort(): Boolean {
     if (!startsWith(':')) return false
