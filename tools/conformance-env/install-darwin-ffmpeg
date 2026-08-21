@@ -95,8 +95,6 @@ def main() -> None:
     assert_locked_graph(closure, ffmpeg["formula"])
 
     names = [entry["formula"] for entry in closure]
-    local_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
-    local_by_name = {formula["name"]: formula for formula in local_info["formulae"]}
     for expected in closure:
         name = expected["formula"]
         quoted_name = urllib.parse.quote(name, safe="")
@@ -105,9 +103,15 @@ def main() -> None:
         ) as response:
             live_formula = json.load(response)
         live = formula_shape(live_formula, expected["bottle_tag"])
-        local = formula_shape(local_by_name.get(name, {}), expected["bottle_tag"])
         if live != expected:
             raise SystemExit(f"Homebrew live formula drift for {name}: expected {expected}, observed {live}")
+
+    run(["brew", "update"])
+    local_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
+    local_by_name = {formula["name"]: formula for formula in local_info["formulae"]}
+    for expected in closure:
+        name = expected["formula"]
+        local = formula_shape(local_by_name.get(name, {}), expected["bottle_tag"])
         if local != expected:
             raise SystemExit(f"Homebrew resolver drift for {name}: expected {expected}, observed {local}")
 
