@@ -2828,6 +2828,10 @@ argue against the recorded rationale — not as filling in a blank.
    requires both an 1180 × 760 window and zero-origin 1180 × 760 theme-frame capture bounds.
 3. Every manifest record carries the observed frame and capture-bound coordinates. The verifier
    enforces them, and its negative control proves that a translated capture-bound claim is rejected.
+4. The artifact also requires an active application and key window. This prevents inactive AppKit
+   chrome from suppressing prominent-button fills while the evidence is evaluated against the active
+   foreground/background contrast pair; both states are recorded per capture and have a negative
+   control.
 
 **Revision 16 (2026-08-21)** — invalid macOS Dynamic Type evidence was removed.
 
