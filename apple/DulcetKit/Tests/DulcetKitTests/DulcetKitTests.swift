@@ -53,10 +53,10 @@ func searchFixtureMakesMergedSourcesExplicitWithoutDuplicates() {
 }
 
 @Test @MainActor
-func tlsFailureIsUserPresentableAndSpecific() {
+func deterministicTLSFixtureCarriesPresentableSpecificFailure() {
     let snapshot = DulcetDeterministicFixture().snapshot(for: .tlsUntrusted)
     guard case let .connectionFailed(.tlsUntrusted(failure)) = snapshot.connectivity else {
-        Issue.record("TLS fixture did not derive both surfaces from one connection failure")
+        Issue.record("TLS fixture did not carry the expected typed connection failure")
         return
     }
 
@@ -145,16 +145,16 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 }
 
 @Test @MainActor
-func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
+func registeredColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
-        for pair in DulcetRenderedContrastPair.allCases {
+        for pair in DulcetRegisteredContrastPair.allCases {
             let sample = try renderedContrastSample(
                 foreground: pair.foreground,
                 backgroundLayers: pair.backgroundLayers,
                 appearanceName: appearanceName
             )
             print(
-                "WCAG RENDERED CONTRAST pair=\(pair.rawValue) appearance=\(appearanceName.rawValue) "
+                "WCAG REGISTERED CONTRAST pair=\(pair.rawValue) appearance=\(appearanceName.rawValue) "
                     + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
                     + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=\(pair.minimumRatio)"
             )
@@ -167,26 +167,26 @@ func renderedColorPairsMeetWCAGAAInBothAppearances() throws {
 }
 
 @Test @MainActor
-func renderedFixtureStatesExerciseEveryContrastPairInTheGate() {
-    var observed: Set<DulcetRenderedContrastPair> = []
+func renderedFixtureStatesExerciseEveryRegisteredContrastPair() {
+    var observed: Set<DulcetRegisteredContrastPair> = []
 
     for state in DulcetPresentationState.allCases {
         let store = DulcetPresentationStore(
             source: DulcetDeterministicDataSource(initialState: state)
         )
         let view = NSHostingView(rootView: DulcetCaptureView(store: store)
-            .onDulcetRenderedContrastPairs { observed.formUnion($0) })
+            .onDulcetRegisteredContrastPairs { observed.formUnion($0) })
         view.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
     }
 
-    #expect(observed == Set(DulcetRenderedContrastPair.allCases))
+    #expect(observed == Set(DulcetRegisteredContrastPair.allCases))
 }
 
 @Test @MainActor
-func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
+func contrastInstrumentRejectsNativeSecondaryOverWhite() throws {
     let sample = try renderedContrastSample(
         foreground: .secondary,
         backgroundLayers: [AnyShapeStyle(Color.white)],
@@ -195,14 +195,14 @@ func renderedContrastGateRejectsNativeSecondaryOverWhite() throws {
 
     #expect(sample.ratio < 4.5)
     print(
-        "WCAG RENDERED CONTRAST NEGATIVE CONTROL PASS pair=native-secondary/white "
+        "WCAG CONTRAST INSTRUMENT NEGATIVE CONTROL PASS pair=native-secondary/white "
             + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "
             + "ratio=\(String(format: "%.3f", sample.ratio)) minimum=4.5 rejected=true"
     )
 }
 
 @Test @MainActor
-func renderedContrastGateRejectsLegacyCombinedSourceTagPairInBothAppearances() throws {
+func contrastInstrumentRejectsLegacyCombinedSourceTagPairInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
         let sample = try renderedContrastSample(
             foreground: .purple,
@@ -216,7 +216,7 @@ func renderedContrastGateRejectsLegacyCombinedSourceTagPairInBothAppearances() t
 
         #expect(sample.ratio < 4.5)
         print(
-            "WCAG RENDERED CONTRAST LEGACY TAG NEGATIVE CONTROL PASS "
+            "WCAG CONTRAST INSTRUMENT LEGACY TAG NEGATIVE CONTROL PASS "
                 + "pair=combined-source-label/combined-source-tint "
                 + "appearance=\(appearanceName.rawValue) "
                 + "foreground=\(sample.foreground.hexRGB) background=\(sample.background.hexRGB) "

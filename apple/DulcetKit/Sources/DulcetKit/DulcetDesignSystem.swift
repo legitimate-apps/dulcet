@@ -76,7 +76,8 @@ enum DulcetContrastColor {
     }
 }
 
-enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
+/// Explicit authored color pairs. Native-control and state-driven pairs are outside this registry.
+enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case primaryTextOnWindow = "primary-text/window"
     case primaryButtonLabelOnPrimaryActionFill = "primary-button-label/primary-action-fill"
     case selectedSidebarLabelOnSelectionFill = "selected-sidebar-label/selection-fill"
@@ -154,29 +155,29 @@ enum DulcetRenderedContrastPair: String, CaseIterable, Hashable, Sendable {
     }
 }
 
-private struct DulcetRenderedContrastPairPreferenceKey: PreferenceKey {
-    static let defaultValue: Set<DulcetRenderedContrastPair> = []
+private struct DulcetRegisteredContrastPairPreferenceKey: PreferenceKey {
+    static let defaultValue: Set<DulcetRegisteredContrastPair> = []
 
     static func reduce(
-        value: inout Set<DulcetRenderedContrastPair>,
-        nextValue: () -> Set<DulcetRenderedContrastPair>
+        value: inout Set<DulcetRegisteredContrastPair>,
+        nextValue: () -> Set<DulcetRegisteredContrastPair>
     ) {
         value.formUnion(nextValue())
     }
 }
 
 extension View {
-    func dulcetForeground(_ pair: DulcetRenderedContrastPair) -> some View {
+    func dulcetForeground(_ pair: DulcetRegisteredContrastPair) -> some View {
         foregroundStyle(pair.foreground) // dulcet-contrast-waiver: catalog-applier
-            .transformPreference(DulcetRenderedContrastPairPreferenceKey.self) { value in
+            .transformPreference(DulcetRegisteredContrastPairPreferenceKey.self) { value in
                 value.insert(pair)
             }
     }
 
-    func onDulcetRenderedContrastPairs(
-        perform action: @escaping (Set<DulcetRenderedContrastPair>) -> Void
+    func onDulcetRegisteredContrastPairs(
+        perform action: @escaping (Set<DulcetRegisteredContrastPair>) -> Void
     ) -> some View {
-        onPreferenceChange(DulcetRenderedContrastPairPreferenceKey.self, perform: action)
+        onPreferenceChange(DulcetRegisteredContrastPairPreferenceKey.self, perform: action)
     }
 }
 

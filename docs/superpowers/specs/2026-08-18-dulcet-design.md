@@ -2815,6 +2815,23 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 18 (2026-08-21)** — the Phase-2 evidence claims were narrowed to their measured boundary.
+
+1. Capture distinctness is measured on normalized decoded pixels, not JPEG bytes. A negative control
+   changes a JPEG encoding with decoder-ignored post-EOI bytes while preserving the raster, and the
+   verifier rejects the duplicate pixels.
+2. Filename, manifest and embedded labels are an internal-consistency check. A fully self-consistent
+   payload swap remains acceptable because the artifact has no independent oracle for what a named
+   fixture state must depict.
+3. `captureProvenance` is a declaration, not measured origin. The control protections are exact
+   checked-in byte digests plus decoded-pixel distinctness, which prevents the required pinned control
+   pixels from also occupying a reference slot under a different encoding.
+4. Automated contrast evidence covers the explicit `DulcetRegisteredContrastPair` registry and a
+   direct-foreground-modifier source policy. Native-control, tint, selection, focus, hover and disabled
+   pairs remain outside that registry and are evaluated from the artifact; no exhaustive automated
+   contrast claim is made. Likewise, the TLS assertion is about the checked-in deterministic fixture,
+   not a type invariant across publicly constructible `DulcetSnapshot` values.
+
 **Revision 17 (2026-08-21)** — the macOS screenshot framing contract became measured evidence.
 
 1. The capture harness previously applied its 1180 × 760 frame before installing and ordering the
@@ -2831,8 +2848,9 @@ argue against the recorded rationale — not as filling in a blank.
 4. Hosted command-line processes cannot become the runner desktop's active application. The capture
    therefore fixes SwiftUI's rendered `controlActiveState` to `key` and records that treatment per
    JPEG rather than falsely labeling the process active. This prevents inactive control rendering
-   from suppressing prominent-button fills while the pixels are evaluated against the key-state
-   foreground/background contrast pair; the manifest field has a negative control.
+   from suppressing prominent-button fills while the pixels are evaluated. Native-control surface
+   pairs are outside the registered automated contrast set; the manifest field has a consistency
+   negative control, not an exhaustive contrast guarantee.
 
 **Revision 16 (2026-08-21)** — invalid macOS Dynamic Type evidence was removed.
 

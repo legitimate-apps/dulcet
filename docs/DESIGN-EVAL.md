@@ -81,9 +81,11 @@ Each reference state appears in light and dark:
 6. `error-tls-untrusted`
 7. `offline-metadata-only`
 
-The TLS detail surface and sidebar footer both derive from the same typed
-`DulcetConnectionFailure.tlsUntrusted` value. A snapshot cannot independently claim a failed footer
-while carrying online detail data, or vice versa.
+For the checked-in deterministic fixture, `error-tls-untrusted` constructs a
+`DulcetConnectionFailure.tlsUntrusted` value containing the failure detail used by the current views;
+the Swift package test checks that fixture output. This is not a type-system invariant:
+`DulcetSnapshot` publicly stores `state` and `connectivity` independently, so a manually constructed
+snapshot can make them inconsistent. No broader type-safe TLS-state derivation is claimed.
 
 The filenames are `macos-<state>-<appearance>.jpg`.
 
@@ -172,18 +174,22 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 
 - Swift package tests, app build success, capture-verifier negative controls;
 - sampled rendered-pixel [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18)
-  for every content-bearing foreground/background pair emitted by the seven rendered fixture states
-  in Aqua and Dark Aqua. Production views apply foregrounds through `DulcetRenderedContrastPair`; a
-  SwiftUI preference records the cases reached by actual rendering, and the test requires that set to
-  equal `allCases` exactly before testing every case. A source gate rejects direct content
-  `foregroundStyle`/`foregroundColor` calls, with named waivers limited to decorative artwork and the
-  deliberately bad control; its negative control injects an unregistered foreground and requires
-  rejection. The probe renders each ordered background stack—including translucent control, material,
-  and tint layers—through AppKit, samples the composited pixels, and computes luminance after alpha
-  compositing. The former `Mac + Server` tag pair is retained as a negative control: native purple
-  over its 11% tint measures below 4.5:1 in both appearances and must be rejected. Link/accent color
-  remains separate from the darker prominent-action fill because native macOS prominent controls
-  render a white label in both appearances;
+  for every entry in the explicit `DulcetRegisteredContrastPair` registry in Aqua and Dark Aqua. A
+  SwiftUI preference records which registry entries the seven fixture views reach; one test requires
+  that observed set to equal the registry's `allCases`, and another tests each registered foreground
+  and declared background stack. A source policy rejects direct `.foregroundStyle` and
+  `.foregroundColor` calls unless they are the registry applier or carry one of the fixed decorative/
+  bad-control waiver reasons; its negative control injects both an uncataloged foreground and an
+  unapproved waiver and requires rejection. The probe renders each registered ordered background
+  stack through AppKit, samples the composited pixels, and computes luminance after alpha compositing.
+  The former `Mac + Server` tag pair is retained as an instrument negative control: native purple over
+  its 11% tint measures below 4.5:1 in both appearances and must be rejected;
+- **Contrast automation limit:** this is a registry and direct-modifier source policy, not exhaustive
+  coverage of every pair rendered by SwiftUI/AppKit. Native `Button`, `Link`, `Table`, `TextField`,
+  `GroupBox`, selection, focus, hover, disabled, and tint-driven control styling can introduce or
+  override foreground/background pairs outside the registry. Those native-control surfaces remain
+  visible in the artifact and subject to the §5 evaluation rubric, but the automated gate makes no
+  exhaustive WCAG claim for them;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
 

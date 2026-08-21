@@ -211,7 +211,7 @@ enum DulcetTrackRowSurface {
     case control
     case regularMaterial
 
-    var primaryPair: DulcetRenderedContrastPair {
+    var primaryPair: DulcetRegisteredContrastPair {
         switch self {
         case .window: .primaryTextOnWindow
         case .control: .primaryTextOnControl
@@ -219,7 +219,7 @@ enum DulcetTrackRowSurface {
         }
     }
 
-    var secondaryPair: DulcetRenderedContrastPair {
+    var secondaryPair: DulcetRegisteredContrastPair {
         switch self {
         case .window: .secondaryTextOnWindow
         case .control: .secondaryTextOnControl
@@ -227,7 +227,7 @@ enum DulcetTrackRowSurface {
         }
     }
 
-    var offlinePair: DulcetRenderedContrastPair {
+    var offlinePair: DulcetRegisteredContrastPair {
         .offlineLabelOnControl
     }
 }
