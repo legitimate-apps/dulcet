@@ -43,13 +43,6 @@ def expected_standard_files() -> set[str]:
     return files
 
 
-def expected_accessibility_files() -> set[str]:
-    return {
-        f"macos-{state}-light-accessibility5.jpg"
-        for state in STATES
-    }
-
-
 def jpeg_dimensions(data: bytes) -> tuple[int, int]:
     if not data.startswith(b"\xff\xd8"):
         raise CaptureVerificationError("file does not start with the JPEG SOI marker")
@@ -85,7 +78,7 @@ def jpeg_dimensions(data: bytes) -> tuple[int, int]:
     raise CaptureVerificationError("JPEG dimensions were not found")
 
 
-def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
+def verify_set(directory: Path, expected: set[str]) -> None:
     if not directory.is_dir():
         raise CaptureVerificationError(f"missing capture directory: {directory.name}")
     manifest_path = directory / "manifest.json"
@@ -96,11 +89,12 @@ def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
         "windowTitlePolicy": "release-name-fixture-with-state-navigation-titles",
+        "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",
         "preflightRender": "discarded-library-browse-light-before-recording",
         "jpegCompression": 0.72,
         "locale": "en_US_POSIX",
@@ -151,17 +145,54 @@ def verify_set(directory: Path, expected: set[str], dynamic_type: str) -> None:
             raise CaptureVerificationError(f"{directory.name}/{filename} SHA-256 mismatch")
         if record.get("jpegBytes") != len(data):
             raise CaptureVerificationError(f"{directory.name}/{filename} byte count mismatch")
-        if record.get("dynamicType") != dynamic_type:
-            raise CaptureVerificationError(f"{directory.name}/{filename} dynamic-type mismatch")
+        if "dynamicType" in record:
+            raise CaptureVerificationError(
+                f"{directory.name}/{filename} claims unsupported macOS dynamicType evidence"
+            )
         is_control = filename.startswith("macos-CONTROL-DELIBERATELY-BAD-")
         expected_variant = "deliberately-bad-control" if is_control else "reference"
         if record.get("variant") != expected_variant:
             raise CaptureVerificationError(f"{directory.name}/{filename} variant mismatch")
 
 
+def verify_no_byte_identical_dynamic_type_treatments(root: Path) -> None:
+    records_by_state: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    for manifest_path in root.rglob("manifest.json"):
+        manifest = json.loads(manifest_path.read_text())
+        for record in manifest.get("captures", []):
+            if "dynamicType" not in record:
+                continue
+            key = (
+                str(record.get("fixtureState")),
+                str(record.get("appearance")),
+                str(record.get("variant")),
+            )
+            records_by_state.setdefault(key, []).append(record)
+
+    for key, records in records_by_state.items():
+        for index, first in enumerate(records):
+            for second in records[index + 1:]:
+                if first.get("dynamicType") == second.get("dynamicType"):
+                    continue
+                if first.get("sha256") == second.get("sha256"):
+                    raise CaptureVerificationError(
+                        "dynamicType treatment is byte-identical to its counterpart: "
+                        f"state={key[0]} appearance={key[1]} "
+                        f"first={first.get('dynamicType')} second={second.get('dynamicType')}"
+                    )
+
+
 def verify_capture_root(root: Path) -> None:
-    verify_set(root / "standard", expected_standard_files(), "standard")
-    verify_set(root / "accessibility5", expected_accessibility_files(), "accessibility5")
+    verify_no_byte_identical_dynamic_type_treatments(root)
+    expected_entries = {"standard"}
+    observed_entries = {path.name for path in root.iterdir()}
+    if observed_entries != expected_entries:
+        raise CaptureVerificationError(
+            "capture root exact directory set mismatch: "
+            f"missing={sorted(expected_entries - observed_entries)} "
+            f"unexpected={sorted(observed_entries - expected_entries)}"
+        )
+    verify_set(root / "standard", expected_standard_files())
 
 
 def main() -> None:
@@ -172,7 +203,7 @@ def main() -> None:
         verify_capture_root(args.root)
     except CaptureVerificationError as error:
         raise SystemExit(f"DESIGN CAPTURE FAIL {error}") from error
-    print("DESIGN CAPTURE PASS standard=16 accessibility5=7 jpeg=23 size=1180x760")
+    print("DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 dynamic-type-claim=absent")
 
 
 if __name__ == "__main__":

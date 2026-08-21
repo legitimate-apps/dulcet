@@ -20,7 +20,7 @@ environment is fixed:
 - light or dark appearance set explicitly rather than inherited from the runner;
 - `en_US_POSIX` locale, Gregorian calendar, UTC time zone;
 - fixture clock `2026-08-21T14:32:00Z`;
-- system semantic fonts at either standard or accessibility-5 text size;
+- macOS system semantic fonts at their platform size;
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
 - a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
@@ -34,7 +34,8 @@ Each capture directory includes `manifest.json` with the complete filename set, 
 byte lengths, and SHA-256 digests. `tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
-control, a mutated JPEG, an extra JPEG, and extra media with another extension.
+control, a mutated JPEG, an extra JPEG, extra media with another extension, and a byte-identical
+capture mislabeled as a different Dynamic Type treatment.
 
 ### 1.1 Standard set: 16 JPEGs
 
@@ -59,15 +60,15 @@ They intentionally contain broken spacing, a clashing accent, inconsistent typog
 contrast, arbitrary card styling, and mismatched hierarchy. They are calibration evidence, never a
 product design.
 
-### 1.2 Accessibility-size set: seven JPEGs
+### 1.2 No macOS Dynamic Type capture
 
-Every reference state also appears once in light appearance at accessibility-5 text size. Filenames
-end in `-light-accessibility5.jpg`. These images exist to expose clipping, fixed-height rows, lost
-actions, and layouts that preserve attractive proportions by hiding content.
-
-Scrolling is allowed. Essential content being below the fixed viewport is not truncation when the
-surface remains scrollable; clipped text, ellipsized essential actions, overlapping content, and
-unreachable regions are failures.
+**OBSERVED 2026-08-21 ([Apple SwiftUI API reference](https://developer.apple.com/documentation/swiftui/environmentvalues/dynamictypesize)):**
+`EnvironmentValues.dynamicTypeSize` does not affect text size on macOS. The earlier `accessibility5`
+set injected that environment value and then labeled the output as scaled even when the rendered
+bytes were unchanged. Those files were not evidence and are no longer emitted. The capture executable
+rejects `--dynamic-type` on macOS, and the artifact verifier rejects a byte-identical
+standard/treatment pair before accepting an evidence set. A future macOS text-resizing claim requires
+a platform-applicable mechanism and visibly changed rendered evidence first.
 
 ## 2. What can and cannot be concluded
 
@@ -79,7 +80,7 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   differentiation;
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
-- visible accessibility-size layout and visible focus/contrast cues;
+- visible focus and contrast cues;
 - the standard AppKit window frame and chrome surrounding both reference and control content.
 
 `OBSERVED` from CI or source evidence, but not from pixels alone:
@@ -88,7 +89,7 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
 - WCAG AA contrast ratios for Dulcet's resolved accent, offline, and danger tokens against the
   resolved macOS window background in Aqua and Dark Aqua;
 - explicit accessibility labels attached to controls in the SwiftUI source;
-- semantic fonts, content-sized scalable-text rows, and native focusable controls.
+- semantic fonts, content-sized rows, and native focusable controls.
 
 `ASSUMED` unless a separate interaction trace is supplied:
 
@@ -176,20 +177,21 @@ A light/dark delta above 12 points is a named inconsistency, even if the average
 
 ## 5. Accessibility rubric — separate 100-point score
 
-This score uses both standard appearances and all seven accessibility-5 captures. A rater must cite
-the evidence type for each finding.
+This score uses both standard appearances. A rater must cite the evidence type for each finding.
+The current artifact provides no macOS text-scaling evidence, so the text-scaling category and the
+aggregate accessibility score are `null`; neither may be inferred from standard-size pixels.
 
 | Category | Points | Contract |
 |---|---:|---|
 | Contrast | 30 | WCAG AA: 4.5:1 normal text, 3:1 large text, and 3:1 meaningful non-text boundaries or focus cues. Inspect both appearances. |
-| Text scaling and reflow | 25 | Accessibility-5 preserves every essential title, reason, action, source, playback state, and offline limitation without overlap or clipping. |
+| Text scaling and reflow | 25 | Unscored until Dulcet implements and captures a platform-applicable macOS text-resizing mechanism. |
 | Non-color communication | 15 | Selection, source, error, offline state, and unavailable playback use labels or symbols in addition to color. |
 | Labels and roles | 15 | Source evidence assigns a concise VoiceOver label to every control and uses native control roles; pixels alone cannot earn full credit. |
 | Keyboard and focus | 15 | Native controls are traversable, primary actions have expected shortcuts, and focus has a visible cue; behavior stays `ASSUMED` without an interaction trace. |
 
-Report `accessibility_score` independently. The design does not pass accessibility when this score is
-below 90, any essential text or action is clipped, any control lacks a label, or WCAG AA contrast has
-a confirmed failure.
+Report `accessibility_score` independently only when every category has evidence. The design does not
+pass accessibility while the score is unreportable, when it is below 90, when any essential text or
+action is clipped, when any control lacks a label, or when WCAG AA contrast has a confirmed failure.
 
 ## 6. Lens calibration and negative-control gate — failure voids the run
 
@@ -299,9 +301,6 @@ swift test --package-path apple/DulcetKit
 swift run --package-path apple/DulcetKit DulcetCapture \
   --output "$RUNNER_TEMP/dulcet-design/run-a/standard" \
   --state all --appearance all --include-control
-swift run --package-path apple/DulcetKit DulcetCapture \
-  --output "$RUNNER_TEMP/dulcet-design/run-a/accessibility5" \
-  --state all --appearance light --dynamic-type accessibility5
 python3 tools/verify_design_captures.py "$RUNNER_TEMP/dulcet-design/run-a"
 ```
 
