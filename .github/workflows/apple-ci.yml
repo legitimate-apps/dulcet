@@ -59,6 +59,20 @@ jobs:
           CODE_SIGNING_ALLOWED=NO
       - name: Test native macOS presentation layer
         run: swift test --package-path apple/DulcetKit
+      - name: Prove macOS capture rejects an inapplicable Dynamic Type label
+        run: |
+          set +e
+          output="$(swift run --package-path apple/DulcetKit DulcetCapture \
+            --output "$RUNNER_TEMP/rejected-dynamic-type" \
+            --state empty-library-no-account --appearance light \
+            --dynamic-type accessibility5 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          grep -q 'macOS capture cannot claim Dynamic Type accessibility5' <<< "$output"
+          test ! -e "$RUNNER_TEMP/rejected-dynamic-type"
+          echo "DYNAMIC TYPE NEGATIVE CONTROL PASS label=accessibility5 rejected=true output-created=false"
       - name: Capture deterministic macOS design evidence twice
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
@@ -67,14 +81,8 @@ jobs:
             --output "$CAPTURE_ROOT/run-a/standard" \
             --state all --appearance all --include-control
           swift run --package-path apple/DulcetKit DulcetCapture \
-            --output "$CAPTURE_ROOT/run-a/accessibility5" \
-            --state all --appearance light --dynamic-type accessibility5
-          swift run --package-path apple/DulcetKit DulcetCapture \
             --output "$CAPTURE_ROOT/run-b/standard" \
             --state all --appearance all --include-control
-          swift run --package-path apple/DulcetKit DulcetCapture \
-            --output "$CAPTURE_ROOT/run-b/accessibility5" \
-            --state all --appearance light --dynamic-type accessibility5
           diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b"
           python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a"
           tools/test-design-capture-gates "$CAPTURE_ROOT/run-a"
@@ -83,7 +91,7 @@ jobs:
             echo
             echo 'Two complete render runs were byte-identical.'
             echo
-            echo 'Artifact contains 16 standard/control JPEGs and 7 accessibility-5 JPEGs.'
+            echo 'Artifact contains 16 standard/control JPEGs and makes no inapplicable Dynamic Type claim.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload macOS design evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

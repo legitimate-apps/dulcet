@@ -1797,8 +1797,12 @@ Set now, because six shells that diverge first cannot be retrofitted cheaply.
 
 - **Every interactive element has an accessible label and a stated role**; playback controls announce
   state changes. VoiceOver on Apple, TalkBack on Android, verified per surface.
-- **Dynamic Type / font scaling honored** up to the platform's accessibility sizes; no fixed-height rows
-  containing scalable text.
+- **Font scaling is platform-specific; no fixed-height rows contain scalable text.** iOS and iPadOS
+  must honor Dynamic Type through the platform accessibility sizes; Android must honor system font
+  scaling. **OBSERVED 2026-08-21 ([Apple SwiftUI API reference](https://developer.apple.com/documentation/swiftui/environmentvalues/dynamictypesize)):**
+  `EnvironmentValues.dynamicTypeSize` does not affect text size on macOS. Dulcet therefore does not
+  label a macOS capture with an iOS Dynamic Type category. A platform-applicable macOS text-resizing
+  mechanism remains required before the macOS design can claim text-scaling evidence.
 - **Full keyboard operability on macOS and iPadOS**, with a visible focus ring and media-key support.
   **Full D-pad operability on tvOS and Android TV** with a visible focus indicator on every focusable
   element (§3).
@@ -2808,6 +2812,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 16 (2026-08-21)** — invalid macOS Dynamic Type evidence was removed.
+
+1. Apple documents that SwiftUI's `dynamicTypeSize` environment value does not affect text size on
+   macOS. The capture harness had nevertheless labeled seven files `accessibility5`; two were
+   byte-identical to their standard counterparts, proving that the label was not rendered evidence.
+2. The macOS capture executable now rejects the inapplicable option, the manifest carries no
+   `dynamicType` field, and the verifier's negative control proves that a byte-identical pair carrying
+   different Dynamic Type labels fails.
+3. The macOS accessibility score remains unreportable until a platform-applicable text-resizing
+   mechanism has its own changed-pixel evidence. The iOS/iPadOS and Android scaling requirements are
+   unchanged.
 
 **Revision 15 (2026-08-21)** — the combined Apple workload replaced its timeout assumption.
 

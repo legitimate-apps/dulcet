@@ -23,34 +23,16 @@ private enum CaptureAppearance: String, CaseIterable {
     }
 }
 
-private enum CaptureTextSize: String {
-    case standard
-    case accessibility5
-
-    var dynamicTypeSize: DynamicTypeSize {
-        switch self {
-        case .standard: .large
-        case .accessibility5: .accessibility5
-        }
-    }
-
-    var filenameSuffix: String {
-        self == .standard ? "" : "-accessibility5"
-    }
-}
-
 private struct CaptureOptions {
     let outputDirectory: URL
     let states: [DulcetPresentationState]
     let appearances: [CaptureAppearance]
-    let textSize: CaptureTextSize
     let includeControl: Bool
 
     init(arguments: [String]) throws {
         var outputDirectory: URL?
         var states = DulcetPresentationState.allCases
         var appearances = CaptureAppearance.allCases
-        var textSize = CaptureTextSize.standard
         var includeControl = false
         var index = 0
 
@@ -86,10 +68,7 @@ private struct CaptureOptions {
             case "--dynamic-type":
                 index += 1
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
-                guard let parsed = CaptureTextSize(rawValue: arguments[index]) else {
-                    throw CaptureError.invalidValue(argument, arguments[index])
-                }
-                textSize = parsed
+                throw CaptureError.unsupportedDynamicType(arguments[index])
             case "--include-control":
                 includeControl = true
             default:
@@ -102,7 +81,6 @@ private struct CaptureOptions {
         self.outputDirectory = outputDirectory
         self.states = states
         self.appearances = appearances
-        self.textSize = textSize
         self.includeControl = includeControl
     }
 }
@@ -112,6 +90,7 @@ private enum CaptureError: Error, CustomStringConvertible {
     case missingValue(String)
     case invalidValue(String, String)
     case unknownArgument(String)
+    case unsupportedDynamicType(String)
     case outputExists(String)
     case bitmapAllocation
     case jpegEncoding
@@ -126,6 +105,8 @@ private enum CaptureError: Error, CustomStringConvertible {
             "invalid value for \(argument): \(value)"
         case let .unknownArgument(argument):
             "unknown argument: \(argument)"
+        case let .unsupportedDynamicType(value):
+            "macOS capture cannot claim Dynamic Type \(value): SwiftUI dynamicTypeSize does not affect text size on macOS"
         case let .outputExists(path):
             "output directory must not exist: \(path)"
         case .bitmapAllocation:
@@ -138,7 +119,6 @@ private enum CaptureError: Error, CustomStringConvertible {
 
 private struct CaptureRecord: Codable {
     let appearance: String
-    let dynamicType: String
     let file: String
     let fixtureState: String
     let jpegBytes: Int
@@ -152,6 +132,7 @@ private struct CaptureManifest: Codable {
     let heightPixels: Int
     let captureSurface: String
     let windowTitlePolicy: String
+    let textSizingPolicy: String
     let preflightRender: String
     let jpegCompression: Double
     let locale: String
@@ -191,7 +172,6 @@ private struct DulcetCaptureMain {
         _ = try render(
             state: .libraryBrowse,
             appearance: .light,
-            textSize: options.textSize,
             variant: .standard,
             outputDirectory: preflightDirectory
         )
@@ -203,7 +183,6 @@ private struct DulcetCaptureMain {
                 records.append(try render(
                     state: state,
                     appearance: appearance,
-                    textSize: options.textSize,
                     variant: .standard,
                     outputDirectory: options.outputDirectory
                 ))
@@ -215,7 +194,6 @@ private struct DulcetCaptureMain {
                 records.append(try render(
                     state: .libraryBrowse,
                     appearance: appearance,
-                    textSize: options.textSize,
                     variant: .deliberatelyBadControl,
                     outputDirectory: options.outputDirectory
                 ))
@@ -223,11 +201,12 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 2,
+            schemaVersion: 3,
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
             windowTitlePolicy: "release-name-fixture-with-state-navigation-titles",
+            textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
             preflightRender: "discarded-library-browse-light-before-recording",
             jpegCompression: jpegCompression,
             locale: "en_US_POSIX",
@@ -249,7 +228,6 @@ private struct DulcetCaptureMain {
     private static func render(
         state: DulcetPresentationState,
         appearance: CaptureAppearance,
-        textSize: CaptureTextSize,
         variant: DulcetRenderVariant,
         outputDirectory: URL
     ) throws -> CaptureRecord {
@@ -266,7 +244,6 @@ private struct DulcetCaptureMain {
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, calendar)
             .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
-            .environment(\.dynamicTypeSize, textSize.dynamicTypeSize)
             .background(Color(nsColor: NSColor.windowBackgroundColor))
 
         let hostingView = NSHostingView(rootView: scene)
@@ -336,14 +313,13 @@ private struct DulcetCaptureMain {
             variantName = "deliberately-bad-control"
             prefix = "macos-CONTROL-DELIBERATELY-BAD"
         }
-        let filename = "\(prefix)-\(state.rawValue)-\(appearance.rawValue)\(textSize.filenameSuffix).jpg"
+        let filename = "\(prefix)-\(state.rawValue)-\(appearance.rawValue).jpg"
         try jpeg.write(to: outputDirectory.appendingPathComponent(filename))
         window.contentView = nil
         window.close()
 
         return CaptureRecord(
             appearance: appearance.rawValue,
-            dynamicType: textSize.rawValue,
             file: filename,
             fixtureState: state.rawValue,
             jpegBytes: jpeg.count,

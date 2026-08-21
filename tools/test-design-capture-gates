@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 from importlib.machinery import SourceFileLoader
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -56,9 +57,29 @@ def main() -> None:
         (extra_jpeg_root / "standard" / "unexpected.jpg").write_bytes(b"extra")
         expect_rejection(extra_jpeg_root, "exact file set mismatch")
 
+        mislabeled_root = Path(temporary) / "mislabeled-dynamic-type"
+        shutil.copytree(args.root, mislabeled_root)
+        manifest_path = mislabeled_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        original = next(
+            record for record in manifest["captures"]
+            if record["file"] == "macos-empty-library-no-account-light.jpg"
+        )
+        original["dynamicType"] = "standard"
+        duplicate = dict(original)
+        duplicate["dynamicType"] = "accessibility5"
+        duplicate["file"] = "macos-empty-library-no-account-light-accessibility5.jpg"
+        manifest["captures"].append(duplicate)
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        source = mislabeled_root / "standard" / original["file"]
+        target = mislabeled_root / "standard" / duplicate["file"]
+        shutil.copyfile(source, target)
+        expect_rejection(mislabeled_root, "dynamicType treatment is byte-identical")
+
     print(
         "DESIGN CAPTURE NEGATIVE CONTROLS PASS "
-        "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true"
+        "missing-control=true mutated-jpeg=true extra-media=true extra-jpeg=true "
+        "byte-identical-dynamic-type=true"
     )
 
 
