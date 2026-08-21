@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "navidrome": {
     "version": "0.63.2",
     "linux": {
@@ -24,10 +24,116 @@
     "darwin": {
       "version": "9.0.1",
       "formula": "ffmpeg",
-      "bottle_tag": "arm64_tahoe",
-      "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080",
-      "sha256": "ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080",
-      "path": "/opt/homebrew/bin/ffmpeg"
+      "path": "/opt/homebrew/bin/ffmpeg",
+      "required_encoders": ["libmp3lame", "libopus"],
+      "closure": [
+        {
+          "formula": "dav1d", "version": "1.5.4", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/dav1d/blobs/sha256:d30ff747564febd643ec4b279c5adc74f708b8d6eb8e172f914b9fcdec26c464",
+          "sha256": "d30ff747564febd643ec4b279c5adc74f708b8d6eb8e172f914b9fcdec26c464"
+        },
+        {
+          "formula": "mpg123", "version": "1.33.7", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/mpg123/blobs/sha256:acabaed07a2aa95e360e1047df604cb45845254f2ff136671b9fb0d4bafc69ce",
+          "sha256": "acabaed07a2aa95e360e1047df604cb45845254f2ff136671b9fb0d4bafc69ce"
+        },
+        {
+          "formula": "lame", "version": "4.0", "revision": 0,
+          "version_scheme": 0, "dependencies": ["mpg123"], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/lame/blobs/sha256:b0fe0cfb39c74a53b7635833fe3293a62c886b084bc5ccc8ed7cd177803182e4",
+          "sha256": "b0fe0cfb39c74a53b7635833fe3293a62c886b084bc5ccc8ed7cd177803182e4"
+        },
+        {
+          "formula": "libvmaf", "version": "3.2.0", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/libvmaf/blobs/sha256:bb9f00a9f9ef91d725d1fcd23205642cedf8557e132f1e38bb9d16a22086beaa",
+          "sha256": "bb9f00a9f9ef91d725d1fcd23205642cedf8557e132f1e38bb9d16a22086beaa"
+        },
+        {
+          "formula": "libvpx", "version": "1.16.0", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/libvpx/blobs/sha256:38d28c66d270e2d9b1826f16ec4721b6532a1c59c9ace22811cca3aac43b06ab",
+          "sha256": "38d28c66d270e2d9b1826f16ec4721b6532a1c59c9ace22811cca3aac43b06ab"
+        },
+        {
+          "formula": "ca-certificates", "version": "2026-08-13", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "all",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:797af9bcf375fb49a98db40c3d5674276db1eb1b5e605ec98359619ed50948ba",
+          "sha256": "797af9bcf375fb49a98db40c3d5674276db1eb1b5e605ec98359619ed50948ba"
+        },
+        {
+          "formula": "openssl@3", "version": "3.6.3", "revision": 0,
+          "version_scheme": 0, "dependencies": ["ca-certificates"], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 1,
+          "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:2d995a1bbbd8e6ee6a9042990dde87e7321d1ddd5716ffee53b140d23cb9f92f",
+          "sha256": "2d995a1bbbd8e6ee6a9042990dde87e7321d1ddd5716ffee53b140d23cb9f92f"
+        },
+        {
+          "formula": "opus", "version": "1.6.1", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/opus/blobs/sha256:5e8146a64fab2683ea447aaa7d0de0b1d717539b4cdabd1fedd4a510e4be0d1e",
+          "sha256": "5e8146a64fab2683ea447aaa7d0de0b1d717539b4cdabd1fedd4a510e4be0d1e"
+        },
+        {
+          "formula": "sdl3", "version": "3.4.14", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/sdl3/blobs/sha256:259aa68688ef848e5c44755eb021b6024b3f6e68e3449a5d74d8bdad7df3b0d6",
+          "sha256": "259aa68688ef848e5c44755eb021b6024b3f6e68e3449a5d74d8bdad7df3b0d6"
+        },
+        {
+          "formula": "sdl2-compat", "version": "2.32.70", "revision": 0,
+          "version_scheme": 0, "dependencies": ["sdl3"], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/sdl2-compat/blobs/sha256:72e2c794f8408fba73fd0345a4eeb4cac49badc134e91c680c6aa7fd685d5492",
+          "sha256": "72e2c794f8408fba73fd0345a4eeb4cac49badc134e91c680c6aa7fd685d5492"
+        },
+        {
+          "formula": "svt-av1", "version": "4.2.0", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/svt-av1/blobs/sha256:bd6186cc963d1980f0d81d59ecef58c8fa6263eb1124211dd3537b224e04c9e0",
+          "sha256": "bd6186cc963d1980f0d81d59ecef58c8fa6263eb1124211dd3537b224e04c9e0"
+        },
+        {
+          "formula": "x264", "version": "r3222", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/x264/blobs/sha256:b631667b5ad55c6c3ae383484f658c5b4ba14da8a2fbb1d537975695852529ca",
+          "sha256": "b631667b5ad55c6c3ae383484f658c5b4ba14da8a2fbb1d537975695852529ca"
+        },
+        {
+          "formula": "x265", "version": "4.2", "revision": 0,
+          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/x265/blobs/sha256:ee3075f8af9807bdb30a890b22c1e948a5930f6001c7123eb57faa87c4d15c85",
+          "sha256": "ee3075f8af9807bdb30a890b22c1e948a5930f6001c7123eb57faa87c4d15c85"
+        },
+        {
+          "formula": "xz", "version": "5.8.3", "revision": 0,
+          "version_scheme": 1, "dependencies": [], "bottle_tag": "arm64_tahoe",
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5",
+          "sha256": "55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5"
+        },
+        {
+          "formula": "ffmpeg", "version": "9.0.1", "revision": 0,
+          "version_scheme": 0,
+          "dependencies": ["dav1d", "lame", "libvmaf", "libvpx", "openssl@3", "opus", "sdl2-compat", "svt-av1", "x264", "x265", "xz"],
+          "bottle_tag": "arm64_tahoe", "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080",
+          "sha256": "ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080"
+        }
+      ]
     }
   }
 }

@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 
+"""Install and prove the complete checksum-pinned Darwin ffmpeg closure."""
+
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import subprocess
+import urllib.parse
 import urllib.request
 
 
 def run(arguments: list[str], *, capture: bool = False) -> str:
-    process = subprocess.run(arguments, text=True, capture_output=capture, env={
-        **os.environ,
-        "HOMEBREW_NO_AUTO_UPDATE": "1",
-    })
+    process = subprocess.run(
+        arguments,
+        text=True,
+        capture_output=capture,
+        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
+    )
     if process.returncode != 0:
         detail = ((process.stdout or "") + (process.stderr or "")).strip()
         raise SystemExit(f"{' '.join(arguments)} failed ({process.returncode}): {detail}")
@@ -28,56 +33,171 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def formula_shape(formula: dict, bottle_tag: str) -> dict:
+    try:
+        bottle = formula["bottle"]["stable"]
+        artifact = bottle["files"][bottle_tag]
+    except (KeyError, TypeError) as error:
+        raise SystemExit(
+            f"formula {formula.get('name', '<unknown>')} has no stable {bottle_tag} bottle"
+        ) from error
+    return {
+        "formula": formula["name"],
+        "version": formula["versions"]["stable"],
+        "revision": formula["revision"],
+        "version_scheme": formula["version_scheme"],
+        "dependencies": formula["dependencies"],
+        "bottle_tag": bottle_tag,
+        "bottle_rebuild": bottle["rebuild"],
+        "url": artifact["url"],
+        "sha256": artifact["sha256"],
+    }
+
+
+def assert_locked_graph(closure: list[dict], root_formula: str) -> None:
+    by_name = {entry["formula"]: entry for entry in closure}
+    if len(by_name) != len(closure):
+        raise SystemExit("Darwin ffmpeg closure contains duplicate formula names")
+    if root_formula not in by_name:
+        raise SystemExit(f"Darwin ffmpeg closure omits root formula {root_formula}")
+
+    indexes = {entry["formula"]: index for index, entry in enumerate(closure)}
+    for entry in closure:
+        missing = set(entry["dependencies"]) - set(by_name)
+        if missing:
+            raise SystemExit(f"closure omits dependencies of {entry['formula']}: {sorted(missing)}")
+        if any(indexes[dependency] >= indexes[entry["formula"]] for dependency in entry["dependencies"]):
+            raise SystemExit(f"closure is not topologically ordered at {entry['formula']}")
+
+    reachable: set[str] = set()
+    pending = [root_formula]
+    while pending:
+        name = pending.pop()
+        if name in reachable:
+            continue
+        reachable.add(name)
+        pending.extend(by_name[name]["dependencies"])
+    if reachable != set(by_name):
+        raise SystemExit(
+            f"closure is not exact: reachable={sorted(reachable)} locked={sorted(by_name)}"
+        )
+
+
 def main() -> None:
     pins = json.loads((Path(__file__).parent / "pins.json").read_text())
     ffmpeg = pins["ffmpeg"]["darwin"]
+    closure = ffmpeg["closure"]
     if platform.system() != "Darwin" or platform.machine() != "arm64":
-        raise SystemExit(f"Darwin ffmpeg pin requires Darwin/arm64, observed {platform.system()}/{platform.machine()}")
-
-    update_environment = dict(os.environ)
-    update_environment.pop("HOMEBREW_NO_AUTO_UPDATE", None)
-    update = subprocess.run(["brew", "update"], text=True, capture_output=True, env=update_environment)
-    if update.returncode != 0:
-        detail = ((update.stdout or "") + (update.stderr or "")).strip()
-        raise SystemExit(f"brew update failed ({update.returncode}): {detail}")
-
-    with urllib.request.urlopen("https://formulae.brew.sh/api/formula/ffmpeg.json", timeout=30) as response:
-        formula = json.load(response)
-    bottle = formula["bottle"]["stable"]["files"][ffmpeg["bottle_tag"]]
-    observed_formula = {
-        "version": formula["versions"]["stable"],
-        "url": bottle["url"],
-        "sha256": bottle["sha256"],
-    }
-    expected_formula = {
-        "version": ffmpeg["version"],
-        "url": ffmpeg["url"],
-        "sha256": ffmpeg["sha256"],
-    }
-    if observed_formula != expected_formula:
-        raise SystemExit(f"Homebrew ffmpeg pin drift: expected {expected_formula}, observed {observed_formula}")
-
-    run(["brew", "fetch", "--force", "--force-bottle", ffmpeg["formula"]])
-    cache = Path(run(["brew", "--cache"], capture=True))
-    candidates = list(cache.rglob(f"*ffmpeg--{ffmpeg['version']}*.bottle.tar*"))
-    bottle_path = next(
-        (candidate for candidate in candidates if candidate.is_file() and file_sha256(candidate) == ffmpeg["sha256"]),
-        None,
-    )
-    if bottle_path is None:
-        observed = {str(candidate): file_sha256(candidate) for candidate in candidates if candidate.is_file()}
         raise SystemExit(
-            f"Homebrew did not fetch the checksum-pinned ffmpeg bottle; expected {ffmpeg['sha256']}, "
-            f"observed {observed}"
+            f"Darwin ffmpeg pin requires Darwin/arm64, observed "
+            f"{platform.system()}/{platform.machine()}"
         )
+    assert_locked_graph(closure, ffmpeg["formula"])
+
+    names = [entry["formula"] for entry in closure]
+    local_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
+    local_by_name = {formula["name"]: formula for formula in local_info["formulae"]}
+    for expected in closure:
+        name = expected["formula"]
+        quoted_name = urllib.parse.quote(name, safe="")
+        with urllib.request.urlopen(
+            f"https://formulae.brew.sh/api/formula/{quoted_name}.json", timeout=30
+        ) as response:
+            live_formula = json.load(response)
+        live = formula_shape(live_formula, expected["bottle_tag"])
+        local = formula_shape(local_by_name.get(name, {}), expected["bottle_tag"])
+        if live != expected:
+            raise SystemExit(f"Homebrew live formula drift for {name}: expected {expected}, observed {live}")
+        if local != expected:
+            raise SystemExit(f"Homebrew resolver drift for {name}: expected {expected}, observed {local}")
+
+        run(["brew", "fetch", "--force", "--force-bottle", name])
+        bottle_path = Path(
+            run(
+                ["brew", "--cache", f"--bottle-tag={expected['bottle_tag']}", name],
+                capture=True,
+            )
+        )
+        if not bottle_path.is_file():
+            raise SystemExit(f"Homebrew did not fetch the locked bottle for {name}: {bottle_path}")
+        observed_sha256 = file_sha256(bottle_path)
+        if observed_sha256 != expected["sha256"]:
+            raise SystemExit(
+                f"Homebrew bottle checksum mismatch for {name}: "
+                f"expected {expected['sha256']}, observed {observed_sha256}"
+            )
 
     run(["brew", "install", "--force-bottle", ffmpeg["formula"]])
+
+    installed_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
+    installed_by_name = {formula["name"]: formula for formula in installed_info["formulae"]}
+    for expected in closure:
+        name = expected["formula"]
+        installed = [
+            record
+            for record in installed_by_name[name]["installed"]
+            if record.get("version") == expected["version"]
+        ]
+        if not installed:
+            raise SystemExit(f"locked Homebrew formula is not installed: {name} {expected['version']}")
+        record = installed[-1]
+        if record.get("built_as_bottle") is not True or record.get("poured_from_bottle") is not True:
+            raise SystemExit(f"locked Homebrew formula was not installed from a bottle: {name}")
+        active_prefix = Path(run(["brew", "--prefix", name], capture=True)).resolve()
+        if active_prefix.name != expected["version"]:
+            raise SystemExit(
+                f"active Homebrew keg drift for {name}: expected {expected['version']}, "
+                f"observed {active_prefix.name}"
+            )
+
+    root_record = next(
+        record
+        for record in installed_by_name[ffmpeg["formula"]]["installed"]
+        if record.get("version") == ffmpeg["version"]
+    )
+    observed_runtime = {
+        dependency["full_name"]: {
+            "version": dependency["version"],
+            "revision": dependency["revision"],
+            "bottle_rebuild": dependency["bottle_rebuild"],
+            "pkg_version": dependency["pkg_version"],
+        }
+        for dependency in root_record.get("runtime_dependencies", [])
+    }
+    expected_runtime = {
+        entry["formula"]: {
+            "version": entry["version"],
+            "revision": entry["revision"],
+            "bottle_rebuild": entry["bottle_rebuild"],
+            "pkg_version": (
+                entry["version"]
+                if entry["revision"] == 0
+                else f"{entry['version']}_{entry['revision']}"
+            ),
+        }
+        for entry in closure
+        if entry["formula"] != ffmpeg["formula"]
+    }
+    if observed_runtime != expected_runtime:
+        raise SystemExit(
+            f"installed ffmpeg runtime closure drift: expected {expected_runtime}, "
+            f"observed {observed_runtime}"
+        )
+
     version = run([ffmpeg["path"], "-version"], capture=True).splitlines()[0]
     if not version.startswith(f"ffmpeg version {ffmpeg['version']}"):
         raise SystemExit(f"installed ffmpeg version mismatch: {version}")
+    encoders = run([ffmpeg["path"], "-hide_banner", "-encoders"], capture=True)
+    missing_encoders = [name for name in ffmpeg["required_encoders"] if name not in encoders]
+    if missing_encoders:
+        raise SystemExit(f"locked ffmpeg omits required corpus encoders: {missing_encoders}")
+
+    closure_digest = hashlib.sha256(
+        json.dumps(closure, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     print(
-        f"DARWIN FFMPEG PASS version={ffmpeg['version']} bottle_tag={ffmpeg['bottle_tag']} "
-        f"sha256={ffmpeg['sha256']}"
+        f"DARWIN FFMPEG CLOSURE PASS root={ffmpeg['version']} formulas={len(closure)} "
+        f"encoders={','.join(ffmpeg['required_encoders'])} closure_sha256={closure_digest}"
     )
 
 

@@ -10,7 +10,13 @@ Both legs run Navidrome 0.63.2 and the same generated corpus:
 | leg | Navidrome pin | ffmpeg pin |
 |---|---|---|
 | Linux/amd64 | `deluan/navidrome` manifest digest in `tools/conformance-env/pins.json` | ffmpeg 6.1.1 inside that immutable image filesystem |
-| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 bottle; formula metadata, cached bottle SHA-256, and installed version are all asserted |
+| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, URL, and SHA-256 is locked |
+
+The Darwin installer does not run `brew update` and does not accept a name-only resolution. Before
+installation it compares both the current official formula API and Homebrew's local resolver metadata
+to the complete lock, fetches and hashes every bottle, and fails on any extra, missing, or changed
+dependency. After installation it verifies every active keg, every bottle receipt, ffmpeg's recorded
+runtime closure, and the `libmp3lame` and `libopus` encoders used by the corpus.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external

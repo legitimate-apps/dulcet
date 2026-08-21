@@ -2038,7 +2038,7 @@ It is strictly worse than having no transcode test, because it manufactures conf
 | leg | transcoder | how it is pinned |
 |---|---|---|
 | Linux (`ubuntu-latest`) | the one **bundled in the Navidrome container** | **by the container's image digest.** A digest pins the exact filesystem, so it pins that ffmpeg build exactly. The resolved ffmpeg version is recorded in `docs/TOOLCHAIN.md` alongside the digest |
-| Darwin (`macos-latest`) | an **explicitly installed** ffmpeg | an explicit workflow step installing a **named version**, verified by checksum. Never "whatever `brew install ffmpeg` gives today" |
+| Darwin (`macos-latest`) | an **explicitly installed** ffmpeg | the complete Homebrew runtime closure is locked: formula version/revision, dependency edges, bottle rebuild, URL, and SHA-256 for the root and every dependency. CI compares both live and resolver metadata to the lock, hashes every fetched bottle, and verifies active kegs plus the installed runtime closure. Never "whatever `brew install ffmpeg` gives today" |
 
 ⚠️ **We disagree with one line of the premise audit here, and the difference is load-bearing.** The
 audit states the container's ffmpeg "floats with the Alpine base and is not part of the pin." That is

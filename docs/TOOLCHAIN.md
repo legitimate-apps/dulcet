@@ -25,7 +25,7 @@ CI checks the Apple values duplicated in Xcode's native project format.
 | macOS / iOS / tvOS deployment | 14.0 / 17.0 / 17.0 | Kotlin framework flags and Xcode targets are checked together in CI |
 | Navidrome | 0.63.2 | OCI index `sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40`; Linux amd64 manifest `sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce`; upstream Darwin arm64 asset `sha256:f621f1b730af93d200d3400e549f60b34dd796d27801ebf9b6ab219df6ac7048` |
 | Linux ffmpeg | 6.1.1 | observed inside the pinned Navidrome Linux amd64 image; the image digest pins the full build |
-| Darwin ffmpeg | 9.0.1 | Homebrew arm64 Tahoe bottle `sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080`; exact bottle and runtime version must match before Darwin conformance is enabled |
+| Darwin ffmpeg | 9.0.1 | Homebrew arm64 Tahoe bottle `sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080`; `tools/conformance-env/pins.json` locks the complete 15-formula closure (root plus 14 dependencies), including each version, revision, dependency list, bottle rebuild, URL, and SHA-256 |
 
 The Darwin and Linux ffmpeg builds deliberately differ. Byte-level transcode assertions belong only
 to the Linux reference leg. Darwin uses its pinned build for Darwin-specific transport and loader
