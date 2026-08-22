@@ -881,25 +881,29 @@ private fun String.parseIpv6Groups(): List<Int>? {
     if (compressionIndex >= 0 && indexOf("::", compressionIndex + 2) >= 0) return null
 
     if (compressionIndex < 0) {
-        val groups = parseIpv6GroupSequence() ?: return null
+        val groups = parseIpv6GroupSequence(allowEmbeddedIpv4 = true) ?: return null
         return groups.takeIf { it.size == 8 }
     }
 
-    val left = substring(0, compressionIndex).parseIpv6GroupSequence() ?: return null
-    val right = substring(compressionIndex + 2).parseIpv6GroupSequence() ?: return null
+    val left = substring(0, compressionIndex)
+        .parseIpv6GroupSequence(allowEmbeddedIpv4 = false)
+        ?: return null
+    val right = substring(compressionIndex + 2)
+        .parseIpv6GroupSequence(allowEmbeddedIpv4 = true)
+        ?: return null
     val omittedGroupCount = 8 - left.size - right.size
     if (omittedGroupCount < 1) return null
     return left + List(omittedGroupCount) { 0 } + right
 }
 
-private fun String.parseIpv6GroupSequence(): List<Int>? {
+private fun String.parseIpv6GroupSequence(allowEmbeddedIpv4: Boolean): List<Int>? {
     if (isEmpty()) return emptyList()
     val parts = split(':')
     if (parts.any(String::isEmpty)) return null
     return buildList {
         parts.forEachIndexed { index, part ->
             if ('.' in part) {
-                if (index != parts.lastIndex) return null
+                if (!allowEmbeddedIpv4 || index != parts.lastIndex) return null
                 val octets = part.parseIpv4() ?: return null
                 add(octets[0] shl 8 or octets[1])
                 add(octets[2] shl 8 or octets[3])

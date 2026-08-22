@@ -898,6 +898,8 @@ class AccountConnectConformanceTest {
             "https://[1::2::3]/collect",
             "https://[1:2:3:4:5:6:7:8:9]/collect",
             "https://[12345::1]/collect",
+            "https://[1.2.3.4::]/collect",
+            "https://[1.2.3.4::5]/collect",
             "https://%zz.invalid/collect",
         ).forEach { target ->
             assertEquals(

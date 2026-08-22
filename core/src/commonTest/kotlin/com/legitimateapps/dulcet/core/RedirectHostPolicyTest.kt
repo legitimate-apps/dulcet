@@ -114,6 +114,23 @@ class RedirectHostPolicyTest {
     }
 
     @Test
+    fun embeddedIpv4TailMustEndTheCompleteIpv6Address() {
+        listOf(
+            "[1.2.3.4::]",
+            "[1.2.3.4::5]",
+        ).forEach { host ->
+            assertEquals(CanonicalRedirectHost.Invalid, host.canonicalRedirectHost(), host)
+        }
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation),
+            redirect(
+                "https://[102:304::]/rest/ping.view",
+                "https://[1.2.3.4::]/collect",
+            ),
+        )
+    }
+
+    @Test
     fun httpToHttpsUpgradeRequiresEqualNormalizedPorts() {
         listOf(
             Triple(
