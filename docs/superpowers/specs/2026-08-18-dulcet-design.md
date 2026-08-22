@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 53 — IPv6 zone identifiers remain case-sensitive during redirect-host comparison;
-revision 52 added an independent mutation test proving deletion of the numeric revision-integrity
+**Revision:** 54 — embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
+made IPv6 zone identifiers case-sensitive during redirect-host comparison; revision 52 added an
+independent mutation test proving deletion of the numeric revision-integrity
 algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
 core-versus-future-presentation boundary it claims; revision 50 confined Funkwhale string-boolean compatibility to the five observed
 `getUser` role fields while account metadata remains strictly typed; revision 49 made redirect-origin
@@ -1419,9 +1420,10 @@ sent, is:
 - Preserve same-origin redirects, including path changes. Origin equality never uses Unicode case
   folding. Each host is percent-decoded once as strict UTF-8; one trailing DNS root dot is removed
   and ASCII letters in a DNS reg-name are lower-cased with an ASCII-only transform. An IPv6 address
-  is parsed to one numeric spelling, while its optional zone identifier is preserved byte-for-byte
-  because OS interface names are case-sensitive. The scheme-normalised port is then compared.
-  Invalid encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
+  is parsed to one numeric spelling, with embedded IPv4 octets restricted to non-empty ASCII decimal
+  digits in the range 0–255, while its optional zone identifier is preserved byte-for-byte because
+  OS interface names are case-sensitive. The scheme-normalised port is then compared. Invalid
+  encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
 - Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
   `Security.RedirectRejected(UnsupportedInternationalizedHost)`. This is distinct from
   `Auth.CrossOriginRedirectRejected`, which means two supported canonical hosts were genuinely
@@ -3017,6 +3019,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 54 (2026-08-22)** — embedded IPv4 tails stopped accepting signed octets.
+
+1. Independent source review found that Kotlin integer parsing accepted a leading plus sign, making
+   `[::ffff:127.0.0.+1]` canonicalize equal to `[::ffff:127.0.0.1]` even though the former is not a
+   valid transport address.
+2. The shared IPv4 parser now requires every octet to contain only ASCII decimal digits before
+   converting it and enforcing the existing 0–255 range. An embedded tail containing `+1` therefore
+   yields `InvalidLocation` instead of a canonical-host match.
+3. Direct common and cross-platform conformance assertions exercise the signed-tail counterexample
+   through `redirectDecision`. Zero-padded digit-only octets remain outside this revision because
+   changing their acceptance is a separate compatibility decision.
 
 **Revision 53 (2026-08-22)** — IPv6 redirect zones stopped using DNS-style case folding.
 

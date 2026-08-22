@@ -903,6 +903,18 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun conf08RedirectHostEmbeddedIpv4OctetsRejectNonDigits() {
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation),
+            AccountConnectionContract.redirectDecision(
+                currentUrl = "https://[::ffff:127.0.0.1]/rest/ping.view",
+                targetUrl = "https://[::ffff:127.0.0.+1]/collect",
+                redirectsAlreadyFollowed = 0,
+            ),
+        )
+    }
+
+    @Test
     fun conf08EnforcesQueryAuthenticationRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val crossOrigin = fixture().connect("$redirectRoot/cross-observe-query")
