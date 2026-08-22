@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import DulcetKit
 
@@ -68,17 +69,82 @@ func accountDomainErrorsHaveATotalActionablePresentation() {
     #expect(crossOrigin?.message.contains("?") == false)
 }
 
+@Test @MainActor
+func keychainCredentialsRoundTripAndDelete() throws {
+    let identifier = UUID().uuidString
+    let suiteName = "com.legitimateapps.dulcet.tests.\(identifier)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    let store = DulcetKeychainCredentialStore(
+        service: "com.legitimateapps.dulcet.tests.\(identifier)",
+        defaults: defaults,
+        activeAccountKey: "active-account"
+    )
+    let request = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    defer {
+        try? store.delete()
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    try store.save(request)
+    #expect(try store.load() == request)
+
+    try store.delete()
+    #expect(try store.load() == nil)
+}
+
+@Test @MainActor
+func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
+    let persisted = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let credentials = MemoryCredentialStore(persisted: persisted)
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials
+    )
+    let store = DulcetPresentationStore(source: source)
+
+    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(store.snapshot.accountForm == persisted)
+    #expect(connector.requests.isEmpty)
+
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: persisted.serverURL
+    )))
+
+    #expect(credentials.saved == [persisted])
+    #expect(store.snapshot.state == .accountConnected)
+}
+
 @MainActor
 private final class ControlledAccountConnector: DulcetAccountConnecting {
     let operation = ControlledAccountOperation()
     private(set) var requests: [DulcetAccountConnectRequest] = []
+    private var completion: (@MainActor (DulcetAccountConnectOutcome) -> Void)?
 
     func connect(
         _ request: DulcetAccountConnectRequest,
         completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void
     ) -> any DulcetAccountConnectOperation {
         requests.append(request)
+        self.completion = completion
         return operation
+    }
+
+    func complete(_ outcome: DulcetAccountConnectOutcome) {
+        completion?(outcome)
+        completion = nil
     }
 }
 
@@ -89,4 +155,24 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
     func cancel() {
         cancelCount += 1
     }
+}
+
+@MainActor
+private final class MemoryCredentialStore: DulcetCredentialStoring {
+    private let persisted: DulcetAccountConnectRequest?
+    private(set) var saved: [DulcetAccountConnectRequest] = []
+
+    init(persisted: DulcetAccountConnectRequest?) {
+        self.persisted = persisted
+    }
+
+    func load() throws -> DulcetAccountConnectRequest? {
+        persisted
+    }
+
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        saved.append(request)
+    }
+
+    func delete() throws {}
 }
