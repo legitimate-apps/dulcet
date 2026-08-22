@@ -21,6 +21,7 @@ import com.legitimateapps.dulcet.core.RedirectRejectionReason
 import com.legitimateapps.dulcet.core.Redactor
 import com.legitimateapps.dulcet.core.SaltSource
 import com.legitimateapps.dulcet.core.TlsTrustFailure
+import com.legitimateapps.dulcet.core.UserPermissions
 import com.legitimateapps.dulcet.core.toDiagnosticJson
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -200,6 +201,25 @@ class AccountConnectConformanceTest {
                 field,
             )
         }
+    }
+
+    @Test
+    fun funkwhale209StringBooleanRolesRemainConnectable() = runTest {
+        val connected = assertIs<AccountConnectionResult.Connected>(
+            fixture().connect("${redirectConformanceRoot()}/funkwhale-2-0-9"),
+            "Funkwhale 2.0.9 string-encoded roles must remain compatible",
+        ).account
+
+        assertEquals(
+            UserPermissions(
+                download = true,
+                playlist = true,
+                share = false,
+                jukebox = true,
+                admin = false,
+            ),
+            connected.capabilities.permissions,
+        )
     }
 
     @Test
