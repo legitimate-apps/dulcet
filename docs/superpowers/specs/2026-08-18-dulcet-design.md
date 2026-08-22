@@ -848,11 +848,15 @@ timeout, 30,000 ms whole-request timeout, and 30,000 ms socket-inactivity timeou
 per-request limits, not one deadline for the entire extension/ping/user sequence or all redirect
 hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
 server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
-cancellable, and an elapsed limit maps to the distinct content-free `Transport.Timeout` error.
+cancellable by its caller at the core boundary, and an elapsed limit maps to the distinct content-free
+`Transport.Timeout` error. **Implementation boundary:** this repository has no non-test caller of
+`AccountConnector`, so Phase 1 has not built an account-setup progress indicator, Cancel control, or
+user-facing timeout/error presentation. The presentation below is a requirement for a future platform
+caller, not an observed product behavior.
 
 ### 10.3 The failure modes must be distinguishable
 
-| observation | classification | UI |
+| observation | classification | required future platform presentation (not implemented in Phase 1) |
 |---|---|---|
 | DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
 | connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
@@ -2991,6 +2995,27 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 47 (2026-08-21)** — engine timeout classification was completed and the account-setup UI
+claim was narrowed to the implemented boundary.
+
+1. Hosted red run `32545017139`, `core-build` job `96961834795`, constructed Ktor 3.5.2's concrete
+   `ConnectTimeoutException` and `SocketTimeoutException` values and passed them through the same
+   classifier used by `AccountConnector`. The test failed on both JVM and Android host because each
+   became `Transport.Unreachable`; the unrelated Linux conformance environment passed.
+2. `HttpRequestTimeoutException`, `ConnectTimeoutException`, and `SocketTimeoutException` now all map
+   to `Transport.Timeout` in that production classifier. Hosted green run `32545171328`, `core-build`
+   job `96962240884`, passed the control on JVM and Android host. That mapping is OBSERVED; this test
+   injects the engine exception values and does not itself wait for real networks to cross all three
+   30-second deadlines.
+3. Repository search found no non-test `AccountConnector` caller. The core operation and typed error
+   shipped, but no platform account-setup progress state, Cancel control, or timeout/error rendering
+   shipped with them. Those UI behaviors are therefore unimplemented, not verified or assumed.
+4. What would settle the user-feedback surface: a platform account-setup caller plus a hosted
+   `AccountSetupTimeoutPresentationConformanceTest` in that platform's required CI job, observing the
+   in-flight progress state, invoking Cancel against the live operation, and observing the distinct
+   timeout presentation after a controlled deadline. Until that exists, §10.3's presentation column
+   is a future requirement only.
+
 **Revision 46 (2026-08-21)** — successful extension envelopes now validate one complete recognised
 shape instead of skipping malformed pieces.
 
@@ -3076,8 +3101,12 @@ string-encoded boolean roles.
    30,000 ms per request. This is not a single deadline over the entire account sequence or its
    redirects. Cancellation remains distinct from timeout.
 3. Thirty seconds is the decided Phase-1 tradeoff for self-hosted servers that may wake storage or a
-   cold reverse proxy. The UI receives `Transport.Timeout` and says that the server took too long;
-   it does not report malformed input, bad credentials, or an undifferentiated unreachable server.
+   cold reverse proxy. At the implemented core boundary, elapsed request, connect, and socket limits
+   are required to return `Transport.Timeout`, distinct from malformed input, bad credentials, or an
+   undifferentiated unreachable server. Revision 42 did not ship a UI: the repository had no non-test
+   `AccountConnector` caller, progress indicator, Cancel control, or error presentation. A platform
+   caller and hosted `AccountSetupTimeoutPresentationConformanceTest` exercising progress, cancellation,
+   and timeout rendering are required to establish that future user-feedback behavior.
 
 **Revision 41 (2026-08-21)** — Darwin response caching became an explicit, bounded decision.
 
