@@ -432,11 +432,13 @@ public class AccountConnector(
             traceRecorder = traceRecorder,
         )
         val extensionEnvelope = parseEnvelope(extensionResponse.body)
-        val extensions = extensionEnvelope?.takeIf { it.status == "ok" }
-            ?.payload
-            ?.get("openSubsonicExtensions")
-            .toExtensionMap()
         val extensionListUnavailable = extensionResponse.statusCode == 404 || extensionEnvelope == null
+        val extensions = if (extensionEnvelope?.status == "ok") {
+            extensionEnvelope.payload["openSubsonicExtensions"].toExtensionMapOrNull()
+                ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
+        } else {
+            emptyMap()
+        }
         val formPost = extensions["formPost"]?.contains(1) == true
 
         val ping = authenticatedRequest(
@@ -1208,19 +1210,24 @@ private fun parseEnvelope(body: String): SubsonicEnvelope? {
     }
 }
 
-private fun JsonElement?.toExtensionMap(): Map<String, Set<Int>> {
-    val list = this as? JsonArray ?: return emptyMap()
-    return buildMap {
-        list.forEach { element ->
-            val extension = element as? JsonObject ?: return@forEach
-            val name = extension.string("name") ?: return@forEach
-            val versions = (extension["versions"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.intOrNull }
-                ?.toSet()
-                .orEmpty()
-            put(name, versions)
+private fun JsonElement?.toExtensionMapOrNull(): Map<String, Set<Int>>? {
+    val list = this as? JsonArray ?: return null
+    val result = mutableMapOf<String, Set<Int>>()
+    list.forEach { element ->
+        val extension = element as? JsonObject ?: return null
+        val name = extension.string("name")?.takeIf(String::isNotBlank) ?: return null
+        val versionElements = extension["versions"] as? JsonArray ?: return null
+        val versions = mutableSetOf<Int>()
+        versionElements.forEach { versionElement ->
+            val version = (versionElement as? JsonPrimitive)
+                ?.takeUnless { it.isString }
+                ?.intOrNull
+                ?: return null
+            versions += version
         }
+        if (result.put(name, versions) != null) return null
     }
+    return result
 }
 
 private fun JsonObject.string(name: String): String? =
