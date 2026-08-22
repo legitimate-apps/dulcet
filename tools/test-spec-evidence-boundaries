@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep the public spec honest about required-check and proxy evidence boundaries."""
+"""Require named evidence-boundary markers and their workflow placement."""
 
 from pathlib import Path
 
@@ -16,20 +16,28 @@ parity_workflow = Path(".github/workflows/parity-gate.yml").read_text()
 drift_workflow = Path(".github/workflows/branch-protection-drift.yml").read_text()
 evidence_schema = section(spec, "### 19.2 Row schema", "### 19.3 The gate")
 gate = section(spec, "### 19.3 The gate", "### 19.4 As a delegate brief")
-normalized_spec = " ".join(spec.split())
+authentication = section(spec, "### 13.1 Authentication", "### 13.2 The threat model, stated correctly")
 normalized_evidence_schema = " ".join(evidence_schema.split())
 normalized_gate = " ".join(gate.split())
+normalized_authentication = " ".join(authentication.split())
 
 errors: list[str] = []
 
 if "pull_request:" not in parity_workflow:
     errors.append("parity-gate must execute on pull requests")
-if "verify_branch_protection.py" in parity_workflow:
-    errors.append("pull-request parity-gate must not call the live branch-protection verifier")
+if "python3 tools/test-spec-evidence-boundaries" not in parity_workflow:
+    errors.append("parity-gate must execute the evidence-boundary marker check")
 if "push:" not in drift_workflow or "branches: [main]" not in drift_workflow:
     errors.append("branch-protection-drift must execute after pushes to main")
 if "python3 tools/verify_branch_protection.py" not in drift_workflow:
     errors.append("branch-protection-drift must call the live verifier")
+
+for marker in (
+    "reviewed static pre-merge declaration",
+    "not proof that the live branch rule requires the job",
+):
+    if marker not in normalized_evidence_schema:
+        errors.append(f"§19.2 must state the manifest evidence boundary with {marker!r}")
 
 for marker in (
     "post-merge detection",
@@ -39,11 +47,6 @@ for marker in (
 ):
     if marker not in normalized_gate:
         errors.append(f"§19.3 must state the gate timing boundary with {marker!r}")
-
-if "GitHub's branch-protection API reports the job as a **required check**" in normalized_evidence_schema:
-    errors.append("§19.2 still attributes a live branch-protection API query to the PR static gate")
-if "The parity job reads classic branch protection through GitHub's REST API" in normalized_gate:
-    errors.append("§19.3 still claims the PR parity job reads live branch protection")
 
 for marker in (
     "**ASSUMED:** proxy-auth challenges fail closed",
@@ -55,10 +58,10 @@ for marker in (
     "records every received `Proxy-Authorization` value",
     "zero such values and `Auth.UnsupportedAuthenticationChallenge`",
 ):
-    if marker not in normalized_spec:
+    if marker not in normalized_authentication:
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 if errors:
     raise SystemExit("\n".join(errors))
 
-print("spec matches required-check timing and proxy evidence boundaries")
+print("required evidence-boundary markers and workflow placement are present")

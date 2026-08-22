@@ -2128,6 +2128,13 @@ responses, duplicate contexts, or disagreement between the API's `contexts` and 
 forms all fail that post-merge job. Test fixtures are accepted only outside GitHub Actions; fixture
 mode in Actions is itself a failure. Pull-request workflows never reference repository secrets.
 
+`tools/test-spec-evidence-boundaries` is deliberately a **positive structural check**. It requires
+the named required-check and proxy evidence-boundary markers to remain in their normative sections,
+requires the marker check to run in the pull-request `parity-gate`, and requires the live verifier to
+run in `branch-protection-drift` after pushes to `main`. It does not search for every possible
+contradictory rewording and does not prove whole-document semantic consistency; review owns that
+wider obligation.
+
 There is no source-annotation scheme. (Revision 1 floated one as a "phase 2 extension"; naming it
 invited building an annotation framework before the basic evidence cycle worked.)
 
@@ -2963,6 +2970,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 43 (2026-08-21)** — the evidence-boundary check now claims only its positive observations.
+
+1. The checker requires named boundary markers in §§13.1, 19.2, and 19.3, requires itself to be
+   placed in the pull-request parity workflow, and requires the live branch-protection verifier to be
+   placed in the post-main drift workflow.
+2. Exact-string absence tests for a live-verifier call and two superseded sentences were removed.
+   Rewording could evade those tests, so they could not establish the broader absence or semantic-
+   consistency claims their names implied.
+3. The checker and workflow step now state the bounded result: required markers and workflow
+   placement are present. Detecting an arbitrarily worded contradiction remains a review obligation,
+   not a property attributed to this structural check.
 
 **Revision 42 (2026-08-21)** — the account-setup timeout became a deliberate self-hosted policy.
 
