@@ -6,8 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 40 — present account metadata and permission fields with the wrong JSON types now fail
-as a malformed envelope instead of silently disabling capabilities; revision 39 made raw and
+**Revision:** 41 — Darwin's default shared response cache is now an explicit accepted Phase-1
+property with a bounded wire observation and no general non-reuse claim; revision 40 made present
+account metadata and permission fields with the wrong JSON types fail as a malformed envelope instead
+of silently disabling capabilities; revision 39 made raw and
 percent-encoded internationalized hosts share the honest unsupported classification, and §10.1 no
 longer promises unimplemented IDNA conversion; revision 38 made CONF-08
 derive and compare the full cross-origin target request, including method, exact path and raw query,
@@ -1308,6 +1310,22 @@ against a future `tools/conformance-env/redirect-server --forward-proxy-auth` lo
 returns `407 Proxy Authentication Required` with `Proxy-Authenticate: Basic`, records every received
 `Proxy-Authorization` value, and asserts both zero such values and
 `Auth.UnsupportedAuthenticationChallenge`.
+
+**Decided Phase-1 Darwin response-cache posture:** the account connector's default
+`NSURLSessionConfiguration` clears shared credential storage but retains Foundation's process-wide
+persistent `URLCache`. **OBSERVED:** that shared cache remains attached in the Darwin configuration.
+This is accepted for Phase 1 rather than silently described as per-account cache isolation.
+**OBSERVED, bounded wire control:** hosted `apple-ci` test
+`DarwinURLCacheIsolationConformanceTest.cacheableExtensionProbeIsRefetchedAcrossAccountConnectors`
+gave the unauthenticated extension probe a fresh one-hour cache lifetime, created two sequential
+account connectors for the same URL, observed two source-wire requests, and observed the second
+connector consume the fixture's changed extension response. Thus cross-account response reuse was
+not demonstrated in that concrete path. **No broader claim is made:** reuse behavior for authenticated
+query GETs, other cache directives, redirects, response bodies, and future Foundation versions is
+unverified. The shared-cache existence is OBSERVED; general cross-account reuse and general
+non-reuse are both unestablished. A future decision to disable the cache must first preserve a hosted
+red control that demonstrates the behavior being changed, then set the session `URLCache` to `null`
+through Ktor Darwin's `configureSession` hook.
 
 **Secure storage, specified rather than gestured at:**
 
@@ -2935,6 +2953,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 41 (2026-08-21)** — Darwin response caching became an explicit, bounded decision.
+
+1. Source inspection observed that Darwin clears `URLCredentialStorage` but leaves Foundation's
+   default process-wide persistent `URLCache` attached. That existence claim is OBSERVED; it is not
+   itself wire evidence of cross-account response reuse.
+2. A candidate hosted red control made the extension probe cacheable for one hour and varied the
+   second response. It stayed green before any production change: two sequential account connectors
+   produced two extension-probe wire requests, and the second used the changed response. This
+   concrete non-reuse result is OBSERVED by the Apple-only test; it is not generalized beyond that
+   request and fixture.
+3. Phase 1 accepts the shared cache's existence and records that the transport does not promise
+   per-account response-cache isolation. No claim is made that authenticated query GETs, other cache
+   directives, redirects, or future Foundation versions either do or do not reuse responses. Cache
+   disabling was deliberately not implemented because the required hosted red behavior did not
+   reproduce; the wire control is retained so a future behavior change is detected.
 
 **Revision 40 (2026-08-21)** — malformed successful envelopes stopped becoming connected accounts.
 
