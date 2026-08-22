@@ -669,10 +669,15 @@ class AccountConnectConformanceTest {
         )
 
         val crossOrigin = fixture().connect("$redirectRoot/cross-observe")
-        val credentialLoss = assertIs<DomainError.Auth.RedirectCredentialLoss>(
+        assertEquals(
+            0,
+            targetRequestCount(redirectRoot, "cross-observe", "getOpenSubsonicExtensions"),
+            "CONF-08 sent an unauthenticated account-connect request across an origin boundary",
+        )
+        val crossOriginRejection = assertIs<DomainError.Security.RedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
-        assertFalse(credentialLoss.redactedUrl.value.contains('?'))
+        assertEquals("CrossOrigin", crossOriginRejection.reason.name)
 
         val redirectLoop = fixture().connect("$redirectRoot/loop")
         val loopRejection = assertIs<DomainError.Security.RedirectRejected>(
@@ -696,15 +701,67 @@ class AccountConnectConformanceTest {
                 redirectsAlreadyFollowed = 0,
             ),
         )
+        val crossOriginDecision = assertIs<RedirectPolicyDecision.Reject>(
+            AccountConnectionContract.redirectDecision(
+                currentUrl = "http://127.0.0.1:4540/rest/ping.view",
+                targetUrl = "http://127.0.0.1:4541/rest/ping.view",
+                redirectsAlreadyFollowed = 0,
+            ),
+        )
+        assertEquals("CrossOrigin", crossOriginDecision.reason.name)
+        assertEquals(
+            RedirectPolicyDecision.PreserveCredentials,
+            AccountConnectionContract.redirectDecision(
+                currentUrl = "http://music.invalid:80/rest/ping.view",
+                targetUrl = "https://music.invalid:443/rest/ping.view",
+                redirectsAlreadyFollowed = 0,
+            ),
+        )
     }
 
     @Test
     fun conf08EnforcesQueryAuthenticationRedirectCredentialPolicy() = runTest {
-        val crossOrigin = fixture().connect("${redirectConformanceRoot()}/cross-observe-query")
-        val credentialLoss = assertIs<DomainError.Auth.RedirectCredentialLoss>(
+        val redirectRoot = redirectConformanceRoot()
+        val crossOrigin = fixture().connect("$redirectRoot/cross-observe-query")
+        assertEquals(
+            0,
+            targetRequestCount(redirectRoot, "cross-observe-query", "getOpenSubsonicExtensions"),
+            "CONF-08 sent the query-auth scenario across an origin boundary",
+        )
+        val rejection = assertIs<DomainError.Security.RedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
-        assertFalse(credentialLoss.redactedUrl.value.contains('?'))
+        assertEquals("CrossOrigin", rejection.reason.name)
+    }
+
+    @Test
+    fun conf08RejectsCredentialBearingRedirectPathBeforeTheTargetWire() = runTest {
+        val redirectRoot = redirectConformanceRoot()
+        val result = fixture().connect("$redirectRoot/cross-reflected-get-user")
+        assertEquals(
+            0,
+            targetRequestCount(redirectRoot, "cross-reflected-get-user", "getUser"),
+            "credential-bearing redirect path reached the cross-origin target wire",
+        )
+        val rejection = assertIs<DomainError.Security.RedirectRejected>(
+            assertIs<AccountConnectionResult.Failed>(result).error,
+        )
+        assertEquals("CrossOrigin", rejection.reason.name)
+    }
+
+    @Test
+    fun conf08RejectsSecondHopOriginChangeBeforeTheTargetWire() = runTest {
+        val redirectRoot = redirectConformanceRoot()
+        val result = fixture().connect("$redirectRoot/two-hop-get-user")
+        assertEquals(
+            0,
+            targetRequestCount(redirectRoot, "two-hop-get-user", "getUser"),
+            "second-hop origin change reached the cross-origin target wire",
+        )
+        val rejection = assertIs<DomainError.Security.RedirectRejected>(
+            assertIs<AccountConnectionResult.Failed>(result).error,
+        )
+        assertEquals("CrossOrigin", rejection.reason.name)
     }
 
     private fun assertEveryRequestChannelAccountedFor(trace: RequestTrace) {
@@ -752,6 +809,26 @@ class AccountConnectConformanceTest {
                 } ?: error("CONF-07 wire observation channel has no values")
                 name to values
             }.groupBy({ it.first }, { it.second }).mapValues { (_, grouped) -> grouped.flatten() }
+        } finally {
+            client.close()
+        }
+    }
+
+    private suspend fun targetRequestCount(
+        redirectRoot: String,
+        scenario: String,
+        endpoint: String,
+    ): Int {
+        val client = HttpClient()
+        try {
+            val response = client.get(
+                "$redirectRoot/observations/target-count?scenario=$scenario&endpoint=$endpoint",
+            )
+            assertEquals(200, response.status.value, "target wire counter is unavailable")
+            val document = Json.parseToJsonElement(response.bodyAsText()) as? JsonObject
+                ?: error("target wire counter response is not an object")
+            return (document["requests"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+                ?: error("target wire counter response has no integer request count")
         } finally {
             client.close()
         }
