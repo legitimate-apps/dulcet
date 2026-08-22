@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 52 — an independent mutation test now proves deleting the numeric revision-integrity
+**Revision:** 53 — IPv6 zone identifiers remain case-sensitive during redirect-host comparison;
+revision 52 added an independent mutation test proving deletion of the numeric revision-integrity
 algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
 core-versus-future-presentation boundary it claims; revision 50 confined Funkwhale string-boolean compatibility to the five observed
 `getUser` role fields while account metadata remains strictly typed; revision 49 made redirect-origin
@@ -1416,10 +1417,11 @@ sent, is:
 
 - Follow at most **5** redirects.
 - Preserve same-origin redirects, including path changes. Origin equality never uses Unicode case
-  folding. Each host is percent-decoded once as strict UTF-8, one trailing DNS root dot is removed,
-  IPv6 literals are parsed to one numeric spelling, and ASCII letters are lower-cased with an
-  ASCII-only transform before the scheme-normalised port is compared. Invalid encodings or host
-  shapes fail as `Security.RedirectRejected(InvalidLocation)`.
+  folding. Each host is percent-decoded once as strict UTF-8; one trailing DNS root dot is removed
+  and ASCII letters in a DNS reg-name are lower-cased with an ASCII-only transform. An IPv6 address
+  is parsed to one numeric spelling, while its optional zone identifier is preserved byte-for-byte
+  because OS interface names are case-sensitive. The scheme-normalised port is then compared.
+  Invalid encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
 - Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
   `Security.RedirectRejected(UnsupportedInternationalizedHost)`. This is distinct from
   `Auth.CrossOriginRedirectRejected`, which means two supported canonical hosts were genuinely
@@ -3015,6 +3017,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 53 (2026-08-22)** — IPv6 redirect zones stopped using DNS-style case folding.
+
+1. Independent source review found that `[fe80::1%25ETH0]` and `[fe80::1%25eth0]` collapsed to one
+   canonical host even though OS interface names are case-sensitive byte strings and can identify
+   different links.
+2. Redirect canonicalization still parses the IPv6 address into one numeric spelling, but preserves
+   the validated zone identifier exactly. Identical zones on compressed and expanded address
+   spellings remain same-origin; zones differing only by case are `CrossOrigin`.
+3. Direct common and cross-platform conformance assertions pin the case-sensitive decision. They
+   prove policy output only; no claim is made about a platform transport resolving a scoped literal.
 
 **Revision 52 (2026-08-22)** — revision integrity gained a reversion-sensitive mutation proof.
 
