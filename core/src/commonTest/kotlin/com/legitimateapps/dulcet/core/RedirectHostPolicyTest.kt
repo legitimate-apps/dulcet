@@ -113,6 +113,34 @@ class RedirectHostPolicyTest {
         )
     }
 
+    @Test
+    fun httpToHttpsUpgradeRequiresEqualNormalizedPorts() {
+        listOf(
+            Triple(
+                "http://music.invalid:80/rest/ping.view",
+                "https://music.invalid:443/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "http://music.invalid:4533/rest/ping.view",
+                "https://music.invalid:4533/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "http://music.invalid:80/rest/ping.view",
+                "https://music.invalid:80/collect",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+            Triple(
+                "http://music.invalid:443/rest/ping.view",
+                "https://music.invalid:443/collect",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+        ).forEach { (current, target, expected) ->
+            assertEquals(expected, redirect(current, target), "$current -> $target")
+        }
+    }
+
     private fun redirect(current: String, target: String): RedirectPolicyDecision =
         AccountConnectionContract.redirectDecision(
             currentUrl = current,
