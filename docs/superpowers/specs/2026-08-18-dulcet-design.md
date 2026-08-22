@@ -821,7 +821,11 @@ to the implementation. Given user input, Dulcet:
    (https://opensubsonic.netlify.app/docs/endpoints/getopensubsonicextensions/): the endpoint must be
    publicly accessible. We still send `c` and `f=json`; we send **no** `u`/`t`/`s`, and we send `v`
    because the envelope requires it. A non-envelope response (HTML, a proxy login page, a WAF
-   challenge, a captive portal) is recorded but **not yet interpreted**.
+   challenge, a captive portal) is recorded but **not yet interpreted**. A successful extension
+   envelope has one recognised shape: `openSubsonicExtensions` is an array of object entries, each
+   with a nonblank string `name` and an array of native JSON integer `versions`; names are unique.
+   A present successful payload outside that complete shape is `Protocol.MalformedEnvelope`, never
+   an empty extension set produced by skipping malformed pieces.
 3. **Authenticate with `ping`** using `v=1.16.1` and the salted token (§13.1). **The extension-probe
    result is not trusted until `ping` succeeds** — otherwise a reverse-proxy login page in front of an
    unknown server gets classified as `legacySubsonic` and we start sending credentials to it.
@@ -2986,6 +2990,26 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 46 (2026-08-21)** — successful extension envelopes now validate one complete recognised
+shape instead of skipping malformed pieces.
+
+1. Hosted red run `32544668674`, job `conformance-env-linux`, ran 27 tests and failed only
+   `malformedExtensionPayloadCannotSilentlyDisableCapabilities`. A successful response containing
+   `"openSubsonicExtensions":{"name":"formPost","versions":[1]}` connected with an empty extension
+   map because the present object was silently treated like an absent array. The core build passed.
+2. A successful extension payload is valid only when the outer value is an array, every element is
+   an object with a nonblank string `name`, every `versions` value is an array containing only native
+   JSON integers, and extension names are unique. Empty arrays and unknown well-shaped extension
+   names remain valid. The parser derives acceptance from that positive grammar; it does not maintain
+   a list of invalid cases to ignore.
+3. A wrong outer type, non-object entry, wrong/missing name, wrong versions container, string-encoded
+   version, duplicate name, or any other deviation from that grammar returns
+   `Protocol.MalformedEnvelope` before credentials are sent according to a silently disabled
+   `formPost` capability. These examples are controls for the positive validator, not the definition
+   of its rejected set.
+4. This extends revision 40's strict successful-envelope decision to the extension surface. Revision
+   45's narrow boolean-string compatibility exception does not weaken extension-version typing.
 
 **Revision 45 (2026-08-21)** — the envelope parser restored compatibility with Funkwhale's
 string-encoded boolean roles.

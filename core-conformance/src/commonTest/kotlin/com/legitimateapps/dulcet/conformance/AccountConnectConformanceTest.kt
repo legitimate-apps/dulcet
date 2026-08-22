@@ -242,12 +242,15 @@ class AccountConnectConformanceTest {
 
     @Test
     fun malformedExtensionPayloadCannotSilentlyDisableCapabilities() = runTest {
-        assertEquals(
-            DomainError.Protocol.MalformedEnvelope,
-            assertIs<AccountConnectionResult.Failed>(
-                fixture().connect("${redirectConformanceRoot()}/malformed-extensions-object"),
-            ).error,
-        )
+        listOf("object", "entry", "name", "versions", "version", "duplicate").forEach { shape ->
+            assertEquals(
+                DomainError.Protocol.MalformedEnvelope,
+                assertIs<AccountConnectionResult.Failed>(
+                    fixture().connect("${redirectConformanceRoot()}/malformed-extensions-$shape"),
+                ).error,
+                shape,
+            )
+        }
     }
 
     @Test
