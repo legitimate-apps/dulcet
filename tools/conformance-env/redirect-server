@@ -294,6 +294,7 @@ def envelope(
     advertise_form_post: bool = True,
     malformed_success_field: str | None = None,
     funkwhale_string_roles: bool = False,
+    mixed_case_string_roles: bool = False,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": "ok",
@@ -328,6 +329,14 @@ def envelope(
                 "shareRole": "false",
                 "jukeboxRole": "true",
                 "adminRole": "false",
+            }
+        elif mixed_case_string_roles:
+            payload["user"] = {
+                "downloadRole": "TRUE",
+                "playlistRole": "True",
+                "shareRole": "FALSE",
+                "jukeboxRole": "False",
+                "adminRole": "tRuE",
             }
     if endpoint == "ping" and malformed_success_field == "open-subsonic":
         payload["openSubsonic"] = "yes"
@@ -463,6 +472,13 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "Funkwhale fixture request channels failed"})
                 return
             self._send_json(200, envelope(endpoint, funkwhale_string_roles=True))
+            return
+
+        if parsed.path.startswith("/mixed-case-string-roles/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "mixed-case role fixture request channels failed"})
+                return
+            self._send_json(200, envelope(endpoint, mixed_case_string_roles=True))
             return
 
         if parsed.path.startswith("/cacheable-account/rest/"):

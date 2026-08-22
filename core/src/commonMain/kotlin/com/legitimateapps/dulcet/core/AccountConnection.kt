@@ -1226,8 +1226,15 @@ private fun JsonElement?.toExtensionMap(): Map<String, Set<Int>> {
 private fun JsonObject.string(name: String): String? =
     (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
-private fun JsonObject.boolean(name: String): Boolean? =
-    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+private fun JsonObject.boolean(name: String): Boolean? {
+    val value = get(name) as? JsonPrimitive ?: return null
+    if (!value.isString) return value.booleanOrNull
+    return when {
+        value.content.equals("true", ignoreCase = true) -> true
+        value.content.equals("false", ignoreCase = true) -> false
+        else -> null
+    }
+}
 
 private fun JsonObject.hasOptionalString(name: String): Boolean =
     name !in this || string(name) != null
