@@ -98,6 +98,16 @@ for marker in (
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 for marker in (
+    "**macOS Phase-1 relaunch decision — explicit reconnect:**",
+    "one Keychain generic-password value",
+    "generated local UUID",
+    "performs **no network request until the person chooses Connect**",
+    "credential-persistence error surface",
+):
+    if marker not in normalized_authentication:
+        errors.append(f"Keychain/relaunch implementation boundary is missing {marker!r}")
+
+for marker in (
     "**macOS implementation boundary:**",
     "`DulcetMacApp` constructs the live `AppleAccountConnectionClient`",
     "publishes an explicit in-progress state",

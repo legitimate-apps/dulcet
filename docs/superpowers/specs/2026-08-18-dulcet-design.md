@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 62 — macOS account setup gained a total, actionable mapping for the closed domain-error taxonomy;
-revision 61 added a reachable form, progress state, and real cancellation; revision 60 made platform
+**Revision:** 63 — macOS account credentials gained Keychain persistence with explicit reconnect;
+revision 62 added a total, actionable mapping for the closed domain-error taxonomy; revision 61 added
+a reachable form, progress state, and real cancellation; revision 60 made platform
 evidence pin one executed testcase per declared conformance id; revision 59
 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
 revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
@@ -1381,6 +1382,18 @@ through Ktor Darwin's `configureSession` hook.
 | device migration / backup restore | credentials do not migrate; the user re-enters the password on a new device | same |
 | key invalidation (lock screen removed, keystore reset) | detected on read; the account enters a re-auth state and cached library data is retained | same |
 | logout | credential deleted before any other cleanup (§14.7) | same |
+
+**macOS Phase-1 relaunch decision — explicit reconnect:** after a successful account negotiation,
+the complete connection request is encoded into one Keychain generic-password value under
+`service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
+is retained in preferences as the active-account pointer; neither the URL, username, nor password is
+used as a Keychain index. Synchronization is explicitly disabled and accessibility is
+`kSecAttrAccessibleAfterFirstUnlock`, as required above. On relaunch Dulcet reads the item and
+prefills the secure account form, but performs **no network request until the person chooses
+Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
+surface instead of silently attempting a connection or discarding the condition. The storage API's
+delete path removes the Keychain item before clearing its active-account pointer; an account-management
+logout control is outside this account-connect surface.
 
 **Background downloads after a reboot** read the credential like any other consumer;
 `kSecAttrAccessibleAfterFirstUnlock` is chosen precisely so a background task can run before the user
@@ -3043,6 +3056,19 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 63 (2026-08-22)** — macOS account credentials gained Keychain persistence.
+
+1. A successful account negotiation writes the server URL, username, password, and local-HTTP choice
+   into a Keychain generic-password item. The service is the stable bundle prefix, the account key is
+   a generated local UUID, synchronization is off, and accessibility is
+   `kSecAttrAccessibleAfterFirstUnlock`.
+2. Relaunch uses explicit reconnect: the saved values prefill the secure form, while the connector is
+   not invoked until the person chooses Connect. Keychain read/write failures use the decided
+   credential-persistence presentation rather than appearing connected or silently losing state.
+3. The hosted Apple control round-trips and deletes a real test Keychain item, then separately proves
+   that a seeded credential store causes zero connector requests before explicit submission and is
+   updated after a successful connection.
 
 **Revision 62 (2026-08-22)** — macOS account errors became total and actionable.
 
