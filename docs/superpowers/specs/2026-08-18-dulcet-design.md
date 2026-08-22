@@ -6,8 +6,13 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 42 — account setup now has a decided 30-second per-request connect/request/socket
-timeout with a hosted slow-server control; revision 41 made Darwin's default shared response cache
+**Revision:** 48 — the declared revision and record are now mechanically consistent; revision 47
+completed engine-timeout classification and narrowed account-setup feedback claims to the core
+boundary; revision 46 validates successful extension payloads against one complete positive grammar;
+revision 45 knowingly accepts Funkwhale's unambiguous string-boolean dialect; revision 44 refuses
+cross-origin account redirects by construction; revision 43 narrowed the evidence-boundary check to
+its positive structural observations; revision 42 gave account setup a decided 30-second per-request
+connect/request/socket timeout with a hosted slow-server control; revision 41 made Darwin's default shared response cache
 an explicit accepted Phase-1 property with a bounded wire observation and no general non-reuse claim;
 revision 40 made present
 account metadata and permission fields with the wrong JSON types fail as a malformed envelope instead
@@ -2155,7 +2160,9 @@ mode in Actions is itself a failure. Pull-request workflows never reference repo
 `tools/test-spec-evidence-boundaries` is deliberately a **positive structural check**. It requires
 the named required-check and proxy evidence-boundary markers to remain in their normative sections,
 requires the marker check to run in the pull-request `parity-gate`, and requires the live verifier to
-run in `branch-protection-drift` after pushes to `main`. It does not search for every possible
+run in `branch-protection-drift` after pushes to `main`. It also requires the declared revision to
+equal the highest dated record and requires one unique dated record for every revision from 2 through
+that declaration. It does not search for every possible
 contradictory rewording and does not prove whole-document semantic consistency; review owns that
 wider obligation.
 
@@ -2995,6 +3002,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 48 (2026-08-21)** — the spec's declared revision and revision record became mechanically
+consistent.
+
+1. The document still declared revision 42 after records 43 through 47 had been added. The declaration
+   now names revision 48, the latest record.
+2. A full numeric audit found the only other record-integrity defect: revision 20 appeared in the
+   summary but had no dated §28 entry. Its omitted historical entry is restored below from the change
+   that introduced CONF-08; revision 44 remains the explicit superseding redirect policy.
+3. The pull-request structural check now requires the declared number to equal the highest dated
+   record and requires exactly one dated record for every revision from 2 through the declaration.
+   This establishes numeric presence and continuity only; it does not claim that revision prose is
+   semantically complete or correct.
+
 **Revision 47 (2026-08-21)** — engine timeout classification was completed and the account-setup UI
 claim was narrowed to the implemented boundary.
 
@@ -3375,6 +3395,17 @@ string-encoded boolean roles.
 3. URL rendering remains necessary for request traces, but it is separate from domain errors and is
    structural: parse the URL and reconstruct scheme, host, port and path while omitting user
    information, query contents and fragments. No credential-shape denylist remains.
+
+**Revision 20 (2026-08-21)** — cross-origin redirect behavior joined the executable account-connect
+conformance contract.
+
+1. CONF-08 was added to the JVM and macOS account-connect suite and to the Phase-1 conformance subset.
+   At that revision it exercised bounded redirect following, same-origin credential preservation,
+   credential stripping across an origin change, a distinct stripped-chain authentication failure,
+   and HTTPS-downgrade rejection.
+2. Revisions 31, 37, and 38 subsequently strengthened the observation oracle. Revision 44 superseded
+   the cross-origin stripping policy entirely: account connect now refuses such sends by construction,
+   while same-origin redirects and the narrowly defined same-authority HTTP-to-HTTPS upgrade remain.
 
 **Revision 19 (2026-08-21)** — the account-connect conformance identifiers were reconciled before
 their first executable run.
