@@ -2,6 +2,8 @@ package com.legitimateapps.dulcet.core
 
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.api.SendingRequest
@@ -714,7 +716,9 @@ public class AccountConnector(
 }
 
 internal fun mapAccountConnectionFailure(failure: Throwable): DomainError = when {
-    failure is HttpRequestTimeoutException -> DomainError.Transport.Timeout
+    failure is HttpRequestTimeoutException ||
+        failure is ConnectTimeoutException ||
+        failure is SocketTimeoutException -> DomainError.Transport.Timeout
     isUnsupportedAuthenticationChallenge(failure) ->
         DomainError.Auth.UnsupportedAuthenticationChallenge
     else -> tlsTrustFailureOrNull(failure)?.let {
