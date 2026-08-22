@@ -241,6 +241,16 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun malformedExtensionPayloadCannotSilentlyDisableCapabilities() = runTest {
+        assertEquals(
+            DomainError.Protocol.MalformedEnvelope,
+            assertIs<AccountConnectionResult.Failed>(
+                fixture().connect("${redirectConformanceRoot()}/malformed-extensions-object"),
+            ).error,
+        )
+    }
+
+    @Test
     fun slowSelfHostedServerCanCompleteAccountNegotiation() = runTest {
         assertIs<AccountConnectionResult.Connected>(
             fixture().connect("${redirectConformanceRoot()}/slow-account"),

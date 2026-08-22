@@ -295,17 +295,21 @@ def envelope(
     malformed_success_field: str | None = None,
     funkwhale_string_roles: bool = False,
     mixed_case_string_roles: bool = False,
+    malformed_extension_object: bool = False,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": "ok",
         "version": "1.16.1",
     }
     if endpoint == "getOpenSubsonicExtensions":
-        payload["openSubsonicExtensions"] = (
-            [{"name": "formPost", "versions": [1]}]
-            if advertise_form_post
-            else []
-        )
+        if malformed_extension_object:
+            payload["openSubsonicExtensions"] = {"name": "formPost", "versions": [1]}
+        else:
+            payload["openSubsonicExtensions"] = (
+                [{"name": "formPost", "versions": [1]}]
+                if advertise_form_post
+                else []
+            )
     elif endpoint == "ping":
         payload.update(
             {
@@ -479,6 +483,16 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "mixed-case role fixture request channels failed"})
                 return
             self._send_json(200, envelope(endpoint, mixed_case_string_roles=True))
+            return
+
+        if parsed.path.startswith("/malformed-extensions-object/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body, "query"):
+                self._send_json(500, {"error": "malformed-extension request channels failed"})
+                return
+            self._send_json(
+                200,
+                envelope(endpoint, malformed_extension_object=True),
+            )
             return
 
         if parsed.path.startswith("/cacheable-account/rest/"):
