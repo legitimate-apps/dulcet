@@ -18,6 +18,9 @@ enum DulcetMetrics {
     static let denseRowArtworkSize: CGFloat = 28
     static let denseRowSeparatorInset: CGFloat = 36
     static let denseRowVerticalPadding: CGFloat = 2
+    static let trackRowIndexWidth: CGFloat = 20
+    static let trackRowDurationWidth: CGFloat = 44
+    static let trackRowActionWidth: CGFloat = 16
     static let captureWidth: CGFloat = 1180
     static let captureHeight: CGFloat = 760
 }

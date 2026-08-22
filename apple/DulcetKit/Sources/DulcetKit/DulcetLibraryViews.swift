@@ -91,14 +91,19 @@ struct DulcetLibraryBrowseView: View {
                 }
 
                 VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                    HStack {
+                    HStack(spacing: DulcetSpacing.xs) {
                         Text(DulcetStrings.recentlyAdded)
                             .font(.title2.weight(.semibold))
                         Spacer()
                         Text(DulcetStrings.duration)
                             .font(.caption.weight(.medium))
                             .dulcetForeground(.secondaryTextOnWindow)
+                            .frame(width: DulcetMetrics.trackRowDurationWidth, alignment: .trailing)
+                        Color.clear
+                            .frame(width: DulcetMetrics.trackRowActionWidth)
+                            .accessibilityHidden(true)
                     }
+                    .padding(.horizontal, DulcetSpacing.xs)
 
                     VStack(spacing: 0) {
                         ForEach(Array(snapshot.recentlyAddedTracks.enumerated()), id: \.element.id) { index, track in
@@ -244,7 +249,7 @@ struct DulcetTrackRow: View {
                             .dulcetForeground(surface.secondaryPair)
                     }
                 }
-                .frame(width: 20)
+                .frame(width: DulcetMetrics.trackRowIndexWidth)
                 .accessibilityHidden(true)
 
                 DulcetArtworkView(
@@ -275,10 +280,12 @@ struct DulcetTrackRow: View {
                     Text(track.durationSeconds.dulcetDuration)
                         .font(.caption.monospacedDigit())
                         .dulcetForeground(surface.secondaryPair)
+                        .frame(width: DulcetMetrics.trackRowDurationWidth, alignment: .trailing)
                 }
 
                 Image(systemName: "ellipsis")
                     .dulcetForeground(surface.secondaryPair)
+                    .frame(width: DulcetMetrics.trackRowActionWidth)
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, DulcetSpacing.xs)
