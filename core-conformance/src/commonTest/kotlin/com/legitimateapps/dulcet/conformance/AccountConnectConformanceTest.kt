@@ -798,6 +798,13 @@ class AccountConnectConformanceTest {
                 ),
             ),
             Triple(
+                "https://i.invalid/rest/ping.view",
+                "https://%C4%B1.invalid/collect",
+                RedirectPolicyDecision.Reject(
+                    RedirectRejectionReason.UnsupportedInternationalizedHost,
+                ),
+            ),
+            Triple(
                 "https://music.invalid/rest/ping.view",
                 "https://music.invalid./collect",
                 RedirectPolicyDecision.PreserveCredentials,
@@ -806,6 +813,11 @@ class AccountConnectConformanceTest {
                 "https://%69.invalid/rest/ping.view",
                 "https://i.invalid/collect",
                 RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "https://%2569.invalid/rest/ping.view",
+                "https://i.invalid/collect",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
             ),
             Triple(
                 "https://[::1]/rest/ping.view",
