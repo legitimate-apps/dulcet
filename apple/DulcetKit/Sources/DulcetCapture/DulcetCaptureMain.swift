@@ -1,8 +1,10 @@
 import AppKit
+import CoreVideo
 import CryptoKit
 import Darwin
 import DulcetKit
 import Foundation
+import ScreenCaptureKit
 import SwiftUI
 
 private enum CaptureAppearance: String, CaseIterable {
@@ -119,8 +121,8 @@ private enum CaptureError: Error, CustomStringConvertible {
     case outputExists(String)
     case geometryMismatch(String)
     case bitmapAllocation
-    case windowPDFCapture
-    case windowPDFRasterization
+    case screenCaptureWindowMissing(Int)
+    case screenshotGeometryMismatch(Int, Int)
     case jpegEncoding
     case invalidJPEGPayload
     case pinnedControlMissing(String)
@@ -146,10 +148,10 @@ private enum CaptureError: Error, CustomStringConvertible {
             "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
             "could not allocate the fixed capture bitmap"
-        case .windowPDFCapture:
-            "the window-level PDF capture was empty"
-        case .windowPDFRasterization:
-            "could not rasterize the window-level PDF capture"
+        case let .screenCaptureWindowMissing(windowNumber):
+            "ScreenCaptureKit did not expose capture window \(windowNumber)"
+        case let .screenshotGeometryMismatch(observedWidth, observedHeight):
+            "ScreenCaptureKit returned \(observedWidth)x\(observedHeight), expected \(DulcetCaptureMain.width)x\(DulcetCaptureMain.height)"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
@@ -213,9 +215,9 @@ private struct DulcetCaptureMain {
     private static let jpegCompression = 0.72
 
     @MainActor
-    static func main() {
+    static func main() async {
         do {
-            try run()
+            try await run()
         } catch {
             FileHandle.standardError.write(Data("DULCET CAPTURE ERROR \(error)\n".utf8))
             exit(EXIT_FAILURE)
@@ -223,7 +225,7 @@ private struct DulcetCaptureMain {
     }
 
     @MainActor
-    private static func run() throws {
+    private static func run() async throws {
         let options = try CaptureOptions(arguments: Array(CommandLine.arguments.dropFirst()))
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: options.outputDirectory.path) {
@@ -242,7 +244,7 @@ private struct DulcetCaptureMain {
             at: preflightDirectory,
             withIntermediateDirectories: false
         )
-        _ = try render(
+        _ = try await render(
             state: .libraryBrowse,
             appearance: .light,
             variant: .standard,
@@ -252,7 +254,7 @@ private struct DulcetCaptureMain {
 
         if options.generateControlCandidates {
             for appearance in CaptureAppearance.allCases {
-                _ = try render(
+                _ = try await render(
                     state: .libraryBrowse,
                     appearance: appearance,
                     variant: .deliberatelyBadControl,
@@ -269,7 +271,7 @@ private struct DulcetCaptureMain {
         var records: [CaptureRecord] = []
         for state in options.states {
             for appearance in options.appearances {
-                records.append(try render(
+                records.append(try await render(
                     state: state,
                     appearance: appearance,
                     variant: .standard,
@@ -292,7 +294,7 @@ private struct DulcetCaptureMain {
             widthPixels: width,
             heightPixels: height,
             captureSurface: "shipping-root-titled-nswindow-with-standard-chrome",
-            captureMethod: "nswindow-data-with-pdf-rasterized-to-fixed-bitmap",
+            captureMethod: "screen-capture-kit-desktop-independent-window",
             referenceRootComposition: "dulcet-root-view-navigation-split-view-balanced",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
@@ -314,7 +316,7 @@ private struct DulcetCaptureMain {
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
-                + "capture-method=nswindow-data-with-pdf "
+                + "capture-method=screen-capture-kit-window "
                 + "reference-root=navigation-split-view-balanced "
                 + "control-active-state=key "
                 + "control-baseline=pinned-resource "
@@ -328,7 +330,7 @@ private struct DulcetCaptureMain {
         appearance: CaptureAppearance,
         variant: DulcetRenderVariant,
         outputDirectory: URL
-    ) throws -> CaptureRecord {
+    ) async throws -> CaptureRecord {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -367,7 +369,7 @@ private struct DulcetCaptureMain {
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
+        try await Task.sleep(for: .milliseconds(80))
         window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: true)
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
@@ -378,7 +380,7 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
+        try await Task.sleep(for: .milliseconds(80))
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
@@ -394,39 +396,32 @@ private struct DulcetCaptureMain {
             )
         }
 
-        let pdfData = window.dataWithPDF(inside: captureBounds)
-        guard !pdfData.isEmpty else {
-            throw CaptureError.windowPDFCapture
+        let shareableContent = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+        guard let captureWindow = shareableContent.windows.first(where: {
+            $0.windowID == CGWindowID(window.windowNumber)
+        }) else {
+            throw CaptureError.screenCaptureWindowMissing(window.windowNumber)
         }
-        guard let pdf = NSPDFImageRep(data: pdfData),
-              let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            throw CaptureError.bitmapAllocation
+        let filter = SCContentFilter(desktopIndependentWindow: captureWindow)
+        let configuration = SCStreamConfiguration()
+        configuration.width = width
+        configuration.height = height
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        configuration.showsCursor = false
+        configuration.capturesAudio = false
+        configuration.ignoreShadowsSingleWindow = true
+        let screenshot = try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: configuration
+        )
+        guard screenshot.width == width, screenshot.height == height else {
+            throw CaptureError.screenshotGeometryMismatch(screenshot.width, screenshot.height)
         }
+        let bitmap = NSBitmapImageRep(cgImage: screenshot)
         bitmap.size = NSSize(width: width, height: height)
-        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
-            throw CaptureError.windowPDFRasterization
-        }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        NSColor.windowBackgroundColor.setFill()
-        NSRect(origin: .zero, size: expectedSize).fill()
-        let drewPDF = pdf.draw(in: NSRect(origin: .zero, size: expectedSize))
-        context.flushGraphics()
-        NSGraphicsContext.restoreGraphicsState()
-        guard drewPDF else {
-            throw CaptureError.windowPDFRasterization
-        }
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]
