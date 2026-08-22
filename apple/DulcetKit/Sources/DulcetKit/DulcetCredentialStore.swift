@@ -93,6 +93,7 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: accountID,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
         ]
     }
 }

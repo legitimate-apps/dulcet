@@ -123,6 +123,8 @@ for marker in (
     "**macOS Phase-1 relaunch decision — explicit reconnect:**",
     "one Keychain generic-password value",
     "generated local UUID",
+    "data-protection Keychain",
+    "kSecUseDataProtectionKeychain = true",
     "performs **no network request until the person chooses Connect**",
     "credential-persistence error surface",
 ):

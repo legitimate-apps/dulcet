@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 70 — replacement submissions now cancel the operation they supersede; revision 69 made
+**Revision:** 71 — Apple credentials now live in the data-protection Keychain where their declared
+accessibility and synchronization attributes take effect; revision 70 made replacement submissions
+cancel the operation they supersede; revision 69 made
 a late Cancel invalidate queued success before persistence; revision 68 made
 Apple credentials after-first-unlock and device-only; revision 67 made
 credential-bearing request and snapshot values use redacted string and mirror
@@ -1408,6 +1410,7 @@ through Ktor Darwin's `configureSession` hook.
 | | Apple | Android |
 |---|---|---|
 | item | Keychain generic password | Keystore-backed encrypted store |
+| store | data-protection Keychain (`kSecUseDataProtectionKeychain = true` on every add, update, read, and delete query) | platform Keystore |
 | accessibility | `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
 | key | `service = "${BUNDLE_PREFIX}"`, `account = server_id` (the local UUID, not the username or URL) | alias `${BUNDLE_PREFIX}.<server_id>` |
 | iCloud Keychain sync | off (`kSecAttrSynchronizable = false`) | n/a |
@@ -1419,8 +1422,12 @@ through Ktor Darwin's `configureSession` hook.
 the complete connection request is encoded into one Keychain generic-password value under
 `service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
 is retained in preferences as the active-account pointer; neither the URL, username, nor password is
-used as a Keychain index. Synchronization is explicitly disabled and accessibility is
-`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, as required above. On relaunch Dulcet reads the item and
+used as a Keychain index. Every `SecItemAdd`, `SecItemUpdate`, `SecItemCopyMatching`, and
+`SecItemDelete` query selects the data-protection Keychain with
+`kSecUseDataProtectionKeychain = true`; on macOS the legacy file-based Keychain does not preserve
+the declared accessibility attribute. In the selected store, iCloud Keychain synchronization is
+explicitly disabled and accessibility is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, as
+required above. On relaunch Dulcet reads the item and
 prefills the secure account form, but performs **no network request until the person chooses
 Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition. The storage API's
@@ -2409,7 +2416,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-09a | the macOS account surface publishes progress on submission and Cancel invokes the active operation handle |
 | CONF-09b | the deterministic macOS fixture renders every declared account-connect state, including idle, in-progress, connected, and each error family |
 | CONF-09c | every closed account-error presentation kind has actionable copy; TLS, internationalized-host, and cross-origin redirect remedies retain their decided specifics |
-| CONF-10a | a real macOS Keychain generic-password item round-trips and deletes the complete account-connect request |
+| CONF-10a | a real macOS data-protection Keychain generic-password item adds, updates, reads, and deletes the complete account-connect request while retaining the specified accessibility and non-sync attributes |
 | CONF-10b | persisted credentials prefill the form after relaunch without a network request until explicit Connect |
 | CONF-10c | an explicitly configured Darwin HTTP forward proxy returns 407 Basic while a matching ambient credential is present; account connect emits `Auth.UnsupportedAuthenticationChallenge` and no `Proxy-Authorization` reaches the fixture |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
@@ -3103,6 +3110,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 71 (2026-08-22)** — the stored Apple credential now has the security properties §13.1
+claims for it.
+
+1. Hosted run `32594779871`, job `apple-ci` (`97083951915`), falsified revision 68's
+   source-reasoned claim: the legacy macOS Keychain accepted the accessibility input but returned no
+   `kSecAttrAccessible` attribute from the real inserted item.
+2. Every add, update, read, and delete query now selects the data-protection Keychain with
+   `kSecUseDataProtectionKeychain = true`. `kSecAttrSynchronizable = false` therefore describes a
+   non-iCloud-synchronizing item in that store, while
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` separately prevents migration through restore
+   to a new device.
+3. The hosted real-Keychain control keeps the read-back accessibility assertion, also reads back the
+   non-synchronizable value, and exercises add, update, read, and delete against the same selected
+   store. There is no legacy-item migration: no Dulcet build containing this store has shipped and
+   no user credential exists to migrate.
 
 **Revision 70 (2026-08-22)** — programmatic replacement submissions became single-flight.
 

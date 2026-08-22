@@ -210,24 +210,47 @@ func keychainCredentialsRoundTripAndDelete() throws {
     try store.save(request)
     #expect(try store.load() == request)
     let accountID = try #require(defaults.string(forKey: activeAccountKey))
-    var attributesResult: CFTypeRef?
-    let attributesStatus = SecItemCopyMatching([
+    let itemQuery: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: service,
         kSecAttrAccount as String: accountID,
         kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-        kSecReturnAttributes as String: kCFBooleanTrue as Any,
-        kSecMatchLimit as String: kSecMatchLimitOne,
-    ] as CFDictionary, &attributesResult)
+        kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
+    ]
+    var attributesResult: CFTypeRef?
+    var attributesQuery = itemQuery
+    attributesQuery[kSecReturnAttributes as String] = kCFBooleanTrue
+    attributesQuery[kSecMatchLimit as String] = kSecMatchLimitOne
+    let attributesStatus = SecItemCopyMatching(
+        attributesQuery as CFDictionary,
+        &attributesResult
+    )
     #expect(attributesStatus == errSecSuccess)
     let attributes = try #require(attributesResult as? [String: Any])
+    #expect(attributes[kSecAttrService as String] as? String == service)
+    #expect(attributes[kSecAttrAccount as String] as? String == accountID)
     #expect(
         attributes[kSecAttrAccessible as String] as? String
             == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
     )
+    let synchronizable = try #require(
+        attributes[kSecAttrSynchronizable as String] as? NSNumber
+    )
+    #expect(synchronizable.boolValue == false)
+
+    let updatedRequest = DulcetAccountConnectRequest(
+        serverURL: request.serverURL,
+        username: request.username,
+        password: "updated-fixture-password",
+        allowLocalHTTP: request.allowLocalHTTP
+    )
+    try store.save(updatedRequest)
+    #expect(defaults.string(forKey: activeAccountKey) == accountID)
+    #expect(try store.load() == updatedRequest)
 
     try store.delete()
     #expect(try store.load() == nil)
+    #expect(SecItemCopyMatching(itemQuery as CFDictionary, nil) == errSecItemNotFound)
 }
 
 @Test @MainActor
