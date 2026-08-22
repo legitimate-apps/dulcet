@@ -199,7 +199,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "shipping-root-titled-nswindow-with-standard-chrome",
-        "captureMethod": "screen-capture-kit-desktop-independent-window",
+        "captureMethod": "cgwindowlist-create-image-including-window-nominal-resolution",
         "referenceRootComposition": "dulcet-root-view-navigation-split-view-balanced",
         "windowTitlePolicy": "visible-centered-standard-window-title",
         "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",

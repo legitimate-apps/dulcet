@@ -1,10 +1,9 @@
 import AppKit
-import CoreVideo
+import CoreGraphics
 import CryptoKit
 import Darwin
 import DulcetKit
 import Foundation
-import ScreenCaptureKit
 import SwiftUI
 
 private enum CaptureAppearance: String, CaseIterable {
@@ -121,7 +120,7 @@ private enum CaptureError: Error, CustomStringConvertible {
     case outputExists(String)
     case geometryMismatch(String)
     case bitmapAllocation
-    case screenCaptureWindowMissing(Int)
+    case cgWindowCaptureFailed(Int)
     case screenshotGeometryMismatch(Int, Int, Int, Int)
     case jpegEncoding
     case invalidJPEGPayload
@@ -148,15 +147,15 @@ private enum CaptureError: Error, CustomStringConvertible {
             "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
             "could not allocate the fixed capture bitmap"
-        case let .screenCaptureWindowMissing(windowNumber):
-            "ScreenCaptureKit did not expose capture window \(windowNumber)"
+        case let .cgWindowCaptureFailed(windowNumber):
+            "CGWindowListCreateImage could not capture window \(windowNumber)"
         case let .screenshotGeometryMismatch(
             observedWidth,
             observedHeight,
             expectedWidth,
             expectedHeight
         ):
-            "ScreenCaptureKit returned \(observedWidth)x\(observedHeight), expected \(expectedWidth)x\(expectedHeight)"
+            "window capture returned \(observedWidth)x\(observedHeight), expected \(expectedWidth)x\(expectedHeight)"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
@@ -299,7 +298,7 @@ private struct DulcetCaptureMain {
             widthPixels: width,
             heightPixels: height,
             captureSurface: "shipping-root-titled-nswindow-with-standard-chrome",
-            captureMethod: "screen-capture-kit-desktop-independent-window",
+            captureMethod: "cgwindowlist-create-image-including-window-nominal-resolution",
             referenceRootComposition: "dulcet-root-view-navigation-split-view-balanced",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
@@ -321,7 +320,7 @@ private struct DulcetCaptureMain {
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
-                + "capture-method=screen-capture-kit-window "
+                + "capture-method=cgwindowlist-create-image "
                 + "reference-root=navigation-split-view-balanced "
                 + "control-active-state=key "
                 + "control-baseline=pinned-resource "
@@ -404,27 +403,14 @@ private struct DulcetCaptureMain {
             )
         }
 
-        let shareableContent = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
-        )
-        guard let captureWindow = shareableContent.windows.first(where: {
-            $0.windowID == CGWindowID(window.windowNumber)
-        }) else {
-            throw CaptureError.screenCaptureWindowMissing(window.windowNumber)
+        guard let screenshot = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            CGWindowID(window.windowNumber),
+            [.boundsIgnoreFraming, .nominalResolution]
+        ) else {
+            throw CaptureError.cgWindowCaptureFailed(window.windowNumber)
         }
-        let filter = SCContentFilter(desktopIndependentWindow: captureWindow)
-        let configuration = SCStreamConfiguration()
-        configuration.width = width
-        configuration.height = height
-        configuration.pixelFormat = kCVPixelFormatType_32BGRA
-        configuration.showsCursor = false
-        configuration.capturesAudio = false
-        configuration.ignoreShadowsSingleWindow = true
-        let screenshot = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: configuration
-        )
         guard screenshot.width == width, screenshot.height == height else {
             throw CaptureError.screenshotGeometryMismatch(
                 screenshot.width,
