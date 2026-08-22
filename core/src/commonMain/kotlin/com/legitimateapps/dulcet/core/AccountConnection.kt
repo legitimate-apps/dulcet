@@ -77,6 +77,7 @@ public enum class RedirectRejectionReason {
     HttpsDowngrade,
     LocalToPublic,
     CrossOrigin,
+    UnsupportedInternationalizedHost,
     TooManyRedirects,
     InvalidLocation,
 }
