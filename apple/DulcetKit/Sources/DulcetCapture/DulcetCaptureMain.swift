@@ -122,7 +122,7 @@ private enum CaptureError: Error, CustomStringConvertible {
     case geometryMismatch(String)
     case bitmapAllocation
     case screenCaptureWindowMissing(Int)
-    case screenshotGeometryMismatch(Int, Int)
+    case screenshotGeometryMismatch(Int, Int, Int, Int)
     case jpegEncoding
     case invalidJPEGPayload
     case pinnedControlMissing(String)
@@ -150,8 +150,13 @@ private enum CaptureError: Error, CustomStringConvertible {
             "could not allocate the fixed capture bitmap"
         case let .screenCaptureWindowMissing(windowNumber):
             "ScreenCaptureKit did not expose capture window \(windowNumber)"
-        case let .screenshotGeometryMismatch(observedWidth, observedHeight):
-            "ScreenCaptureKit returned \(observedWidth)x\(observedHeight), expected \(DulcetCaptureMain.width)x\(DulcetCaptureMain.height)"
+        case let .screenshotGeometryMismatch(
+            observedWidth,
+            observedHeight,
+            expectedWidth,
+            expectedHeight
+        ):
+            "ScreenCaptureKit returned \(observedWidth)x\(observedHeight), expected \(expectedWidth)x\(expectedHeight)"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
@@ -418,7 +423,12 @@ private struct DulcetCaptureMain {
             configuration: configuration
         )
         guard screenshot.width == width, screenshot.height == height else {
-            throw CaptureError.screenshotGeometryMismatch(screenshot.width, screenshot.height)
+            throw CaptureError.screenshotGeometryMismatch(
+                screenshot.width,
+                screenshot.height,
+                width,
+                height
+            )
         }
         let bitmap = NSBitmapImageRep(cgImage: screenshot)
         bitmap.size = NSSize(width: width, height: height)
