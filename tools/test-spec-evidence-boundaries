@@ -40,14 +40,20 @@ account_connect = next(
 )
 macos_account_connect = account_connect["platforms"]["macos"]
 if macos_account_connect.get("status") != "partial":
-    errors.append("account.connect/macos must remain partial until the live app seam executes")
+    errors.append(
+        "account.connect/macos must remain partial until the signed app persistence and "
+        "connected effect execute"
+    )
 account_reason = macos_account_connect.get("reason", "")
 for marker in (
-    "no app-level test drives Connect in the built DulcetMac process",
+    "32598531311",
+    "launchd refused to spawn",
+    "before application or test code ran",
     "Kotlin main dispatcher to @MainActor completion",
-    "Keychain save",
+    "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureUI",
+    "credentialPersistenceFailed",
+    "does not observe a production Keychain save or connected UI",
     "connected UI",
-    "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
     "unentitled SwiftPM process",
     "missingDataProtectionKeychainEntitlement",
     "legacy-Keychain item",
@@ -158,12 +164,17 @@ for marker in (
 for marker in (
     "**ASSUMED live-app seam:**",
     "fourteen `account.connect/macos` evidence entries",
-    "built `DulcetMac` app process",
+    "`DulcetMacProduction` composition root",
+    "32598531311",
+    "launchd refused to spawn",
+    "no application or test code ran",
     "Kotlin main dispatcher",
     "Swift `@MainActor`",
-    "production Keychain store",
+    "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureUI",
+    "credentialPersistenceFailed",
+    "no active-account pointer or persisted credential",
+    "will not establish a production Keychain save",
     "connected UI",
-    "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
 ):
     if marker not in normalized_account_setup:
         errors.append(f"account-setup live-app evidence boundary is missing {marker!r}")

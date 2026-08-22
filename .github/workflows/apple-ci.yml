@@ -298,9 +298,10 @@ jobs:
               -configuration Debug \
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
-              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureUI \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
+              CODE_SIGN_ENTITLEMENTS= \
               DEVELOPMENT_TEAM= \
               PROVISIONING_PROFILE_SPECIFIER=
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \

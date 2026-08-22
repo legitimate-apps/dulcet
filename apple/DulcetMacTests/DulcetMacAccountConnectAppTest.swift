@@ -1,5 +1,4 @@
 import AppKit
-import Security
 import SwiftUI
 import XCTest
 @testable import DulcetKit
@@ -11,7 +10,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
-    func connectReachesConnectedUIThroughLiveKotlinFacade() async throws {
+    func connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureUI() async throws {
         let baseURL = try XCTUnwrap(
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
             "apple-ci must supply the live conformance fixture URL"
@@ -22,9 +21,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             password: fixturePassword,
             allowLocalHTTP: true
         )
+        UserDefaults.standard.removeObject(forKey: activeAccountKey)
+        defer { UserDefaults.standard.removeObject(forKey: activeAccountKey) }
         let credentialStore = DulcetKeychainCredentialStore()
-        try? credentialStore.delete()
-        defer { try? credentialStore.delete() }
 
         let store = DulcetMacProduction.makePresentationStore()
         store.accountServerURL = request.serverURL
@@ -39,34 +38,33 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             store.snapshot.state != .accountConnecting
         }
 
-        XCTAssertEqual(store.snapshot.state, .accountConnected)
-        XCTAssertTrue(store.snapshot.accountConnected)
-        guard case let .connected(account) = store.snapshot.accountConnection else {
-            return XCTFail("the live connector did not publish a connected account")
+        XCTAssertEqual(store.snapshot.state, .accountErrorPersistence)
+        XCTAssertFalse(store.snapshot.accountConnected)
+        guard case let .failed(failure) = store.snapshot.accountConnection else {
+            return XCTFail("the live success did not reach the production persistence boundary")
         }
-        XCTAssertEqual(account.normalizedServerURL, baseURL)
-        guard case let .online(serverName) = store.snapshot.connectivity else {
-            return XCTFail("the connected state did not publish online connectivity")
+        XCTAssertEqual(failure.kind, .credentialPersistenceFailed)
+        guard case let .connectionFailed(.account(connectivityFailure)) =
+            store.snapshot.connectivity else {
+            return XCTFail("the persistence failure did not reach production connectivity state")
         }
-        XCTAssertFalse(serverName.isEmpty)
-
-        let persisted = try XCTUnwrap(try credentialStore.load())
-        XCTAssertEqual(persisted, request)
-        try assertProductionKeychainAttributes()
+        XCTAssertEqual(connectivityFailure.kind, .credentialPersistenceFailed)
+        XCTAssertNil(UserDefaults.standard.string(forKey: activeAccountKey))
+        XCTAssertNil(try credentialStore.load())
 
         let rendering = try renderProductionView(store: store)
         XCTAssertTrue(rendering.didRenderPixels)
         XCTAssertTrue(
             rendering.accessibilityStrings.contains {
-                $0.localizedCaseInsensitiveContains("Connected to")
+                $0.localizedCaseInsensitiveContains("account could not be saved")
             },
-            "the connected confirmation was not present in the rendered accessibility tree"
+            "the typed persistence failure was not present in the rendered accessibility tree"
         )
         XCTAssertTrue(
             rendering.accessibilityStrings.contains {
-                $0.localizedCaseInsensitiveContains("Online")
+                $0.localizedCaseInsensitiveContains("Keychain")
             },
-            "online status was not present in the rendered accessibility tree"
+            "the rendered persistence failure did not name the Keychain remedy"
         )
         XCTAssertFalse(
             rendering.accessibilityStrings.contains { $0.contains(fixturePassword) },
@@ -101,28 +99,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-    }
-
-    private func assertProductionKeychainAttributes() throws {
-        let accountID = try XCTUnwrap(UserDefaults.standard.string(forKey: activeAccountKey))
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: DulcetKeychainCredentialStore.productionService,
-            kSecAttrAccount as String: accountID,
-            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
-            kSecReturnAttributes as String: kCFBooleanTrue as Any,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        XCTAssertEqual(status, errSecSuccess)
-        let attributes = try XCTUnwrap(result as? [String: Any])
-        XCTAssertEqual(
-            attributes[kSecAttrAccessible as String] as? String,
-            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
-        )
-        XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
     }
 
     private func renderProductionView(
