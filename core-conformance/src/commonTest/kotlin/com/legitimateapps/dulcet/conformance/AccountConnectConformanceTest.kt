@@ -204,6 +204,16 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun openSubsonicStringBooleanRemainsMalformed() = runTest {
+        assertEquals(
+            DomainError.Protocol.MalformedEnvelope,
+            assertIs<AccountConnectionResult.Failed>(
+                fixture().connect("${redirectConformanceRoot()}/malformed-envelope-open-subsonic-string"),
+            ).error,
+        )
+    }
+
+    @Test
     fun funkwhale209StringBooleanRolesRemainConnectable() = runTest {
         val connected = assertIs<AccountConnectionResult.Connected>(
             fixture().connect("${redirectConformanceRoot()}/funkwhale-2-0-9"),

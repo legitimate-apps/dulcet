@@ -357,6 +357,8 @@ def envelope(
             }
     if endpoint == "ping" and malformed_success_field == "open-subsonic":
         payload["openSubsonic"] = "yes"
+    elif endpoint == "ping" and malformed_success_field == "open-subsonic-string":
+        payload["openSubsonic"] = "TRUE"
     elif endpoint == "ping" and malformed_success_field == "type":
         payload["type"] = 42
     elif endpoint == "getUser" and malformed_success_field == "download-role":
@@ -472,7 +474,12 @@ class RedirectHandler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/malformed-envelope-"):
             scenario = parsed.path.split("/", 2)[1].removeprefix("malformed-envelope-")
-            if scenario not in {"open-subsonic", "type", "download-role"}:
+            if scenario not in {
+                "open-subsonic",
+                "open-subsonic-string",
+                "type",
+                "download-role",
+            }:
                 self._send_json(404, {"error": "unknown malformed-envelope scenario"})
                 return
             if not self._observes_expected_channels(endpoint, channels, body):
