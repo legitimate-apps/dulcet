@@ -33,16 +33,22 @@ expected: dict[tuple[str, str], list[str]] = {}
 for feature in document.get("features", []):
     for platform, cell in feature.get("platforms", {}).items():
         evidence = cell.get("evidence")
-        if not isinstance(evidence, dict):
-            continue
-        if evidence.get("workflow") == workflow and evidence.get("job") == job:
-            identity = evidence.get("test", "")
-            parts = identity.split("/")
-            if len(parts) != 2 or not all(parts):
-                fail(f"invalid test identity for {feature.get('id')}/{platform}: {identity!r}")
-            expected.setdefault((parts[0], parts[1]), []).append(
-                f"{feature.get('id')}/{platform}"
-            )
+        entries = evidence if isinstance(evidence, list) else [evidence]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("workflow") == workflow and entry.get("job") == job:
+                identity = entry.get("test", "")
+                parts = identity.split("/")
+                if len(parts) != 2 or not all(parts):
+                    fail(
+                        f"invalid test identity for {feature.get('id')}/{platform}: "
+                        f"{identity!r}"
+                    )
+                claim = f"{feature.get('id')}/{platform}"
+                if entry.get("conformance"):
+                    claim += f"/{entry['conformance']}"
+                expected.setdefault((parts[0], parts[1]), []).append(claim)
 
 if not expected:
     fail(f"no FEATURES.yml evidence targets the executing job {workflow}/{job}")
