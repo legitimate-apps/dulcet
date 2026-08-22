@@ -133,10 +133,14 @@ else:
         )
 
 for marker in (
-    "**Implementation boundary (not implemented in Phase 1):**",
-    "no platform code references `DomainError`",
-    "future account UI",
-    "not an observed product behavior",
+    "**macOS implementation boundary:**",
+    "exhaustive Kotlin `when`",
+    "exhaustive `switch` with no default branch",
+    "exposes only the canonical target host",
+    "exempt `/rest/`",
+    "punycode as the available workaround",
+    "install a private CA at the macOS operating-system level",
+    "Other platform presentation mappings remain future work",
 ):
     if marker not in normalized_error_model:
         errors.append(f"§18.12 error-presentation implementation boundary is missing {marker!r}")

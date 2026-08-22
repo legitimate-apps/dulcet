@@ -18,6 +18,7 @@ import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.RequestChannelLocation
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
 import com.legitimateapps.dulcet.core.RedirectRejectionReason
+import com.legitimateapps.dulcet.core.RedirectTargetHost
 import com.legitimateapps.dulcet.core.Redactor
 import com.legitimateapps.dulcet.core.SaltSource
 import com.legitimateapps.dulcet.core.TlsTrustFailure
@@ -396,7 +397,9 @@ class AccountConnectConformanceTest {
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
-            DomainError.Auth.CrossOriginRedirectRejected(),
+            DomainError.Auth.CrossOriginRedirectRejected(
+                RedirectTargetHost("redirect.example.invalid"),
+            ),
             DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
         )
         val logging = mutableListOf<String>()

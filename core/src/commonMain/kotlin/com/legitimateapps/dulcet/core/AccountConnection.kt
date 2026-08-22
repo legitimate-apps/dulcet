@@ -215,8 +215,9 @@ public object SuppressedRedirectUrl {
 
 /**
  * Semantic failures safe for rendering, logging, exception wrapping, and diagnostic serialization.
- * Server-controlled messages and URLs are discarded before construction; fields contain only closed
- * enums, numeric values, or content-free markers.
+ * Server-controlled messages and URLs are discarded before construction. Fields contain only closed
+ * enums, numeric values, content-free markers, or the separately validated canonical target host
+ * that the cross-origin refusal UI is explicitly allowed to display.
  */
 public sealed interface DomainError {
     public sealed interface Input : DomainError {
@@ -269,11 +270,24 @@ public sealed interface DomainError {
         public data object UnsupportedAuthenticationChallenge : Auth
         /** Account connect refused to send a request across an origin boundary. */
         public data class CrossOriginRedirectRejected(
+            val targetHost: RedirectTargetHost,
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
     }
 
     public data class CapabilityUnsupported(val featureId: CapabilityFeature) : DomainError
+}
+
+/** A canonical host safe to show without exposing a redirect path, query, or user information. */
+public data class RedirectTargetHost(public val value: String) {
+    init {
+        val canonical = value.canonicalRedirectHost()
+        require(canonical is CanonicalRedirectHost.Canonical && canonical.value == value) {
+            "RedirectTargetHost must be an already-canonical ASCII host"
+        }
+    }
+
+    override fun toString(): String = "<redirect-host>"
 }
 
 private val DomainError.diagnosticKind: String
@@ -620,7 +634,10 @@ public class AccountConnector(
                 )
             if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
                 throw RedirectPolicyFailure(
-                    DomainError.Auth.CrossOriginRedirectRejected(SuppressedRedirectUrl),
+                    DomainError.Auth.CrossOriginRedirectRejected(
+                        targetHost = nextUrl.redirectTargetHost(),
+                        redactedUrl = SuppressedRedirectUrl,
+                    ),
                 )
             }
             when (
@@ -633,7 +650,10 @@ public class AccountConnector(
                 RedirectPolicyDecision.PreserveCredentials -> Unit
                 is RedirectPolicyDecision.Reject -> {
                     val error = if (decision.reason == RedirectRejectionReason.CrossOrigin) {
-                        DomainError.Auth.CrossOriginRedirectRejected(SuppressedRedirectUrl)
+                        DomainError.Auth.CrossOriginRedirectRejected(
+                            targetHost = nextUrl.redirectTargetHost(),
+                            redactedUrl = SuppressedRedirectUrl,
+                        )
                     } else {
                         DomainError.Security.RedirectRejected(
                             decision.reason,
@@ -829,6 +849,14 @@ private fun String.withoutQuery(): String = URLBuilder().apply {
     parameters.clear()
     fragment = ""
 }.buildString()
+
+private fun String.redirectTargetHost(): RedirectTargetHost {
+    val canonical = Url(this).host.canonicalRedirectHost()
+    check(canonical is CanonicalRedirectHost.Canonical) {
+        "Cross-origin decisions require a canonical target host"
+    }
+    return RedirectTargetHost(canonical.value)
+}
 
 private fun Url.normalizedRedirectPort(): Int? = when {
     protocol.name == "http" && port == 80 -> null
