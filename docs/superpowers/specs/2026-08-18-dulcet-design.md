@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 50 — Funkwhale string-boolean compatibility is confined to the five observed `getUser`
-role fields while account metadata remains strictly typed; revision 49 made redirect-origin
+**Revision:** 51 — the parity gate now enforces the account-setup core-versus-future-presentation
+boundary it claims; revision 50 confined Funkwhale string-boolean compatibility to the five observed
+`getUser` role fields while account metadata remains strictly typed; revision 49 made redirect-origin
 comparison use bounded ASCII/IP host canonicalization and reject internationalized redirect hosts
 distinctly without adding IDNA; revision 48 made the
 declared revision and record mechanically consistent; revision 47
@@ -3013,6 +3014,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 51 (2026-08-22)** — the account-setup implementation boundary became parity-enforced.
+
+1. Hosted red run `32580441500`, `parity-gate` job `97048859025`, first accepted the valid spec and
+   then removed the §10.2 implementation-boundary paragraph and retitled §10.3's future-presentation
+   column to `UI`. The production checker still returned success, so the reversion-sensitive mutation
+   step failed with `removed account-setup implementation boundary was accepted`.
+2. `tools/test-spec-evidence-boundaries` now isolates the normative account-setup timeout subsection
+   and failure-mode table. It requires the explicit no-production-caller fact, the absent
+   progress/Cancel/error surface, the future-platform qualification, and the table's
+   `not implemented in Phase 1` label.
+3. The retained mutation test proves that removing the substantive boundary while preserving revision
+   numbering is rejected. This remains a positive structural claim about required markers; detecting
+   an arbitrarily reworded contradiction remains a review obligation under revision 43.
 
 **Revision 50 (2026-08-22)** — Funkwhale compatibility returned to its observed `getUser` scope.
 
