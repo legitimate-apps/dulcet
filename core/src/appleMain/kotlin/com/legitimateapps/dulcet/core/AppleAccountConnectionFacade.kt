@@ -48,9 +48,12 @@ public enum class AppleAccountErrorKind {
  * It returns the operation handle synchronously, delivers exactly one completion on the Apple main
  * dispatcher, and never lets a Kotlin exception cross the framework boundary.
  */
-public class AppleAccountConnectionClient(
-    private val connector: AccountConnector = AccountConnector(),
+public class AppleAccountConnectionClient internal constructor(
+    private val connector: AccountConnector,
 ) {
+    /** Objective-C/Swift-visible production constructor. */
+    public constructor() : this(AccountConnector())
+
     private val scope: CoroutineScope = MainScope()
 
     public fun startConnect(
