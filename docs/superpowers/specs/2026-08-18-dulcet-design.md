@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 57 — localized DomainError presentation is explicitly future account-UI work; revision
+**Revision:** 58 — embedded IPv4 syntax is accepted only at the end of a complete IPv6 address;
+revision 57 made localized DomainError presentation explicitly future account-UI work; revision
 56 made the documented and sealed authentication-error taxonomies match; revision 55
 made the HTTP-to-HTTPS carve-out match the equal-normalized-port policy implemented by account
 connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
@@ -1423,8 +1424,9 @@ sent, is:
 - Preserve same-origin redirects, including path changes. Origin equality never uses Unicode case
   folding. Each host is percent-decoded once as strict UTF-8; one trailing DNS root dot is removed
   and ASCII letters in a DNS reg-name are lower-cased with an ASCII-only transform. An IPv6 address
-  is parsed to one numeric spelling, with embedded IPv4 octets restricted to non-empty ASCII decimal
-  digits in the range 0–255, while its optional zone identifier is preserved byte-for-byte because
+  is parsed to one numeric spelling, with an embedded IPv4 tail permitted only in the final 32 bits
+  of the complete address and its octets restricted to non-empty ASCII decimal digits in the range
+  0–255, while its optional zone identifier is preserved byte-for-byte because
   OS interface names are case-sensitive. The scheme-normalised port is then compared. Invalid
   encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
 - Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
@@ -3026,6 +3028,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 58 (2026-08-22)** — embedded IPv4 tails became positionally valid IPv6 syntax.
+
+1. A dotted quad is accepted only as the final 32 bits of the complete IPv6 address, including when
+   `::` compression is used; it may not appear in the left side of a compressed address.
+2. Consequently malformed `[1.2.3.4::]` and `[1.2.3.4::5]` no longer canonicalize to valid numeric
+   IPv6 identities, while the valid final-tail equivalence remains supported.
+3. Direct canonical-host and public conformance controls require an invalid-location rejection for
+   the malformed spellings, closing the equality collision with `[102:304::]`.
 
 **Revision 57 (2026-08-22)** — localized error presentation gained an explicit implementation boundary.
 
