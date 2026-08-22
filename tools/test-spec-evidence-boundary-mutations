@@ -2,6 +2,7 @@
 """Mutation tests proving the spec evidence-boundary checker rejects regressions."""
 
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -73,9 +74,11 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
     materialize(root)
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    mutated = spec.replace("**Revision:** 51 ", "**Revision:** 50 ", 1)
-    if mutated == spec:
+    declaration = re.search(r"^\*\*Revision:\*\* (\d+)\b", spec, re.MULTILINE)
+    if declaration is None:
         raise AssertionError("declared revision fixture is missing")
+    declared = int(declaration.group(1))
+    mutated = spec[: declaration.start(1)] + str(declared - 1) + spec[declaration.end(1) :]
     spec_path.write_text(mutated)
 
     result = invoke(root)

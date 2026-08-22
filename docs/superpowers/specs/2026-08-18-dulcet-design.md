@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 51 — the parity gate now enforces the account-setup core-versus-future-presentation
-boundary it claims; revision 50 confined Funkwhale string-boolean compatibility to the five observed
+**Revision:** 52 — an independent mutation test now proves deleting the numeric revision-integrity
+algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
+core-versus-future-presentation boundary it claims; revision 50 confined Funkwhale string-boolean compatibility to the five observed
 `getUser` role fields while account metadata remains strictly typed; revision 49 made redirect-origin
 comparison use bounded ASCII/IP host canonicalization and reject internationalized redirect hosts
 distinctly without adding IDNA; revision 48 made the
@@ -3014,6 +3015,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 52 (2026-08-22)** — revision integrity gained a reversion-sensitive mutation proof.
+
+1. Hosted red run `32580533027`, `parity-gate` job `97049085272`, removed the revision-integrity
+   implementation while retaining the workflow invocation and the new independent mutation test.
+   A temporary spec declaring revision 50 while retaining record 51 was accepted, so the mutation
+   step failed with `declared/latest revision mismatch was accepted`.
+2. The numeric checker is restored unchanged: it requires one declaration, unique and continuous
+   dated records from 2 through that declaration, and equality between the declaration and latest
+   record. The retained mutation test derives the current declared number, lowers only that number,
+   and requires the checker to reject the resulting mismatch.
+3. The mutation harness is a separate tool invoked after the production checker, so deleting only
+   the production revision algorithm now makes parity fail. The enforced claim remains numeric
+   integrity; it does not establish semantic correctness of revision prose.
 
 **Revision 51 (2026-08-22)** — the account-setup implementation boundary became parity-enforced.
 
