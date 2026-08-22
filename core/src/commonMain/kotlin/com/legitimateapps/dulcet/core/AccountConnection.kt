@@ -870,7 +870,7 @@ internal fun String.canonicalRedirectHost(): CanonicalRedirectHost {
         val canonicalAddress = groups.joinToString(":") {
             it.toString(16).padStart(4, '0')
         }
-        val canonicalZone = zone?.let { "%${it.lowercaseAscii()}" }.orEmpty()
+        val canonicalZone = zone?.let { "%$it" }.orEmpty()
         return CanonicalRedirectHost.Canonical("[$canonicalAddress$canonicalZone]")
     }
 

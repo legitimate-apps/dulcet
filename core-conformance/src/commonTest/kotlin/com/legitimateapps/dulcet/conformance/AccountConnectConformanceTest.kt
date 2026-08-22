@@ -891,6 +891,18 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun conf08RedirectHostIpv6ZonesRemainCaseSensitive() {
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            AccountConnectionContract.redirectDecision(
+                currentUrl = "https://[fe80::1%25ETH0]/rest/ping.view",
+                targetUrl = "https://[fe80::1%25eth0]/collect",
+                redirectsAlreadyFollowed = 0,
+            ),
+        )
+    }
+
+    @Test
     fun conf08EnforcesQueryAuthenticationRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val crossOrigin = fixture().connect("$redirectRoot/cross-observe-query")

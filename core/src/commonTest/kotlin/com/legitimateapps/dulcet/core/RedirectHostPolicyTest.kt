@@ -87,6 +87,17 @@ class RedirectHostPolicyTest {
         }
     }
 
+    @Test
+    fun ipv6ZoneIdentifiersRemainCaseSensitive() {
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            redirect(
+                "https://[fe80::1%25ETH0]/rest/ping.view",
+                "https://[fe80::1%25eth0]/collect",
+            ),
+        )
+    }
+
     private fun redirect(current: String, target: String): RedirectPolicyDecision =
         AccountConnectionContract.redirectDecision(
             currentUrl = current,
