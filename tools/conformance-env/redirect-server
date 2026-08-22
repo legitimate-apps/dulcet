@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, parse_qsl, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, urlsplit
 
 
 CHANNEL_CLASSIFICATIONS = {
@@ -78,6 +78,7 @@ class RedirectState:
         self.ambient_auth_challenges = 0
         self.ambient_authentication_observed = False
         self.cacheable_extension_requests = 0
+        self.target_requests: dict[tuple[str, str], int] = {}
 
     def remember(
         self,
@@ -96,16 +97,19 @@ class RedirectState:
         self,
         scenario: str,
         endpoint: str,
-        method: str,
-        channels: tuple[ObservedChannel, ...],
+        request: ObservedRequest,
+        expected_path: str,
     ) -> bool:
         with self.lock:
             observation = self.issued.get((scenario, endpoint))
-            return (
-                observation is not None
-                and observation.method == method
-                and observation.channels == channels
+            expected = None if observation is None else ObservedRequest(
+                method=observation.method,
+                path=expected_path,
+                raw_query=observation.raw_query,
+                body=observation.body,
+                channels=observation.channels,
             )
+            return request == expected
 
     def redirect_observation(
         self,
@@ -151,6 +155,15 @@ class RedirectState:
     def cacheable_extension_request_count(self) -> int:
         with self.lock:
             return self.cacheable_extension_requests
+
+    def record_target_request(self, scenario: str, endpoint: str) -> None:
+        with self.lock:
+            key = (scenario, endpoint)
+            self.target_requests[key] = self.target_requests.get(key, 0) + 1
+
+    def target_request_count(self, scenario: str, endpoint: str) -> int:
+        with self.lock:
+            return self.target_requests.get((scenario, endpoint), 0)
 
 
 STATE = RedirectState()
@@ -355,6 +368,21 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 {"extension_requests": STATE.cacheable_extension_request_count()},
             )
             return
+        if parsed.path == "/observations/target-count":
+            scenario = parse_qs(parsed.query, keep_blank_values=True).get("scenario", [])
+            endpoint = parse_qs(parsed.query, keep_blank_values=True).get("endpoint", [])
+            if len(scenario) != 1 or len(endpoint) != 1:
+                self._send_json(400, {"error": "scenario and endpoint are required exactly once"})
+                return
+            self._send_json(
+                200,
+                {
+                    "scenario": scenario[0],
+                    "endpoint": endpoint[0],
+                    "requests": STATE.target_request_count(scenario[0], endpoint[0]),
+                },
+            )
+            return
 
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b""
@@ -447,13 +475,80 @@ class RedirectHandler(BaseHTTPRequestHandler):
             if not self._all_channels_accounted_for(channels):
                 self._send_json(500, {"error": "unaccounted same-origin target channel"})
                 return
-            if not STATE.matches("same", endpoint, self.command, channels):
+            if not STATE.matches(
+                "same",
+                endpoint,
+                request,
+                f"/same-target/rest/{endpoint}.view",
+            ):
                 self._send_json(500, {"error": "same-origin request changed across redirect"})
                 return
             if endpoint != "getOpenSubsonicExtensions" and not self._has_form_authentication(body):
                 self._send_json(500, {"error": "same-origin credentials were not preserved"})
                 return
             self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/cross-reflected-get-user/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "reflected-path source channels failed"})
+                return
+            if endpoint != "getUser":
+                self._send_json(200, envelope(endpoint))
+                return
+            form = self._channels_at("form", channels)
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = (
+                f"http://127.0.0.1:{target_port}/cross-reflected-target/rest/"
+                f"u/{quote(form['u'][0], safe='')}/"
+                f"t/{quote(form['t'][0], safe='')}/"
+                f"s/{quote(form['s'][0], safe='')}/{endpoint}.view"
+            )
+            STATE.remember("cross-reflected-get-user", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/cross-reflected-target/rest/"):
+            STATE.record_target_request("cross-reflected-get-user", endpoint)
+            observation = STATE.redirect_observation("cross-reflected-get-user", endpoint)
+            if observation is None or not cross_origin_target_matches_expectation(
+                observation[0],
+                request,
+                observation[1],
+            ):
+                self._send_json(500, {"error": "reflected-path target differed from circular expectation"})
+                return
+            self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+
+        if parsed.path.startswith("/two-hop-get-user/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "two-hop source channels failed"})
+                return
+            if endpoint != "getUser":
+                self._send_json(200, envelope(endpoint))
+                return
+            self._redirect(f"/two-hop-get-user-intermediate/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/two-hop-get-user-intermediate/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "two-hop intermediate channels failed"})
+                return
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = f"http://127.0.0.1:{target_port}/two-hop-target/rest/{endpoint}.view"
+            STATE.remember("two-hop-get-user", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/two-hop-target/rest/"):
+            STATE.record_target_request("two-hop-get-user", endpoint)
+            observation = STATE.redirect_observation("two-hop-get-user", endpoint)
+            if observation is None or not cross_origin_target_matches_expectation(
+                observation[0],
+                request,
+                observation[1],
+            ):
+                self._send_json(500, {"error": "two-hop target request differed from expectation"})
+                return
+            self._send_json(401, {"error": "authentication intentionally absent"})
             return
 
         if parsed.path.startswith("/cross/rest/"):
@@ -484,6 +579,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             self._redirect(location)
             return
         if parsed.path.startswith("/cross-target/rest/"):
+            STATE.record_target_request("cross-observe", endpoint)
             if not self._all_channels_accounted_for(channels):
                 self._send_json(500, {"error": "unaccounted cross-origin target channel"})
                 return
@@ -507,6 +603,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "authentication intentionally absent"})
             return
         if parsed.path.startswith("/cross-target-query/rest/"):
+            STATE.record_target_request("cross-observe-query", endpoint)
             if not self._all_channels_accounted_for(channels):
                 self._send_json(500, {"error": "unaccounted cross-origin query target channel"})
                 return
