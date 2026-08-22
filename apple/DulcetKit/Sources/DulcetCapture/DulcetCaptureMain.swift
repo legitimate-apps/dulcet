@@ -372,10 +372,13 @@ private struct DulcetCaptureMain {
         window.isMovableByWindowBackground = false
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
+        window.setFrame(
+            NSRect(x: 0, y: 0, width: width, height: height),
+            display: false
+        )
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        try await Task.sleep(for: .milliseconds(80))
-        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: true)
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
@@ -385,7 +388,7 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
-        try await Task.sleep(for: .milliseconds(80))
+        try await Task.sleep(for: .milliseconds(500))
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
