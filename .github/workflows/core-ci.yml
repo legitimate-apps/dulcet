@@ -67,7 +67,7 @@ jobs:
         run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
         run: python3 tools/test-seed-corpus-gates
-      - name: Prove closed redirect target oracle rejects every deviation
+      - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
       - name: Create fresh test-class root
         id: root
