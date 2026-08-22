@@ -37,6 +37,11 @@ public struct DulcetRootView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(DulcetStrings.appName)
+            }
+        }
     }
 }
 
@@ -85,6 +90,11 @@ public struct DulcetCaptureView: View {
             }
             .background(Color.dulcetWindow)
             .dulcetForeground(.primaryTextOnWindow)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(DulcetStrings.appName)
+                }
+            }
         }
     }
 }
