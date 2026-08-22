@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 69 — a late Cancel now invalidates queued success before persistence; revision 68 made
+**Revision:** 70 — replacement submissions now cancel the operation they supersede; revision 69 made
+a late Cancel invalidate queued success before persistence; revision 68 made
 Apple credentials after-first-unlock and device-only; revision 67 made
 credential-bearing request and snapshot values use redacted string and mirror
 representations; revision 66 returned macOS `account.connect` to partial because the live app seam remains
@@ -886,6 +887,11 @@ and immediately returns the form to idle. A success already queued for main-acto
 cannot publish a connected account, and cannot write credentials after the person's last instruction
 was Cancel. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
 Android TV. This paragraph makes no shipped account-setup UI claim for them.
+
+The account data source enforces one active submission independently of view state. A replacement
+submission advances the generation, detaches and cancels the prior handle, then starts the new
+request. Any late prior outcome is stale; it cannot publish or persist. The view's disabled controls
+are usability feedback, not the concurrency invariant.
 
 **ASSUMED live-app seam:** the fourteen `account.connect/macos` evidence entries prove the real
 core/Darwin wire half and the Swift presentation half independently, and the hosted Xcode build
@@ -3097,6 +3103,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 70 (2026-08-22)** — programmatic replacement submissions became single-flight.
+
+1. Starting a submission now advances the generation, detaches and cancels the previous operation,
+   and only then starts the replacement. This invariant lives in `DulcetAccountDataSource`; it does
+   not rely on SwiftUI hiding or disabling a second submit action.
+2. A late outcome from the superseded operation remains generation-stale and cannot render or save.
+   The replacement is the only operation whose outcome can own the presentation and Keychain write.
+3. The hosted Swift control bypasses the UI and submits two distinct requests, requires the first
+   handle to be cancelled, deliberately delivers both successes, and requires that only the second
+   request reaches connected presentation and credential persistence. Removing the cancellation
+   leaves the first handle orphaned and fails the test.
 
 **Revision 69 (2026-08-22)** — Cancel wins over an already-completed but not-yet-rendered request.
 

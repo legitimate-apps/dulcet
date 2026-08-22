@@ -277,7 +277,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func submit(_ request: DulcetAccountConnectRequest) {
         generation += 1
         let submissionGeneration = generation
+        let supersededOperation = activeOperation
         activeOperation = nil
+        supersededOperation?.cancel()
         publish(state: .accountConnecting, form: request, status: .connecting)
 
         let operation = connector.connect(request) { [weak self] outcome in

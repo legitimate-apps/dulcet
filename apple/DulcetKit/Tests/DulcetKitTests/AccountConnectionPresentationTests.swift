@@ -100,6 +100,50 @@ func lateCancelSuppressesQueuedSuccessAndCredentialPersistence() {
     #expect(credentials.saved.isEmpty)
 }
 
+@Test @MainActor
+func replacementSubmissionCancelsThePreviousOperationAndOwnsTheOutcome() {
+    let connector = SequencedAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials
+    )
+    let first = DulcetAccountConnectRequest(
+        serverURL: "https://first.example.invalid",
+        username: "first-listener",
+        password: "first-password",
+        allowLocalHTTP: false
+    )
+    let second = DulcetAccountConnectRequest(
+        serverURL: "https://second.example.invalid",
+        username: "second-listener",
+        password: "second-password",
+        allowLocalHTTP: false
+    )
+
+    source.send(.submitAccountConnection(first))
+    source.send(.submitAccountConnection(second))
+
+    #expect(connector.requests == [first, second])
+    #expect(connector.operations[0].cancelCount == 1)
+    #expect(connector.operations[1].cancelCount == 0)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "First",
+        normalizedServerURL: first.serverURL
+    )), at: 0)
+    #expect(credentials.saved.isEmpty)
+    #expect(source.currentSnapshot.state == .accountConnecting)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Second",
+        normalizedServerURL: second.serverURL
+    )), at: 1)
+    #expect(credentials.saved == [second])
+    #expect(source.currentSnapshot.state == .accountConnected)
+    #expect(source.currentSnapshot.accountForm == second)
+}
+
 @Test
 func accountDomainErrorsHaveATotalActionablePresentation() {
     let presentations = DulcetAccountFailureKind.allCases.map { kind in
@@ -243,6 +287,29 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
 
     func cancel() {
         cancelCount += 1
+    }
+}
+
+@MainActor
+private final class SequencedAccountConnector: DulcetAccountConnecting {
+    private(set) var requests: [DulcetAccountConnectRequest] = []
+    private(set) var operations: [ControlledAccountOperation] = []
+    private var completions: [Int: (@MainActor (DulcetAccountConnectOutcome) -> Void)] = [:]
+
+    func connect(
+        _ request: DulcetAccountConnectRequest,
+        completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void
+    ) -> any DulcetAccountConnectOperation {
+        let index = requests.count
+        let operation = ControlledAccountOperation()
+        requests.append(request)
+        operations.append(operation)
+        completions[index] = completion
+        return operation
+    }
+
+    func complete(_ outcome: DulcetAccountConnectOutcome, at index: Int) {
+        completions.removeValue(forKey: index)?(outcome)
     }
 }
 
