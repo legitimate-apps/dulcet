@@ -21,6 +21,23 @@ func localizedLibraryCountsSelectPluralCategoriesForVisibleAndAccessibilityCopy(
     #expect(!accessibility.contains("1 tracks"))
 }
 
+@Test
+func localizedIdentifierNumbersNeverUseQuantityGrouping() {
+    for localeIdentifier in ["en_US", "de_DE", "fr_FR", "hi_IN"] {
+        let identifier = DulcetStrings.identifierNumber(
+            2026,
+            locale: Locale(identifier: localeIdentifier)
+        )
+        #expect(identifier == "2026", "identifier grouped in \(localeIdentifier)")
+    }
+
+    #expect(
+        DulcetStrings.albumMetadata(year: 2026, tracks: "4 tracks", duration: "15:04")
+            == "2026 · 4 tracks · 15:04"
+    )
+    #expect(DulcetStrings.discTitle(2026) == "Disc 2026")
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()

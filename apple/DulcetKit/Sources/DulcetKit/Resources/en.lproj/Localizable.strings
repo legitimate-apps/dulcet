@@ -140,12 +140,12 @@
 "account.error.credentialPersistenceFailed.message" = "The server accepted the account, but the system Keychain did not save it.";
 "account.error.credentialPersistenceFailed.recovery" = "Review Keychain access for Dulcet, then connect again.";
 "action.cancel" = "Cancel";
-"album.discNumber" = "Disc %d";
+"album.discNumber" = "Disc %@";
 "status.server" = "%@ · Online";
 "status.serverConnectionFailed" = "%@ · Connection failed";
 "library.summary" = "%1$@ · %2$@";
 "album.accessibility" = "%1$@, %2$@, %3$@";
-"album.metadata" = "%1$d · %2$@ · %3$@";
+"album.metadata" = "%1$@ · %2$@ · %3$@";
 "track.subtitle" = "%1$@ · %2$@";
 "track.accessibility" = "%1$@, %2$@, %3$@";
 "track.accessibility.unavailable" = "%1$@, %2$@, %3$@, %4$@";

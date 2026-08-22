@@ -87,7 +87,7 @@ enum DulcetStrings {
     }
 
     static func discTitle(_ number: Int) -> String {
-        formatted("album.discNumber", "Disc %d", number)
+        formatted("album.discNumber", "Disc %@", identifierNumber(number))
     }
 
     static func serverStatus(_ name: String) -> String {
@@ -116,7 +116,13 @@ enum DulcetStrings {
     }
 
     static func albumMetadata(year: Int, tracks: String, duration: String) -> String {
-        formatted("album.metadata", "%1$d · %2$@ · %3$@", year, tracks, duration)
+        formatted(
+            "album.metadata",
+            "%1$@ · %2$@ · %3$@",
+            identifierNumber(year),
+            tracks,
+            duration
+        )
     }
 
     static func trackSubtitle(artists: String, album: String) -> String {
@@ -199,6 +205,10 @@ enum DulcetStrings {
             locale: Locale.current,
             arguments: arguments
         )
+    }
+
+    static func identifierNumber(_ value: Int, locale: Locale = .current) -> String {
+        value.formatted(.number.grouping(.never).locale(locale))
     }
 
     private static func formatted(
