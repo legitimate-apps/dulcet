@@ -53,9 +53,14 @@ internal class LocalHttpConnectionPolicy(
     suspend fun leavesLocalNetwork(currentUrl: String, targetUrl: String): Boolean {
         val current = Url(currentUrl)
         val target = Url(targetUrl)
-        if (current.protocol.name != "http" || current.host.equals(target.host, ignoreCase = true)) {
-            return false
-        }
+        if (current.protocol.name != "http") return false
+        val currentHost = current.host.canonicalRedirectHost()
+        val targetHost = target.host.canonicalRedirectHost()
+        if (
+            currentHost !is CanonicalRedirectHost.Canonical ||
+            targetHost !is CanonicalRedirectHost.Canonical
+        ) return false
+        if (currentHost.value == targetHost.value) return false
         val addresses = resolve(target.host)
         return addresses.isEmpty() || addresses.any { !it.isPermittedLocalHttpAddress() }
     }
