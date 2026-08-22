@@ -1,0 +1,6 @@
+Test Suite 'Selected tests' started.
+Test Case '-[DulcetMacTests.DulcetMacAccountConnectAppTest connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState]' passed (0.742 seconds).
+Test Suite 'DulcetMacAccountConnectAppTest' passed.
+Executed 1 test, with 0 failures (0 unexpected) in 0.742 seconds
+Test Suite 'Selected tests' passed.
+Executed 1 test, with 0 failures (0 unexpected) in 0.742 seconds

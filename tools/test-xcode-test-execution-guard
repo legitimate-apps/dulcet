@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Mutation fixtures proving the app-hosted execution guard cannot accept non-execution."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parent.parent
+VERIFY = ROOT / "tools/verify-xcode-test-execution"
+FIXTURES = ROOT / "tools/fixtures/xcode-test-execution"
+EXPECTED_CLASS = "DulcetMacTests.DulcetMacAccountConnectAppTest"
+EXPECTED_METHOD = "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState"
+
+
+def invoke(fixture: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(VERIFY),
+            str(FIXTURES / fixture),
+            EXPECTED_CLASS,
+            EXPECTED_METHOD,
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+passing = invoke("one-passing.log")
+if passing.returncode != 0:
+    raise AssertionError(f"valid one-test record rejected: {passing.stdout}")
+
+for fixture, expected in (
+    ("zero-tests.log", "expected exactly one terminal test record, observed 0"),
+    ("wrong-test.log", "wrong test executed"),
+    ("skipped-test.log", "terminated as skipped"),
+    ("failed-test.log", "terminated as failed"),
+    ("duplicate-test.log", "expected exactly one terminal test record, observed 2"),
+):
+    result = invoke(fixture)
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            f"{fixture} was not rejected with {expected!r}: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+print("xcode test execution guard rejects zero, wrong, skipped, failed, and duplicate controls")

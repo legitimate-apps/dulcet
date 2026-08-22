@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Require exactly one named XCTest terminal record and a one-test clean summary."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import sys
+
+
+def fail(message: str) -> None:
+    print(f"xcode test execution invalid: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+if len(sys.argv) != 4:
+    fail(
+        "usage: verify-xcode-test-execution "
+        "<xcodebuild-log> <expected-class> <expected-method>"
+    )
+
+log_path = Path(sys.argv[1])
+expected_identity = (sys.argv[2], sys.argv[3])
+try:
+    log = log_path.read_text(errors="replace")
+except OSError as error:
+    fail(f"cannot read {log_path}: {error}")
+
+record_pattern = re.compile(
+    r"Test Case '-\[(?P<class>\S+) (?P<method>[^\]]+)\]' "
+    r"(?P<status>passed|failed|skipped)(?:\s|\.)"
+)
+records = [
+    (
+        match.group("class"),
+        match.group("method"),
+        match.group("status"),
+    )
+    for match in record_pattern.finditer(log)
+]
+if len(records) != 1:
+    fail(f"expected exactly one terminal test record, observed {len(records)}: {records}")
+
+observed_identity = records[0][:2]
+if observed_identity != expected_identity:
+    fail(
+        "wrong test executed: "
+        f"expected {expected_identity[0]}/{expected_identity[1]}, "
+        f"observed {observed_identity[0]}/{observed_identity[1]}"
+    )
+if records[0][2] != "passed":
+    fail(f"named control terminated as {records[0][2]}, not passed")
+
+summary_pattern = re.compile(
+    r"Executed (?P<count>\d+) tests?, with (?P<failures>\d+) failures? "
+    r"\((?P<unexpected>\d+) unexpected\)"
+)
+summaries = [
+    tuple(int(match.group(name)) for name in ("count", "failures", "unexpected"))
+    for match in summary_pattern.finditer(log)
+]
+if not summaries:
+    fail("no XCTest execution summary was emitted")
+if any(summary != (1, 0, 0) for summary in summaries):
+    fail(f"every suite summary must report exactly one clean execution: {summaries}")
+
+print(
+    "xcode test execution valid: "
+    f"test={expected_identity[0]}/{expected_identity[1]} "
+    f"terminal=passed summaries={len(summaries)}"
+)
