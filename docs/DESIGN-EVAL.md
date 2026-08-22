@@ -428,7 +428,7 @@ aggregate accessibility score are `null`; neither may be inferred from standard-
 | Text scaling and reflow | 25 | Unscored until Dulcet implements and captures a platform-applicable macOS text-resizing mechanism. |
 | Non-color communication | 15 | Selection, source, error, offline state, and unavailable playback use labels or symbols in addition to color. |
 | Labels and roles | 15 | Source evidence assigns a concise VoiceOver label to every control and uses native control roles; pixels alone cannot earn full credit. |
-| Keyboard and focus | 15 | Native controls are traversable, primary actions have expected shortcuts, and focus has a visible cue; behavior stays `ASSUMED` without an interaction trace. |
+| Keyboard and focus | 15 | Native controls are traversable, primary actions have expected shortcuts, and focus has a visible cue. The account-connect behavior stays `ASSUMED` until workflow `apple-ci`, job `apple-ci`, executes test `DulcetMacTests/DulcetMacAccountConnectAppTest/accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction` in its app host and the exact-execution guard records one passing test. That trace promotes only initial Server Address focus; forward and reverse Server Address → Username → Password → Allow Local HTTP → Connect traversal; Return invoking Connect; focus moving to Cancel while connecting; and Escape cancelling and restoring focus to Connect. Visible-focus-cue pixels, assistive-technology interaction, other account states, and every other surface remain `ASSUMED` without their own evidence. |
 
 Report `accessibility_score` independently only when every category has evidence. The design does not
 pass accessibility while the score is unreportable, when it is below 90, when any essential text or

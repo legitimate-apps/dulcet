@@ -1,8 +1,29 @@
 #if os(macOS)
 import SwiftUI
 
+enum DulcetAccountConnectionFocus: String, Sendable {
+    case serverAddress
+    case username
+    case password
+    case allowLocalHTTP
+    case connect
+    case cancel
+    case tryAgain
+}
+
 struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
+    @FocusState private var focusedControl: DulcetAccountConnectionFocus?
+
+    private let focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)?
+
+    init(
+        store: DulcetPresentationStore,
+        focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)? = nil
+    ) {
+        self.store = store
+        self.focusDidChange = focusDidChange
+    }
 
     private var isConnecting: Bool {
         if case .connecting = store.snapshot.accountConnection { return true }
@@ -23,6 +44,28 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
+        .onAppear {
+            if focusedControl == nil {
+                focusedControl = preferredFocus(for: store.snapshot.accountConnection)
+            }
+        }
+        .onChange(of: store.snapshot.accountConnection) { previous, current in
+            switch (previous, current) {
+            case (_, .connecting):
+                focusedControl = .cancel
+            case (.connecting, .idle):
+                focusedControl = .connect
+            case (_, .failed):
+                focusedControl = .tryAgain
+            case (_, .connected):
+                focusedControl = nil
+            case (_, .idle):
+                focusedControl = .serverAddress
+            }
+        }
+        .onChange(of: focusedControl) { _, current in
+            focusDidChange?(current)
+        }
     }
 
     private var heading: some View {
@@ -49,18 +92,30 @@ struct DulcetAccountConnectionView: View {
                     )
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel(DulcetStrings.serverAddress)
+                    .focused($focusedControl, equals: .serverAddress)
+                    .onKeyPress(.tab, phases: .down) { press in
+                        moveFocus(from: .serverAddress, reverse: press.modifiers.contains(.shift))
+                    }
                 }
                 GridRow {
                     Text(DulcetStrings.username)
                     TextField(DulcetStrings.username, text: $store.accountUsername)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel(DulcetStrings.username)
+                        .focused($focusedControl, equals: .username)
+                        .onKeyPress(.tab, phases: .down) { press in
+                            moveFocus(from: .username, reverse: press.modifiers.contains(.shift))
+                        }
                 }
                 GridRow {
                     Text(DulcetStrings.password)
                     SecureField(DulcetStrings.password, text: $store.accountPassword)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel(DulcetStrings.password)
+                        .focused($focusedControl, equals: .password)
+                        .onKeyPress(.tab, phases: .down) { press in
+                            moveFocus(from: .password, reverse: press.modifiers.contains(.shift))
+                        }
                 }
                 GridRow {
                     Color.clear.frame(width: 1, height: 1)
@@ -69,6 +124,10 @@ struct DulcetAccountConnectionView: View {
                         isOn: $store.accountAllowLocalHTTP
                     )
                     .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
+                    .focused($focusedControl, equals: .allowLocalHTTP)
+                    .onKeyPress(.tab, phases: .down) { press in
+                        moveFocus(from: .allowLocalHTTP, reverse: press.modifiers.contains(.shift))
+                    }
                 }
             }
             .disabled(isConnecting)
@@ -87,6 +146,10 @@ struct DulcetAccountConnectionView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .focused($focusedControl, equals: .connect)
+                .onKeyPress(.tab, phases: .down) { press in
+                    moveFocus(from: .connect, reverse: press.modifiers.contains(.shift))
+                }
                 .disabled(
                     store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || store.accountUsername.isEmpty
@@ -115,6 +178,7 @@ struct DulcetAccountConnectionView: View {
                     store.cancelAccountConnection()
                 }
                 .keyboardShortcut(.cancelAction)
+                .focused($focusedControl, equals: .cancel)
             }
             .padding(DulcetSpacing.md)
             .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
@@ -172,6 +236,7 @@ struct DulcetAccountConnectionView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .focused($focusedControl, equals: .tryAgain)
 
                 if failure.kind == .tlsUntrusted {
                     Link(DulcetStrings.openCertificateHelp, destination: DulcetLinks.certificateInstallationGuide)
@@ -182,6 +247,39 @@ struct DulcetAccountConnectionView: View {
         .padding(DulcetSpacing.md)
         .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
         .dulcetForeground(.primaryTextOnControl)
+    }
+
+    private func preferredFocus(
+        for status: DulcetAccountConnectionStatus
+    ) -> DulcetAccountConnectionFocus? {
+        switch status {
+        case .idle:
+            .serverAddress
+        case .connecting:
+            .cancel
+        case .connected:
+            nil
+        case .failed:
+            .tryAgain
+        }
+    }
+
+    private func moveFocus(
+        from current: DulcetAccountConnectionFocus,
+        reverse: Bool
+    ) -> KeyPress.Result {
+        let order: [DulcetAccountConnectionFocus] = [
+            .serverAddress,
+            .username,
+            .password,
+            .allowLocalHTTP,
+            .connect,
+        ]
+        guard let index = order.firstIndex(of: current) else { return .ignored }
+        let offset = reverse ? -1 : 1
+        let destination = (index + offset + order.count) % order.count
+        focusedControl = order[destination]
+        return .handled
     }
 }
 #endif

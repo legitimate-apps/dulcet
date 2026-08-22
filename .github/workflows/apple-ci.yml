@@ -317,6 +317,23 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-app-test.log" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState
+          xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetMac \
+              -configuration Debug \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY=- \
+              CODE_SIGN_ENTITLEMENTS= \
+              DEVELOPMENT_TEAM= \
+              PROVISIONING_PROFILE_SPECIFIER= 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-mac-keyboard-test.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-mac-keyboard-test.log" \
+            DulcetMacTests.DulcetMacAccountConnectAppTest \
+            accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
