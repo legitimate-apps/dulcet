@@ -67,9 +67,21 @@ the settling configuration made every sidebar pixel byte-stable. They do establi
 hosted evidence platform, no tested faithful window-level path captures the complete shipping
 composition while also satisfying exact byte determinism across the declared states. Pixel
 tolerances, post-capture normalization, and a weaker geometry rule were deliberately not adopted.
-The fixed sibling therefore remains the evidence path. A design rating of this artifact is a rating
-of the fixed capture sibling, not of the shipping view, and no stronger shipping-UI claim should be
-made from it unless a future capture path passes both unchanged gates.
+The fixed sibling therefore remains the deterministic regression-evidence path. A design rating of
+that artifact is a rating of the fixed capture sibling, not of the shipping view, and no stronger
+shipping-UI claim should be made from it.
+
+`apple-ci` separately publishes
+`dulcet-macos-shipping-reference-<run>-<attempt>`. This second artifact captures the actual
+`DulcetRootView` balanced `NavigationSplitView` composition once per state and appearance through
+`SCScreenshotManager`; it is not compared with another render and its variability cannot fail CI.
+Its manifest labels the set as non-deterministic, design-rating-only, and inadmissible as regression
+evidence. The manifest also enumerates every successful capture and any missing state/appearance;
+the executable never fills a gap with `DulcetCaptureView`. This reference set is valid for design
+rating and visual review of the shipping composition, but not for pixel parity, regression testing,
+or run-to-run diff claims. The two artifacts are independent evidence sets and their claims must not
+be merged. The first hosted reference artifact, run `32555697776`, contained all seven states in both
+light and dark at 1180 × 760 plus both hash-pinned control images, with no missing captures.
 
 Every image is a compressed JPEG of the complete titled `NSWindow` at exactly 1180 × 760 pixels.
 The standard AppKit title bar, title, and traffic-light controls are inside the evidence boundary;
