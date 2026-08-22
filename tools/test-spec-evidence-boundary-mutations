@@ -46,17 +46,17 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-boundary-") as directory:
 
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    boundary_start = "**Implementation boundary:**"
-    boundary_end = "caller, not an observed product behavior."
+    boundary_start = "**macOS implementation boundary:**"
+    boundary_end = "Android TV. This paragraph makes no shipped account-setup UI claim for them."
     before, separator, remainder = spec.partition(boundary_start)
     if not separator:
         raise AssertionError("account-setup implementation boundary fixture is missing")
     _boundary, separator, after = remainder.partition(boundary_end)
     if not separator:
         raise AssertionError("account-setup implementation boundary terminator is missing")
-    mutated = before + "Phase 1 ships the account-setup feedback described below." + after
+    mutated = before + "Account setup is available where supported." + after
     mutated = mutated.replace(
-        "required future platform presentation (not implemented in Phase 1)",
+        "required macOS presentation (other platform callers remain future work)",
         "UI",
         1,
     )

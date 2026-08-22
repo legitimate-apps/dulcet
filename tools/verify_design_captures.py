@@ -13,6 +13,17 @@ import tempfile
 
 
 STATES = (
+    "account-connect-idle",
+    "account-connecting",
+    "account-connected",
+    "account-error-input",
+    "account-error-transport",
+    "account-error-security",
+    "account-error-protocol",
+    "account-error-server",
+    "account-error-authentication",
+    "account-error-capability",
+    "account-error-persistence",
     "empty-library-no-account",
     "library-browse",
     "album-detail-multi-disc",
@@ -195,7 +206,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 8,
+        "schemaVersion": 9,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -381,7 +392,7 @@ def main() -> None:
     except CaptureVerificationError as error:
         raise SystemExit(f"DESIGN CAPTURE FAIL {error}") from error
     print(
-        "DESIGN CAPTURE PASS standard=16 jpeg=16 size=1180x760 "
+        "DESIGN CAPTURE PASS standard=38 jpeg=38 size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
         "decoded-pixels-pairwise-distinct=true "
         "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "

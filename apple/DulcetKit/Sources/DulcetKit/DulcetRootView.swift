@@ -28,7 +28,7 @@ public struct DulcetRootView: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store)
                     } detail: {
-                        DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
+                        DulcetStateSurface(store: store)
                     }
                     .navigationSplitViewStyle(.balanced)
                     .dulcetForeground(.primaryTextOnWindow)
@@ -68,7 +68,7 @@ public struct DulcetCaptureView: View {
                         .fixedSize(horizontal: true, vertical: false)
                         .zIndex(1)
                     Divider()
-                    DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
+                    DulcetStateSurface(store: store)
                         .id(store.snapshot.state.rawValue)
                         .frame(
                             width: max(0, geometry.size.width - 233),
@@ -207,13 +207,21 @@ private struct DulcetSidebar: View {
 }
 
 private struct DulcetStateSurface: View {
-    let snapshot: DulcetSnapshot
-    @Binding var searchQuery: String
+    @Bindable var store: DulcetPresentationStore
+
+    private var snapshot: DulcetSnapshot { store.snapshot }
 
     var body: some View {
         switch snapshot.state {
+        case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
+             .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
+             .accountErrorCapability, .accountErrorPersistence:
+            DulcetAccountConnectionView(store: store)
         case .emptyLibraryNoAccount:
-            DulcetEmptyLibraryView()
+            DulcetEmptyLibraryView {
+                store.selectDestination(.settings)
+            }
         case .libraryBrowse:
             DulcetLibraryBrowseView(snapshot: snapshot)
         case .albumDetailMultiDisc:
@@ -225,7 +233,7 @@ private struct DulcetStateSurface: View {
                 DulcetNowPlayingView(player: player)
             }
         case .searchMixedSources:
-            DulcetSearchView(snapshot: snapshot, searchQuery: $searchQuery)
+            DulcetSearchView(snapshot: snapshot, searchQuery: $store.searchQuery)
         case .tlsUntrusted:
             if case let .connectionFailed(.tlsUntrusted(failure)) = snapshot.connectivity {
                 DulcetTLSUntrustedView(failure: failure)
