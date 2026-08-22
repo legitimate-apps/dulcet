@@ -131,6 +131,15 @@ else:
             f"documented={sorted(documented_auth_types)}, source={sorted(source_auth_types)}"
         )
 
+for marker in (
+    "**Implementation boundary (not implemented in Phase 1):**",
+    "no platform code references `DomainError`",
+    "future account UI",
+    "not an observed product behavior",
+):
+    if marker not in normalized_error_model:
+        errors.append(f"§18.12 error-presentation implementation boundary is missing {marker!r}")
+
 if errors:
     raise SystemExit("\n".join(errors))
 

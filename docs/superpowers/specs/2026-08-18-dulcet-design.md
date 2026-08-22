@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 56 — the documented and sealed authentication-error taxonomies now match; revision 55
+**Revision:** 57 — localized DomainError presentation is explicitly future account-UI work; revision
+56 made the documented and sealed authentication-error taxonomies match; revision 55
 made the HTTP-to-HTTPS carve-out match the equal-normalized-port policy implemented by account
 connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
 made IPv6 zone identifiers case-sensitive during redirect-host comparison; revision 52 added an
@@ -2035,10 +2036,12 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
-Every error is user-presentable through a localized mapping from its semantic kind: a short user
-string and a suggested action. Raw technical detail belongs only in non-exported platform diagnostics
-that have independently enforced privacy boundaries; it is never a `DomainError` payload. "Unknown
-error" is not a permitted terminal state.
+**Implementation boundary (not implemented in Phase 1):** no platform code references `DomainError`,
+so the repository does not yet provide localized error text, suggested actions, or rendering. A
+future account UI must map every semantic kind to a short localized string and suggested action; that
+is a requirement, not an observed product behavior. Raw technical detail must remain confined to
+non-exported platform diagnostics with independently enforced privacy boundaries and must never
+become a `DomainError` payload. "Unknown error" is not a permitted terminal state.
 
 ---
 
@@ -3023,6 +3026,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 57 (2026-08-22)** — localized error presentation gained an explicit implementation boundary.
+
+1. `DomainError` is a content-free semantic taxonomy, but no platform code consumes it and Phase 1
+   has no localized mapping, suggested-action mapping, or error-rendering surface.
+2. §18.12 now labels that presentation as future account-UI work and distinguishes the normative UI
+   requirement from observed product behavior, matching the boundary already used in §§10.2–10.3.
+3. The structural checker requires the boundary markers, and its mutation harness deletes the
+   substantive paragraph while retaining revision numbering. The parity gate must reject that state.
 
 **Revision 56 (2026-08-22)** — the authentication-error taxonomy shed its unreachable redirect case.
 
