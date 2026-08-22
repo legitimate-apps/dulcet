@@ -43,7 +43,7 @@ private final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                 return
             }
 
-            let kind: DulcetAccountFailureKind = outcome.errorKind == .transportCancelled
+            let kind: DulcetAccountFailureKind = outcome.errorKind == .transportcancelled
                 ? .transportCancelled
                 : .transportUnreachable
             completion(.failed(DulcetAccountFailurePresentation(
