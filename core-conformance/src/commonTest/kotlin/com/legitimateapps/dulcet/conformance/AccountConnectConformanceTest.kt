@@ -735,9 +735,12 @@ class AccountConnectConformanceTest {
             targetRequestCount(redirectRoot, "cross-observe", "getOpenSubsonicExtensions"),
             "CONF-08 sent an unauthenticated account-connect request across an origin boundary",
         )
-        assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
+        val crossOriginRejection = assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
+        assertEquals("127.0.0.1", crossOriginRejection.targetHost.value)
+        assertFalse(crossOriginRejection.targetHost.value.contains('/'))
+        assertFalse(crossOriginRejection.targetHost.value.contains('?'))
 
         val redirectLoop = fixture().connect("$redirectRoot/loop")
         val loopRejection = assertIs<DomainError.Security.RedirectRejected>(
