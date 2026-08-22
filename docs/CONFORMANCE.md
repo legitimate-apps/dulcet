@@ -1,17 +1,19 @@
 # Conformance registry
 
-This registry reserves stable identifiers for the tests required by the design. Phase 0 contains no
-protocol implementation, so every item below is planned.
+This registry reserves stable identifiers for the tests required by the design. An identifier remains
+stable when its test moves from planned to executable; the design's representative-test table carries
+the detailed assertion.
 
-| id | planned assertion |
+| id | assertion |
 |---|---|
 | CONF-01 | unauthenticated extension discovery |
 | CONF-02 | reference-server extension set |
-| CONF-03 | baseline ping authentication |
+| CONF-03 | baseline salted-token authentication and invalid credentials |
 | CONF-04 | version compatibility |
 | CONF-05 | OpenSubsonic envelope fields |
-| CONF-06 | distinguish authentication and transport failures |
-| CONF-07 | redact credentials from diagnostics |
+| CONF-06 | transport reachability and server-error mappings |
+| CONF-07 | wire-observed credential channels and credential-free diagnostics |
+| CONF-08 | fail-closed request-channel inventory; same-origin preservation and pre-send cross-origin refusal on every account-connect hop |
 | CONF-11 | successful stream signature validation |
 | CONF-12 | legacy stream error-envelope detection |
 | CONF-13 | ranged stream behavior |

@@ -1,0 +1,1004 @@
+#!/usr/bin/env python3
+"""Disposable redirect-policy server for account-connect conformance tests."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+import json
+import re
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, parse_qsl, quote, urlsplit
+
+
+CHANNEL_CLASSIFICATIONS = {
+    "header": {
+        "accept": "metadata",
+        "accept-charset": "metadata",
+        "accept-encoding": "metadata",
+        "accept-language": "metadata",
+        "authorization": "credential",
+        "connection": "metadata",
+        "content-length": "metadata",
+        "content-type": "metadata",
+        "host": "metadata",
+        "proxy-authorization": "credential",
+        "user-agent": "metadata",
+    },
+    "query": {
+        "c": "metadata",
+        "f": "metadata",
+        "p": "credential",
+        "s": "credential",
+        "t": "credential",
+        "u": "credential",
+        "username": "metadata",
+        "v": "metadata",
+    },
+    "form": {
+        "c": "metadata",
+        "f": "metadata",
+        "p": "credential",
+        "s": "credential",
+        "t": "credential",
+        "u": "credential",
+        "username": "metadata",
+        "v": "metadata",
+    },
+}
+
+
+@dataclass(frozen=True, order=True)
+class ObservedChannel:
+    location: str
+    name: str
+    values: tuple[str, ...]
+
+    @property
+    def classification(self) -> str | None:
+        return CHANNEL_CLASSIFICATIONS.get(self.location, {}).get(self.name)
+
+
+@dataclass(frozen=True)
+class ObservedRequest:
+    method: str
+    path: str
+    raw_query: str
+    body: bytes
+    channels: tuple[ObservedChannel, ...]
+
+
+class RedirectState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.issued: dict[tuple[str, str], ObservedRequest] = {}
+        self.redirect_locations: dict[tuple[str, str], str] = {}
+        self.ambient_auth_challenges = 0
+        self.ambient_authentication_observed = False
+        self.cacheable_extension_requests = 0
+        self.target_requests: dict[tuple[str, str], int] = {}
+
+    def remember(
+        self,
+        scenario: str,
+        endpoint: str,
+        request: ObservedRequest,
+        redirect_location: str | None = None,
+    ) -> None:
+        with self.lock:
+            key = (scenario, endpoint)
+            self.issued[key] = request
+            if redirect_location is not None:
+                self.redirect_locations[key] = redirect_location
+
+    def matches(
+        self,
+        scenario: str,
+        endpoint: str,
+        request: ObservedRequest,
+        expected_path: str,
+    ) -> bool:
+        with self.lock:
+            observation = self.issued.get((scenario, endpoint))
+            return observation is not None and same_origin_target_matches_expectation(
+                observation,
+                request,
+                expected_path,
+            )
+
+    def redirect_observation(
+        self,
+        scenario: str,
+        endpoint: str,
+    ) -> tuple[ObservedRequest, str] | None:
+        with self.lock:
+            key = (scenario, endpoint)
+            request = self.issued.get(key)
+            location = self.redirect_locations.get(key)
+            return (request, location) if request is not None and location is not None else None
+
+    def scenario_channels(self, scenario: str) -> tuple[ObservedChannel, ...]:
+        with self.lock:
+            return tuple(
+                channel
+                for (observed_scenario, _endpoint), request in self.issued.items()
+                if observed_scenario == scenario
+                for channel in request.channels
+            )
+
+    def record_ambient_auth_challenge(self, channels: tuple[ObservedChannel, ...]) -> None:
+        with self.lock:
+            self.ambient_auth_challenges += 1
+            self.ambient_authentication_observed = (
+                self.ambient_authentication_observed or
+                any(
+                    channel.location == "header" and
+                    channel.name in {"authorization", "proxy-authorization"}
+                    for channel in channels
+                )
+            )
+
+    def ambient_auth_outcome(self) -> tuple[int, bool]:
+        with self.lock:
+            return self.ambient_auth_challenges, self.ambient_authentication_observed
+
+    def record_cacheable_extension_request(self) -> int:
+        with self.lock:
+            self.cacheable_extension_requests += 1
+            return self.cacheable_extension_requests
+
+    def cacheable_extension_request_count(self) -> int:
+        with self.lock:
+            return self.cacheable_extension_requests
+
+    def record_target_request(self, scenario: str, endpoint: str) -> None:
+        with self.lock:
+            key = (scenario, endpoint)
+            self.target_requests[key] = self.target_requests.get(key, 0) + 1
+
+    def target_request_count(self, scenario: str, endpoint: str) -> int:
+        with self.lock:
+            return self.target_requests.get((scenario, endpoint), 0)
+
+
+STATE = RedirectState()
+
+
+def expected_same_origin_target_request(
+    source_request: ObservedRequest,
+    expected_path: str,
+) -> ObservedRequest:
+    """Derive the permitted same-origin hop from the observed source request."""
+    return ObservedRequest(
+        method=source_request.method,
+        path=expected_path,
+        raw_query=source_request.raw_query,
+        body=source_request.body,
+        channels=source_request.channels,
+    )
+
+
+def same_origin_target_matches_expectation(
+    source_request: ObservedRequest,
+    target_request: ObservedRequest,
+    expected_path: str,
+) -> bool:
+    return target_request == expected_same_origin_target_request(source_request, expected_path)
+
+
+def expected_cross_origin_target_channels(
+    source_channels: tuple[ObservedChannel, ...],
+    target_body: bytes,
+    target_authority: str,
+) -> tuple[ObservedChannel, ...]:
+    """Derive the permitted parsed target channels from observed source channels."""
+    source_credentials = {
+        value
+        for channel in source_channels
+        if channel.classification == "credential"
+        for value in channel.values
+    }
+    expected: list[ObservedChannel] = []
+    for channel in source_channels:
+        if channel.classification == "credential":
+            continue
+        if any(value in source_credentials for value in channel.values):
+            continue
+        if channel.location == "header" and channel.name == "host":
+            expected.append(ObservedChannel("header", "host", (target_authority,)))
+        elif channel.location == "header" and channel.name == "content-length":
+            expected.append(ObservedChannel("header", "content-length", (str(len(target_body)),)))
+        else:
+            expected.append(channel)
+    return tuple(sorted(expected))
+
+
+def credential_free_raw_fields(
+    raw_fields: str,
+    location: str,
+    excluded_names: set[str],
+) -> str:
+    """Remove excluded observed channels while preserving every retained field byte and its order."""
+    if not raw_fields:
+        return ""
+    retained: list[str] = []
+    for raw_field in raw_fields.split("&"):
+        parsed_field = parse_qsl(raw_field, keep_blank_values=True, strict_parsing=True)
+        if len(parsed_field) != 1:
+            raise ValueError(f"invalid {location} field in validated source request")
+        name, _value = parsed_field[0]
+        if name.lower() not in excluded_names:
+            retained.append(raw_field)
+    return "&".join(retained)
+
+
+def expected_cross_origin_target_request(
+    source_request: ObservedRequest,
+    redirect_location: str,
+) -> ObservedRequest:
+    """Derive the full permitted target request from the observed source and issued redirect."""
+    source_credentials = {
+        value
+        for channel in source_request.channels
+        if channel.classification == "credential"
+        for value in channel.values
+    }
+    excluded_names = {
+        location: {
+            channel.name
+            for channel in source_request.channels
+            if channel.location == location and (
+                channel.classification == "credential"
+                or any(value in source_credentials for value in channel.values)
+            )
+        }
+        for location in ("query", "form")
+    }
+    target = urlsplit(redirect_location)
+    raw_query = credential_free_raw_fields(
+        source_request.raw_query,
+        "query",
+        excluded_names["query"],
+    )
+    raw_body = credential_free_raw_fields(
+        source_request.body.decode("ascii", errors="strict"),
+        "form",
+        excluded_names["form"],
+    ).encode("ascii")
+    return ObservedRequest(
+        method=source_request.method,
+        path=target.path,
+        raw_query=raw_query,
+        body=raw_body,
+        channels=expected_cross_origin_target_channels(
+            source_request.channels,
+            raw_body,
+            target.netloc,
+        ),
+    )
+
+
+def cross_origin_target_matches_expectation(
+    source_request: ObservedRequest,
+    target_request: ObservedRequest,
+    redirect_location: str,
+) -> bool:
+    return target_request == expected_cross_origin_target_request(source_request, redirect_location)
+
+
+def envelope(
+    endpoint: str,
+    *,
+    advertise_form_post: bool = True,
+    malformed_success_field: str | None = None,
+    funkwhale_string_roles: bool = False,
+    mixed_case_string_roles: bool = False,
+    malformed_extension_shape: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": "ok",
+        "version": "1.16.1",
+    }
+    if endpoint == "getOpenSubsonicExtensions":
+        if malformed_extension_shape == "object":
+            payload["openSubsonicExtensions"] = {"name": "formPost", "versions": [1]}
+        elif malformed_extension_shape == "entry":
+            payload["openSubsonicExtensions"] = [42]
+        elif malformed_extension_shape == "name":
+            payload["openSubsonicExtensions"] = [{"name": 42, "versions": [1]}]
+        elif malformed_extension_shape == "versions":
+            payload["openSubsonicExtensions"] = [{"name": "formPost", "versions": {"v": 1}}]
+        elif malformed_extension_shape == "version":
+            payload["openSubsonicExtensions"] = [{"name": "formPost", "versions": ["1"]}]
+        elif malformed_extension_shape == "duplicate":
+            payload["openSubsonicExtensions"] = [
+                {"name": "formPost", "versions": [1]},
+                {"name": "formPost", "versions": [1]},
+            ]
+        else:
+            payload["openSubsonicExtensions"] = (
+                [{"name": "formPost", "versions": [1]}]
+                if advertise_form_post
+                else []
+            )
+    elif endpoint == "ping":
+        payload.update(
+            {
+                "openSubsonic": True,
+                "type": "redirect-conformance",
+                "serverVersion": "1.0.0",
+            }
+        )
+    elif endpoint == "getUser":
+        payload["user"] = {
+            "downloadRole": True,
+            "playlistRole": True,
+            "shareRole": False,
+            "jukeboxRole": False,
+            "adminRole": True,
+        }
+        if funkwhale_string_roles:
+            payload["user"] = {
+                "downloadRole": "true",
+                "playlistRole": "true",
+                "shareRole": "false",
+                "jukeboxRole": "true",
+                "adminRole": "false",
+            }
+        elif mixed_case_string_roles:
+            payload["user"] = {
+                "downloadRole": "TRUE",
+                "playlistRole": "True",
+                "shareRole": "FALSE",
+                "jukeboxRole": "False",
+                "adminRole": "tRuE",
+            }
+    if endpoint == "ping" and malformed_success_field == "open-subsonic":
+        payload["openSubsonic"] = "yes"
+    elif endpoint == "ping" and malformed_success_field == "open-subsonic-string":
+        payload["openSubsonic"] = "TRUE"
+    elif endpoint == "ping" and malformed_success_field == "type":
+        payload["type"] = 42
+    elif endpoint == "getUser" and malformed_success_field == "download-role":
+        user = payload["user"]
+        assert isinstance(user, dict)
+        user["downloadRole"] = 42
+    return {"subsonic-response": payload}
+
+
+class RedirectHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._handle()
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._handle()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _handle(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path == "/health":
+            self._send(200, b"ok", "text/plain")
+            return
+        if parsed.path == "/observations/observe":
+            observed = tuple(
+                channel
+                for channel in STATE.scenario_channels("observe")
+                if channel.classification == "credential"
+            )
+            if not observed:
+                self._send_json(409, {"error": "no credential-bearing request was observed"})
+                return
+            self._send_json(
+                200,
+                {
+                    "channels": [
+                        {
+                            "location": channel.location,
+                            "name": channel.name,
+                            "values": list(channel.values),
+                        }
+                        for channel in observed
+                    ]
+                },
+            )
+            return
+        if parsed.path == "/observations/ambient-auth":
+            challenge_count, authentication_observed = STATE.ambient_auth_outcome()
+            if challenge_count == 0:
+                self._send_json(409, {"error": "ambient authentication challenge was not reached"})
+                return
+            if authentication_observed:
+                self._send_json(409, {"error": "ambient authentication reached the wire"})
+                return
+            self._send_json(200, {"challenge_count": challenge_count, "authentication_observed": False})
+            return
+        if parsed.path == "/observations/cacheable-account":
+            self._send_json(
+                200,
+                {"extension_requests": STATE.cacheable_extension_request_count()},
+            )
+            return
+        if parsed.path == "/observations/target-count":
+            scenario = parse_qs(parsed.query, keep_blank_values=True).get("scenario", [])
+            endpoint = parse_qs(parsed.query, keep_blank_values=True).get("endpoint", [])
+            if len(scenario) != 1 or len(endpoint) != 1:
+                self._send_json(400, {"error": "scenario and endpoint are required exactly once"})
+                return
+            self._send_json(
+                200,
+                {
+                    "scenario": scenario[0],
+                    "endpoint": endpoint[0],
+                    "requests": STATE.target_request_count(scenario[0], endpoint[0]),
+                },
+            )
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b""
+        endpoint = parsed.path.rsplit("/", 1)[-1].removesuffix(".view")
+        channels = self._observed_channels(parsed.query, body)
+        request = ObservedRequest(
+            method=self.command,
+            path=parsed.path,
+            raw_query=parsed.query,
+            body=body,
+            channels=channels,
+        )
+
+        if parsed.path.startswith("/ambient-auth/rest/"):
+            STATE.record_ambient_auth_challenge(channels)
+            if any(
+                channel.location == "header" and
+                channel.name in {"authorization", "proxy-authorization"}
+                for channel in channels
+            ):
+                self._send_json(500, {"error": "ambient authentication reached the wire"})
+                return
+            self._authentication_challenge()
+            return
+
+        if parsed.path.startswith("/observe/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "credential channel observation failed"})
+                return
+            STATE.remember("observe", endpoint, request)
+            self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/malformed-envelope-"):
+            scenario = parsed.path.split("/", 2)[1].removeprefix("malformed-envelope-")
+            if scenario not in {
+                "open-subsonic",
+                "open-subsonic-string",
+                "type",
+                "download-role",
+            }:
+                self._send_json(404, {"error": "unknown malformed-envelope scenario"})
+                return
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "malformed-envelope request channels failed"})
+                return
+            self._send_json(
+                200,
+                envelope(endpoint, malformed_success_field=scenario),
+            )
+            return
+
+        if parsed.path.startswith("/funkwhale-2-0-9/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "Funkwhale fixture request channels failed"})
+                return
+            self._send_json(200, envelope(endpoint, funkwhale_string_roles=True))
+            return
+
+        if parsed.path.startswith("/mixed-case-string-roles/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "mixed-case role fixture request channels failed"})
+                return
+            self._send_json(200, envelope(endpoint, mixed_case_string_roles=True))
+            return
+
+        if parsed.path.startswith("/malformed-extensions-"):
+            scenario = parsed.path.split("/", 2)[1].removeprefix("malformed-extensions-")
+            if scenario not in {"object", "entry", "name", "versions", "version", "duplicate"}:
+                self._send_json(404, {"error": "unknown malformed-extension scenario"})
+                return
+            if not self._observes_expected_channels(endpoint, channels, body, "query"):
+                self._send_json(500, {"error": "malformed-extension request channels failed"})
+                return
+            self._send_json(
+                200,
+                envelope(endpoint, malformed_extension_shape=scenario),
+            )
+            return
+
+        if parsed.path.startswith("/cacheable-account/rest/"):
+            if endpoint == "getOpenSubsonicExtensions":
+                if not self._observes_expected_channels(endpoint, channels, body):
+                    self._send_json(500, {"error": "cacheable extension request channels failed"})
+                    return
+                request_count = STATE.record_cacheable_extension_request()
+                self._send_json(
+                    200,
+                    envelope(endpoint, advertise_form_post=request_count == 1),
+                    cache_control="public, max-age=3600",
+                )
+                return
+            request_count = STATE.cacheable_extension_request_count()
+            authentication_location = "form" if request_count == 1 else "query"
+            if not self._observes_expected_channels(
+                endpoint,
+                channels,
+                body,
+                authentication_location,
+            ):
+                self._send_json(500, {"error": "cacheable account request channels failed"})
+                return
+            self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/slow-account/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "slow account request channels failed"})
+                return
+            if endpoint == "getOpenSubsonicExtensions":
+                time.sleep(10.5)
+            self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/same/rest/"):
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted same-origin source channel"})
+                return
+            STATE.remember("same", endpoint, request)
+            self._redirect(f"/same-target/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/same-target/rest/"):
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted same-origin target channel"})
+                return
+            if not STATE.matches(
+                "same",
+                endpoint,
+                request,
+                f"/same-target/rest/{endpoint}.view",
+            ):
+                self._send_json(500, {"error": "same-origin request changed across redirect"})
+                return
+            if endpoint != "getOpenSubsonicExtensions" and not self._has_form_authentication(body):
+                self._send_json(500, {"error": "same-origin credentials were not preserved"})
+                return
+            self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/cross-reflected-get-user/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "reflected-path source channels failed"})
+                return
+            if endpoint != "getUser":
+                self._send_json(200, envelope(endpoint))
+                return
+            form = self._channels_at("form", channels)
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = (
+                f"http://127.0.0.1:{target_port}/cross-reflected-target/rest/"
+                f"u/{quote(form['u'][0], safe='')}/"
+                f"t/{quote(form['t'][0], safe='')}/"
+                f"s/{quote(form['s'][0], safe='')}/{endpoint}.view"
+            )
+            STATE.remember("cross-reflected-get-user", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/cross-reflected-target/rest/"):
+            STATE.record_target_request("cross-reflected-get-user", endpoint)
+            observation = STATE.redirect_observation("cross-reflected-get-user", endpoint)
+            if observation is None or not cross_origin_target_matches_expectation(
+                observation[0],
+                request,
+                observation[1],
+            ):
+                self._send_json(500, {"error": "reflected-path target differed from circular expectation"})
+                return
+            self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+
+        if parsed.path.startswith("/two-hop-get-user/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "two-hop source channels failed"})
+                return
+            if endpoint != "getUser":
+                self._send_json(200, envelope(endpoint))
+                return
+            self._redirect(f"/two-hop-get-user-intermediate/rest/{endpoint}.view")
+            return
+        if parsed.path.startswith("/two-hop-get-user-intermediate/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "two-hop intermediate channels failed"})
+                return
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = f"http://127.0.0.1:{target_port}/two-hop-target/rest/{endpoint}.view"
+            STATE.remember("two-hop-get-user", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/two-hop-target/rest/"):
+            STATE.record_target_request("two-hop-get-user", endpoint)
+            observation = STATE.redirect_observation("two-hop-get-user", endpoint)
+            if observation is None or not cross_origin_target_matches_expectation(
+                observation[0],
+                request,
+                observation[1],
+            ):
+                self._send_json(500, {"error": "two-hop target request differed from expectation"})
+                return
+            self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+
+        if parsed.path.startswith("/cross/rest/"):
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted cross-origin source channel"})
+                return
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view"
+            STATE.remember("cross", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/cross-observe/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body, "form"):
+                self._send_json(500, {"error": "cross-origin source credential channels failed"})
+                return
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = f"http://127.0.0.1:{target_port}/cross-target/rest/{endpoint}.view"
+            STATE.remember("cross-observe", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/cross-observe-query/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body, "query"):
+                self._send_json(500, {"error": "cross-origin query source channels failed"})
+                return
+            target_port = self.server.target_port  # type: ignore[attr-defined]
+            location = f"http://127.0.0.1:{target_port}/cross-target-query/rest/{endpoint}.view"
+            STATE.remember("cross-observe-query", endpoint, request, location)
+            self._redirect(location)
+            return
+        if parsed.path.startswith("/cross-target/rest/"):
+            STATE.record_target_request("cross-observe", endpoint)
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted cross-origin target channel"})
+                return
+            if self._has_authentication(channels):
+                self._send_json(500, {"error": "credentials crossed an origin boundary"})
+                return
+            observation = STATE.redirect_observation("cross-observe", endpoint)
+            if observation is None:
+                self._send_json(500, {"error": "cross-origin target had no observed source"})
+                return
+            if not cross_origin_target_matches_expectation(
+                observation[0],
+                request,
+                observation[1],
+            ):
+                self._send_json(500, {"error": "cross-origin target request differed from expectation"})
+                return
+            if endpoint == "getOpenSubsonicExtensions":
+                self._send_json(200, envelope(endpoint))
+            else:
+                self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+        if parsed.path.startswith("/cross-target-query/rest/"):
+            STATE.record_target_request("cross-observe-query", endpoint)
+            if not self._all_channels_accounted_for(channels):
+                self._send_json(500, {"error": "unaccounted cross-origin query target channel"})
+                return
+            if self._has_authentication(channels):
+                self._send_json(500, {"error": "query credentials crossed an origin boundary"})
+                return
+            observation = STATE.redirect_observation("cross-observe-query", endpoint)
+            if observation is None:
+                self._send_json(500, {"error": "cross-origin query target had no observed source"})
+                return
+            if not cross_origin_target_matches_expectation(
+                observation[0],
+                request,
+                observation[1],
+            ):
+                self._send_json(500, {"error": "cross-origin query target differed from expectation"})
+                return
+            if endpoint == "getOpenSubsonicExtensions":
+                self._send_json(200, envelope(endpoint, advertise_form_post=False))
+            else:
+                self._send_json(401, {"error": "authentication intentionally absent"})
+            return
+
+        if parsed.path.startswith("/loop/"):
+            parts = parsed.path.split("/")
+            hop_segment = parts[2] if len(parts) > 3 else ""
+            hop = int(hop_segment[1:]) if hop_segment.startswith("r") and hop_segment[1:].isdigit() else 0
+            self._redirect(f"/loop/r{hop + 1}/rest/{endpoint}.view")
+            return
+
+        self._send_json(404, {"error": "unknown conformance route"})
+
+    def _has_form_authentication(self, body: bytes) -> bool:
+        form = parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True)
+        return {"u", "t", "s"}.issubset(form)
+
+    def _has_authentication(self, channels: tuple[ObservedChannel, ...]) -> bool:
+        return any(channel.classification == "credential" for channel in channels)
+
+    def _observed_channels(self, query: str, body: bytes) -> tuple[ObservedChannel, ...]:
+        grouped: dict[tuple[str, str], list[str]] = {}
+        for name, value in self.headers.raw_items():
+            grouped.setdefault(("header", name.lower()), []).append(value)
+        for location, parameters in (
+            ("query", parse_qs(query, keep_blank_values=True)),
+            ("form", parse_qs(body.decode("ascii", errors="strict"), keep_blank_values=True)),
+        ):
+            for name, values in parameters.items():
+                grouped.setdefault((location, name.lower()), []).extend(values)
+        return tuple(
+            sorted(
+                ObservedChannel(location, name, tuple(values))
+                for (location, name), values in grouped.items()
+            )
+        )
+
+    def _all_channels_accounted_for(self, channels: tuple[ObservedChannel, ...]) -> bool:
+        return all(channel.classification is not None for channel in channels)
+
+    def _authentication_channels(
+        self,
+        channels: tuple[ObservedChannel, ...],
+    ) -> tuple[set[str], set[str], set[str]]:
+        by_location = {
+            location: {
+                channel.name
+                for channel in channels
+                if channel.location == location and channel.classification == "credential"
+            }
+            for location in ("header", "query", "form")
+        }
+        return by_location["header"], by_location["query"], by_location["form"]
+
+    def _observes_expected_channels(
+        self,
+        endpoint: str,
+        channels: tuple[ObservedChannel, ...],
+        body: bytes,
+        authentication_location: str = "form",
+    ) -> bool:
+        if not self._all_channels_accounted_for(channels):
+            self._oracle_mismatch("source-unaccounted-channel", channels)
+            return False
+        if not self._headers_match_closed_rules(channels, body):
+            return False
+        header_authentication, query_authentication, form_authentication = (
+            self._authentication_channels(channels)
+        )
+        query = self._channels_at("query", channels)
+        form = self._channels_at("form", channels)
+        if endpoint == "getOpenSubsonicExtensions":
+            matches = (
+                self.command == "GET"
+                and not header_authentication
+                and not query_authentication
+                and not form_authentication
+                and query == {"c": ("Dulcet",), "f": ("json",), "v": ("1.16.1",)}
+                and not form
+            )
+            if not matches:
+                self._oracle_mismatch("source-extension-application-channels", channels)
+            return matches
+        application_channels = query if authentication_location == "query" else form
+        expected_application_channels = {
+            "c": ("Dulcet",),
+            "f": ("json",),
+            "s": tuple(
+                value
+                for value in application_channels.get("s", ())
+                if re.fullmatch(r"[0-9a-f]{32}", value)
+            ),
+            "t": tuple(
+                value
+                for value in application_channels.get("t", ())
+                if re.fullmatch(r"[0-9a-f]{32}", value)
+            ),
+            "u": ("dulcet-admin",),
+            "v": ("1.16.1",),
+        }
+        if endpoint == "getUser":
+            expected_application_channels["username"] = ("dulcet-admin",)
+        expected_method = "GET" if authentication_location == "query" else "POST"
+        expected_query_authentication = {"u", "t", "s"} if authentication_location == "query" else set()
+        expected_form_authentication = {"u", "t", "s"} if authentication_location == "form" else set()
+        matches = (
+            self.command == expected_method
+            and not header_authentication
+            and query_authentication == expected_query_authentication
+            and form_authentication == expected_form_authentication
+            and query == (expected_application_channels if authentication_location == "query" else {})
+            and form == (expected_application_channels if authentication_location == "form" else {})
+            and len(application_channels["s"]) == 1
+            and len(application_channels["t"]) == 1
+        )
+        if not matches:
+            self._oracle_mismatch(f"source-{endpoint}-application-channels", channels)
+        return matches
+
+    def _headers_match_closed_rules(
+        self,
+        channels: tuple[ObservedChannel, ...],
+        body: bytes,
+    ) -> bool:
+        headers = self._channels_at("header", channels)
+        expected_authority = f"127.0.0.1:{self.server.server_port}"
+        if headers.get("host") != (expected_authority,):
+            self._oracle_mismatch("source-host", channels)
+            return False
+        if body:
+            if headers.get("content-length") != (str(len(body)),):
+                self._oracle_mismatch("source-content-length", channels)
+                return False
+            if headers.get("content-type") != ("application/x-www-form-urlencoded; charset=UTF-8",):
+                self._oracle_mismatch("source-content-type", channels)
+                return False
+        else:
+            if "content-length" in headers and headers["content-length"] != ("0",):
+                self._oracle_mismatch("source-empty-content-length", channels)
+                return False
+            if "content-type" in headers:
+                self._oracle_mismatch("source-empty-content-type", channels)
+                return False
+        exact_optional = {
+            "accept": {("*/*",), ("application/json",)},
+            "accept-charset": {("UTF-8",), ("utf-8",)},
+            "connection": {("Keep-Alive",), ("keep-alive",)},
+        }
+        for name, permitted in exact_optional.items():
+            if name in headers and headers[name] not in permitted:
+                self._oracle_mismatch(f"source-{name}", channels)
+                return False
+        if "accept-encoding" in headers and not all(
+            re.fullmatch(
+                r"(?:gzip|deflate|br|identity)"
+                r"(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?",
+                token.strip(),
+            )
+            for value in headers["accept-encoding"]
+            for token in value.split(",")
+        ):
+            self._oracle_mismatch("source-accept-encoding", channels)
+            return False
+        if "accept-language" in headers and not all(
+            len(value) <= 128 and re.fullmatch(
+                r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?"
+                r"(?:\s*,\s*[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*"
+                r"(?:;q=(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?))?)*",
+                value,
+            )
+            for value in headers["accept-language"]
+        ):
+            self._oracle_mismatch("source-accept-language", channels)
+            return False
+        if "user-agent" in headers and not all(
+            value in {"Ktor client", "ktor-client"} or (
+                len(value) <= 128 and re.fullmatch(
+                    r"[A-Za-z][A-Za-z0-9._-]*/[0-9][A-Za-z0-9._-]*"
+                    r"(?: CFNetwork/[0-9.]+ Darwin/[0-9.]+)?",
+                    value,
+                )
+            )
+            for value in headers["user-agent"]
+        ):
+            self._oracle_mismatch("source-user-agent", channels)
+            return False
+        return True
+
+    def _oracle_mismatch(
+        self,
+        reason: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> None:
+        shape = [
+            {
+                "location": channel.location,
+                "name": channel.name,
+                "value_count": len(channel.values),
+                "value_lengths": [len(value) for value in channel.values],
+            }
+            for channel in channels
+        ]
+        print(
+            "CLOSED ORACLE MISMATCH " +
+            json.dumps({"reason": reason, "shape": shape}, separators=(",", ":")),
+            flush=True,
+        )
+
+    def _channels_at(
+        self,
+        location: str,
+        channels: tuple[ObservedChannel, ...],
+    ) -> dict[str, tuple[str, ...]]:
+        return {
+            channel.name: channel.values
+            for channel in channels
+            if channel.location == location
+        }
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(307)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _authentication_challenge(self) -> None:
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="dulcet-ambient-auth"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _send_json(
+        self,
+        status: int,
+        value: object,
+        *,
+        cache_control: str | None = None,
+    ) -> None:
+        self._send(
+            status,
+            json.dumps(value, separators=(",", ":")).encode(),
+            "application/json",
+            cache_control=cache_control,
+        )
+
+    def _send(
+        self,
+        status: int,
+        body: bytes,
+        content_type: str,
+        *,
+        cache_control: str | None = None,
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if cache_control is not None:
+            self.send_header("Cache-Control", cache_control)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=4540)
+    parser.add_argument("--target-port", type=int, default=4541)
+    args = parser.parse_args()
+
+    source = ThreadingHTTPServer(("127.0.0.1", args.port), RedirectHandler)
+    target = ThreadingHTTPServer(("127.0.0.1", args.target_port), RedirectHandler)
+    source.target_port = args.target_port  # type: ignore[attr-defined]
+    target.target_port = args.target_port  # type: ignore[attr-defined]
+    target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+    try:
+        source.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        source.server_close()
+        target.shutdown()
+        target.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

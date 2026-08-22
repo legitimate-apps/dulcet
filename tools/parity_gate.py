@@ -6,6 +6,8 @@ import re
 import subprocess
 import sys
 
+from required_checks import load_required_checks
+
 PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
 STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
 LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
@@ -43,26 +45,43 @@ def spec_anchors(path: Path) -> set[str]:
     }
 
 
-def workflow_jobs() -> set[tuple[str, str]]:
-    pairs: set[tuple[str, str]] = set()
+def workflow_jobs() -> dict[tuple[str, str], str]:
+    jobs: dict[tuple[str, str], str] = {}
     for workflow in Path(".github/workflows").glob("*.yml"):
         workflow_name = None
-        current_job = None
-        in_jobs = False
-        for line in workflow.read_text().splitlines():
+        lines = workflow.read_text().splitlines()
+        for line in lines:
             if line.startswith("name:"):
                 workflow_name = line.split(":", 1)[1].strip()
-            if line == "jobs:":
-                in_jobs = True
-                continue
-            if in_jobs and (match := re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)):
-                current_job = match.group(1)
-                if workflow_name:
-                    pairs.add((workflow_name, current_job))
-            elif in_jobs and line and not line.startswith(" "):
-                in_jobs = False
-                current_job = None
-    return pairs
+                break
+        if workflow_name is None:
+            continue
+        job_starts = [
+            (index, match.group(1))
+            for index, line in enumerate(lines)
+            if (match := re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line))
+            and any(previous == "jobs:" for previous in lines[:index])
+        ]
+        for position, (start, job_name) in enumerate(job_starts):
+            end = job_starts[position + 1][0] if position + 1 < len(job_starts) else len(lines)
+            jobs[(workflow_name, job_name)] = "\n".join(lines[start:end])
+    return jobs
+
+
+def executed_evidence_jobs(jobs: dict[tuple[str, str], str]) -> set[tuple[str, str]]:
+    return {
+        identity
+        for identity, body in jobs.items()
+        if any(
+            re.match(r"^\s*(?:run:\s*)?python3\s+tools/verify-parity-evidence\b", line)
+            for line in body.splitlines()
+        )
+    }
+
+
+def required_status_checks(_jobs: dict[tuple[str, str], str]) -> set[str]:
+    _default_branch, contexts = load_required_checks()
+    return contexts
 
 
 def test_names() -> set[str]:
@@ -92,6 +111,8 @@ def validate(document: dict, source: str) -> dict[str, dict]:
     conformance_text = Path("docs/CONFORMANCE.md").read_text()
     conformance_ids = set(re.findall(r"\bCONF-[0-9]+[a-z]?\b", conformance_text))
     jobs = workflow_jobs()
+    execution_jobs = executed_evidence_jobs(jobs)
+    required_checks = required_status_checks(jobs)
     tests = test_names()
     by_id: dict[str, dict] = {}
 
@@ -133,14 +154,30 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                 fail(f"{source}: {feature_id}/{platform} n/a requires reason")
             if status == "blocked" and not cell.get("blocked_by"):
                 fail(f"{source}: {feature_id}/{platform} blocked requires blocked_by")
-            if status == "shipped":
-                evidence = cell.get("evidence")
-                if not isinstance(evidence, dict) or set(evidence) != {"workflow", "job", "test"}:
-                    fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
+            evidence = cell.get("evidence")
+            if status == "shipped" and evidence is None:
+                fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
+            if evidence is not None:
+                if (
+                    not isinstance(evidence, dict)
+                    or set(evidence) != {"workflow", "job", "test"}
+                    or any(not isinstance(value, str) or not value for value in evidence.values())
+                ):
+                    fail(f"{source}: {feature_id}/{platform} evidence requires workflow/job/test strings")
                 if (evidence["workflow"], evidence["job"]) not in jobs:
                     fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
                 if evidence["test"].split("/")[-1].split("#")[-1] not in tests:
                     fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
+                if evidence["job"] not in required_checks:
+                    fail(
+                        f"{source}: {feature_id}/{platform} evidence job is not required "
+                        "by branch protection"
+                    )
+                if (evidence["workflow"], evidence["job"]) not in execution_jobs:
+                    fail(
+                        f"{source}: {feature_id}/{platform} evidence job is not wired "
+                        "to executed-test verification"
+                    )
     return by_id
 
 

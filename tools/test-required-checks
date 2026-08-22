@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Mutation tests for the trusted required-check drift predicate."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+
+from required_checks import validate_live_required_checks
+
+
+DECLARED = {"apple-ci", "core-ci", "parity-gate"}
+LIVE = {
+    "strict": True,
+    "contexts": sorted(DECLARED),
+    "checks": [
+        {"context": context, "app_id": 15368}
+        for context in sorted(DECLARED)
+    ],
+}
+
+
+def expect_rejection(label: str, document: dict[str, object]) -> None:
+    try:
+        validate_live_required_checks("main", document, DECLARED)
+    except ValueError:
+        return
+    raise AssertionError(f"{label}: malformed live branch protection was accepted")
+
+
+if validate_live_required_checks("main", LIVE, DECLARED) != DECLARED:
+    raise AssertionError("matching manifest and live branch protection did not validate")
+
+not_strict = deepcopy(LIVE)
+not_strict["strict"] = False
+expect_rejection("strict-mode drift", not_strict)
+
+missing_context = deepcopy(LIVE)
+missing_context["contexts"] = ["apple-ci", "parity-gate"]
+missing_context["checks"] = [
+    check for check in missing_context["checks"] if check["context"] != "core-ci"
+]
+expect_rejection("required-context drift", missing_context)
+
+contexts_checks_disagree = deepcopy(LIVE)
+contexts_checks_disagree["checks"] = contexts_checks_disagree["checks"][:-1]
+expect_rejection("contexts/checks disagreement", contexts_checks_disagree)
+
+malformed_app = deepcopy(LIVE)
+malformed_app["checks"][0]["app_id"] = "github-actions"
+expect_rejection("malformed check app", malformed_app)
+
+print("required-check drift mutation tests pass")

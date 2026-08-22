@@ -1,22 +1,25 @@
 # Dependency licence audit
 
-The Phase 0 core has no production library dependencies. Its Kotlin test dependency and build plugins
-are checked by `./gradlew :core:licensee`; that task is part of `core-ci` and rejects licences outside
-the explicit allowlist.
+The core's production dependencies, Kotlin test dependency, and build plugins are checked by
+`./gradlew :core:licensee`; that task is part of `core-ci` and rejects licences outside the explicit
+allowlist. Ktor's JVM engine brings in SLF4J's MIT-licensed API. SLF4J publishes the modern OSI MIT
+URL rather than an SPDX identifier, so the audit admits that exact URL instead of a broad dependency
+exception.
 
 The version catalog also reserves the reviewed Phase 1 coordinates below. Reserving a version is not
 the same as shipping it. Each becomes part of the generated transitive report when first declared by a
 source set.
 
-| dependency or tool | pin | licence | Phase 0 disposition |
+| dependency or tool | pin | licence | disposition |
 |---|---:|---|---|
 | Kotlin Gradle plugin and standard library | 2.4.10 | Apache-2.0 | build and scaffold runtime |
 | Android Gradle / Android-KMP plugin | 9.1.0 | Apache-2.0 | build only |
 | Licensee Gradle plugin | 1.14.1 | Apache-2.0 | build audit only |
-| Ktor | 3.5.2 | Apache-2.0 | reserved, not declared |
+| Ktor core / CIO / Darwin | 3.5.2 | Apache-2.0 | account connection transport |
+| SLF4J API (transitive from Ktor CIO) | 2.0.18 | MIT | JVM/Android logging facade; no backend configured by core |
 | SQLDelight | 2.3.2 | Apache-2.0 | reserved, not declared |
-| kotlinx-coroutines | 1.11.0 | Apache-2.0 | reserved, not declared |
-| kotlinx-serialization | 1.11.0 | Apache-2.0 | reserved, not declared |
+| kotlinx-coroutines | 1.11.0 | Apache-2.0 | core runtime and conformance tests |
+| kotlinx-serialization | 1.11.0 | Apache-2.0 | OpenSubsonic JSON envelopes |
 | Compose Multiplatform | 1.11.0 | Apache-2.0 | reserved, not declared |
 | Compose for TV Material / Foundation | 1.1.0 / 1.0.0 | Apache-2.0 | reserved, not declared |
 | Media3 | 1.11.0 | Apache-2.0 | reserved, not declared |

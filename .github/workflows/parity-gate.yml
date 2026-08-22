@@ -22,6 +22,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Prove pull-request workflows never receive repository secrets
+        run: python3 tools/test-pr-workflow-secret-boundary
+      - name: Require evidence-boundary markers and revision integrity
+        run: python3 tools/test-spec-evidence-boundaries
+      - name: Prove spec evidence-boundary regressions are rejected
+        run: python3 tools/test-spec-evidence-boundary-mutations
+      - name: Prove partial evidence defects are rejected
+        run: python3 tools/test-parity-gate
+      - name: Prove required-check drift is rejected
+        run: python3 tools/test-required-checks
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
       - name: Verify CI policy

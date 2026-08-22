@@ -52,10 +52,23 @@ jobs:
       TZ: UTC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Prove ffmpeg version gate rejects prefix collisions
         run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
         run: python3 tools/test-seed-corpus-gates
+      - name: Exercise redirect oracle defence-in-depth mutation controls
+        run: python3 tools/test-redirect-credential-detector
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
@@ -83,11 +96,30 @@ jobs:
         run: |
           image="$(tools/conformance-env/read-pin navidrome.linux.image)"
           container="dulcet-conformance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
+            -config tools/conformance-env/untrusted-tls-openssl.cnf \
+            -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
           cleanup() {
+            kill "$redirect_pid" >/dev/null 2>&1 || true
+            wait "$redirect_pid" 2>/dev/null || true
+            kill "$tls_pid" >/dev/null 2>&1 || true
+            wait "$tls_pid" 2>/dev/null || true
             docker logs "$container" 2>&1 | tail -200 || true
             docker stop --time 5 "$container" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
+          python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
+          redirect_pid=$!
+          python3 tools/conformance-env/untrusted-tls-server --port 4542 \
+            --certificate "$ROOT/untrusted-tls.crt" --key "$ROOT/untrusted-tls.key" &
+          tls_pid=$!
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
+              curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null; then break; fi
+            sleep 0.1
+          done
+          curl --fail --silent http://127.0.0.1:4540/health >/dev/null
+          curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null
           docker run --detach --name "$container" --platform linux/amd64 \
             --user "$(id -u):$(id -g)" \
             --publish 127.0.0.1:4533:4533 \
@@ -104,6 +136,10 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.linux.version)" \
             --ffmpeg-command-json "[\"docker\",\"exec\",\"$container\",\"$(tools/conformance-env/read-pin ffmpeg.linux.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
+            DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            ./gradlew --no-daemon :core-conformance:jvmTest
 
   core-ci:
     name: core-ci
