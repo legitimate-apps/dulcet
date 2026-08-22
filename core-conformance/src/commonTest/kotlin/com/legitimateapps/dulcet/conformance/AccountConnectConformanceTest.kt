@@ -203,6 +203,14 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun slowSelfHostedServerCanCompleteAccountNegotiation() = runTest {
+        assertIs<AccountConnectionResult.Connected>(
+            fixture().connect("${redirectConformanceRoot()}/slow-account"),
+            "a self-hosted server responding after 10.5 seconds must remain connectable",
+        )
+    }
+
+    @Test
     fun conf06DistinguishesAuthenticationAndTransportFailures() = runTest {
         val unreachable = AccountConnector().connect(
             AccountConnectionRequest(

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import json
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, parse_qsl, urlsplit
 
@@ -423,6 +424,15 @@ class RedirectHandler(BaseHTTPRequestHandler):
             ):
                 self._send_json(500, {"error": "cacheable account request channels failed"})
                 return
+            self._send_json(200, envelope(endpoint))
+            return
+
+        if parsed.path.startswith("/slow-account/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "slow account request channels failed"})
+                return
+            if endpoint == "getOpenSubsonicExtensions":
+                time.sleep(10.5)
             self._send_json(200, envelope(endpoint))
             return
 
