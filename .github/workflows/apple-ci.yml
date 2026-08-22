@@ -292,6 +292,18 @@ jobs:
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetMac \
+              -configuration Debug \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY=- \
+              DEVELOPMENT_TEAM= \
+              PROVISIONING_PROFILE_SPECIFIER=
+          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:macosArm64Test

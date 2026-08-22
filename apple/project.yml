@@ -29,7 +29,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
+        PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
+        CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -39,6 +41,18 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - DulcetMacTests
+    dependencies:
+      - target: DulcetMac
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev.tests
+        CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
   DulcetiOS:
     type: application
     platform: iOS
@@ -76,3 +90,12 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+schemes:
+  DulcetMac:
+    build:
+      targets:
+        DulcetMac: all
+        DulcetMacTests: [test]
+    test:
+      targets:
+        - DulcetMacTests

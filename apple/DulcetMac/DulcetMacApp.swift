@@ -5,24 +5,36 @@ import SwiftUI
 
 @main
 struct DulcetMacApp: App {
-    @State private var presentation = DulcetPresentationStore(
-        source: DulcetAccountDataSource(
-            connector: DulcetCoreAccountConnector(),
-            credentialStore: DulcetKeychainCredentialStore()
-        )
-    )
+    @State private var presentation = DulcetMacProduction.makePresentationStore()
 
     var body: some Scene {
         WindowGroup {
-            DulcetRootView(store: presentation)
-                .frame(minWidth: 900, minHeight: 600)
+            DulcetMacProduction.makeRootView(store: presentation)
         }
         .defaultSize(width: 1180, height: 760)
     }
 }
 
+/// The single production composition root shared by the application and its app-hosted control.
 @MainActor
-private final class DulcetCoreAccountConnector: DulcetAccountConnecting {
+enum DulcetMacProduction {
+    static func makePresentationStore() -> DulcetPresentationStore {
+        DulcetPresentationStore(
+            source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(),
+                credentialStore: DulcetKeychainCredentialStore()
+            )
+        )
+    }
+
+    static func makeRootView(store: DulcetPresentationStore) -> some View {
+        DulcetRootView(store: store)
+            .frame(minWidth: 900, minHeight: 600)
+    }
+}
+
+@MainActor
+final class DulcetCoreAccountConnector: DulcetAccountConnecting {
     private let client = AppleAccountConnectionClient()
 
     func connect(
@@ -66,7 +78,7 @@ private final class DulcetCoreAccountConnector: DulcetAccountConnecting {
 }
 
 @MainActor
-private final class DulcetCoreAccountOperation: DulcetAccountConnectOperation {
+final class DulcetCoreAccountOperation: DulcetAccountConnectOperation {
     private let operation: any AppleAccountConnectOperation
 
     init(operation: any AppleAccountConnectOperation) {
