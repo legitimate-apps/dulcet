@@ -778,6 +778,29 @@ class AccountConnectConformanceTest {
                 redirectsAlreadyFollowed = 0,
             ),
         )
+        listOf(
+            Triple(
+                "http://music.invalid:4533/rest/ping.view",
+                "https://music.invalid:4533/rest/ping.view",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "http://music.invalid:80/rest/ping.view",
+                "https://music.invalid:80/rest/ping.view",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+            Triple(
+                "http://music.invalid:443/rest/ping.view",
+                "https://music.invalid:443/rest/ping.view",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+        ).forEach { (current, target, expected) ->
+            assertEquals(
+                expected,
+                AccountConnectionContract.redirectDecision(current, target, redirectsAlreadyFollowed = 0),
+                "$current -> $target",
+            )
+        }
     }
 
     @Test

@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 54 — embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
+**Revision:** 55 — the documented HTTP-to-HTTPS carve-out now matches the equal-normalized-port
+policy implemented by account connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
 made IPv6 zone identifiers case-sensitive during redirect-host comparison; revision 52 added an
 independent mutation test proving deletion of the numeric revision-integrity
 algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
@@ -1430,10 +1431,12 @@ sent, is:
   different. Phase 1 does not use IDNA here: an A-label redirect such as
   `xn--bcher-kva.invalid` to `bücher.invalid` is deliberately refused even when an IDNA profile could
   prove them equivalent.
-- Permit one common reverse-proxy carve-out: `http` to `https` on the same canonical host when both
-  sides use their scheme-default ports (`80` and `443`, whether explicit or implicit). A non-default
-  port change, host change, `https` downgrade, or any other scheme change is not covered by this
-  carve-out.
+- Permit `http` to `https` on the same canonical host when the two scheme-normalised ports are equal.
+  Default `http:80` and `https:443` endpoints both normalise to no explicit port, so that ordinary
+  upgrade is permitted; an in-place non-default upgrade such as `:4533` to `:4533` is also permitted.
+  Textually equal `:80` to `:80` and `:443` to `:443` upgrades are refused because only one side is
+  its scheme default after normalisation. A normalized-port change, host change, `https` downgrade,
+  or any other scheme change is not covered by this carve-out.
 - Refuse every other origin change **before the next request is sent**, on every hop. The result is
   the content-free, actionable `Auth.CrossOriginRedirectRejected`, so a deployment requiring such a
   redirect is reported as an unsupported account-connect topology rather than as unreachable or bad
@@ -2327,7 +2330,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
-| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits only the same-canonical-host default-port `http`→`https` carve-out; refuses every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
+| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits same-canonical-host `http`→`https` only when scheme-normalised ports are equal, including both default `80`→`443` and equal non-default ports; rejects asymmetric `80`→`80` and `443`→`443` spellings plus every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -3019,6 +3022,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 55 (2026-08-22)** — the documented TLS-upgrade carve-out widened to the implemented policy.
+
+1. Maintainer decision keeps credentials on a same-canonical-host `http` to `https` redirect whenever
+   the scheme-normalised ports are equal. An equal non-default port such as `4533` is an in-place move
+   from cleartext to a certificate-validated channel, so refusing it would be unnecessary over-refusal.
+2. Direct common and cross-platform policy assertions pin default `80` to `443` and equal `4533` as
+   permitted, while textually equal `80` to `80` and `443` to `443` remain cross-origin because their
+   normalized ports differ. HTTPS downgrade remains rejected before this comparison.
+3. §13.3 and the CONF-08 row now describe equal normalized ports rather than a default-ports-only
+   rule. This supersedes revision 44's narrower port wording; redirect refusal on host or normalized-
+   port change is otherwise unchanged.
 
 **Revision 54 (2026-08-22)** — embedded IPv4 tails stopped accepting signed octets.
 
