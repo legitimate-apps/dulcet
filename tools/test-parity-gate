@@ -26,7 +26,7 @@ def materialize(root: Path) -> None:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    for relative in (".github/workflows", "docs", "core-conformance"):
+    for relative in (".github/workflows", "docs", "core-conformance", "apple/DulcetKit/Tests"):
         shutil.copytree(REPOSITORY / relative, root / relative)
 
 
@@ -153,6 +153,18 @@ passing_report = """\
             name="conf07RedactsCredentialsFromDiagnostics[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf08EnforcesRedirectCredentialPolicy[macosArm64]" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="fixtureRendersEveryDeclaredDistinctState" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="keychainCredentialsRoundTripAndDelete" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"
+            name="proxyChallengeFailsClosedWithoutAmbientCredentials[macosArm64]" time="0.1" />
 </testsuite>
 """
 with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:

@@ -7,10 +7,10 @@
       "title": "Connect an OpenSubsonic server",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
       "gates": ["protocol:subsonic-1.16.1"],
-      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08"],
+      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08", "CONF-09a", "CONF-09b", "CONF-09c", "CONF-10a", "CONF-10b", "CONF-10c"],
       "platforms": {
         "macos": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-01",
@@ -59,9 +59,44 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"
+            },
+            {
+              "conformance": "CONF-09a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation"
+            },
+            {
+              "conformance": "CONF-09b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/fixtureRendersEveryDeclaredDistinctState"
+            },
+            {
+              "conformance": "CONF-09c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/accountDomainErrorsHaveATotalActionablePresentation"
+            },
+            {
+              "conformance": "CONF-10a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/keychainCredentialsRoundTripAndDelete"
+            },
+            {
+              "conformance": "CONF-10b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect"
+            },
+            {
+              "conformance": "CONF-10c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
             }
-          ],
-          "reason": "CONF-01..08 prove the macOS core and Darwin transport; account UI and credential persistence are not wired."
+          ]
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
