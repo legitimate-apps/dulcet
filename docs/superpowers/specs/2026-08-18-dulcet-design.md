@@ -6,7 +6,13 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 54 — embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
+**Revision:** 60 — platform evidence pins one executed testcase per declared conformance id;
+revision 59 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
+revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
+localized DomainError presentation explicitly future account-UI work; revision
+56 made the documented and sealed authentication-error taxonomies match; revision 55
+made the HTTP-to-HTTPS carve-out match the equal-normalized-port policy implemented by account
+connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
 made IPv6 zone identifiers case-sensitive during redirect-host comparison; revision 52 added an
 independent mutation test proving deletion of the numeric revision-integrity
 algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
@@ -1420,9 +1426,12 @@ sent, is:
 - Preserve same-origin redirects, including path changes. Origin equality never uses Unicode case
   folding. Each host is percent-decoded once as strict UTF-8; one trailing DNS root dot is removed
   and ASCII letters in a DNS reg-name are lower-cased with an ASCII-only transform. An IPv6 address
-  is parsed to one numeric spelling, with embedded IPv4 octets restricted to non-empty ASCII decimal
-  digits in the range 0–255, while its optional zone identifier is preserved byte-for-byte because
-  OS interface names are case-sensitive. The scheme-normalised port is then compared. Invalid
+  is parsed to one numeric spelling, with an embedded IPv4 tail permitted only in the final 32 bits
+  of the complete address and its octets restricted to non-empty ASCII decimal digits in the range
+  0–255, while its optional zone identifier is preserved byte-for-byte because
+  OS interface names are case-sensitive. Raw `%25` delimiter syntax is handled before the decoded
+  identifier is validated, so a decoded zone identifier literally named `25` remains valid. The
+  scheme-normalised port is then compared. Invalid
   encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
 - Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
   `Security.RedirectRejected(UnsupportedInternationalizedHost)`. This is distinct from
@@ -1430,10 +1439,12 @@ sent, is:
   different. Phase 1 does not use IDNA here: an A-label redirect such as
   `xn--bcher-kva.invalid` to `bücher.invalid` is deliberately refused even when an IDNA profile could
   prove them equivalent.
-- Permit one common reverse-proxy carve-out: `http` to `https` on the same canonical host when both
-  sides use their scheme-default ports (`80` and `443`, whether explicit or implicit). A non-default
-  port change, host change, `https` downgrade, or any other scheme change is not covered by this
-  carve-out.
+- Permit `http` to `https` on the same canonical host when the two scheme-normalised ports are equal.
+  Default `http:80` and `https:443` endpoints both normalise to no explicit port, so that ordinary
+  upgrade is permitted; an in-place non-default upgrade such as `:4533` to `:4533` is also permitted.
+  Textually equal `:80` to `:80` and `:443` to `:443` upgrades are refused because only one side is
+  its scheme default after normalisation. A normalized-port change, host change, `https` downgrade,
+  or any other scheme change is not covered by this carve-out.
 - Refuse every other origin change **before the next request is sent**, on every hop. The result is
   the content-free, actionable `Auth.CrossOriginRedirectRejected`, so a deployment requiring such a
   redirect is reported as an unsupported account-connect topology rather than as unreachable or bad
@@ -2025,16 +2036,18 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   one server instance cannot establish a closed universe of codes and other compatible servers may
   return others.
 - `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | UnsupportedAuthenticationChallenge |
-  RedirectCredentialLoss`
+  CrossOriginRedirectRejected`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
-Every error is user-presentable through a localized mapping from its semantic kind: a short user
-string and a suggested action. Raw technical detail belongs only in non-exported platform diagnostics
-that have independently enforced privacy boundaries; it is never a `DomainError` payload. "Unknown
-error" is not a permitted terminal state.
+**Implementation boundary (not implemented in Phase 1):** no platform code references `DomainError`,
+so the repository does not yet provide localized error text, suggested actions, or rendering. A
+future account UI must map every semantic kind to a short localized string and suggested action; that
+is a requirement, not an observed product behavior. Raw technical detail must remain confined to
+non-exported platform diagnostics with independently enforced privacy boundaries and must never
+become a `DomainError` payload. "Unknown error" is not a permitted terminal state.
 
 ---
 
@@ -2054,11 +2067,11 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
   gates: [extension:transcodeOffset, engine:seekable]
   conformance: [CONF-14a]
   platforms:
-    macos:     { status: shipped, evidence: { workflow: apple-ci, job: macos-tests,  test: PlaybackSeekTests/testServerOffsetSeek } }
-    ios:       { status: shipped, evidence: { workflow: apple-ci, job: ios-sim-tests, test: PlaybackSeekTests/testServerOffsetSeek } }
-    ipados:    { status: shipped, evidence: { workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekOnIPadLayout } }
+    macos:     { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: macos-tests,  test: PlaybackSeekTests/testServerOffsetSeek }] }
+    ios:       { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: ios-sim-tests, test: PlaybackSeekTests/testServerOffsetSeek }] }
+    ipados:    { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekOnIPadLayout }] }
     tvos:      { status: planned }
-    android:   { status: shipped, evidence: { workflow: android-ci, job: instrumented, test: PlaybackSeekTest#serverOffsetSeek } }
+    android:   { status: shipped, evidence: [{ conformance: CONF-14a, workflow: android-ci, job: instrumented, test: PlaybackSeekTest#serverOffsetSeek }] }
     androidtv: { status: planned }
 ```
 
@@ -2068,13 +2081,15 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 
 **Evidence is a stable identity, not a run id.** Revision 1 required a CI run number in the `evidence`
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
-the number afterwards produces a commit nobody verified. Evidence is therefore
-`{workflow, job, test}` — knowable at commit time. The PR static gate asserts that (a) the named
-workflow and job exist, (b) the named test exists in the repo, (c) the job is named by the reviewed
-`.github/required-checks.json` manifest, and (d) the named job invokes the executed-evidence verifier.
-During that same job, after the named test task, the verifier reads the test runner's JUnit XML and
-requires the exact class/method testcase to be present, executed, unskipped, and passing. A source
-method, log line, invented job label, or tuple alone is not evidence. The manifest binding is a
+the number afterwards produces a commit nobody verified. Evidence is therefore a non-empty list of
+`{conformance, workflow, job, test}` entries, one for every conformance id declared by the row and
+knowable at commit time. The PR static gate requires exact, duplicate-free conformance coverage and
+asserts for every entry that (a) the named workflow and job exist, (b) the named test exists in the
+repo, (c) the job is named by the reviewed `.github/required-checks.json` manifest, and (d) the named
+job invokes the executed-evidence verifier. During that same job, after the named test task, the
+verifier reads the test runner's JUnit XML and requires every exact class/method testcase to be
+present, executed, unskipped, and passing. A source method, log line, invented job label, tuple alone,
+or one representative testcase for a multi-CONF claim is not evidence. The manifest binding is a
 reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
 records the accepted timing boundary for that live comparison.
 
@@ -2327,7 +2342,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
-| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits only the same-canonical-host default-port `http`→`https` carve-out; refuses every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
+| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits same-canonical-host `http`→`https` only when scheme-normalised ports are equal, including both default `80`→`443` and equal non-default ports; rejects asymmetric `80`→`80` and `443`→`443` spellings plus every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -3019,6 +3034,69 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 60 (2026-08-22)** — executed platform evidence became complete over each row's conformance set.
+
+1. `FEATURES.yml` schema 2 represents evidence as one `{conformance, workflow, job, test}` entry per
+   declared conformance id. The static gate requires exact, duplicate-free coverage rather than one
+   representative test for a cell carrying several protocol claims.
+2. The `account.connect/macos` cell now pins CONF-01 through CONF-08 individually. The Darwin verifier
+   therefore requires all eight named testcases to appear, execute unskipped, and pass in the Apple
+   job's own JUnit XML.
+3. The mutation harness removes one manifest entry and separately removes one testcase from an
+   otherwise-passing report; both states must fail. Per-test evidence was chosen over a report-wide
+   skipped scan because it also detects a task filter that omits a testcase entirely.
+
+**Revision 59 (2026-08-22)** — raw IPv6 zone syntax and decoded zone identity stopped being conflated.
+
+1. The authority validator still consumes the raw `%25` zone delimiter and rejects an empty or
+   nested delimiter, but canonical redirect comparison validates the already-decoded identifier
+   without stripping a second `25` prefix.
+2. A valid zone literally named `25`, written as `%2525` in a URL host, now canonicalizes and compares
+   like every other byte-preserved zone rather than failing as `InvalidLocation`.
+3. Direct canonical-host and public conformance assertions pin the compressed/expanded equivalence;
+   existing empty-zone and nested-`%25` cases continue to pin the raw grammar's fail-closed boundary.
+
+**Revision 58 (2026-08-22)** — embedded IPv4 tails became positionally valid IPv6 syntax.
+
+1. A dotted quad is accepted only as the final 32 bits of the complete IPv6 address, including when
+   `::` compression is used; it may not appear in the left side of a compressed address.
+2. Consequently malformed `[1.2.3.4::]` and `[1.2.3.4::5]` no longer canonicalize to valid numeric
+   IPv6 identities, while the valid final-tail equivalence remains supported.
+3. Direct canonical-host and public conformance controls require an invalid-location rejection for
+   the malformed spellings, closing the equality collision with `[102:304::]`.
+
+**Revision 57 (2026-08-22)** — localized error presentation gained an explicit implementation boundary.
+
+1. `DomainError` is a content-free semantic taxonomy, but no platform code consumes it and Phase 1
+   has no localized mapping, suggested-action mapping, or error-rendering surface.
+2. §18.12 now labels that presentation as future account-UI work and distinguishes the normative UI
+   requirement from observed product behavior, matching the boundary already used in §§10.2–10.3.
+3. The structural checker requires the boundary markers, and its mutation harness deletes the
+   substantive paragraph while retaining revision numbering. The parity gate must reject that state.
+
+**Revision 56 (2026-08-22)** — the authentication-error taxonomy shed its unreachable redirect case.
+
+1. Cross-origin account redirects now emit `Auth.CrossOriginRedirectRejected`; no production site
+   emitted the superseded `RedirectCredentialLoss` subtype after revision 44 changed the policy from
+   strip-and-follow to pre-send refusal.
+2. The dead subtype and its diagnostic branches are removed, and §18.12 now enumerates
+   `CrossOriginRedirectRejected` alongside the four other sealed authentication failures.
+3. The parity checker derives the `Auth` subtype names from the sealed common-code declaration and
+   requires the §18.12 enumeration to equal that set. Removing or adding a name on only one side now
+   fails the gate; the check establishes taxonomy parity, not that every subtype has a runtime emitter.
+
+**Revision 55 (2026-08-22)** — the documented TLS-upgrade carve-out widened to the implemented policy.
+
+1. Maintainer decision keeps credentials on a same-canonical-host `http` to `https` redirect whenever
+   the scheme-normalised ports are equal. An equal non-default port such as `4533` is an in-place move
+   from cleartext to a certificate-validated channel, so refusing it would be unnecessary over-refusal.
+2. Direct common and cross-platform policy assertions pin default `80` to `443` and equal `4533` as
+   permitted, while textually equal `80` to `80` and `443` to `443` remain cross-origin because their
+   normalized ports differ. HTTPS downgrade remains rejected before this comparison.
+3. §13.3 and the CONF-08 row now describe equal normalized ports rather than a default-ports-only
+   rule. This supersedes revision 44's narrower port wording; redirect refusal on host or normalized-
+   port change is otherwise unchanged.
 
 **Revision 54 (2026-08-22)** — embedded IPv4 tails stopped accepting signed octets.
 

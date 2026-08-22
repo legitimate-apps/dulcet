@@ -99,6 +99,23 @@ class RedirectHostPolicyTest {
     }
 
     @Test
+    fun decodedIpv6ZoneNamed25RemainsValid() {
+        assertEquals(
+            CanonicalRedirectHost.Canonical(
+                "[fe80:0000:0000:0000:0000:0000:0000:0001%25]",
+            ),
+            "[fe80::1%2525]".canonicalRedirectHost(),
+        )
+        assertEquals(
+            RedirectPolicyDecision.PreserveCredentials,
+            redirect(
+                "https://[fe80::1%2525]/rest/ping.view",
+                "https://[fe80:0:0:0:0:0:0:1%2525]/collect",
+            ),
+        )
+    }
+
+    @Test
     fun embeddedIpv4OctetsRejectNonDigits() {
         assertEquals(
             CanonicalRedirectHost.Invalid,
@@ -111,6 +128,51 @@ class RedirectHostPolicyTest {
                 "https://[::ffff:127.0.0.+1]/collect",
             ),
         )
+    }
+
+    @Test
+    fun embeddedIpv4TailMustEndTheCompleteIpv6Address() {
+        listOf(
+            "[1.2.3.4::]",
+            "[1.2.3.4::5]",
+        ).forEach { host ->
+            assertEquals(CanonicalRedirectHost.Invalid, host.canonicalRedirectHost(), host)
+        }
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation),
+            redirect(
+                "https://[102:304::]/rest/ping.view",
+                "https://[1.2.3.4::]/collect",
+            ),
+        )
+    }
+
+    @Test
+    fun httpToHttpsUpgradeRequiresEqualNormalizedPorts() {
+        listOf(
+            Triple(
+                "http://music.invalid:80/rest/ping.view",
+                "https://music.invalid:443/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "http://music.invalid:4533/rest/ping.view",
+                "https://music.invalid:4533/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "http://music.invalid:80/rest/ping.view",
+                "https://music.invalid:80/collect",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+            Triple(
+                "http://music.invalid:443/rest/ping.view",
+                "https://music.invalid:443/collect",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+        ).forEach { (current, target, expected) ->
+            assertEquals(expected, redirect(current, target), "$current -> $target")
+        }
     }
 
     private fun redirect(current: String, target: String): RedirectPolicyDecision =
