@@ -48,6 +48,11 @@ for marker in (
     "Keychain save",
     "connected UI",
     "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
+    "unentitled SwiftPM process",
+    "missingDataProtectionKeychainEntitlement",
+    "legacy-Keychain item",
+    "signed-release-validation / entitled-keychain",
+    "DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility",
 ):
     if marker not in account_reason:
         errors.append(f"account.connect/macos partial reason is missing {marker!r}")
@@ -125,6 +130,15 @@ for marker in (
     "generated local UUID",
     "data-protection Keychain",
     "kSecUseDataProtectionKeychain = true",
+    "**OBSERVED unentitled fail-closed boundary:**",
+    "32595294491",
+    "97085139126",
+    "DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement",
+    "no matching legacy generic-password item exists",
+    "**ASSUMED signed-Keychain properties and promotion condition:**",
+    "`signed-release-validation`, job `entitled-keychain`",
+    "DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility",
+    "Pull-request workflows receive no signing identity",
     "performs **no network request until the person chooses Connect**",
     "credential-persistence error surface",
 ):

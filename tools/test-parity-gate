@@ -160,7 +160,7 @@ passing_report = """\
   <testcase classname="DulcetKitTests"
             name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />
   <testcase classname="DulcetKitTests"
-            name="keychainCredentialsRoundTripAndDelete" time="0.1" />
+            name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"

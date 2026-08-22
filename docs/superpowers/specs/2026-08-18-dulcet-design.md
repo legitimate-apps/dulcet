@@ -6,11 +6,12 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 71 — Apple credentials now live in the data-protection Keychain where their declared
-accessibility and synchronization attributes take effect; revision 70 made replacement submissions
+**Revision:** 72 — unentitled data-protection-Keychain access now fails with a typed error and no
+legacy fallback, while the signed item's accessibility remains explicitly ASSUMED; revision 71
+selected the data-protection Keychain; revision 70 made replacement submissions
 cancel the operation they supersede; revision 69 made
-a late Cancel invalidate queued success before persistence; revision 68 made
-Apple credentials after-first-unlock and device-only; revision 67 made
+a late Cancel invalidate queued success before persistence; revision 68 recorded the intended
+after-first-unlock/device-only policy; revision 67 made
 credential-bearing request and snapshot values use redacted string and mirror
 representations; revision 66 returned macOS `account.connect` to partial because the live app seam remains
 unexecuted; revision 65 added schema-2 evidence covering its
@@ -1410,34 +1411,53 @@ through Ktor Darwin's `configureSession` hook.
 | | Apple | Android |
 |---|---|---|
 | item | Keychain generic password | Keystore-backed encrypted store |
-| store | data-protection Keychain (`kSecUseDataProtectionKeychain = true` on every add, update, read, and delete query) | platform Keystore |
-| accessibility | `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
+| store | data-protection Keychain (`kSecUseDataProtectionKeychain = true` on every add, update, read, and delete query); signed-item behavior is **ASSUMED** pending the entitled control below | platform Keystore |
+| accessibility | **ASSUMED:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
 | key | `service = "${BUNDLE_PREFIX}"`, `account = server_id` (the local UUID, not the username or URL) | alias `${BUNDLE_PREFIX}.<server_id>` |
-| iCloud Keychain sync | off (`kSecAttrSynchronizable = false`) | n/a |
-| device migration / backup restore | credentials do not migrate; the user re-enters the password on a new device | same |
+| iCloud Keychain sync | **ASSUMED for the signed item:** off (`kSecAttrSynchronizable = false`) | n/a |
+| device migration / backup restore | **ASSUMED:** the intended `ThisDeviceOnly` item does not migrate, so the user re-enters the password on a new device | same |
 | key invalidation (lock screen removed, keystore reset) | detected on read; the account enters a re-auth state and cached library data is retained | same |
 | logout | credential deleted before any other cleanup (§14.7) | same |
 
-**macOS Phase-1 relaunch decision — explicit reconnect:** after a successful account negotiation,
-the complete connection request is encoded into one Keychain generic-password value under
+**macOS Phase-1 relaunch decision — explicit reconnect:** in the signed application, after a
+successful account negotiation, the complete connection request is intended to be encoded into one
+Keychain generic-password value under
 `service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
 is retained in preferences as the active-account pointer; neither the URL, username, nor password is
 used as a Keychain index. Every `SecItemAdd`, `SecItemUpdate`, `SecItemCopyMatching`, and
 `SecItemDelete` query selects the data-protection Keychain with
 `kSecUseDataProtectionKeychain = true`; on macOS the legacy file-based Keychain does not preserve
-the declared accessibility attribute. In the selected store, iCloud Keychain synchronization is
-explicitly disabled and accessibility is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, as
-required above. On relaunch Dulcet reads the item and
+the declared accessibility attribute. The source requests disabled iCloud Keychain synchronization
+and `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; both properties of the real signed item are
+**ASSUMED** until the entitled control below reads them back. On relaunch Dulcet reads the item and
 prefills the secure account form, but performs **no network request until the person chooses
 Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition. The storage API's
 delete path removes the Keychain item before clearing its active-account pointer; an account-management
 logout control is outside this account-connect surface.
 
-**Background downloads after a reboot** read the credential like any other consumer;
-`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is chosen precisely so a background task can run
-after the device's first post-reboot unlock but the item cannot migrate to another device. A download
-whose credential read fails is **paused with a re-auth reason**, not failed.
+**OBSERVED unentitled fail-closed boundary:** pull-request `apple-ci` intentionally runs an unsigned,
+unentitled SwiftPM test binary. Hosted run `32595294491`, job `apple-ci` (`97085139126`), returned
+`errSecMissingEntitlement` when that process selected the data-protection Keychain. The store exposes
+that status as `DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement`; it never retries
+against the legacy Keychain, never records an active-account pointer, and the control requires that
+no matching legacy generic-password item exists. This proves the failure is loud and prevents a
+silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
+
+**ASSUMED signed-Keychain properties and promotion condition:** the accessibility, non-sync, and
+resulting device-migration properties above are promoted to OBSERVED only when workflow
+`signed-release-validation`, job `entitled-keychain`, executes
+`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` in a signed host carrying
+the production keychain-access-group entitlement. That check must add, update, read, and delete the
+real data-protection-Keychain item, read back
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and `kSecAttrSynchronizable = false`, and observe
+the item absent after deletion. Pull-request workflows receive no signing identity, so CONF-10a does
+not claim those properties.
+
+**ASSUMED background behavior:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is intended to
+let a background task run after the device's first post-reboot unlock while preventing migration to
+another device. A download whose credential read fails is specified to be **paused with a re-auth
+reason**, not failed; neither lifecycle behavior is established by the unentitled control.
 
 ### 13.2 The threat model, stated correctly
 
@@ -2416,7 +2436,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-09a | the macOS account surface publishes progress on submission and Cancel invokes the active operation handle |
 | CONF-09b | the deterministic macOS fixture renders every declared account-connect state, including idle, in-progress, connected, and each error family |
 | CONF-09c | every closed account-error presentation kind has actionable copy; TLS, internationalized-host, and cross-origin redirect remedies retain their decided specifics |
-| CONF-10a | a real macOS data-protection Keychain generic-password item adds, updates, reads, and deletes the complete account-connect request while retaining the specified accessibility and non-sync attributes |
+| CONF-10a | an unentitled macOS caller receives `missingDataProtectionKeychainEntitlement`, leaves no active-account pointer, and creates no matching legacy-Keychain item; signed-item accessibility and non-sync properties remain ASSUMED |
 | CONF-10b | persisted credentials prefill the form after relaunch without a network request until explicit Connect |
 | CONF-10c | an explicitly configured Darwin HTTP forward proxy returns 407 Basic while a matching ambient credential is present; account connect emits `Auth.UnsupportedAuthenticationChallenge` and no `Proxy-Authorization` reaches the fixture |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
@@ -3111,21 +3131,38 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 71 (2026-08-22)** — the stored Apple credential now has the security properties §13.1
-claims for it.
+**Revision 72 (2026-08-22)** — data-protection-Keychain persistence became fail-closed and its
+unexecutable pull-request claim became explicitly ASSUMED.
+
+1. Hosted run `32595294491`, job `apple-ci` (`97085139126`), observed
+   `errSecMissingEntitlement` from the unentitled SwiftPM process. This is the expected boundary for
+   a data-protection-Keychain client without a validated application identifier or Keychain access
+   group, not evidence that the store should fall back.
+2. `errSecMissingEntitlement` now maps to the typed
+   `DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement`. CONF-10a requires that
+   failure, no active-account pointer, and no matching item in the legacy Keychain. A future retry
+   against the legacy store would therefore fail the hosted control.
+3. Accessibility, synchronization, migration, and background-after-first-unlock claims for the real
+   signed item are ASSUMED. The named promotion check is
+   `signed-release-validation` / `entitled-keychain` /
+   `DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility`, executed from a signed
+   host carrying the production keychain-access-group entitlement. Pull-request CI is deliberately
+   unentitled and receives no signing identity.
+
+**Revision 71 (2026-08-22)** — Apple credential queries selected the data-protection Keychain, but
+the signed item's security attributes remained ASSUMED.
 
 1. Hosted run `32594779871`, job `apple-ci` (`97083951915`), falsified revision 68's
    source-reasoned claim: the legacy macOS Keychain accepted the accessibility input but returned no
    `kSecAttrAccessible` attribute from the real inserted item.
 2. Every add, update, read, and delete query now selects the data-protection Keychain with
-   `kSecUseDataProtectionKeychain = true`. `kSecAttrSynchronizable = false` therefore describes a
-   non-iCloud-synchronizing item in that store, while
-   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` separately prevents migration through restore
-   to a new device.
-3. The hosted real-Keychain control keeps the read-back accessibility assertion, also reads back the
-   non-synchronizable value, and exercises add, update, read, and delete against the same selected
-   store. There is no legacy-item migration: no Dulcet build containing this store has shipped and
-   no user credential exists to migrate.
+   `kSecUseDataProtectionKeychain = true`. The source requests `kSecAttrSynchronizable = false` and
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; revision 72 records why their effect on a real
+   signed item is not executable in pull-request CI.
+3. Run `32595294491` showed that the unentitled hosted control cannot insert or inspect that item;
+   its former read-back claim is superseded by revision 72's fail-closed control and entitled-host
+   promotion condition. There is no legacy-item migration: no Dulcet build containing this store has
+   shipped and no user credential exists to migrate.
 
 **Revision 70 (2026-08-22)** — programmatic replacement submissions became single-flight.
 
@@ -3151,17 +3188,17 @@ claims for it.
    It requires one handle cancellation, idle/non-connected presentation, and zero credential-store
    writes; removing the generation invalidation restores the late save and fails the test.
 
-**Revision 68 (2026-08-22)** — Keychain accessibility now delivers both background access and the
-decided non-migration property.
+**Revision 68 (2026-08-22)** — recorded the intended Keychain accessibility and non-migration
+policy; revision 72 marks its signed-item effect ASSUMED.
 
-1. Apple account credentials use `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. They remain
-   available to background work after the first post-reboot unlock, without a biometric or per-read
-   user-presence gate, and cannot migrate through backup restore to another device.
+1. Apple account credentials are specified to use
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, with intended background availability after
+   the first post-reboot unlock and no migration through restore to another device.
 2. The secure-storage table's accessibility and migration rows now describe the same policy. The
    latter remains unchanged: a person re-enters the password on a new device.
-3. The hosted Keychain control reads the actual inserted item's attributes and requires the
-   `ThisDeviceOnly` accessibility value. A source constant assertion would not establish what
-   Security.framework stored and is deliberately not used.
+3. The intended evidence was a hosted read-back of the inserted item's `ThisDeviceOnly` value.
+   Run `32595294491` later established that the unentitled test host cannot create that item; the
+   property is ASSUMED pending revision 72's signed, entitled control.
 
 **Revision 67 (2026-08-22)** — credential-bearing account values became non-printable by default.
 

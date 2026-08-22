@@ -11,6 +11,7 @@ public protocol DulcetCredentialStoring: AnyObject {
 public enum DulcetCredentialStoreError: Error, Equatable {
     case credentialMissing
     case malformedRecord
+    case missingDataProtectionKeychainEntitlement
     case unexpectedStatus(OSStatus)
 }
 
@@ -46,7 +47,7 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
             throw DulcetCredentialStoreError.credentialMissing
         }
         guard status == errSecSuccess else {
-            throw DulcetCredentialStoreError.unexpectedStatus(status)
+            throw storeError(for: status)
         }
         guard let data = result as? Data,
               let record = try? JSONDecoder().decode(CredentialRecord.self, from: data) else {
@@ -73,7 +74,7 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
             finalStatus = updateStatus
         }
         guard finalStatus == errSecSuccess else {
-            throw DulcetCredentialStoreError.unexpectedStatus(finalStatus)
+            throw storeError(for: finalStatus)
         }
         defaults.set(accountID, forKey: activeAccountKey)
     }
@@ -82,7 +83,7 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
         guard let accountID = defaults.string(forKey: activeAccountKey) else { return }
         let status = SecItemDelete(baseQuery(accountID: accountID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw DulcetCredentialStoreError.unexpectedStatus(status)
+            throw storeError(for: status)
         }
         defaults.removeObject(forKey: activeAccountKey)
     }
@@ -95,6 +96,13 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
             kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
         ]
+    }
+
+    private func storeError(for status: OSStatus) -> DulcetCredentialStoreError {
+        if status == errSecMissingEntitlement {
+            return .missingDataProtectionKeychainEntitlement
+        }
+        return .unexpectedStatus(status)
     }
 }
 

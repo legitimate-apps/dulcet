@@ -82,7 +82,7 @@
               "conformance": "CONF-10a",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitTests/keychainCredentialsRoundTripAndDelete"
+              "test": "DulcetKitTests/unentitledKeychainWriteFailsClosedWithoutLegacyFallback"
             },
             {
               "conformance": "CONF-10b",
@@ -97,7 +97,7 @@
               "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
             }
           ],
-          "reason": "All fourteen controls prove the core/Darwin and presentation halves, but no app-level test drives Connect in the built DulcetMac process through the Kotlin main dispatcher to @MainActor completion, Keychain save, and the connected UI. Promote only after apple-ci executes DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade against the real facade and fixture."
+          "reason": "All fourteen controls prove their bounded core/Darwin and presentation claims. CONF-10a proves that an unentitled SwiftPM process receives missingDataProtectionKeychainEntitlement and creates neither an active-account pointer nor a legacy-Keychain item; the signed data-protection-Keychain accessibility and non-sync attributes remain ASSUMED. Promote that storage claim only after signed-release-validation / entitled-keychain executes DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility from a signed host carrying the production keychain-access-group entitlement and reads both attributes back from the real item. Separately, no app-level test drives Connect in the built DulcetMac process through the Kotlin main dispatcher to @MainActor completion, Keychain save, and the connected UI. Promote that seam only after apple-ci executes DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade against the real facade and fixture."
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}

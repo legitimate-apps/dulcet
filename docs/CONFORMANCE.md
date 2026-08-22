@@ -17,7 +17,7 @@ the detailed assertion.
 | CONF-09a | macOS account-connect progress and active-operation cancellation |
 | CONF-09b | macOS account-connect render-state inventory |
 | CONF-09c | total actionable macOS account-error presentation |
-| CONF-10a | macOS data-protection Keychain add, update, read and delete with stored accessibility and non-sync attributes |
+| CONF-10a | an unentitled macOS caller gets a typed data-protection-Keychain entitlement failure without an active-account pointer or legacy-Keychain fallback |
 | CONF-10b | macOS explicit reconnect after persisted-credential prefill |
 | CONF-10c | Darwin 407 proxy-auth challenge rejects ambient credentials |
 | CONF-11 | successful stream signature validation |
