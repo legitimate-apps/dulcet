@@ -217,8 +217,9 @@ struct DulcetSearchView: View {
                         .dulcetForeground(.primaryTextOnWindow)
                         .accessibilityLabel(result.source.displayTitle)
                 }
-                .width(min: 132, ideal: 150, max: 180)
+                .width(min: 132, ideal: 180, max: .infinity)
             }
+            .alternatingRowBackgrounds(.disabled)
         }
         .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)

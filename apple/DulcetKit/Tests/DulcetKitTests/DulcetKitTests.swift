@@ -68,6 +68,10 @@ func searchFixtureMakesMergedSourcesExplicitWithoutDuplicates() {
     #expect(DulcetSearchSource.server.displayTitle == DulcetStrings.server)
     #expect(DulcetSearchSource.localAndServer.displayTitle == DulcetStrings.localAndServer)
     #expect(Set(DulcetSearchSource.allCases.map(\.symbolName)).count == 3)
+    #expect(
+        DulcetStrings.searchSummary
+            == "Local results appear immediately. Server matches refresh the same row instead of creating a duplicate."
+    )
 }
 
 @Test @MainActor
