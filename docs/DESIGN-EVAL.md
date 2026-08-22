@@ -259,6 +259,16 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   override foreground/background pairs outside the registry. Those native-control surfaces remain
   visible in the artifact and subject to the §5 evaluation rubric, but the automated gate makes no
   exhaustive WCAG claim for them;
+- **Registry coverage is deliberately smaller than it once was.** Adopting stock `.borderedProminent`
+  buttons and stock sidebar selection removed the authored `DulcetPrimaryActionFill`,
+  `DulcetPrimaryActionLabel`, and `DulcetSelectionBackground` colors, and with them the
+  `primary-button-label/primary-action-fill` and `selected-sidebar-label/selection-fill` registry
+  entries. Those two were the *only* authored interactive-state fills the automated WCAG probe ever
+  measured — the fifteen remaining entries are all text or icon over a static window, control,
+  material, or tint surface; they are now system-drawn and fall under the limit stated immediately above. The gate did
+  not get weaker at catching authored mistakes — there are two fewer authored pairs to get wrong — but
+  primary-action and selection contrast is now Apple's guarantee, asserted nowhere in this repository.
+  Recorded here so a later reader does not mistake the smaller registry for broader coverage;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
 
