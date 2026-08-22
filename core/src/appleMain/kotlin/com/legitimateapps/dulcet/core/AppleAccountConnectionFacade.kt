@@ -18,6 +18,14 @@ public class AppleAccountConnectOutcome internal constructor(
     public val account: ConnectedAccount?,
     public val error: DomainError?,
     public val errorKind: AppleAccountErrorKind?,
+    public val errorPresentation: AppleAccountErrorPresentation?,
+)
+
+/** Localizable presentation inputs derived exhaustively from the closed domain-error hierarchy. */
+public class AppleAccountErrorPresentation internal constructor(
+    public val kind: String,
+    public val targetHost: String?,
+    public val invalidServerURLIsInternationalized: Boolean,
 )
 
 /** Flat, closed discriminator for exhaustive Apple presentation mapping. */
@@ -122,13 +130,53 @@ private fun AccountConnectionResult.toAppleOutcome(): AppleAccountConnectOutcome
         account = account,
         error = null,
         errorKind = null,
+        errorPresentation = null,
     )
     is AccountConnectionResult.Failed -> AppleAccountConnectOutcome(
         account = null,
         error = error,
         errorKind = error.toAppleErrorKind(),
+        errorPresentation = error.toAppleErrorPresentation(),
     )
 }
+
+private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentation = when (this) {
+    is DomainError.Input.InvalidServerUrl -> AppleAccountErrorPresentation(
+        kind = "invalidServerURL",
+        targetHost = null,
+        invalidServerURLIsInternationalized =
+            reason == InvalidServerUrlReason.UnsupportedInternationalizedHost,
+    )
+    DomainError.Transport.Unreachable -> applePresentation("transportUnreachable")
+    DomainError.Transport.Timeout -> applePresentation("transportTimeout")
+    DomainError.Transport.Cancelled -> applePresentation("transportCancelled")
+    is DomainError.Security.TlsUntrusted -> applePresentation("tlsUntrusted")
+    DomainError.Security.LocalExceptionViolated -> applePresentation("localNetworkPolicyRejected")
+    is DomainError.Security.RedirectRejected -> applePresentation("redirectRejected")
+    DomainError.Protocol.MalformedEnvelope -> applePresentation("malformedEnvelope")
+    is DomainError.Protocol.Incompatible -> applePresentation("incompatibleProtocol")
+    DomainError.Protocol.NotASubsonicServer -> applePresentation("notASubsonicServer")
+    is DomainError.Server.Known -> applePresentation("knownServerError")
+    is DomainError.Server.Unknown -> applePresentation("unknownServerError")
+    DomainError.Auth.InvalidCredentials -> applePresentation("invalidCredentials")
+    DomainError.Auth.TokenAuthUnsupported -> applePresentation("tokenAuthenticationUnsupported")
+    DomainError.Auth.Forbidden -> applePresentation("forbidden")
+    DomainError.Auth.UnsupportedAuthenticationChallenge ->
+        applePresentation("unsupportedAuthenticationChallenge")
+    is DomainError.Auth.CrossOriginRedirectRejected -> AppleAccountErrorPresentation(
+        kind = "crossOriginRedirectRejected",
+        targetHost = targetHost.value,
+        invalidServerURLIsInternationalized = false,
+    )
+    is DomainError.CapabilityUnsupported -> applePresentation("capabilityUnsupported")
+}
+
+private fun applePresentation(kind: String): AppleAccountErrorPresentation =
+    AppleAccountErrorPresentation(
+        kind = kind,
+        targetHost = null,
+        invalidServerURLIsInternationalized = false,
+    )
 
 private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) {
     is DomainError.Input.InvalidServerUrl -> AppleAccountErrorKind.InputInvalidServerUrl

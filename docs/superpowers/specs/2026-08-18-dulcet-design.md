@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 61 — macOS account setup gained a reachable form, progress state, and real cancellation;
-revision 60 made platform evidence pin one executed testcase per declared conformance id; revision 59
+**Revision:** 62 — macOS account setup gained a total, actionable mapping for the closed domain-error taxonomy;
+revision 61 added a reachable form, progress state, and real cancellation; revision 60 made platform
+evidence pin one executed testcase per declared conformance id; revision 59
 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
 revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
 localized DomainError presentation explicitly future account-UI work; revision
@@ -2045,12 +2046,17 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
-**Implementation boundary (not implemented in Phase 1):** no platform code references `DomainError`,
-so the repository does not yet provide localized error text, suggested actions, or rendering. A
-future account UI must map every semantic kind to a short localized string and suggested action; that
-is a requirement, not an observed product behavior. Raw technical detail must remain confined to
-non-exported platform diagnostics with independently enforced privacy boundaries and must never
-become a `DomainError` payload. "Unknown error" is not a permitted terminal state.
+**macOS implementation boundary:** the Apple facade maps every `DomainError` subtype through an
+exhaustive Kotlin `when` into a closed presentation key and safe display fields; the Swift presenter
+then maps every closed macOS failure kind through an exhaustive `switch` with no default branch.
+Together those compiler-checked boundaries provide localized titles, explanations, and suggested
+actions for every account-connect failure. The cross-origin error exposes only the canonical target
+host: its copy explains that an SSO or identity-provider sign-in intercepted account setup and tells
+the operator to exempt `/rest/` or enter an endpoint outside that layer. An internationalized-host
+input names punycode as the available workaround, and TLS failures direct the operator to install a
+private CA at the macOS operating-system level. Raw paths, queries, credentials, and technical
+exception detail remain unavailable to presentation. Other platform presentation mappings remain
+future work. "Unknown error" is not a permitted terminal state.
 
 ---
 
@@ -3037,6 +3043,19 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 62 (2026-08-22)** — macOS account errors became total and actionable.
+
+1. The Apple facade exhaustively derives a closed presentation key from every concrete
+   `DomainError`; adding a domain subtype without deciding its user-facing mapping is a compile
+   error. The Swift presenter independently uses an exhaustive, default-free switch over its closed
+   failure kind, so adding a presentation kind without copy is also a compile error.
+2. Every kind has a localized title, explanation, and recovery. The internationalized-host case
+   gives the punycode remedy, TLS names OS-level CA installation, and unsupported intermediary
+   authentication is distinct from transport reachability.
+3. A refused cross-origin redirect now carries only a validated canonical target host into the
+   presentation boundary. The UI names that host and the `/rest/` SSO-bypass remedy without gaining
+   access to the redirect path, query, user information, or credential-bearing request.
 
 **Revision 61 (2026-08-22)** — macOS account setup became reachable and cancellable.
 

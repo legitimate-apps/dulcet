@@ -185,6 +185,22 @@ enum DulcetStrings {
         formatted("account.connect.connected", "Connected to %@", serverName)
     }
 
+    static func dynamicText(_ key: String, fallback: String) -> String {
+        Bundle.module.localizedString(forKey: key, value: fallback, table: nil)
+    }
+
+    static func dynamicFormatted(
+        _ key: String,
+        fallback: String,
+        _ arguments: CVarArg...
+    ) -> String {
+        String(
+            format: dynamicText(key, fallback: fallback),
+            locale: Locale.current,
+            arguments: arguments
+        )
+    }
+
     private static func formatted(
         _ key: StaticString,
         _ fallback: String.LocalizationValue,

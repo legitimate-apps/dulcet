@@ -43,18 +43,20 @@ private final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                 return
             }
 
-            let kind: DulcetAccountFailureKind = outcome.errorKind == .transportcancelled
-                ? .transportCancelled
-                : .transportUnreachable
-            completion(.failed(DulcetAccountFailurePresentation(
+            guard let error = outcome.errorPresentation else {
+                preconditionFailure("A failed account connection must carry its presentation key")
+            }
+            guard let kind = DulcetAccountFailureKind(rawValue: error.kind) else {
+                preconditionFailure("The core exported an unmapped account error kind")
+            }
+            let context = DulcetAccountErrorContext(
                 kind: kind,
                 serverName: URL(string: request.serverURL)?.host ?? request.serverURL,
-                title: kind == .transportCancelled ? "Connection cancelled" : "Can’t connect yet",
-                message: kind == .transportCancelled
-                    ? "Dulcet stopped the account connection."
-                    : "Dulcet could not complete account setup.",
-                recovery: "Review the connection details and try again."
-            )))
+                targetHost: error.targetHost,
+                invalidServerURLIsInternationalized:
+                    error.invalidServerURLIsInternationalized
+            )
+            completion(.failed(DulcetAccountErrorPresenter.presentation(for: context)))
         }
         return DulcetCoreAccountOperation(operation: operation)
     }
