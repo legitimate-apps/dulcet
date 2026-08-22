@@ -35,8 +35,8 @@ environment is fixed:
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
-- the standard expanded AppKit toolbar keeps its window title visible and centered, while each
-  content surface carries its own visible state heading and debug target suffixes are excluded;
+- the standard centered AppKit window title remains visible, while each content surface carries its
+  own visible state heading and debug target suffixes are excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
   and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
