@@ -202,6 +202,7 @@ public protocol DulcetAccountConnecting: AnyObject {
 @MainActor
 public final class DulcetAccountDataSource: DulcetDataSource {
     private let connector: any DulcetAccountConnecting
+    private let credentialStore: (any DulcetCredentialStoring)?
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
     private var activeOperation: (any DulcetAccountConnectOperation)?
     private var generation = 0
@@ -210,14 +211,29 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     public init(
         connector: any DulcetAccountConnecting,
+        credentialStore: (any DulcetCredentialStoring)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty
     ) {
         self.connector = connector
-        currentSnapshot = Self.snapshot(
-            state: .accountConnectIdle,
-            form: initialRequest,
-            status: .idle
-        )
+        self.credentialStore = credentialStore
+        do {
+            let restoredRequest = try credentialStore?.load() ?? initialRequest
+            currentSnapshot = Self.snapshot(
+                state: .accountConnectIdle,
+                form: restoredRequest,
+                status: .idle
+            )
+        } catch {
+            let failure = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
+                kind: .credentialPersistenceFailed,
+                serverName: "Music server"
+            ))
+            currentSnapshot = Self.snapshot(
+                state: .accountErrorPersistence,
+                form: initialRequest,
+                status: .failed(failure)
+            )
+        }
     }
 
     public func setSnapshotHandler(
@@ -256,11 +272,26 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.activeOperation = nil
             switch outcome {
             case let .connected(account):
-                self.publish(
-                    state: .accountConnected,
-                    form: request,
-                    status: .connected(account)
-                )
+                do {
+                    try self.credentialStore?.save(request)
+                    self.publish(
+                        state: .accountConnected,
+                        form: request,
+                        status: .connected(account)
+                    )
+                } catch {
+                    let failure = DulcetAccountErrorPresenter.presentation(
+                        for: DulcetAccountErrorContext(
+                            kind: .credentialPersistenceFailed,
+                            serverName: account.serverName
+                        )
+                    )
+                    self.publish(
+                        state: .accountErrorPersistence,
+                        form: request,
+                        status: .failed(failure)
+                    )
+                }
             case let .failed(failure) where failure.kind == .transportCancelled:
                 self.publish(
                     state: .accountConnectIdle,

@@ -6,7 +6,10 @@ import SwiftUI
 @main
 struct DulcetMacApp: App {
     @State private var presentation = DulcetPresentationStore(
-        source: DulcetAccountDataSource(connector: DulcetCoreAccountConnector())
+        source: DulcetAccountDataSource(
+            connector: DulcetCoreAccountConnector(),
+            credentialStore: DulcetKeychainCredentialStore()
+        )
     )
 
     var body: some Scene {
