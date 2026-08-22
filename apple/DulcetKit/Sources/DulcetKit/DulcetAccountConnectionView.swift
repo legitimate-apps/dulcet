@@ -93,9 +93,6 @@ struct DulcetAccountConnectionView: View {
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel(DulcetStrings.serverAddress)
                     .focused($focusedControl, equals: .serverAddress)
-                    .onKeyPress(.tab, phases: .down) { press in
-                        moveFocus(from: .serverAddress, reverse: press.modifiers.contains(.shift))
-                    }
                 }
                 GridRow {
                     Text(DulcetStrings.username)
@@ -103,9 +100,6 @@ struct DulcetAccountConnectionView: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel(DulcetStrings.username)
                         .focused($focusedControl, equals: .username)
-                        .onKeyPress(.tab, phases: .down) { press in
-                            moveFocus(from: .username, reverse: press.modifiers.contains(.shift))
-                        }
                 }
                 GridRow {
                     Text(DulcetStrings.password)
@@ -113,9 +107,6 @@ struct DulcetAccountConnectionView: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel(DulcetStrings.password)
                         .focused($focusedControl, equals: .password)
-                        .onKeyPress(.tab, phases: .down) { press in
-                            moveFocus(from: .password, reverse: press.modifiers.contains(.shift))
-                        }
                 }
                 GridRow {
                     Color.clear.frame(width: 1, height: 1)
@@ -125,9 +116,6 @@ struct DulcetAccountConnectionView: View {
                     )
                     .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
                     .focused($focusedControl, equals: .allowLocalHTTP)
-                    .onKeyPress(.tab, phases: .down) { press in
-                        moveFocus(from: .allowLocalHTTP, reverse: press.modifiers.contains(.shift))
-                    }
                 }
             }
             .disabled(isConnecting)
@@ -147,9 +135,6 @@ struct DulcetAccountConnectionView: View {
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .focused($focusedControl, equals: .connect)
-                .onKeyPress(.tab, phases: .down) { press in
-                    moveFocus(from: .connect, reverse: press.modifiers.contains(.shift))
-                }
                 .disabled(
                     store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || store.accountUsername.isEmpty
@@ -264,22 +249,5 @@ struct DulcetAccountConnectionView: View {
         }
     }
 
-    private func moveFocus(
-        from current: DulcetAccountConnectionFocus,
-        reverse: Bool
-    ) -> KeyPress.Result {
-        let order: [DulcetAccountConnectionFocus] = [
-            .serverAddress,
-            .username,
-            .password,
-            .allowLocalHTTP,
-            .connect,
-        ]
-        guard let index = order.firstIndex(of: current) else { return .ignored }
-        let offset = reverse ? -1 : 1
-        let destination = (index + offset + order.count) % order.count
-        focusedControl = order[destination]
-        return .handled
-    }
 }
 #endif

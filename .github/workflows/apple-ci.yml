@@ -317,6 +317,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-app-test.log" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState
+          defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetMac \

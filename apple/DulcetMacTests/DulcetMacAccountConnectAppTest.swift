@@ -24,9 +24,15 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         let store = DulcetPresentationStore(source: source)
         var observedFocus: DulcetAccountConnectionFocus?
+        var focusTrace: [DulcetAccountConnectionFocus] = []
         let hostingView = NSHostingView(rootView: DulcetAccountConnectionView(
             store: store,
-            focusDidChange: { observedFocus = $0 }
+            focusDidChange: {
+                observedFocus = $0
+                if let focus = $0, focusTrace.last != focus {
+                    focusTrace.append(focus)
+                }
+            }
         ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 650)
         let window = NSWindow(
@@ -40,6 +46,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
+        XCTAssertTrue(
+            NSApplication.shared.isFullKeyboardAccessEnabled,
+            "apple-ci must enable macOS Full Keyboard Access for all-control traversal"
+        )
 
         try await waitUntil(
             timeout: .seconds(5),
@@ -111,6 +121,30 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 && connector.operation.cancelCount == 1
                 && observedFocus == .connect
         }
+
+        let expectedTrace: [DulcetAccountConnectionFocus] = [
+            .serverAddress,
+            .username,
+            .password,
+            .allowLocalHTTP,
+            .connect,
+            .allowLocalHTTP,
+            .password,
+            .username,
+            .serverAddress,
+            .username,
+            .password,
+            .allowLocalHTTP,
+            .connect,
+            .cancel,
+            .connect,
+        ]
+        XCTAssertEqual(focusTrace, expectedTrace)
+        print(
+            "ACCOUNT CONNECT KEYBOARD TRACE focus="
+                + focusTrace.map(\.rawValue).joined(separator: ">")
+                + " actions=return:connect>escape:cancel"
+        )
     }
 
     func connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState() async throws {
