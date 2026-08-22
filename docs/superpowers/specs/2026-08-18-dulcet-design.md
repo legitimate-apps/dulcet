@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 55 — the documented HTTP-to-HTTPS carve-out now matches the equal-normalized-port
-policy implemented by account connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
+**Revision:** 56 — the documented and sealed authentication-error taxonomies now match; revision 55
+made the HTTP-to-HTTPS carve-out match the equal-normalized-port policy implemented by account
+connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
 made IPv6 zone identifiers case-sensitive during redirect-host comparison; revision 52 added an
 independent mutation test proving deletion of the numeric revision-integrity
 algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
@@ -2028,7 +2029,7 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   one server instance cannot establish a closed universe of codes and other compatible servers may
   return others.
 - `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | UnsupportedAuthenticationChallenge |
-  RedirectCredentialLoss`
+  CrossOriginRedirectRejected`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
@@ -3022,6 +3023,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 56 (2026-08-22)** — the authentication-error taxonomy shed its unreachable redirect case.
+
+1. Cross-origin account redirects now emit `Auth.CrossOriginRedirectRejected`; no production site
+   emitted the superseded `RedirectCredentialLoss` subtype after revision 44 changed the policy from
+   strip-and-follow to pre-send refusal.
+2. The dead subtype and its diagnostic branches are removed, and §18.12 now enumerates
+   `CrossOriginRedirectRejected` alongside the four other sealed authentication failures.
+3. The parity checker derives the `Auth` subtype names from the sealed common-code declaration and
+   requires the §18.12 enumeration to equal that set. Removing or adding a name on only one side now
+   fails the gate; the check establishes taxonomy parity, not that every subtype has a runtime emitter.
 
 **Revision 55 (2026-08-22)** — the documented TLS-upgrade carve-out widened to the implemented policy.
 

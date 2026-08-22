@@ -15,6 +15,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 def materialize(root: Path) -> None:
     for relative in (
         "tools/test-spec-evidence-boundaries",
+        "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
         "docs/superpowers/specs/2026-08-18-dulcet-design.md",
         ".github/workflows/parity-gate.yml",
         ".github/workflows/branch-protection-drift.yml",

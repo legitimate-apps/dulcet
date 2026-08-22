@@ -397,7 +397,6 @@ class AccountConnectConformanceTest {
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
             DomainError.Auth.CrossOriginRedirectRejected(),
-            DomainError.Auth.RedirectCredentialLoss(),
             DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
         )
         val logging = mutableListOf<String>()
