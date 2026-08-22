@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
       - name: Prove pull-request workflows never receive repository secrets
         run: python3 tools/test-pr-workflow-secret-boundary
-      - name: Require evidence-boundary markers and workflow placement
+      - name: Require evidence-boundary markers and revision integrity
         run: python3 tools/test-spec-evidence-boundaries
       - name: Prove partial evidence defects are rejected
         run: python3 tools/test-parity-gate
