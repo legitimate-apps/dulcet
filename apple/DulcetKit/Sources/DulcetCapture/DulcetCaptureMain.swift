@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 import CryptoKit
 import Darwin
 import DulcetKit
@@ -120,8 +119,6 @@ private enum CaptureError: Error, CustomStringConvertible {
     case outputExists(String)
     case geometryMismatch(String)
     case bitmapAllocation
-    case cgWindowCaptureFailed(Int)
-    case screenshotGeometryMismatch(Int, Int, Int, Int)
     case jpegEncoding
     case invalidJPEGPayload
     case pinnedControlMissing(String)
@@ -147,15 +144,6 @@ private enum CaptureError: Error, CustomStringConvertible {
             "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
             "could not allocate the fixed capture bitmap"
-        case let .cgWindowCaptureFailed(windowNumber):
-            "CGWindowListCreateImage could not capture window \(windowNumber)"
-        case let .screenshotGeometryMismatch(
-            observedWidth,
-            observedHeight,
-            expectedWidth,
-            expectedHeight
-        ):
-            "window capture returned \(observedWidth)x\(observedHeight), expected \(expectedWidth)x\(expectedHeight)"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
@@ -191,8 +179,6 @@ private struct CaptureManifest: Codable {
     let widthPixels: Int
     let heightPixels: Int
     let captureSurface: String
-    let captureMethod: String
-    let referenceRootComposition: String
     let windowTitlePolicy: String
     let textSizingPolicy: String
     let preflightRender: String
@@ -219,9 +205,9 @@ private struct DulcetCaptureMain {
     private static let jpegCompression = 0.72
 
     @MainActor
-    static func main() async {
+    static func main() {
         do {
-            try await run()
+            try run()
         } catch {
             FileHandle.standardError.write(Data("DULCET CAPTURE ERROR \(error)\n".utf8))
             exit(EXIT_FAILURE)
@@ -229,7 +215,7 @@ private struct DulcetCaptureMain {
     }
 
     @MainActor
-    private static func run() async throws {
+    private static func run() throws {
         let options = try CaptureOptions(arguments: Array(CommandLine.arguments.dropFirst()))
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: options.outputDirectory.path) {
@@ -248,7 +234,7 @@ private struct DulcetCaptureMain {
             at: preflightDirectory,
             withIntermediateDirectories: false
         )
-        _ = try await render(
+        _ = try render(
             state: .libraryBrowse,
             appearance: .light,
             variant: .standard,
@@ -258,7 +244,7 @@ private struct DulcetCaptureMain {
 
         if options.generateControlCandidates {
             for appearance in CaptureAppearance.allCases {
-                _ = try await render(
+                _ = try render(
                     state: .libraryBrowse,
                     appearance: appearance,
                     variant: .deliberatelyBadControl,
@@ -275,7 +261,7 @@ private struct DulcetCaptureMain {
         var records: [CaptureRecord] = []
         for state in options.states {
             for appearance in options.appearances {
-                records.append(try await render(
+                records.append(try render(
                     state: state,
                     appearance: appearance,
                     variant: .standard,
@@ -294,12 +280,10 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 9,
+            schemaVersion: 8,
             widthPixels: width,
             heightPixels: height,
-            captureSurface: "shipping-root-titled-nswindow-with-standard-chrome",
-            captureMethod: "cgwindowlist-create-image-including-window-nominal-resolution",
-            referenceRootComposition: "dulcet-root-view-navigation-split-view-balanced",
+            captureSurface: "titled-nswindow-with-standard-chrome",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
             preflightRender: "discarded-library-browse-light-before-recording",
@@ -320,8 +304,6 @@ private struct DulcetCaptureMain {
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
-                + "capture-method=cgwindowlist-create-image "
-                + "reference-root=navigation-split-view-balanced "
                 + "control-active-state=key "
                 + "control-baseline=pinned-resource "
                 + "output=\(options.outputDirectory.lastPathComponent)"
@@ -334,7 +316,7 @@ private struct DulcetCaptureMain {
         appearance: CaptureAppearance,
         variant: DulcetRenderVariant,
         outputDirectory: URL
-    ) async throws -> CaptureRecord {
+    ) throws -> CaptureRecord {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -342,7 +324,7 @@ private struct DulcetCaptureMain {
         let store = DulcetPresentationStore(
             source: DulcetDeterministicDataSource(initialState: state)
         )
-        let scene = DulcetRootView(store: store, variant: variant)
+        let scene = DulcetCaptureView(store: store, variant: variant)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.colorScheme, appearance.colorScheme)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
@@ -371,13 +353,10 @@ private struct DulcetCaptureMain {
         window.isMovableByWindowBackground = false
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
-        window.animationBehavior = .none
-        window.setFrame(
-            NSRect(x: 0, y: 0, width: width, height: height),
-            display: false
-        )
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
+        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: true)
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
@@ -387,7 +366,6 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
-        try await Task.sleep(for: .milliseconds(500))
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
@@ -403,24 +381,22 @@ private struct DulcetCaptureMain {
             )
         }
 
-        guard let screenshot = CGWindowListCreateImage(
-            .null,
-            .optionIncludingWindow,
-            CGWindowID(window.windowNumber),
-            [.boundsIgnoreFraming, .nominalResolution]
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
         ) else {
-            throw CaptureError.cgWindowCaptureFailed(window.windowNumber)
+            throw CaptureError.bitmapAllocation
         }
-        guard screenshot.width == width, screenshot.height == height else {
-            throw CaptureError.screenshotGeometryMismatch(
-                screenshot.width,
-                screenshot.height,
-                width,
-                height
-            )
-        }
-        let bitmap = NSBitmapImageRep(cgImage: screenshot)
         bitmap.size = NSSize(width: width, height: height)
+        captureView.cacheDisplay(in: captureView.bounds, to: bitmap)
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]

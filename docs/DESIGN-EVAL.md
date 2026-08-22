@@ -39,9 +39,37 @@ and geometry recorded by the manifest. They are **not** evidence for:
   `NavigationSplitView` hierarchy; or
 - pixel parity between the design artifact and the shipping macOS application.
 
-Until the shipping composition can be captured while retaining the geometry and byte-determinism
-gates below, a design rating of this artifact is a rating of the fixed capture sibling, not of the
-shipping view. No stronger shipping-UI claim should be made from it.
+This boundary is a measured limitation, not an untried assumption. Hosted `apple-ci` experiments on
+2026-08-22 installed the actual `DulcetRootView` in the titled window and retained both the exact
+1180 × 760 geometry guard and the recursive byte comparison:
+
+- `NSWindow.dataWithPDF(inside:)` was byte-deterministic in run `32553554450`, but the resulting
+  pixels were not faithful. The PDF retained only fragments such as the window title, an empty
+  selection shape, and a scrollbar while omitting sidebar labels and detail content. The existing
+  distinct-state gate rejected the artifact because the empty-library and offline dark captures
+  decoded to identical pixels.
+- `SCScreenshotManager` with a desktop-independent filter for the exact `NSWindow.windowNumber`
+  captured the complete shipping composition, including the native sidebar material, selection,
+  split-view divider, toolbar integration, and detail content. It was not byte-deterministic in run
+  `32554080215`. Pre-sizing the window before display, disabling window animation, and increasing
+  post-layout compositor settling from 80 ms to 500 ms eliminated the sidebar-edge differences, but
+  run `32554336276` still differed in `offline-metadata-only-light`: 237 decoded pixels (0.0264% of
+  the image) inside the GPU-muted artwork region at `x=552…815`, `y=248…383`, with channel deltas of
+  one to three levels.
+- `CGWindowListCreateImage` was then exercised against the same settled on-screen window in run
+  `32554568474`. It reproduced the same sole failing file, the same 237 changed decoded pixels, the
+  same bounding box, and the same per-channel delta distribution. This independently confirmed that
+  the residual variance comes from the shared WindowServer/compositor output rather than
+  ScreenCaptureKit's JPEG path.
+
+The measurements do not support claiming that sidebar material is intrinsically nondeterministic:
+the settling configuration made every sidebar pixel byte-stable. They do establish that, on the
+hosted evidence platform, no tested faithful window-level path captures the complete shipping
+composition while also satisfying exact byte determinism across the declared states. Pixel
+tolerances, post-capture normalization, and a weaker geometry rule were deliberately not adopted.
+The fixed sibling therefore remains the evidence path. A design rating of this artifact is a rating
+of the fixed capture sibling, not of the shipping view, and no stronger shipping-UI claim should be
+made from it unless a future capture path passes both unchanged gates.
 
 Every image is a compressed JPEG of the complete titled `NSWindow` at exactly 1180 × 760 pixels.
 The standard AppKit title bar, title, and traffic-light controls are inside the evidence boundary;
