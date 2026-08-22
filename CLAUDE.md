@@ -267,8 +267,8 @@ found eight wrong foundation contracts in revision 1, and revision 5 exists beca
 disclosure defect in revision 4.
 
 A work brief is one `FEATURES.yml` row: *"Implement row `<id>` on `<platform>`. Contract: spec
-§`<n>`. Must satisfy `<CONF-ids>`. When done, move the cell to `shipped` and fill `evidence` with the
-workflow, job and test that prove it."* Batch the whole ask into one brief rather than trickling
+§`<n>`. Must satisfy `<CONF-ids>`. When done, move the cell to `shipped` and fill `evidence` with one
+workflow, job and test identity per declared CONF id."* Batch the whole ask into one brief rather than trickling
 follow-ups — a reviewer or implementer who sees the whole job decides coherently across it, where
 isolated asks produce locally-sensible answers that do not fit together.
 

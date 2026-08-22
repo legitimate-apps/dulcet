@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "accepted_regressions": [],
   "features": [
     {
@@ -11,11 +11,56 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "evidence": {
-            "workflow": "apple-ci",
-            "job": "apple-ci",
-            "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"
-          },
+          "evidence": [
+            {
+              "conformance": "CONF-01",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"
+            },
+            {
+              "conformance": "CONF-02",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf02ReferenceServerExtensionSet"
+            },
+            {
+              "conformance": "CONF-03",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf03BaselinePingAuthentication"
+            },
+            {
+              "conformance": "CONF-04",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf04VersionCompatibility"
+            },
+            {
+              "conformance": "CONF-05",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf05OpenSubsonicEnvelopeFields"
+            },
+            {
+              "conformance": "CONF-06",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf06DistinguishesAuthenticationAndTransportFailures"
+            },
+            {
+              "conformance": "CONF-07",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf07RedactsCredentialsFromDiagnostics"
+            },
+            {
+              "conformance": "CONF-08",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"
+            }
+          ],
           "reason": "CONF-01..08 prove the macOS core and Darwin transport; account UI and credential persistence are not wired."
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},

@@ -271,9 +271,6 @@ public sealed interface DomainError {
         public data class CrossOriginRedirectRejected(
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
-        public data class RedirectCredentialLoss(
-            val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
-        ) : Auth
     }
 
     public data class CapabilityUnsupported(val featureId: CapabilityFeature) : DomainError
@@ -298,7 +295,6 @@ private val DomainError.diagnosticKind: String
         DomainError.Auth.Forbidden -> "Auth.Forbidden"
         DomainError.Auth.UnsupportedAuthenticationChallenge -> "Auth.UnsupportedAuthenticationChallenge"
         is DomainError.Auth.CrossOriginRedirectRejected -> "Auth.CrossOriginRedirectRejected"
-        is DomainError.Auth.RedirectCredentialLoss -> "Auth.RedirectCredentialLoss"
         is DomainError.CapabilityUnsupported -> "Capability.Unsupported"
     }
 
@@ -331,7 +327,6 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
             is DomainError.Auth.CrossOriginRedirectRejected,
-            is DomainError.Auth.RedirectCredentialLoss,
             -> Unit
             is DomainError.CapabilityUnsupported -> put(
                 "featureId",
@@ -861,7 +856,7 @@ internal fun String.canonicalRedirectHost(): CanonicalRedirectHost {
         val address = if (zoneDelimiter >= 0) unbracketed.substring(0, zoneDelimiter) else unbracketed
         val zone = if (zoneDelimiter >= 0) {
             unbracketed.substring(zoneDelimiter + 1)
-                .takeIf { it.isValidIpv6ZoneSuffix() }
+                .takeIf { it.isValidIpv6ZoneIdentifier() }
                 ?: return CanonicalRedirectHost.Invalid
         } else {
             null
@@ -886,25 +881,29 @@ private fun String.parseIpv6Groups(): List<Int>? {
     if (compressionIndex >= 0 && indexOf("::", compressionIndex + 2) >= 0) return null
 
     if (compressionIndex < 0) {
-        val groups = parseIpv6GroupSequence() ?: return null
+        val groups = parseIpv6GroupSequence(allowEmbeddedIpv4 = true) ?: return null
         return groups.takeIf { it.size == 8 }
     }
 
-    val left = substring(0, compressionIndex).parseIpv6GroupSequence() ?: return null
-    val right = substring(compressionIndex + 2).parseIpv6GroupSequence() ?: return null
+    val left = substring(0, compressionIndex)
+        .parseIpv6GroupSequence(allowEmbeddedIpv4 = false)
+        ?: return null
+    val right = substring(compressionIndex + 2)
+        .parseIpv6GroupSequence(allowEmbeddedIpv4 = true)
+        ?: return null
     val omittedGroupCount = 8 - left.size - right.size
     if (omittedGroupCount < 1) return null
     return left + List(omittedGroupCount) { 0 } + right
 }
 
-private fun String.parseIpv6GroupSequence(): List<Int>? {
+private fun String.parseIpv6GroupSequence(allowEmbeddedIpv4: Boolean): List<Int>? {
     if (isEmpty()) return emptyList()
     val parts = split(':')
     if (parts.any(String::isEmpty)) return null
     return buildList {
         parts.forEachIndexed { index, part ->
             if ('.' in part) {
-                if (index != parts.lastIndex) return null
+                if (!allowEmbeddedIpv4 || index != parts.lastIndex) return null
                 val octets = part.parseIpv4() ?: return null
                 add(octets[0] shl 8 or octets[1])
                 add(octets[2] shl 8 or octets[3])
@@ -1057,7 +1056,7 @@ private fun String.isStructurallyValidUrlAuthority(): Boolean {
         val literal = substring(1, closingBracket)
         val address = literal.substringBefore('%').lowercase()
         if (!address.isValidIpv6Literal()) return false
-        if ('%' in literal && !literal.substringAfter('%').isValidIpv6ZoneSuffix()) return false
+        if ('%' in literal && !literal.substringAfter('%').isValidRawIpv6ZoneSuffix()) return false
         val suffix = substring(closingBracket + 1)
         return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
     }
@@ -1122,25 +1121,27 @@ private fun String.decodePercentEncodedAsciiRegName(): String? {
     }
 }
 
-private fun String.isValidIpv6ZoneSuffix(): Boolean {
-    val zoneIdentifier = if (startsWith("25")) drop(2) else this
-    if (zoneIdentifier.isEmpty()) return false
+private fun String.isValidRawIpv6ZoneSuffix(): Boolean =
+    (if (startsWith("25")) drop(2) else this).isValidIpv6ZoneIdentifier()
+
+private fun String.isValidIpv6ZoneIdentifier(): Boolean {
+    if (isEmpty()) return false
     var index = 0
-    while (index < zoneIdentifier.length) {
-        val character = zoneIdentifier[index]
+    while (index < length) {
+        val character = this[index]
         when {
             character in 'a'..'z' || character in 'A'..'Z' || character in '0'..'9' ||
                 character in "-._~" -> index += 1
 
             character == '%' -> {
                 if (
-                    index + 2 >= zoneIdentifier.length ||
-                    !zoneIdentifier[index + 1].isAsciiHexDigit() ||
-                    !zoneIdentifier[index + 2].isAsciiHexDigit()
+                    index + 2 >= length ||
+                    !this[index + 1].isAsciiHexDigit() ||
+                    !this[index + 2].isAsciiHexDigit()
                 ) {
                     return false
                 }
-                if (zoneIdentifier.substring(index + 1, index + 3).equals("25", ignoreCase = true)) {
+                if (substring(index + 1, index + 3).equals("25", ignoreCase = true)) {
                     return false
                 }
                 index += 3

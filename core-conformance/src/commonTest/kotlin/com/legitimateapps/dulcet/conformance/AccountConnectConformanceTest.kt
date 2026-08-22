@@ -397,7 +397,6 @@ class AccountConnectConformanceTest {
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
             DomainError.Auth.CrossOriginRedirectRejected(),
-            DomainError.Auth.RedirectCredentialLoss(),
             DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
         )
         val logging = mutableListOf<String>()
@@ -778,6 +777,29 @@ class AccountConnectConformanceTest {
                 redirectsAlreadyFollowed = 0,
             ),
         )
+        listOf(
+            Triple(
+                "http://music.invalid:4533/rest/ping.view",
+                "https://music.invalid:4533/rest/ping.view",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "http://music.invalid:80/rest/ping.view",
+                "https://music.invalid:80/rest/ping.view",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+            Triple(
+                "http://music.invalid:443/rest/ping.view",
+                "https://music.invalid:443/rest/ping.view",
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
+            ),
+        ).forEach { (current, target, expected) ->
+            assertEquals(
+                expected,
+                AccountConnectionContract.redirectDecision(current, target, redirectsAlreadyFollowed = 0),
+                "$current -> $target",
+            )
+        }
     }
 
     @Test
@@ -859,6 +881,8 @@ class AccountConnectConformanceTest {
         listOf(
             "https://[fe80::1%25eth0]/rest/ping.view" to
                 "https://[fe80:0:0:0:0:0:0:1%25eth0]/collect",
+            "https://[fe80::1%2525]/rest/ping.view" to
+                "https://[fe80:0:0:0:0:0:0:1%2525]/collect",
             "https://[::ffff:127.0.0.1]/rest/ping.view" to
                 "https://[::ffff:7f00:1]/collect",
         ).forEach { (current, target) ->
@@ -876,6 +900,8 @@ class AccountConnectConformanceTest {
             "https://[1::2::3]/collect",
             "https://[1:2:3:4:5:6:7:8:9]/collect",
             "https://[12345::1]/collect",
+            "https://[1.2.3.4::]/collect",
+            "https://[1.2.3.4::5]/collect",
             "https://%zz.invalid/collect",
         ).forEach { target ->
             assertEquals(
