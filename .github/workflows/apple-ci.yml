@@ -62,7 +62,14 @@ jobs:
       - name: Require direct custom foreground modifiers to use the contrast registry
         run: python3 tools/verify_contrast_foreground_policy.py
       - name: Test native macOS presentation and registered-pair contrast ratios
-        run: swift test --package-path apple/DulcetKit
+        run: |
+          set -o pipefail
+          swift test --package-path apple/DulcetKit 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-swift-testing.log"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-swift-testing.log" \
+            "$RUNNER_TEMP/dulcet-swift-testing-junit/TEST-DulcetKitTests.xml" \
+            DulcetKitTests
       - name: Prove macOS capture rejects an inapplicable Dynamic Type label
         run: |
           swift build --package-path apple/DulcetKit --product DulcetCapture
@@ -289,4 +296,5 @@ jobs:
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
           python3 tools/verify-parity-evidence \
-            core-conformance/build/test-results/macosArm64Test
+            core-conformance/build/test-results/macosArm64Test \
+            "$RUNNER_TEMP/dulcet-swift-testing-junit"

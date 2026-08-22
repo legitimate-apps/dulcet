@@ -183,6 +183,14 @@ execution_rejections = {
         ),
         "evidence test did not execute",
     ),
+    "Swift presentation report omits one declared conformance test": (
+        passing_report.replace(
+            """  <testcase classname="DulcetKitTests"
+            name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />\n""",
+            "",
+        ),
+        "evidence test did not execute",
+    ),
     "existing but unexecuted source test": (
         """<testsuite><testcase classname="AccountConnectConformanceTest"
         name="conf02RedirectPolicy" /></testsuite>""",

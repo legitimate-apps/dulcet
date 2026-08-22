@@ -30,6 +30,8 @@ jobs:
         run: python3 tools/test-spec-evidence-boundary-mutations
       - name: Prove partial evidence defects are rejected
         run: python3 tools/test-parity-gate
+      - name: Prove Swift Testing evidence conversion rejects incomplete transcripts
+        run: python3 tools/test-swift-testing-junit
       - name: Prove required-check drift is rejected
         run: python3 tools/test-required-checks
       - name: Validate FEATURES.yml

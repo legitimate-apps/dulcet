@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 64 — a hosted Darwin 407 fixture made proxy-auth credential neutralisation observed
+**Revision:** 65 — macOS `account.connect` became shipped only after schema-2 evidence covered its
+core, Darwin, presentation, capture-state, Keychain, relaunch, and 407 claims; revision 64 made
+proxy-auth credential neutralisation observed
 at its explicit forward-proxy boundary; revision 63 added macOS Keychain persistence with explicit reconnect;
 revision 62 added a total, actionable mapping for the closed domain-error taxonomy; revision 61 added
 a reachable form, progress state, and real cancellation; revision 60 made platform
@@ -2114,11 +2116,19 @@ knowable at commit time. The PR static gate requires exact, duplicate-free confo
 asserts for every entry that (a) the named workflow and job exist, (b) the named test exists in the
 repo, (c) the job is named by the reviewed `.github/required-checks.json` manifest, and (d) the named
 job invokes the executed-evidence verifier. During that same job, after the named test task, the
-verifier reads the test runner's JUnit XML and requires every exact class/method testcase to be
+verifier reads the test runners' JUnit XML and requires every exact class/method testcase to be
 present, executed, unskipped, and passing. A source method, log line, invented job label, tuple alone,
 or one representative testcase for a multi-CONF claim is not evidence. The manifest binding is a
 reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
 records the accepted timing boundary for that live comparison.
+
+Swift Testing does not emit JUnit in this workflow. The Apple job therefore retains its complete
+console transcript and converts it only after the test command succeeds. The converter requires one
+successful run summary, one unique passed-test line per summary count, and emits those executed
+identities as JUnit; an incomplete, duplicate, failed, or summary-free transcript emits no evidence.
+The executed-evidence verifier unions that report with Kotlin/Native's JUnit. This is a transport
+adapter for runner evidence, not a source-name assertion: deleting or filtering a named Swift test
+removes its passed-test line and fails the manifest binding.
 
 **Evidence must match the claim's granularity.** A core unit test does not evidence a platform UI
 capability, and an iPhone simulator run does not evidence iPad navigation, resizing, pointer/keyboard
@@ -3067,6 +3077,28 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 65 (2026-08-22)** — macOS account connect gained complete, execution-bound platform
+evidence and moved from `partial` to `shipped`.
+
+1. `account.connect/macos` now declares six claim-sized controls in addition to CONF-01 through
+   CONF-08: progress/cancellation, declared render states, total actionable error presentation,
+   Keychain round-trip/delete, explicit reconnect, and the bounded Darwin 407 proxy path. Schema 2
+   requires exactly one evidence entry for each of all fourteen ids; no representative test stands
+   in for another claim.
+2. Hosted red run `32591604026`, `apple-ci` job `97076245047`, passed the Swift presentation suite
+   and Darwin conformance suite, then failed the executed-evidence verifier because its Kotlin-only
+   JUnit roots did not contain
+   `DulcetKitTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation`. That isolates
+   the evidence transport gap rather than a product or test failure.
+3. The Apple job now captures Swift Testing's transcript after a successful command, requires the
+   successful summary count to equal its unique passed-test lines, converts those identities to
+   JUnit, and verifies the union of Swift and Kotlin/Native reports. Mutation controls reject a
+   missing passed-test line, a duplicate identity, a failed/missing summary, and omission of a
+   manifest-named Swift presentation test.
+4. `shipped` means the macOS capability is reachable and has executed evidence for every declared
+   claim. It makes no reachability claim for iOS, iPadOS, tvOS, Android, or Android TV, whose cells
+   remain `planned`; it also does not widen revision 64's bounded proxy observation.
 
 **Revision 64 (2026-08-22)** — proxy-auth credential neutralisation gained a bounded Darwin wire
 observation.
