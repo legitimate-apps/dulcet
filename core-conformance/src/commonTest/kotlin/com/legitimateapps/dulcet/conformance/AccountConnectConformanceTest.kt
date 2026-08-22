@@ -771,6 +771,58 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun conf08RedirectHostCanonicalizationIsPlatformInvariant() {
+        listOf(
+            Triple(
+                "https://i.invalid/rest/ping.view",
+                "https://ı.invalid/collect",
+                RedirectPolicyDecision.Reject(
+                    RedirectRejectionReason.UnsupportedInternationalizedHost,
+                ),
+            ),
+            Triple(
+                "https://I.invalid/rest/ping.view",
+                "https://İ.invalid/collect",
+                RedirectPolicyDecision.Reject(
+                    RedirectRejectionReason.UnsupportedInternationalizedHost,
+                ),
+            ),
+            Triple(
+                "https://music.invalid/rest/ping.view",
+                "https://music.invalid./collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "https://%69.invalid/rest/ping.view",
+                "https://i.invalid/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "https://[::1]/rest/ping.view",
+                "https://[0:0:0:0:0:0:0:1]/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "https://xn--bcher-kva.invalid/rest/ping.view",
+                "https://bücher.invalid/collect",
+                RedirectPolicyDecision.Reject(
+                    RedirectRejectionReason.UnsupportedInternationalizedHost,
+                ),
+            ),
+        ).forEach { (current, target, expected) ->
+            assertEquals(
+                expected,
+                AccountConnectionContract.redirectDecision(
+                    currentUrl = current,
+                    targetUrl = target,
+                    redirectsAlreadyFollowed = 0,
+                ),
+                "$current -> $target",
+            )
+        }
+    }
+
+    @Test
     fun conf08EnforcesQueryAuthenticationRedirectCredentialPolicy() = runTest {
         val redirectRoot = redirectConformanceRoot()
         val crossOrigin = fixture().connect("$redirectRoot/cross-observe-query")
