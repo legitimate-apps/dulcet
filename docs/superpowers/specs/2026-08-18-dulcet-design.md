@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 48 — the declared revision and record are now mechanically consistent; revision 47
+**Revision:** 49 — redirect-origin comparison now uses bounded ASCII/IP host canonicalization and
+rejects internationalized redirect hosts distinctly without adding IDNA; revision 48 made the
+declared revision and record mechanically consistent; revision 47
 completed engine-timeout classification and narrowed account-setup feedback claims to the core
 boundary; revision 46 validates successful extension payloads against one complete positive grammar;
 revision 45 knowingly accepts Funkwhale's unambiguous string-boolean dialect; revision 44 refuses
@@ -1410,8 +1412,17 @@ URLs. The normative Phase-1 **account-connect** policy, enforced before every re
 sent, is:
 
 - Follow at most **5** redirects.
-- Preserve same-origin redirects, including path changes. Origin equality compares a canonical,
-  case-insensitive host and a scheme-normalised port.
+- Preserve same-origin redirects, including path changes. Origin equality never uses Unicode case
+  folding. Each host is percent-decoded once as strict UTF-8, one trailing DNS root dot is removed,
+  IPv6 literals are parsed to one numeric spelling, and ASCII letters are lower-cased with an
+  ASCII-only transform before the scheme-normalised port is compared. Invalid encodings or host
+  shapes fail as `Security.RedirectRejected(InvalidLocation)`.
+- Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
+  `Security.RedirectRejected(UnsupportedInternationalizedHost)`. This is distinct from
+  `Auth.CrossOriginRedirectRejected`, which means two supported canonical hosts were genuinely
+  different. Phase 1 does not use IDNA here: an A-label redirect such as
+  `xn--bcher-kva.invalid` to `bücher.invalid` is deliberately refused even when an IDNA profile could
+  prove them equivalent.
 - Permit one common reverse-proxy carve-out: `http` to `https` on the same canonical host when both
   sides use their scheme-default ports (`80` and `443`, whether explicit or implicit). A non-default
   port change, host change, `https` downgrade, or any other scheme change is not covered by this
@@ -3002,6 +3013,31 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 49 (2026-08-21)** — redirect-host comparison became ASCII-bounded and representation-aware
+without reversing the Phase-1 IDNA decision.
+
+1. Hosted red run `32546596890`, `core-build` job `96966031104`, executed the production redirect
+   contract on JVM and Android host. Five unit tests ran and all three new matrix tests failed: Unicode
+   case folding preserved `i.invalid` to dotless-U+0131 `ı.invalid`; the U+0130 variant and a general
+   Unicode target lacked the distinct unsupported result; trailing-dot, percent-encoded ASCII and
+   equivalent IPv6 spellings were spuriously cross-origin. The unrelated Linux conformance job passed.
+2. Redirect host equality now derives from a closed canonicalization result. It decodes one valid
+   percent-encoding layer as strict UTF-8, rejects any resulting non-ASCII host, strips exactly one
+   DNS root dot, parses IPv6 to eight numeric groups, and lower-cases only ASCII. It never invokes
+   Unicode case folding or IDNA. The plaintext local-network precheck consumes the same result so it
+   cannot disagree with the final redirect decision. Hosted green run `32546777399`, `core-build` job
+   `96966502896`, passed the six cases on JVM and Android host; Linux conformance job `96966502984`
+   also passed.
+3. The identical six-case policy matrix now lives in the cross-platform account-connect conformance
+   suite. Hosted run `32546943649`, `conformance-env-linux` job `96966973642`, passed 28 tests; its
+   `core-build` job `96966973725` also passed. The Apple required job executes the same common test on
+   its Darwin conformance leg; only a completed PR-head Apple run is evidence for that platform.
+4. Internationalized redirect equivalence remains an accepted Phase-1 limitation. Lifting it requires
+   one pinned common-code IDNA profile used identically on every target plus hosted JVM, Android and
+   Darwin `RedirectHostIdnaConformanceTest` vectors proving Unicode/A-label equivalence, deviation
+   handling and rejection behavior. Until then, refusing a non-ASCII redirect host is the security
+   boundary, not a malformed-host or genuine-cross-origin classification.
+
 **Revision 48 (2026-08-21)** — the spec's declared revision and revision record became mechanically
 consistent.
 
@@ -3231,6 +3267,10 @@ string-encoded boolean roles.
 3. Phase 1 deliberately does not claim IDNA conversion or validation. Common code has no built-in
    IDNA facility, and adding a new cross-platform dependency was not treated as a cheap compatibility
    patch; malformed ASCII authorities remain `MalformedHost`.
+4. Revision 49 applies the same decision to redirect locations: non-ASCII or percent-encoded UTF-8
+   hosts are rejected distinctly before origin comparison. A Unicode spelling is not treated as
+   equivalent to an A-label until one pinned common-code IDNA profile and hosted cross-target parity
+   controls exist.
 
 **Revision 33 (2026-08-21)** — unsupported Darwin authentication became legible.
 
