@@ -848,11 +848,11 @@ internal sealed interface CanonicalRedirectHost {
 }
 
 internal fun String.canonicalRedirectHost(): CanonicalRedirectHost {
-    if (any { it.code > 0x7f }) {
-        return CanonicalRedirectHost.UnsupportedInternationalizedHost
-    }
     val decoded = decodePercentEncodedAsciiRegName()
         ?: return CanonicalRedirectHost.Invalid
+    if (decoded.any { it.code > 0x7f }) {
+        return CanonicalRedirectHost.UnsupportedInternationalizedHost
+    }
 
     val bracketedIpv6 = decoded.startsWith('[') && decoded.endsWith(']')
     val unbracketed = if (bracketedIpv6) decoded.substring(1, decoded.lastIndex) else decoded
