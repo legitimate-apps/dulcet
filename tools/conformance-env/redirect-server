@@ -102,14 +102,11 @@ class RedirectState:
     ) -> bool:
         with self.lock:
             observation = self.issued.get((scenario, endpoint))
-            expected = None if observation is None else ObservedRequest(
-                method=observation.method,
-                path=expected_path,
-                raw_query=observation.raw_query,
-                body=observation.body,
-                channels=observation.channels,
+            return observation is not None and same_origin_target_matches_expectation(
+                observation,
+                request,
+                expected_path,
             )
-            return request == expected
 
     def redirect_observation(
         self,
@@ -167,6 +164,28 @@ class RedirectState:
 
 
 STATE = RedirectState()
+
+
+def expected_same_origin_target_request(
+    source_request: ObservedRequest,
+    expected_path: str,
+) -> ObservedRequest:
+    """Derive the permitted same-origin hop from the observed source request."""
+    return ObservedRequest(
+        method=source_request.method,
+        path=expected_path,
+        raw_query=source_request.raw_query,
+        body=source_request.body,
+        channels=source_request.channels,
+    )
+
+
+def same_origin_target_matches_expectation(
+    source_request: ObservedRequest,
+    target_request: ObservedRequest,
+    expected_path: str,
+) -> bool:
+    return target_request == expected_same_origin_target_request(source_request, expected_path)
 
 
 def expected_cross_origin_target_channels(

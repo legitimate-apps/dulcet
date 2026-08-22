@@ -1387,29 +1387,42 @@ where URLs leak: logs, crash reports, proxy access logs, media-framework diagnos
 
 ### 13.3 Redirects and credential leakage
 
-Signed media URLs must never carry credentials to another origin. Reverse proxies routinely redirect
-HTTP to HTTPS, add or strip trailing slashes, or redirect to object storage on a different host.
-Normative policy, enforced in the transport layer and in the resource loader (§12.4):
+Signed media URLs must never carry credentials to another origin. Account connection and media
+resource loading have different redirect policies because account connection is an authenticated
+capability probe, while the resource loader may later need to consume already-signed object-storage
+URLs. The normative Phase-1 **account-connect** policy, enforced before every redirected request is
+sent, is:
 
 - Follow at most **5** redirects.
-- A redirect changing **scheme, host or port** is cross-origin: credentials are **stripped** from the
-  redirected request. If the target then returns 401 the request fails with
-  `Auth.RedirectCredentialLoss`, with the URL surfaced redacted, rather than being retried with
-  credentials attached.
+- Preserve same-origin redirects, including path changes. Origin equality compares a canonical,
+  case-insensitive host and a scheme-normalised port.
+- Permit one common reverse-proxy carve-out: `http` to `https` on the same canonical host when both
+  sides use their scheme-default ports (`80` and `443`, whether explicit or implicit). A non-default
+  port change, host change, `https` downgrade, or any other scheme change is not covered by this
+  carve-out.
+- Refuse every other origin change **before the next request is sent**, on every hop. The result is
+  the content-free, actionable `Auth.CrossOriginRedirectRejected`, so a deployment requiring such a
+  redirect is reported as an unsupported account-connect topology rather than as unreachable or bad
+  credentials. No account-connect request is intentionally sent to the other origin.
 - Every request in the chain is inventoried at the Ktor send boundary and at the receiving wire
   fixture as header, query, and form channels. Each observed channel must resolve through an explicit
   credential-or-metadata classification; an unknown channel fails CONF-08. CONF-08 runs this policy
   once with advertised `formPost` and again with a source that advertises no `formPost`, requiring the
-  authenticated source request to use GET/query placement in the latter scenario. **CONF-08 proves that each
-  cross-origin target request is exactly the fixture-derived credential-free transformation of the
-  validated source request and the redirect location the fixture issued. The method, exact target
-  path, raw query serialization, byte-exact body, permitted channel set, fixed protocol values, target
-  authority, body length, and unchanged transport metadata must all match. It does not claim to
-  recognize every reversible encoding of a credential.** Any target-only deviation fails independent
-  of its encoding or request surface.
-- A downgrade from `https` to `http` is **rejected outright**, never followed.
-- Same-origin redirects preserve the query string as issued; credentials are not regenerated
-  mid-redirect, since a fresh salt would invalidate an already-signed URL for no benefit.
+  authenticated source request to use GET/query placement in the latter scenario. It also exercises
+  a credential-bearing server-supplied path and an origin change on the second hop. In every
+  cross-origin case, the receiving target's request count must remain zero.
+- The fixture's derived cross-origin target equality oracle remains a **defence-in-depth mutation
+  control only**. It says which deviations the fixture would detect if a forbidden request ever
+  reached the target; it is not the load-bearing proof that credentials were stripped, and it is not
+  a complete proof over server-controlled redirect targets. The load-bearing assertion is that no
+  cross-origin target request occurs.
+- Same-origin redirects preserve the exact method, raw query and body bytes observed at the source;
+  credentials are not regenerated mid-redirect, since a fresh salt would invalidate an already-signed
+  request for no benefit.
+
+The §12.4 media resource loader still owns its entire redirect chain and separately enforces the
+signed-media policy. This account-connect decision does not claim that the Phase-1 connector
+implements cross-origin object-storage handoff.
 - The final resolved URL is **never** handed to `AVPlayer` directly; the resource loader owns the whole
   chain (§12.4) — a second reason inline validation is the right mechanism.
 
@@ -2278,7 +2291,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
-| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; derives the permitted target method, exact redirect path, raw query serialization, byte-exact body, and closed channel tuple from the observed source request plus the fixture-issued redirect location; validates fixed protocol values and bounded transport metadata; preserves the exact issued credentials on same-origin hops; reports a stripped chain ending in 401 as `Auth.RedirectCredentialLoss`; rejects HTTPS downgrade |
+| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits only the same-canonical-host default-port `http`→`https` carve-out; refuses every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2970,6 +2983,31 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 44 (2026-08-21)** — account connect now refuses cross-origin redirects by construction.
+
+1. Hosted red run `32543358654`, job `conformance-env-linux`, executed 24 JVM conformance tests and
+   failed only four new CONF-08 expectations: the existing form-auth and query-auth origin changes,
+   a server-supplied credential-bearing target path on `getUser`, and an origin change on the second
+   redirect hop. Each failure demonstrated that the pre-revision behavior sent a request to the
+   cross-origin target.
+2. Before every redirected send, account connect now permits either the same origin or the explicit
+   same-canonical-host, scheme-default-port `http:80` to `https:443` upgrade. Every other host, port
+   or scheme boundary is refused. The check is repeated hop by hop, so a same-origin first hop cannot
+   introduce a later cross-origin request.
+3. Refusal returns `Auth.CrossOriginRedirectRejected`; it retains no server-controlled URL text. A
+   self-hosted deployment whose account setup requires a host or non-default-port change is therefore
+   a decided Phase-1 limitation with an actionable classification, not `Transport.Unreachable`.
+4. CONF-08's load-bearing observation is now zero requests at the cross-origin target for both auth
+   placements, the reflected credential path, and the later-hop case. The old derived cross-origin
+   target oracle remains only as defence in depth. Its method/path/raw-query/raw-body/channel mutation
+   controls establish that those named deviations are rejected; they do not establish completeness
+   over arbitrary server-selected targets. This supersedes revisions 31, 37 and 38 wherever they
+   describe credential stripping or full target equality as the account-connect safety property.
+5. Same-origin redirects remain supported. Their fixture expectation is derived from the complete
+   observed source request and the fixed fixture target path, and exact method, raw query, body bytes
+   and channel tuple are compared. No claim is made that a real deployment requiring a cross-origin
+   account-connect redirect remains compatible.
 
 **Revision 43 (2026-08-21)** — the evidence-boundary check now claims only its positive observations.
 
