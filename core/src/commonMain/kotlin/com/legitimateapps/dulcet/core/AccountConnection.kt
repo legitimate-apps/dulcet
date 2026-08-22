@@ -841,6 +841,93 @@ private fun Url.normalizedRedirectPort(): Int? = when {
     else -> port
 }
 
+internal sealed interface CanonicalRedirectHost {
+    data class Canonical(val value: String) : CanonicalRedirectHost
+    data object UnsupportedInternationalizedHost : CanonicalRedirectHost
+    data object Invalid : CanonicalRedirectHost
+}
+
+internal fun String.canonicalRedirectHost(): CanonicalRedirectHost {
+    val decoded = decodePercentEncodedAsciiRegName()
+        ?: return CanonicalRedirectHost.Invalid
+    if (decoded.any { it.code > 0x7f }) {
+        return CanonicalRedirectHost.UnsupportedInternationalizedHost
+    }
+
+    val bracketedIpv6 = decoded.startsWith('[') && decoded.endsWith(']')
+    val unbracketed = if (bracketedIpv6) decoded.substring(1, decoded.lastIndex) else decoded
+    if (bracketedIpv6 || ':' in unbracketed) {
+        val zoneDelimiter = unbracketed.indexOf('%')
+        val address = if (zoneDelimiter >= 0) unbracketed.substring(0, zoneDelimiter) else unbracketed
+        val zone = if (zoneDelimiter >= 0) {
+            unbracketed.substring(zoneDelimiter + 1)
+                .takeIf { it.isValidIpv6ZoneSuffix() }
+                ?: return CanonicalRedirectHost.Invalid
+        } else {
+            null
+        }
+        val groups = address.parseIpv6Groups() ?: return CanonicalRedirectHost.Invalid
+        val canonicalAddress = groups.joinToString(":") {
+            it.toString(16).padStart(4, '0')
+        }
+        val canonicalZone = zone?.let { "%${it.lowercaseAscii()}" }.orEmpty()
+        return CanonicalRedirectHost.Canonical("[$canonicalAddress$canonicalZone]")
+    }
+
+    val withoutRootMarker = decoded.removeSuffix(".")
+    if (withoutRootMarker.isEmpty() || !withoutRootMarker.isValidUrlRegName()) {
+        return CanonicalRedirectHost.Invalid
+    }
+    return CanonicalRedirectHost.Canonical(withoutRootMarker.lowercaseAscii())
+}
+
+private fun String.parseIpv6Groups(): List<Int>? {
+    val compressionIndex = indexOf("::")
+    if (compressionIndex >= 0 && indexOf("::", compressionIndex + 2) >= 0) return null
+
+    if (compressionIndex < 0) {
+        val groups = parseIpv6GroupSequence() ?: return null
+        return groups.takeIf { it.size == 8 }
+    }
+
+    val left = substring(0, compressionIndex).parseIpv6GroupSequence() ?: return null
+    val right = substring(compressionIndex + 2).parseIpv6GroupSequence() ?: return null
+    val omittedGroupCount = 8 - left.size - right.size
+    if (omittedGroupCount < 1) return null
+    return left + List(omittedGroupCount) { 0 } + right
+}
+
+private fun String.parseIpv6GroupSequence(): List<Int>? {
+    if (isEmpty()) return emptyList()
+    val parts = split(':')
+    if (parts.any(String::isEmpty)) return null
+    return buildList {
+        parts.forEachIndexed { index, part ->
+            if ('.' in part) {
+                if (index != parts.lastIndex) return null
+                val octets = part.parseIpv4() ?: return null
+                add(octets[0] shl 8 or octets[1])
+                add(octets[2] shl 8 or octets[3])
+            } else {
+                if (part.length !in 1..4 || part.any { !it.isAsciiHexDigit() }) return null
+                add(part.toInt(16))
+            }
+        }
+    }
+}
+
+private fun String.lowercaseAscii(): String = buildString(length) {
+    this@lowercaseAscii.forEach { character ->
+        append(
+            if (character in 'A'..'Z') {
+                (character.code + ('a'.code - 'A'.code)).toChar()
+            } else {
+                character
+            },
+        )
+    }
+}
+
 /** Stable protocol functions shared by transport, tests, and future account refreshes. */
 public object AccountConnectionContract {
     public const val protocolVersion: String = "1.16.1"
@@ -878,7 +965,23 @@ public object AccountConnectionContract {
         if (current.protocol.name == "https" && target.protocol.name == "http") {
             return RedirectPolicyDecision.Reject(RedirectRejectionReason.HttpsDowngrade)
         }
-        val sameAuthority = current.host.equals(target.host, ignoreCase = true) &&
+        val currentHost = current.host.canonicalRedirectHost()
+        val targetHost = target.host.canonicalRedirectHost()
+        if (
+            currentHost is CanonicalRedirectHost.UnsupportedInternationalizedHost ||
+            targetHost is CanonicalRedirectHost.UnsupportedInternationalizedHost
+        ) {
+            return RedirectPolicyDecision.Reject(
+                RedirectRejectionReason.UnsupportedInternationalizedHost,
+            )
+        }
+        if (
+            currentHost !is CanonicalRedirectHost.Canonical ||
+            targetHost !is CanonicalRedirectHost.Canonical
+        ) {
+            return RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation)
+        }
+        val sameAuthority = currentHost.value == targetHost.value &&
             current.normalizedRedirectPort() == target.normalizedRedirectPort()
         val sameOrigin = current.protocol == target.protocol && sameAuthority
         val sameAuthorityUpgrade = current.protocol.name == "http" &&
