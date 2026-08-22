@@ -386,20 +386,10 @@ public class AccountConnector(
                     AccountConnectionResult.Failed(failure.error)
                 } catch (failure: LocalHttpPolicyFailure) {
                     AccountConnectionResult.Failed(failure.error)
-                } catch (_: HttpRequestTimeoutException) {
-                    AccountConnectionResult.Failed(DomainError.Transport.Timeout)
                 } catch (_: CancellationException) {
                     return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
                 } catch (failure: Throwable) {
-                    AccountConnectionResult.Failed(
-                        when {
-                            isUnsupportedAuthenticationChallenge(failure) ->
-                                DomainError.Auth.UnsupportedAuthenticationChallenge
-                            else -> tlsTrustFailureOrNull(failure)?.let {
-                                DomainError.Security.TlsUntrusted(it)
-                            } ?: DomainError.Transport.Unreachable
-                        },
-                    )
+                    AccountConnectionResult.Failed(mapAccountConnectionFailure(failure))
                 }
                 lastResult = result
                 val mayTryLocalHttp = index < normalized.candidates.lastIndex &&
@@ -721,6 +711,15 @@ public class AccountConnector(
         val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
         val SALT_PATTERN = Regex("[0-9a-f]{32}")
     }
+}
+
+internal fun mapAccountConnectionFailure(failure: Throwable): DomainError = when {
+    failure is HttpRequestTimeoutException -> DomainError.Transport.Timeout
+    isUnsupportedAuthenticationChallenge(failure) ->
+        DomainError.Auth.UnsupportedAuthenticationChallenge
+    else -> tlsTrustFailureOrNull(failure)?.let {
+        DomainError.Security.TlsUntrusted(it)
+    } ?: DomainError.Transport.Unreachable
 }
 
 private class RequestTracePluginConfig {
