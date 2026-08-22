@@ -6,8 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 41 — Darwin's default shared response cache is now an explicit accepted Phase-1
-property with a bounded wire observation and no general non-reuse claim; revision 40 made present
+**Revision:** 42 — account setup now has a decided 30-second per-request connect/request/socket
+timeout with a hosted slow-server control; revision 41 made Darwin's default shared response cache
+an explicit accepted Phase-1 property with a bounded wire observation and no general non-reuse claim;
+revision 40 made present
 account metadata and permission fields with the wrong JSON types fail as a malformed envelope instead
 of silently disabling capabilities; revision 39 made raw and
 percent-encoded internationalized hosts share the honest unsupported classification, and §10.1 no
@@ -834,11 +836,19 @@ to the implementation. Given user input, Dulcet:
    extensions, user permissions, known quirks (§17).
 7. Cache it per account. Refresh after each login and on the evidence rules in §10.4.
 
+**Account-setup timeout decision:** every network request in this sequence has a 30,000 ms connect
+timeout, 30,000 ms whole-request timeout, and 30,000 ms socket-inactivity timeout. These are
+per-request limits, not one deadline for the entire extension/ping/user sequence or all redirect
+hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
+server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
+cancellable, and an elapsed limit maps to the distinct content-free `Transport.Timeout` error.
+
 ### 10.3 The failure modes must be distinguishable
 
 | observation | classification | UI |
 |---|---|---|
-| DNS/TCP/TLS failure, timeout, no HTTP response | `ServerUnreachable` | "Can't reach the server" + the normalized URL + retry |
+| DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
+| connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
 | TLS chain/hostname/expiry failure | `TlsUntrusted(reason)` | the specific reason + §13.5 guidance. **Never** an option to ignore it |
 | HTTP reached; extension probe returns 404 or a non-envelope body; **and** `ping` then succeeds | `ExtensionListUnavailable` | login proceeds, server marked `legacySubsonic` |
 | HTTP reached; extension probe non-envelope; **and** `ping` also fails to parse | `NotASubsonicServer` | "This doesn't look like a Subsonic server" — do not retry with credentials |
@@ -2953,6 +2963,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 42 (2026-08-21)** — the account-setup timeout became a deliberate self-hosted policy.
+
+1. A hosted red fixture delayed one otherwise-valid extension response for 10.5 seconds. The existing
+   connector closed the socket at its incidental ten-second limit; 22 JVM conformance tests ran and
+   only `slowSelfHostedServerCanCompleteAccountNegotiation` failed.
+2. Connect establishment, whole-request duration, and socket inactivity are now each bounded at
+   30,000 ms per request. This is not a single deadline over the entire account sequence or its
+   redirects. Cancellation remains distinct from timeout.
+3. Thirty seconds is the decided Phase-1 tradeoff for self-hosted servers that may wake storage or a
+   cold reverse proxy. The UI receives `Transport.Timeout` and says that the server took too long;
+   it does not report malformed input, bad credentials, or an undifferentiated unreachable server.
 
 **Revision 41 (2026-08-21)** — Darwin response caching became an explicit, bounded decision.
 

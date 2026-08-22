@@ -364,9 +364,9 @@ public class AccountConnector(
                 observe = traceRecorder::observe
             }
             install(HttpTimeout) {
-                connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-                requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-                socketTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+                connectTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
+                requestTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
+                socketTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
             }
         }
         return try {
@@ -723,7 +723,7 @@ public class AccountConnector(
 
     private companion object {
         const val CLIENT_NAME = "Dulcet"
-        const val REQUEST_TIMEOUT_MILLIS = 10_000L
+        const val ACCOUNT_REQUEST_TIMEOUT_MILLIS = 30_000L
         val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
         val SALT_PATTERN = Regex("[0-9a-f]{32}")
     }
