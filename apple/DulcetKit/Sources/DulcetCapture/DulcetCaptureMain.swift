@@ -119,6 +119,8 @@ private enum CaptureError: Error, CustomStringConvertible {
     case outputExists(String)
     case geometryMismatch(String)
     case bitmapAllocation
+    case windowPDFCapture
+    case windowPDFRasterization
     case jpegEncoding
     case invalidJPEGPayload
     case pinnedControlMissing(String)
@@ -144,6 +146,10 @@ private enum CaptureError: Error, CustomStringConvertible {
             "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
             "could not allocate the fixed capture bitmap"
+        case .windowPDFCapture:
+            "the window-level PDF capture was empty"
+        case .windowPDFRasterization:
+            "could not rasterize the window-level PDF capture"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
@@ -179,6 +185,8 @@ private struct CaptureManifest: Codable {
     let widthPixels: Int
     let heightPixels: Int
     let captureSurface: String
+    let captureMethod: String
+    let referenceRootComposition: String
     let windowTitlePolicy: String
     let textSizingPolicy: String
     let preflightRender: String
@@ -280,10 +288,12 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 8,
+            schemaVersion: 9,
             widthPixels: width,
             heightPixels: height,
-            captureSurface: "titled-nswindow-with-standard-chrome",
+            captureSurface: "shipping-root-titled-nswindow-with-standard-chrome",
+            captureMethod: "nswindow-data-with-pdf-rasterized-to-fixed-bitmap",
+            referenceRootComposition: "dulcet-root-view-navigation-split-view-balanced",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
             preflightRender: "discarded-library-browse-light-before-recording",
@@ -304,6 +314,8 @@ private struct DulcetCaptureMain {
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
+                + "capture-method=nswindow-data-with-pdf "
+                + "reference-root=navigation-split-view-balanced "
                 + "control-active-state=key "
                 + "control-baseline=pinned-resource "
                 + "output=\(options.outputDirectory.lastPathComponent)"
@@ -324,7 +336,7 @@ private struct DulcetCaptureMain {
         let store = DulcetPresentationStore(
             source: DulcetDeterministicDataSource(initialState: state)
         )
-        let scene = DulcetCaptureView(store: store, variant: variant)
+        let scene = DulcetRootView(store: store, variant: variant)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.colorScheme, appearance.colorScheme)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
@@ -366,6 +378,7 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
@@ -381,7 +394,12 @@ private struct DulcetCaptureMain {
             )
         }
 
-        guard let bitmap = NSBitmapImageRep(
+        let pdfData = window.dataWithPDF(inside: captureBounds)
+        guard !pdfData.isEmpty else {
+            throw CaptureError.windowPDFCapture
+        }
+        guard let pdf = NSPDFImageRep(data: pdfData),
+              let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: width,
             pixelsHigh: height,
@@ -396,7 +414,19 @@ private struct DulcetCaptureMain {
             throw CaptureError.bitmapAllocation
         }
         bitmap.size = NSSize(width: width, height: height)
-        captureView.cacheDisplay(in: captureView.bounds, to: bitmap)
+        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+            throw CaptureError.windowPDFRasterization
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.windowBackgroundColor.setFill()
+        NSRect(origin: .zero, size: expectedSize).fill()
+        let drewPDF = pdf.draw(in: NSRect(origin: .zero, size: expectedSize))
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+        guard drewPDF else {
+            throw CaptureError.windowPDFRasterization
+        }
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]

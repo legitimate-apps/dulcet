@@ -189,6 +189,14 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(inactive_root, "controlActiveState is not key")
 
+        sibling_composition_root = Path(temporary) / "capture-sibling-composition"
+        shutil.copytree(args.root, sibling_composition_root)
+        manifest_path = sibling_composition_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["referenceRootComposition"] = "dulcet-capture-view-fixed-hstack-sibling"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(sibling_composition_root, "referenceRootComposition mismatch")
+
         substituted_control_root = Path(temporary) / "substituted-pinned-control"
         shutil.copytree(args.root, substituted_control_root)
         control = (
@@ -242,6 +250,7 @@ def main() -> None:
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
+        "capture-sibling-composition=true "
         "substituted-pinned-control=true "
         "reencoded-pinned-control-as-reference-pixel-duplicate=true"
     )
