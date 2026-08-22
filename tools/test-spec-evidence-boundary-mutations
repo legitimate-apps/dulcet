@@ -90,4 +90,27 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+with tempfile.TemporaryDirectory(prefix="dulcet-error-presentation-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    boundary_start = "**Implementation boundary (not implemented in Phase 1):**"
+    boundary_end = '"Unknown error" is not a permitted terminal state.'
+    before, separator, remainder = spec.partition(boundary_start)
+    if not separator:
+        raise AssertionError("§18.12 error-presentation boundary fixture is missing")
+    _boundary, separator, after = remainder.partition(boundary_end)
+    if not separator:
+        raise AssertionError("§18.12 error-presentation boundary terminator is missing")
+    spec_path.write_text(before + "Every error is user-presentable through a localized mapping." + after)
+
+    result = invoke(root)
+    expected = "error-presentation implementation boundary"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "removed §18.12 error-presentation boundary was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
 print("spec evidence-boundary mutations are rejected")
