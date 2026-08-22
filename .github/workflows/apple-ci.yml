@@ -145,6 +145,7 @@ jobs:
           PY
       - name: Upload non-deterministic macOS shipping reference
         if: ${{ always() && steps.shipping_reference.outcome != 'skipped' }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-macos-shipping-reference-${{ github.run_id }}-${{ github.run_attempt }}
