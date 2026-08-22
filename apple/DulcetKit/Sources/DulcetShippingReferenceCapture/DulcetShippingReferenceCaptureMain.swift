@@ -1,8 +1,10 @@
 import AppKit
+import CoreVideo
 import CryptoKit
 import Darwin
 import DulcetKit
 import Foundation
+import ScreenCaptureKit
 import SwiftUI
 
 private enum CaptureAppearance: String, CaseIterable {
@@ -37,18 +39,11 @@ private enum CaptureAppearance: String, CaseIterable {
 
 private struct CaptureOptions {
     let outputDirectory: URL
-    let states: [DulcetPresentationState]
-    let appearances: [CaptureAppearance]
-    let includeControl: Bool
-    let generateControlCandidates: Bool
+    let pinnedControlDirectory: URL
 
     init(arguments: [String]) throws {
         var outputDirectory: URL?
-        var states = DulcetPresentationState.allCases
-        var appearances = CaptureAppearance.allCases
-        var includeControl = false
-        var generateControlCandidates = false
-        var usedCaptureSelectionOption = false
+        var pinnedControlDirectory: URL?
         var index = 0
 
         while index < arguments.count {
@@ -58,39 +53,10 @@ private struct CaptureOptions {
                 index += 1
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 outputDirectory = URL(fileURLWithPath: arguments[index], isDirectory: true)
-            case "--state":
-                usedCaptureSelectionOption = true
+            case "--pinned-control-directory":
                 index += 1
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
-                let value = arguments[index]
-                if value == "all" {
-                    states = DulcetPresentationState.allCases
-                } else if let state = DulcetPresentationState(rawValue: value) {
-                    states = [state]
-                } else {
-                    throw CaptureError.invalidValue(argument, value)
-                }
-            case "--appearance":
-                usedCaptureSelectionOption = true
-                index += 1
-                guard index < arguments.count else { throw CaptureError.missingValue(argument) }
-                let value = arguments[index]
-                if value == "all" {
-                    appearances = CaptureAppearance.allCases
-                } else if let appearance = CaptureAppearance(rawValue: value) {
-                    appearances = [appearance]
-                } else {
-                    throw CaptureError.invalidValue(argument, value)
-                }
-            case "--dynamic-type":
-                index += 1
-                guard index < arguments.count else { throw CaptureError.missingValue(argument) }
-                throw CaptureError.unsupportedDynamicType(arguments[index])
-            case "--include-control":
-                usedCaptureSelectionOption = true
-                includeControl = true
-            case "--generate-control-candidates":
-                generateControlCandidates = true
+                pinnedControlDirectory = URL(fileURLWithPath: arguments[index], isDirectory: true)
             default:
                 throw CaptureError.unknownArgument(argument)
             }
@@ -98,27 +64,22 @@ private struct CaptureOptions {
         }
 
         guard let outputDirectory else { throw CaptureError.outputRequired }
-        if generateControlCandidates && usedCaptureSelectionOption {
-            throw CaptureError.incompatibleControlGenerationOptions
-        }
+        guard let pinnedControlDirectory else { throw CaptureError.pinnedControlDirectoryRequired }
         self.outputDirectory = outputDirectory
-        self.states = states
-        self.appearances = appearances
-        self.includeControl = includeControl
-        self.generateControlCandidates = generateControlCandidates
+        self.pinnedControlDirectory = pinnedControlDirectory
     }
 }
 
 private enum CaptureError: Error, CustomStringConvertible {
     case outputRequired
+    case pinnedControlDirectoryRequired
     case missingValue(String)
-    case invalidValue(String, String)
     case unknownArgument(String)
-    case unsupportedDynamicType(String)
-    case incompatibleControlGenerationOptions
     case outputExists(String)
     case geometryMismatch(String)
     case bitmapAllocation
+    case screenCaptureWindowMissing(Int)
+    case screenshotGeometryMismatch(Int, Int, Int, Int)
     case jpegEncoding
     case invalidJPEGPayload
     case pinnedControlMissing(String)
@@ -128,22 +89,22 @@ private enum CaptureError: Error, CustomStringConvertible {
         switch self {
         case .outputRequired:
             "--output is required"
+        case .pinnedControlDirectoryRequired:
+            "--pinned-control-directory is required"
         case let .missingValue(argument):
             "missing value for \(argument)"
-        case let .invalidValue(argument, value):
-            "invalid value for \(argument): \(value)"
         case let .unknownArgument(argument):
             "unknown argument: \(argument)"
-        case let .unsupportedDynamicType(value):
-            "macOS capture cannot claim Dynamic Type \(value): SwiftUI dynamicTypeSize does not affect text size on macOS"
-        case .incompatibleControlGenerationOptions:
-            "--generate-control-candidates cannot be combined with --state, --appearance, or --include-control"
         case let .outputExists(path):
             "output directory must not exist: \(path)"
         case let .geometryMismatch(detail):
             "capture geometry mismatch: \(detail)"
         case .bitmapAllocation:
-            "could not allocate the fixed capture bitmap"
+            "could not resolve the AppKit theme-frame capture boundary"
+        case let .screenCaptureWindowMissing(windowNumber):
+            "ScreenCaptureKit did not expose capture window \(windowNumber)"
+        case let .screenshotGeometryMismatch(observedWidth, observedHeight, expectedWidth, expectedHeight):
+            "ScreenCaptureKit returned \(observedWidth)x\(observedHeight), expected \(expectedWidth)x\(expectedHeight)"
         case .jpegEncoding:
             "could not encode the capture as JPEG"
         case .invalidJPEGPayload:
@@ -174,14 +135,31 @@ private struct CaptureRecord: Codable {
     let windowFrameWidthPoints: Int
 }
 
+private struct MissingCapture: Codable {
+    let appearance: String
+    let error: String
+    let expectedFile: String
+    let fixtureState: String
+    let variant: String
+}
+
 private struct CaptureManifest: Codable {
     let schemaVersion: Int
+    let artifactClass: String
+    let warning: String
+    let determinismPolicy: String
+    let admissibleUses: [String]
+    let prohibitedUses: [String]
     let widthPixels: Int
     let heightPixels: Int
     let captureSurface: String
+    let captureMethod: String
+    let referenceRootComposition: String
+    let fallbackComposition: String
     let windowTitlePolicy: String
     let textSizingPolicy: String
     let preflightRender: String
+    let compositorSettlingMilliseconds: Int
     let jpegCompression: Double
     let locale: String
     let calendar: String
@@ -189,6 +167,11 @@ private struct CaptureManifest: Codable {
     let fixedClock: String
     let network: String
     let controlBaselinePolicy: String
+    let expectedShippingCaptureCount: Int
+    let successfulShippingCaptureCount: Int
+    let expectedPinnedControlCount: Int
+    let successfulPinnedControlCount: Int
+    let missingCaptures: [MissingCapture]
     let captures: [CaptureRecord]
 }
 
@@ -199,113 +182,159 @@ private final class CaptureWindow: NSWindow {
 }
 
 @main
-private struct DulcetCaptureMain {
+private struct DulcetShippingReferenceCaptureMain {
     private static let width = 1180
     private static let height = 760
     private static let jpegCompression = 0.72
+    private static let settlingMilliseconds = 500
+    private static let warning =
+        "NON-DETERMINISTIC DESIGN-RATING REFERENCE ONLY — NOT ADMISSIBLE AS REGRESSION EVIDENCE"
 
     @MainActor
-    static func main() {
+    static func main() async {
         do {
-            try run()
+            try await run()
         } catch {
-            FileHandle.standardError.write(Data("DULCET CAPTURE ERROR \(error)\n".utf8))
+            FileHandle.standardError.write(Data("DULCET SHIPPING REFERENCE ERROR \(error)\n".utf8))
             exit(EXIT_FAILURE)
         }
     }
 
     @MainActor
-    private static func run() throws {
+    private static func run() async throws {
         let options = try CaptureOptions(arguments: Array(CommandLine.arguments.dropFirst()))
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: options.outputDirectory.path) {
             throw CaptureError.outputExists(options.outputDirectory.path)
         }
-        try fileManager.createDirectory(
-            at: options.outputDirectory,
-            withIntermediateDirectories: true
-        )
+        try fileManager.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
 
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
 
+        var preflightResult = "not-attempted"
         let preflightDirectory = options.outputDirectory.appendingPathComponent(".preflight")
-        try fileManager.createDirectory(
-            at: preflightDirectory,
-            withIntermediateDirectories: false
-        )
-        _ = try render(
-            state: .libraryBrowse,
-            appearance: .light,
-            variant: .standard,
-            outputDirectory: preflightDirectory
-        )
-        try fileManager.removeItem(at: preflightDirectory)
-
-        if options.generateControlCandidates {
-            for appearance in CaptureAppearance.allCases {
-                _ = try render(
-                    state: .libraryBrowse,
-                    appearance: appearance,
-                    variant: .deliberatelyBadControl,
-                    outputDirectory: options.outputDirectory
-                )
-            }
-            print(
-                "DULCET CONTROL CANDIDATES PASS images=2 policy=review-candidates-only "
-                    + "output=\(options.outputDirectory.lastPathComponent)"
+        do {
+            try fileManager.createDirectory(at: preflightDirectory, withIntermediateDirectories: false)
+            _ = try await render(
+                state: .libraryBrowse,
+                appearance: .light,
+                outputDirectory: preflightDirectory
             )
-            return
+            preflightResult = "discarded-library-browse-light-succeeded"
+        } catch {
+            preflightResult = "discarded-library-browse-light-failed: \(error)"
+            reportFailure(preflightResult)
         }
+        try? fileManager.removeItem(at: preflightDirectory)
 
         var records: [CaptureRecord] = []
-        for state in options.states {
-            for appearance in options.appearances {
-                records.append(try render(
-                    state: state,
-                    appearance: appearance,
-                    variant: .standard,
-                    outputDirectory: options.outputDirectory
-                ))
+        var missing: [MissingCapture] = []
+        for state in DulcetPresentationState.allCases {
+            for appearance in CaptureAppearance.allCases {
+                do {
+                    records.append(try await render(
+                        state: state,
+                        appearance: appearance,
+                        outputDirectory: options.outputDirectory
+                    ))
+                } catch {
+                    let failure = MissingCapture(
+                        appearance: appearance.rawValue,
+                        error: String(describing: error),
+                        expectedFile: filename(state: state, appearance: appearance),
+                        fixtureState: state.rawValue,
+                        variant: "shipping-reference"
+                    )
+                    missing.append(failure)
+                    reportFailure("state=\(state.rawValue) appearance=\(appearance.rawValue) error=\(error)")
+                }
             }
         }
 
-        if options.includeControl {
-            for appearance in options.appearances {
+        for appearance in CaptureAppearance.allCases {
+            do {
                 records.append(try copyPinnedControl(
                     appearance: appearance,
+                    sourceDirectory: options.pinnedControlDirectory,
                     outputDirectory: options.outputDirectory
                 ))
+            } catch {
+                let failure = MissingCapture(
+                    appearance: appearance.rawValue,
+                    error: String(describing: error),
+                    expectedFile: appearance.pinnedControlFilename,
+                    fixtureState: DulcetPresentationState.libraryBrowse.rawValue,
+                    variant: "deliberately-bad-control"
+                )
+                missing.append(failure)
+                reportFailure("control appearance=\(appearance.rawValue) error=\(error)")
             }
         }
 
+        let shippingCount = records.filter { $0.variant == "shipping-reference" }.count
+        let controlCount = records.filter { $0.variant == "deliberately-bad-control" }.count
         let manifest = CaptureManifest(
-            schemaVersion: 8,
+            schemaVersion: 1,
+            artifactClass: "NON-DETERMINISTIC-SHIPPING-DESIGN-REFERENCE",
+            warning: warning,
+            determinismPolicy: "not-claimed-no-byte-comparison-no-regression-gate",
+            admissibleUses: [
+                "pairwise-design-rating",
+                "shipping-composition-visual-review",
+            ],
+            prohibitedUses: [
+                "pixel-parity",
+                "regression-testing",
+                "run-to-run-diffing",
+            ],
             widthPixels: width,
             heightPixels: height,
-            captureSurface: "titled-nswindow-with-standard-chrome",
+            captureSurface: "shipping-root-titled-nswindow-with-standard-chrome",
+            captureMethod: "screen-capture-kit-desktop-independent-window",
+            referenceRootComposition: "dulcet-root-view-navigation-split-view-balanced",
+            fallbackComposition: "none-never-substitute-dulcet-capture-view",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
-            preflightRender: "discarded-library-browse-light-before-recording",
+            preflightRender: preflightResult,
+            compositorSettlingMilliseconds: settlingMilliseconds,
             jpegCompression: jpegCompression,
             locale: "en_US_POSIX",
             calendar: "gregorian",
             timeZone: "UTC",
             fixedClock: "2026-08-21T14:32:00Z",
             network: "disabled-by-fixture-source",
-            controlBaselinePolicy: "bundled-reviewed-resources-explicit-regeneration-only",
+            controlBaselinePolicy: "copied-byte-for-byte-from-hash-pinned-deterministic-capture-resources",
+            expectedShippingCaptureCount: DulcetPresentationState.allCases.count * CaptureAppearance.allCases.count,
+            successfulShippingCaptureCount: shippingCount,
+            expectedPinnedControlCount: CaptureAppearance.allCases.count,
+            successfulPinnedControlCount: controlCount,
+            missingCaptures: missing.sorted { $0.expectedFile < $1.expectedFile },
             captures: records.sorted { $0.file < $1.file }
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let manifestData = try encoder.encode(manifest) + Data("\n".utf8)
-        try manifestData.write(to: options.outputDirectory.appendingPathComponent("manifest.json"))
+        try (encoder.encode(manifest) + Data("\n".utf8)).write(
+            to: options.outputDirectory.appendingPathComponent("manifest.json")
+        )
+
+        let notice = """
+        \(warning)
+
+        These images capture the shipping DulcetRootView NavigationSplitView composition.
+        ScreenCaptureKit/WindowServer output has measured run-to-run pixel variance.
+        Use this artifact for design rating and visual review only.
+        Do not use it for pixel parity, regression testing, or run-to-run diff claims.
+        See manifest.json for successful and missing captures.
+        """
+        try Data((notice + "\n").utf8).write(
+            to: options.outputDirectory.appendingPathComponent("ARTIFACT-NOTICE.txt")
+        )
 
         print(
-            "DULCET CAPTURE PASS images=\(records.count) "
-                + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
-                + "control-active-state=key "
-                + "control-baseline=pinned-resource "
+            "DULCET SHIPPING REFERENCE COMPLETE shipping=\(shippingCount)/14 "
+                + "controls=\(controlCount)/2 missing=\(missing.count) "
+                + "determinism=not-claimed regression-admissible=false "
                 + "output=\(options.outputDirectory.lastPathComponent)"
         )
     }
@@ -314,9 +343,8 @@ private struct DulcetCaptureMain {
     private static func render(
         state: DulcetPresentationState,
         appearance: CaptureAppearance,
-        variant: DulcetRenderVariant,
         outputDirectory: URL
-    ) throws -> CaptureRecord {
+    ) async throws -> CaptureRecord {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -324,7 +352,7 @@ private struct DulcetCaptureMain {
         let store = DulcetPresentationStore(
             source: DulcetDeterministicDataSource(initialState: state)
         )
-        let scene = DulcetCaptureView(store: store, variant: variant)
+        let scene = DulcetRootView(store: store, variant: .standard)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.colorScheme, appearance.colorScheme)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
@@ -345,6 +373,10 @@ private struct DulcetCaptureMain {
             backing: .buffered,
             defer: false
         )
+        defer {
+            window.contentView = nil
+            window.close()
+        }
         window.appearance = hostingView.appearance
         window.backgroundColor = NSColor.windowBackgroundColor
         window.title = "Dulcet"
@@ -353,10 +385,10 @@ private struct DulcetCaptureMain {
         window.isMovableByWindowBackground = false
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
+        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
-        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: true)
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
@@ -366,6 +398,7 @@ private struct DulcetCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(settlingMilliseconds))
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
@@ -381,22 +414,37 @@ private struct DulcetCaptureMain {
             )
         }
 
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            throw CaptureError.bitmapAllocation
+        let shareableContent = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+        guard let captureWindow = shareableContent.windows.first(where: {
+            $0.windowID == CGWindowID(window.windowNumber)
+        }) else {
+            throw CaptureError.screenCaptureWindowMissing(window.windowNumber)
         }
-        bitmap.size = NSSize(width: width, height: height)
-        captureView.cacheDisplay(in: captureView.bounds, to: bitmap)
+        let filter = SCContentFilter(desktopIndependentWindow: captureWindow)
+        let configuration = SCStreamConfiguration()
+        configuration.width = width
+        configuration.height = height
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        configuration.showsCursor = false
+        configuration.capturesAudio = false
+        configuration.ignoreShadowsSingleWindow = true
+        let screenshot = try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: configuration
+        )
+        guard screenshot.width == width, screenshot.height == height else {
+            throw CaptureError.screenshotGeometryMismatch(
+                screenshot.width,
+                screenshot.height,
+                width,
+                height
+            )
+        }
+        let bitmap = NSBitmapImageRep(cgImage: screenshot)
+        bitmap.size = expectedSize
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]
@@ -404,41 +452,28 @@ private struct DulcetCaptureMain {
             throw CaptureError.jpegEncoding
         }
 
-        let variantName: String
-        let prefix: String
-        switch variant {
-        case .standard:
-            variantName = "reference"
-            prefix = "macos"
-        case .deliberatelyBadControl:
-            variantName = "deliberately-bad-control"
-            prefix = "macos-CONTROL-DELIBERATELY-BAD"
-        }
         let boundJPEG = try bindJPEGPayload(
             jpeg,
             fixtureState: state.rawValue,
-            appearance: appearance.rawValue,
-            variant: variantName
+            appearance: appearance.rawValue
         )
-        let filename = "\(prefix)-\(state.rawValue)-\(appearance.rawValue).jpg"
-        try boundJPEG.write(to: outputDirectory.appendingPathComponent(filename))
-        window.contentView = nil
-        window.close()
+        let outputFilename = filename(state: state, appearance: appearance)
+        try boundJPEG.write(to: outputDirectory.appendingPathComponent(outputFilename))
 
         return CaptureRecord(
             appearance: appearance.rawValue,
-            captureProvenance: "rendered-current-run",
+            captureProvenance: "rendered-current-run-via-window-server",
             captureBoundsHeightPoints: Int(captureBounds.height),
             captureBoundsWidthPoints: Int(captureBounds.width),
             captureBoundsXPoints: Int(captureBounds.origin.x),
             captureBoundsYPoints: Int(captureBounds.origin.y),
             controlActiveState: "key",
-            file: filename,
+            file: outputFilename,
             fixtureState: state.rawValue,
             jpegBytes: boundJPEG.count,
             pinnedControlSha256: nil,
             sha256: sha256Hex(boundJPEG),
-            variant: variantName,
+            variant: "shipping-reference",
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
         )
@@ -446,17 +481,15 @@ private struct DulcetCaptureMain {
 
     private static func copyPinnedControl(
         appearance: CaptureAppearance,
+        sourceDirectory: URL,
         outputDirectory: URL
     ) throws -> CaptureRecord {
         let filename = appearance.pinnedControlFilename
-        guard let resourceURL = Bundle.module.url(
-            forResource: filename,
-            withExtension: nil,
-            subdirectory: "PinnedControls"
-        ) else {
+        let source = sourceDirectory.appendingPathComponent(filename)
+        guard FileManager.default.fileExists(atPath: source.path) else {
             throw CaptureError.pinnedControlMissing(filename)
         }
-        let data = try Data(contentsOf: resourceURL)
+        let data = try Data(contentsOf: source)
         let observedHash = sha256Hex(data)
         guard observedHash == appearance.pinnedControlSHA256 else {
             throw CaptureError.pinnedControlHashMismatch(
@@ -469,7 +502,7 @@ private struct DulcetCaptureMain {
 
         return CaptureRecord(
             appearance: appearance.rawValue,
-            captureProvenance: "bundled-pinned-resource",
+            captureProvenance: "copied-hash-pinned-deterministic-control-resource",
             captureBoundsHeightPoints: height,
             captureBoundsWidthPoints: width,
             captureBoundsXPoints: 0,
@@ -486,19 +519,26 @@ private struct DulcetCaptureMain {
         )
     }
 
+    private static func filename(
+        state: DulcetPresentationState,
+        appearance: CaptureAppearance
+    ) -> String {
+        "macos-\(state.rawValue)-\(appearance.rawValue).jpg"
+    }
+
     private static func bindJPEGPayload(
         _ jpeg: Data,
         fixtureState: String,
-        appearance: String,
-        variant: String
+        appearance: String
     ) throws -> Data {
         guard jpeg.starts(with: [0xFF, 0xD8]) else {
             throw CaptureError.invalidJPEGPayload
         }
-        let commentText = "DULCET-CAPTURE-BINDING-V1\n"
+        let commentText = "DULCET-SHIPPING-REFERENCE-BINDING-V1\n"
                 + "fixtureState=\(fixtureState)\n"
                 + "appearance=\(appearance)\n"
-                + "variant=\(variant)\n"
+                + "variant=shipping-reference\n"
+                + "regressionAdmissible=false\n"
                 + "jpegPayloadSha256=\(sha256Hex(jpeg))\n"
         let comment = Data(commentText.utf8)
         let segmentLength = comment.count + 2
@@ -516,5 +556,9 @@ private struct DulcetCaptureMain {
 
     private static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func reportFailure(_ message: String) {
+        FileHandle.standardError.write(Data("DULCET SHIPPING REFERENCE MISSING \(message)\n".utf8))
     }
 }
