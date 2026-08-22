@@ -20,6 +20,11 @@ public struct DulcetDeterministicFixture {
         )
 
         switch state {
+        case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
+             .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
+             .accountErrorCapability, .accountErrorPersistence:
+            return accountSnapshot(for: state)
         case .emptyLibraryNoAccount, .libraryBrowse:
             return base.snapshot()
         case .albumDetailMultiDisc:
@@ -64,13 +69,24 @@ public struct DulcetDeterministicFixture {
             .nowPlaying
         case .searchMixedSources:
             .search
-        case .tlsUntrusted:
+        case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
+             .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
+             .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted:
             .settings
         }
     }
 
     private func connectivity(for state: DulcetPresentationState) -> DulcetConnectivity {
         switch state {
+        case .accountConnected:
+            .online(serverName: "Listening Room")
+        case .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
+             .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
+             .accountErrorCapability, .accountErrorPersistence:
+            .connectionFailed(.account(Self.accountFailure(for: state)))
+        case .accountConnectIdle, .accountConnecting:
+            .unavailable
         case .emptyLibraryNoAccount:
             .unavailable
         case .tlsUntrusted:
@@ -80,6 +96,45 @@ public struct DulcetDeterministicFixture {
         default:
             .online(serverName: "Listening Room")
         }
+    }
+
+    private func accountSnapshot(for state: DulcetPresentationState) -> DulcetSnapshot {
+        let form = DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid",
+            username: "listener",
+            password: "fixture-password",
+            allowLocalHTTP: false
+        )
+        let status: DulcetAccountConnectionStatus = switch state {
+        case .accountConnectIdle:
+            .idle
+        case .accountConnecting:
+            .connecting
+        case .accountConnected:
+            .connected(DulcetConnectedAccountSummary(
+                serverName: "Listening Room",
+                normalizedServerURL: "https://music.example.invalid"
+            ))
+        case .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
+             .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
+             .accountErrorCapability, .accountErrorPersistence:
+            .failed(Self.accountFailure(for: state))
+        case .emptyLibraryNoAccount, .libraryBrowse, .albumDetailMultiDisc, .nowPlaying,
+             .searchMixedSources, .tlsUntrusted, .offlineMetadataOnly:
+            .idle
+        }
+        return DulcetSnapshot(
+            state: state,
+            selectedDestination: .settings,
+            accountConnected: state == .accountConnected,
+            connectivity: connectivity(for: state),
+            albums: [],
+            looseTracks: [],
+            recentlyAddedTracks: [],
+            captureDate: Self.captureDate,
+            accountForm: form,
+            accountConnection: status
+        )
     }
 }
 
@@ -112,11 +167,16 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
             case .library: .libraryBrowse
             case .search: .searchMixedSources
             case .nowPlaying: .nowPlaying
-            case .settings: .tlsUntrusted
+            case .settings: .accountConnectIdle
             }
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
+        case let .submitAccountConnection(request):
+            currentSnapshot = fixture.snapshot(for: .accountConnecting)
+                .replacingAccountForm(request)
+        case .cancelAccountConnection:
+            currentSnapshot = fixture.snapshot(for: .accountConnectIdle)
         }
         snapshotHandler?(currentSnapshot)
     }
@@ -136,7 +196,28 @@ private extension DulcetSnapshot {
             nowPlaying: nowPlaying,
             searchQuery: query,
             searchResults: searchResults,
-            captureDate: captureDate
+            captureDate: captureDate,
+            accountForm: accountForm,
+            accountConnection: accountConnection
+        )
+    }
+
+    func replacingAccountForm(_ form: DulcetAccountConnectRequest) -> DulcetSnapshot {
+        DulcetSnapshot(
+            state: state,
+            selectedDestination: selectedDestination,
+            accountConnected: accountConnected,
+            connectivity: connectivity,
+            albums: albums,
+            looseTracks: looseTracks,
+            recentlyAddedTracks: recentlyAddedTracks,
+            selectedAlbum: selectedAlbum,
+            nowPlaying: nowPlaying,
+            searchQuery: searchQuery,
+            searchResults: searchResults,
+            captureDate: captureDate,
+            accountForm: form,
+            accountConnection: accountConnection
         )
     }
 }
@@ -444,6 +525,95 @@ private extension DulcetDeterministicFixture {
         reason: "The certificate expired on 14 August 2026.",
         technicalDetail: "macOS stopped the connection because it could not establish an OS-trusted certificate chain."
     )
+
+    static func accountFailure(
+        for state: DulcetPresentationState
+    ) -> DulcetAccountFailurePresentation {
+        let fixture: (DulcetAccountFailureKind, String, String, String, String?) = switch state {
+        case .accountErrorInput:
+            (
+                .invalidServerURL,
+                "This server address isn’t supported",
+                "Enter a complete HTTP or HTTPS OpenSubsonic server address.",
+                "Check the address and try again.",
+                nil
+            )
+        case .accountErrorTransport:
+            (
+                .transportTimeout,
+                "The server took too long to respond",
+                "Dulcet stopped this connection attempt after the server did not respond in time.",
+                "Check that the server is awake and reachable, then try again.",
+                nil
+            )
+        case .accountErrorSecurity:
+            (
+                .tlsUntrusted,
+                "This server’s certificate isn’t trusted",
+                "macOS could not establish an operating-system-trusted certificate chain.",
+                "Install the private certificate authority in macOS, then try again.",
+                nil
+            )
+        case .accountErrorProtocol:
+            (
+                .malformedEnvelope,
+                "The server returned invalid account information",
+                "Dulcet reached the server, but its successful response was not a valid Subsonic envelope.",
+                "Check for a proxy login page or update the server, then try again.",
+                nil
+            )
+        case .accountErrorServer:
+            (
+                .knownServerError,
+                "The server could not complete account setup",
+                "The server returned a recognised Subsonic error.",
+                "Review the server configuration and try again.",
+                nil
+            )
+        case .accountErrorAuthentication:
+            (
+                .crossOriginRedirectRejected,
+                "The server redirected account setup to another host",
+                "Dulcet did not send credentials to login.example.invalid.",
+                "Exclude /rest/ from the SSO sign-in layer, or enter an endpoint that is not behind it.",
+                "login.example.invalid"
+            )
+        case .accountErrorCapability:
+            (
+                .capabilityUnsupported,
+                "Account connection isn’t available",
+                "This build cannot complete the requested account capability.",
+                "Update Dulcet and try again.",
+                nil
+            )
+        case .accountErrorPersistence:
+            (
+                .credentialPersistenceFailed,
+                "Dulcet couldn’t save these credentials",
+                "The server accepted the account, but the system Keychain did not save it.",
+                "Unlock the Keychain and try connecting again.",
+                nil
+            )
+        case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .emptyLibraryNoAccount, .libraryBrowse, .albumDetailMultiDisc, .nowPlaying,
+             .searchMixedSources, .tlsUntrusted, .offlineMetadataOnly:
+            (
+                .transportUnreachable,
+                "Can’t reach the server",
+                "Dulcet could not establish a connection.",
+                "Check the address and network, then try again.",
+                nil
+            )
+        }
+        return DulcetAccountFailurePresentation(
+            kind: fixture.0,
+            serverName: "music.example.invalid",
+            title: fixture.1,
+            message: fixture.2,
+            recovery: fixture.3,
+            targetHost: fixture.4
+        )
+    }
 
     static func album(
         id: String,

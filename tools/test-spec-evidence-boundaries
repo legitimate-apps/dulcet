@@ -98,16 +98,27 @@ for marker in (
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 for marker in (
-    "**Implementation boundary:**",
-    "no non-test caller of `AccountConnector`",
-    "has not built an account-setup progress indicator, Cancel control, or user-facing timeout/error presentation",
-    "requirement for a future platform caller, not an observed product behavior",
+    "**macOS Phase-1 relaunch decision — explicit reconnect:**",
+    "one Keychain generic-password value",
+    "generated local UUID",
+    "performs **no network request until the person chooses Connect**",
+    "credential-persistence error surface",
+):
+    if marker not in normalized_authentication:
+        errors.append(f"Keychain/relaunch implementation boundary is missing {marker!r}")
+
+for marker in (
+    "**macOS implementation boundary:**",
+    "`DulcetMacApp` constructs the live `AppleAccountConnectionClient`",
+    "publishes an explicit in-progress state",
+    "visible Cancel control invokes the synchronously returned operation handle",
+    "other platform shells remain future work",
 ):
     if marker not in normalized_account_setup:
         errors.append(f"account-setup implementation boundary is missing {marker!r}")
 
-if "required future platform presentation (not implemented in Phase 1)" not in normalized_failure_modes:
-    errors.append("account-setup implementation boundary is missing the future-presentation table label")
+if "required macOS presentation (other platform callers remain future work)" not in normalized_failure_modes:
+    errors.append("account-setup implementation boundary is missing the macOS-presentation table label")
 
 auth_source = section(
     account_connection_source,
@@ -132,10 +143,14 @@ else:
         )
 
 for marker in (
-    "**Implementation boundary (not implemented in Phase 1):**",
-    "no platform code references `DomainError`",
-    "future account UI",
-    "not an observed product behavior",
+    "**macOS implementation boundary:**",
+    "exhaustive Kotlin `when`",
+    "exhaustive `switch` with no default branch",
+    "exposes only the canonical target host",
+    "exempt `/rest/`",
+    "punycode as the available workaround",
+    "install a private CA at the macOS operating-system level",
+    "Other platform presentation mappings remain future work",
 ):
     if marker not in normalized_error_model:
         errors.append(f"§18.12 error-presentation implementation boundary is missing {marker!r}")

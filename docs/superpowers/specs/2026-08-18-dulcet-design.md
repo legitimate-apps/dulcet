@@ -6,8 +6,11 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 60 — platform evidence pins one executed testcase per declared conformance id;
-revision 59 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
+**Revision:** 63 — macOS account credentials gained Keychain persistence with explicit reconnect;
+revision 62 added a total, actionable mapping for the closed domain-error taxonomy; revision 61 added
+a reachable form, progress state, and real cancellation; revision 60 made platform
+evidence pin one executed testcase per declared conformance id; revision 59
+made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
 revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
 localized DomainError presentation explicitly future account-UI work; revision
 56 made the documented and sealed authentication-error taxonomies match; revision 55
@@ -867,14 +870,16 @@ per-request limits, not one deadline for the entire extension/ping/user sequence
 hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
 server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
 cancellable by its caller at the core boundary, and an elapsed limit maps to the distinct content-free
-`Transport.Timeout` error. **Implementation boundary:** this repository has no non-test caller of
-`AccountConnector`, so Phase 1 has not built an account-setup progress indicator, Cancel control, or
-user-facing timeout/error presentation. The presentation below is a requirement for a future platform
-caller, not an observed product behavior.
+`Transport.Timeout` error. **macOS implementation boundary:** `DulcetMacApp` constructs the live
+`AppleAccountConnectionClient` through a Swift presentation adapter. The Connection surface accepts
+server URL, username and password, publishes an explicit in-progress state, and its visible Cancel
+control invokes the synchronously returned operation handle, which cancels the child coroutine and
+in-flight Ktor request. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
+Android TV. This paragraph makes no shipped account-setup UI claim for them.
 
 ### 10.3 The failure modes must be distinguishable
 
-| observation | classification | required future platform presentation (not implemented in Phase 1) |
+| observation | classification | required macOS presentation (other platform callers remain future work) |
 |---|---|---|
 | DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
 | connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
@@ -1377,6 +1382,18 @@ through Ktor Darwin's `configureSession` hook.
 | device migration / backup restore | credentials do not migrate; the user re-enters the password on a new device | same |
 | key invalidation (lock screen removed, keystore reset) | detected on read; the account enters a re-auth state and cached library data is retained | same |
 | logout | credential deleted before any other cleanup (§14.7) | same |
+
+**macOS Phase-1 relaunch decision — explicit reconnect:** after a successful account negotiation,
+the complete connection request is encoded into one Keychain generic-password value under
+`service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
+is retained in preferences as the active-account pointer; neither the URL, username, nor password is
+used as a Keychain index. Synchronization is explicitly disabled and accessibility is
+`kSecAttrAccessibleAfterFirstUnlock`, as required above. On relaunch Dulcet reads the item and
+prefills the secure account form, but performs **no network request until the person chooses
+Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
+surface instead of silently attempting a connection or discarding the condition. The storage API's
+delete path removes the Keychain item before clearing its active-account pointer; an account-management
+logout control is outside this account-connect surface.
 
 **Background downloads after a reboot** read the credential like any other consumer;
 `kSecAttrAccessibleAfterFirstUnlock` is chosen precisely so a background task can run before the user
@@ -2042,12 +2059,17 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
-**Implementation boundary (not implemented in Phase 1):** no platform code references `DomainError`,
-so the repository does not yet provide localized error text, suggested actions, or rendering. A
-future account UI must map every semantic kind to a short localized string and suggested action; that
-is a requirement, not an observed product behavior. Raw technical detail must remain confined to
-non-exported platform diagnostics with independently enforced privacy boundaries and must never
-become a `DomainError` payload. "Unknown error" is not a permitted terminal state.
+**macOS implementation boundary:** the Apple facade maps every `DomainError` subtype through an
+exhaustive Kotlin `when` into a closed presentation key and safe display fields; the Swift presenter
+then maps every closed macOS failure kind through an exhaustive `switch` with no default branch.
+Together those compiler-checked boundaries provide localized titles, explanations, and suggested
+actions for every account-connect failure. The cross-origin error exposes only the canonical target
+host: its copy explains that an SSO or identity-provider sign-in intercepted account setup and tells
+the operator to exempt `/rest/` or enter an endpoint outside that layer. An internationalized-host
+input names punycode as the available workaround, and TLS failures direct the operator to install a
+private CA at the macOS operating-system level. Raw paths, queries, credentials, and technical
+exception detail remain unavailable to presentation. Other platform presentation mappings remain
+future work. "Unknown error" is not a permitted terminal state.
 
 ---
 
@@ -3034,6 +3056,46 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 63 (2026-08-22)** — macOS account credentials gained Keychain persistence.
+
+1. A successful account negotiation writes the server URL, username, password, and local-HTTP choice
+   into a Keychain generic-password item. The service is the stable bundle prefix, the account key is
+   a generated local UUID, synchronization is off, and accessibility is
+   `kSecAttrAccessibleAfterFirstUnlock`.
+2. Relaunch uses explicit reconnect: the saved values prefill the secure form, while the connector is
+   not invoked until the person chooses Connect. Keychain read/write failures use the decided
+   credential-persistence presentation rather than appearing connected or silently losing state.
+3. The hosted Apple control round-trips and deletes a real test Keychain item, then separately proves
+   that a seeded credential store causes zero connector requests before explicit submission and is
+   updated after a successful connection.
+
+**Revision 62 (2026-08-22)** — macOS account errors became total and actionable.
+
+1. The Apple facade exhaustively derives a closed presentation key from every concrete
+   `DomainError`; adding a domain subtype without deciding its user-facing mapping is a compile
+   error. The Swift presenter independently uses an exhaustive, default-free switch over its closed
+   failure kind, so adding a presentation kind without copy is also a compile error.
+2. Every kind has a localized title, explanation, and recovery. The internationalized-host case
+   gives the punycode remedy, TLS names OS-level CA installation, and unsupported intermediary
+   authentication is distinct from transport reachability.
+3. A refused cross-origin redirect now carries only a validated canonical target host into the
+   presentation boundary. The UI names that host and the `/rest/` SSO-bypass remedy without gaining
+   access to the redirect path, query, user information, or credential-bearing request.
+
+**Revision 61 (2026-08-22)** — macOS account setup became reachable and cancellable.
+
+1. The macOS app no longer boots the deterministic library fixture. Its Connection destination owns
+   server URL, username and password fields, an explicit connecting state, and a visible Cancel
+   control wired to the active operation handle.
+2. `AppleAccountConnectionClient` wraps the suspending connector in the §7.2 completion-plus-handle
+   contract: it returns the handle synchronously, confines completion to the Apple main dispatcher,
+   maps cancellation to `Transport.Cancelled`, and prevents Kotlin exceptions crossing the boundary.
+3. The deterministic Swift source and hosted Swift test drive the same presentation actions. The
+   control requires submission to publish progress and requires Cancel to invoke the returned handle;
+   captures include idle, progress, connected, and typed error-family surfaces in both appearances.
+4. This revision implements the caller only on macOS. It does not claim account setup is reachable
+   from the other platform shells.
 
 **Revision 60 (2026-08-22)** — executed platform evidence became complete over each row's conformance set.
 

@@ -1,6 +1,17 @@
 import Foundation
 
 public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendable {
+    case accountConnectIdle = "account-connect-idle"
+    case accountConnecting = "account-connecting"
+    case accountConnected = "account-connected"
+    case accountErrorInput = "account-error-input"
+    case accountErrorTransport = "account-error-transport"
+    case accountErrorSecurity = "account-error-security"
+    case accountErrorProtocol = "account-error-protocol"
+    case accountErrorServer = "account-error-server"
+    case accountErrorAuthentication = "account-error-authentication"
+    case accountErrorCapability = "account-error-capability"
+    case accountErrorPersistence = "account-error-persistence"
     case emptyLibraryNoAccount = "empty-library-no-account"
     case libraryBrowse = "library-browse"
     case albumDetailMultiDisc = "album-detail-multi-disc"
@@ -30,12 +41,142 @@ public enum DulcetConnectivity: Sendable, Hashable {
 
 public enum DulcetConnectionFailure: Sendable, Hashable {
     case tlsUntrusted(DulcetTLSFailure)
+    case account(DulcetAccountFailurePresentation)
 
     public var serverName: String {
         switch self {
         case let .tlsUntrusted(failure): failure.serverName
+        case let .account(failure): failure.serverName
         }
     }
+}
+
+public struct DulcetAccountConnectRequest: Sendable, Hashable {
+    public let serverURL: String
+    public let username: String
+    public let password: String
+    public let allowLocalHTTP: Bool
+
+    public init(
+        serverURL: String,
+        username: String,
+        password: String,
+        allowLocalHTTP: Bool
+    ) {
+        self.serverURL = serverURL
+        self.username = username
+        self.password = password
+        self.allowLocalHTTP = allowLocalHTTP
+    }
+
+    public static let empty = DulcetAccountConnectRequest(
+        serverURL: "",
+        username: "",
+        password: "",
+        allowLocalHTTP: false
+    )
+}
+
+public struct DulcetConnectedAccountSummary: Sendable, Hashable {
+    public let serverName: String
+    public let normalizedServerURL: String
+
+    public init(serverName: String, normalizedServerURL: String) {
+        self.serverName = serverName
+        self.normalizedServerURL = normalizedServerURL
+    }
+}
+
+public enum DulcetAccountErrorFamily: String, CaseIterable, Sendable, Hashable {
+    case input
+    case transport
+    case security
+    case `protocol`
+    case server
+    case authentication
+    case capability
+    case persistence
+}
+
+public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
+    case invalidServerURL
+    case transportUnreachable
+    case transportTimeout
+    case transportCancelled
+    case tlsUntrusted
+    case localNetworkPolicyRejected
+    case redirectRejected
+    case malformedEnvelope
+    case incompatibleProtocol
+    case notASubsonicServer
+    case knownServerError
+    case unknownServerError
+    case invalidCredentials
+    case tokenAuthenticationUnsupported
+    case forbidden
+    case unsupportedAuthenticationChallenge
+    case crossOriginRedirectRejected
+    case capabilityUnsupported
+    case credentialPersistenceFailed
+
+    public var family: DulcetAccountErrorFamily {
+        switch self {
+        case .invalidServerURL:
+            .input
+        case .transportUnreachable, .transportTimeout, .transportCancelled:
+            .transport
+        case .tlsUntrusted, .localNetworkPolicyRejected, .redirectRejected:
+            .security
+        case .malformedEnvelope, .incompatibleProtocol, .notASubsonicServer:
+            .protocol
+        case .knownServerError, .unknownServerError:
+            .server
+        case .invalidCredentials, .tokenAuthenticationUnsupported, .forbidden,
+             .unsupportedAuthenticationChallenge, .crossOriginRedirectRejected:
+            .authentication
+        case .capabilityUnsupported:
+            .capability
+        case .credentialPersistenceFailed:
+            .persistence
+        }
+    }
+}
+
+public struct DulcetAccountFailurePresentation: Sendable, Hashable {
+    public let kind: DulcetAccountFailureKind
+    public let serverName: String
+    public let title: String
+    public let message: String
+    public let recovery: String
+    public let targetHost: String?
+
+    public init(
+        kind: DulcetAccountFailureKind,
+        serverName: String,
+        title: String,
+        message: String,
+        recovery: String,
+        targetHost: String? = nil
+    ) {
+        self.kind = kind
+        self.serverName = serverName
+        self.title = title
+        self.message = message
+        self.recovery = recovery
+        self.targetHost = targetHost
+    }
+}
+
+public enum DulcetAccountConnectOutcome: Sendable, Hashable {
+    case connected(DulcetConnectedAccountSummary)
+    case failed(DulcetAccountFailurePresentation)
+}
+
+public enum DulcetAccountConnectionStatus: Sendable, Hashable {
+    case idle
+    case connecting
+    case connected(DulcetConnectedAccountSummary)
+    case failed(DulcetAccountFailurePresentation)
 }
 
 public enum DulcetMediaAvailability: String, Sendable, Hashable {
@@ -247,6 +388,8 @@ public struct DulcetSnapshot: Sendable, Hashable {
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
     public let captureDate: Date
+    public let accountForm: DulcetAccountConnectRequest
+    public let accountConnection: DulcetAccountConnectionStatus
 
     public init(
         state: DulcetPresentationState,
@@ -260,7 +403,9 @@ public struct DulcetSnapshot: Sendable, Hashable {
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
-        captureDate: Date
+        captureDate: Date,
+        accountForm: DulcetAccountConnectRequest = .empty,
+        accountConnection: DulcetAccountConnectionStatus = .idle
     ) {
         self.state = state
         self.selectedDestination = selectedDestination
@@ -274,5 +419,7 @@ public struct DulcetSnapshot: Sendable, Hashable {
         self.searchQuery = searchQuery
         self.searchResults = searchResults
         self.captureDate = captureDate
+        self.accountForm = accountForm
+        self.accountConnection = accountConnection
     }
 }

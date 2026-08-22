@@ -63,6 +63,20 @@ enum DulcetStrings {
     static let duration = text("track.duration", "Duration")
     static let withoutAlbum = text("track.withoutAlbum", "Single · no album")
     static let controlBad = text("control.bad", "DELIBERATELY BAD CONTROL")
+    static let accountConnectTitle = text("account.connect.title", "Connect your music server")
+    static let accountConnectBody = text("account.connect.body", "Enter the OpenSubsonic address and the account you use with that server.")
+    static let accountDetails = text("account.connect.details", "Server account")
+    static let serverAddress = text("account.connect.server", "Server address")
+    static let serverAddressPlaceholder = text("account.connect.server.placeholder", "https://music.example.com")
+    static let username = text("account.connect.username", "Username")
+    static let password = text("account.connect.password", "Password")
+    static let allowLocalHTTP = text("account.connect.localHTTP", "Allow HTTP on this local network")
+    static let allowLocalHTTPHint = text("account.connect.localHTTP.hint", "Use only for a server you control on a private local network.")
+    static let connect = text("account.connect.submit", "Connect")
+    static let connecting = text("account.connect.progress", "Connecting to the server…")
+    static let connectingBody = text("account.connect.progress.body", "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.")
+    static let cancel = text("action.cancel", "Cancel")
+    static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
 
     static func albumCount(_ count: Int) -> String {
         formatted("library.albumCount", "%d albums", count)
@@ -165,6 +179,26 @@ enum DulcetStrings {
 
     static func lastSynced(_ description: String) -> String {
         formatted("offline.lastSyncedValue", "Last synced %@", description)
+    }
+
+    static func connectedTo(_ serverName: String) -> String {
+        formatted("account.connect.connected", "Connected to %@", serverName)
+    }
+
+    static func dynamicText(_ key: String, fallback: String) -> String {
+        Bundle.module.localizedString(forKey: key, value: fallback, table: nil)
+    }
+
+    static func dynamicFormatted(
+        _ key: String,
+        fallback: String,
+        _ arguments: CVarArg...
+    ) -> String {
+        String(
+            format: dynamicText(key, fallback: fallback),
+            locale: Locale.current,
+            arguments: arguments
+        )
     }
 
     private static func formatted(
