@@ -26,6 +26,8 @@ jobs:
         run: python3 tools/test-pr-workflow-secret-boundary
       - name: Require evidence-boundary markers and revision integrity
         run: python3 tools/test-spec-evidence-boundaries
+      - name: Prove spec evidence-boundary regressions are rejected
+        run: python3 tools/test-spec-evidence-boundary-mutations
       - name: Prove partial evidence defects are rejected
         run: python3 tools/test-parity-gate
       - name: Prove required-check drift is rejected
