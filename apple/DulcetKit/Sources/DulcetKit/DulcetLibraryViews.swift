@@ -33,8 +33,6 @@ struct DulcetEmptyLibraryView: View {
             VStack(spacing: DulcetSpacing.sm) {
                 Button(DulcetStrings.connectServer, systemImage: "plus") {}
                     .buttonStyle(.borderedProminent)
-                    .tint(.dulcetPrimaryActionFill)
-                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.connectServer)
 
@@ -148,8 +146,6 @@ struct DulcetLibraryHeader: View {
             HStack(spacing: DulcetSpacing.xs) {
                 Button(DulcetStrings.playAll, systemImage: "play.fill") {}
                     .buttonStyle(.borderedProminent)
-                    .tint(.dulcetPrimaryActionFill)
-                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.playAll)
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
@@ -408,8 +404,6 @@ struct DulcetAlbumDetailView: View {
         HStack(spacing: DulcetSpacing.xs) {
             Button(DulcetStrings.play, systemImage: "play.fill") {}
                 .buttonStyle(.borderedProminent)
-                .tint(.dulcetPrimaryActionFill)
-                .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel(DulcetStrings.play)
             Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
@@ -445,8 +439,6 @@ struct DulcetOfflineLibraryView: View {
                     Spacer()
                     Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
                         .buttonStyle(.borderedProminent)
-                        .tint(.dulcetPrimaryActionFill)
-                        .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.tryAgain)
                 }

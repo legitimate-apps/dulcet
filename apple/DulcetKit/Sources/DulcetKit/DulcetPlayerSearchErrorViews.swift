@@ -92,8 +92,6 @@ struct DulcetNowPlayingView: View {
                     .accessibilityLabel(DulcetStrings.previous)
                 Button(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: player.isPlaying ? "pause.fill" : "play.fill") {}
                     .buttonStyle(.borderedProminent)
-                    .tint(.dulcetPrimaryActionFill)
-                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .controlSize(.large)
                     .font(.title2)
                     .keyboardShortcut(.space, modifiers: [])
@@ -341,8 +339,6 @@ struct DulcetTLSUntrustedView: View {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
                     }
                         .buttonStyle(.borderedProminent)
-                        .tint(.dulcetPrimaryActionFill)
-                        .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
                     Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}

@@ -21,9 +21,6 @@ enum DulcetMetrics {
 
 extension Color {
     static let dulcetAccent = Color(nsColor: DulcetContrastColor.accent)
-    static let dulcetPrimaryActionFill = Color(nsColor: DulcetContrastColor.primaryActionFill)
-    static let dulcetPrimaryActionLabel = Color(nsColor: DulcetContrastColor.primaryActionLabel)
-    static let dulcetSelectionBackground = Color(nsColor: DulcetContrastColor.selectionBackground)
     static let dulcetSecondaryText = Color(nsColor: DulcetContrastColor.secondaryText)
     static let dulcetOffline = Color(nsColor: DulcetContrastColor.offline)
     static let dulcetDanger = Color(nsColor: DulcetContrastColor.danger)
@@ -37,21 +34,6 @@ enum DulcetContrastColor {
         name: "DulcetAccent",
         light: NSColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
         dark: NSColor(red: 0.47, green: 0.64, blue: 1.00, alpha: 1)
-    )
-    static let primaryActionFill = adaptive(
-        name: "DulcetPrimaryActionFill",
-        light: NSColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
-        dark: NSColor(red: 0.25, green: 0.38, blue: 0.72, alpha: 1)
-    )
-    static let primaryActionLabel = adaptive(
-        name: "DulcetPrimaryActionLabel",
-        light: .white,
-        dark: .white
-    )
-    static let selectionBackground = adaptive(
-        name: "DulcetSelectionBackground",
-        light: NSColor(red: 0.82, green: 0.86, blue: 0.96, alpha: 1),
-        dark: NSColor(red: 0.20, green: 0.27, blue: 0.43, alpha: 1)
     )
     static let secondaryText = adaptive(
         name: "DulcetSecondaryText",
@@ -79,8 +61,6 @@ enum DulcetContrastColor {
 /// Explicit authored color pairs. Native-control and state-driven pairs are outside this registry.
 enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case primaryTextOnWindow = "primary-text/window"
-    case primaryButtonLabelOnPrimaryActionFill = "primary-button-label/primary-action-fill"
-    case selectedSidebarLabelOnSelectionFill = "selected-sidebar-label/selection-fill"
     case secondaryTextOnWindow = "secondary-text/window"
     case primaryTextOnControl = "primary-text/control"
     case secondaryTextOnControl = "secondary-text/control"
@@ -98,11 +78,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
 
     var foreground: Color {
         switch self {
-        case .primaryButtonLabelOnPrimaryActionFill:
-            .dulcetPrimaryActionLabel
         case .primaryTextOnWindow, .primaryTextOnControl, .primaryTextOnOfflineTint,
-             .primaryTextOnThinMaterial, .primaryTextOnRegularMaterial,
-             .selectedSidebarLabelOnSelectionFill:
+             .primaryTextOnThinMaterial, .primaryTextOnRegularMaterial:
             .primary
         case .secondaryTextOnWindow, .secondaryTextOnControl, .secondaryTextOnOfflineTint,
              .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial:
@@ -119,10 +96,6 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     /// Ordered back-to-front to match the pixels under the rendered foreground.
     var backgroundLayers: [AnyShapeStyle] {
         switch self {
-        case .primaryButtonLabelOnPrimaryActionFill:
-            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetPrimaryActionFill)]
-        case .selectedSidebarLabelOnSelectionFill:
-            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetSelectionBackground)]
         case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow:
             [AnyShapeStyle(Color.dulcetWindow)]
         case .primaryTextOnControl, .secondaryTextOnControl, .offlineLabelOnControl:
