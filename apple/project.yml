@@ -53,6 +53,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev.tests
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   DulcetiOS:
     type: application
     platform: iOS
