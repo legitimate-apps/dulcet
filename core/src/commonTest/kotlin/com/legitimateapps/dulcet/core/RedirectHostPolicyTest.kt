@@ -23,12 +23,16 @@ class RedirectHostPolicyTest {
     @Test
     fun equivalentAsciiAndIpv6HostSpellingsPreserveCredentials() {
         listOf(
+            "https://MUSIC.INVALID/rest/ping.view" to
+                "https://music.invalid/collect",
             "https://music.invalid/rest/ping.view" to
                 "https://music.invalid./collect",
             "https://%69.invalid/rest/ping.view" to
                 "https://i.invalid/collect",
             "https://[::1]/rest/ping.view" to
                 "https://[0:0:0:0:0:0:0:1]/collect",
+            "https://[ABCD::1]/rest/ping.view" to
+                "https://[abcd::1]/collect",
         ).forEach { (current, target) ->
             assertEquals(
                 RedirectPolicyDecision.PreserveCredentials,

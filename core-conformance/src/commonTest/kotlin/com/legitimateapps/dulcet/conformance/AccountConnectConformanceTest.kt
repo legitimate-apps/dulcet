@@ -805,6 +805,11 @@ class AccountConnectConformanceTest {
                 ),
             ),
             Triple(
+                "https://MUSIC.INVALID/rest/ping.view",
+                "https://music.invalid/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
                 "https://music.invalid/rest/ping.view",
                 "https://music.invalid./collect",
                 RedirectPolicyDecision.PreserveCredentials,
@@ -822,6 +827,11 @@ class AccountConnectConformanceTest {
             Triple(
                 "https://[::1]/rest/ping.view",
                 "https://[0:0:0:0:0:0:0:1]/collect",
+                RedirectPolicyDecision.PreserveCredentials,
+            ),
+            Triple(
+                "https://[ABCD::1]/rest/ping.view",
+                "https://[abcd::1]/collect",
                 RedirectPolicyDecision.PreserveCredentials,
             ),
             Triple(
