@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Mutation tests proving parity evidence resolves to an executed passing test."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Callable
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+def materialize(root: Path) -> None:
+    for relative in (
+        "FEATURES.yml",
+        ".github/required-checks.json",
+        "tools/parity_gate.py",
+        "tools/required_checks.py",
+        "tools/verify-parity-evidence",
+    ):
+        source = REPOSITORY / relative
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for relative in (".github/workflows", "docs", "core-conformance"):
+        shutil.copytree(REPOSITORY / relative, root / relative)
+
+
+def invoke(root: Path) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment.pop("GITHUB_BASE_REF", None)
+    return subprocess.run(
+        [sys.executable, "tools/parity_gate.py"],
+        cwd=root,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+def invoke_execution(root: Path, report: str) -> subprocess.CompletedProcess[str]:
+    results = root / "results"
+    results.mkdir()
+    (results / "TEST-evidence.xml").write_text(report)
+    environment = os.environ.copy()
+    environment.update(GITHUB_WORKFLOW="apple-ci", GITHUB_JOB="apple-ci")
+    return subprocess.run(
+        [sys.executable, "tools/verify-parity-evidence", str(results)],
+        cwd=root,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+def mutate(root: Path, change: Callable[[dict[str, object]], None]) -> None:
+    path = root / "FEATURES.yml"
+    document = json.loads(path.read_text())
+    change(document)
+    path.write_text(json.dumps(document, indent=2) + "\n")
+
+
+def macos_evidence(document: dict[str, object]) -> dict[str, str]:
+    features = document["features"]
+    assert isinstance(features, list)
+    account = features[0]
+    assert isinstance(account, dict)
+    platforms = account["platforms"]
+    assert isinstance(platforms, dict)
+    macos = platforms["macos"]
+    assert isinstance(macos, dict)
+    evidence = macos["evidence"]
+    assert isinstance(evidence, dict)
+    return evidence
+
+
+def expect_rejection(
+    label: str,
+    change: Callable[[dict[str, object]], None],
+    expected: str,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-gate-") as directory:
+        root = Path(directory)
+        materialize(root)
+        mutate(root, change)
+        result = invoke(root)
+        if result.returncode == 0 or expected not in result.stdout:
+            raise AssertionError(
+                f"{label}: expected rejection containing {expected!r}, "
+                f"returncode={result.returncode}, output={result.stdout!r}"
+            )
+
+
+with tempfile.TemporaryDirectory(prefix="dulcet-parity-gate-") as directory:
+    root = Path(directory)
+    materialize(root)
+    baseline = invoke(root)
+    if baseline.returncode != 0:
+        raise AssertionError(f"valid evidence tuple rejected: {baseline.stdout}")
+
+expect_rejection(
+    "existing but non-required job",
+    lambda document: macos_evidence(document).update(workflow="core-ci", job="core-build"),
+    "evidence job is not required by branch protection",
+)
+expect_rejection(
+    "missing workflow and job",
+    lambda document: macos_evidence(document).update(workflow="missing-ci", job="missing-ci"),
+    "evidence workflow/job does not exist",
+)
+expect_rejection(
+    "missing test",
+    lambda document: macos_evidence(document).update(test="MissingTest/missingTest"),
+    "evidence test does not exist",
+)
+expect_rejection(
+    "required aggregator that never verifies executed tests",
+    lambda document: macos_evidence(document).update(workflow="core-ci", job="core-ci"),
+    "evidence job is not wired to executed-test verification",
+)
+
+passing_report = """\
+<testsuite tests="1" failures="0" errors="0" skipped="0">
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
+</testsuite>
+"""
+with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
+    root = Path(directory)
+    materialize(root)
+    result = invoke_execution(root, passing_report)
+    if result.returncode != 0:
+        raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
+
+execution_rejections = {
+    "existing but unexecuted source test": (
+        """<testsuite><testcase classname="AccountConnectConformanceTest"
+        name="conf02RedirectPolicy" /></testsuite>""",
+        "evidence test did not execute",
+    ),
+    "self-declared text without a testcase": (
+        """<testsuite><system-out>
+        AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery passed
+        </system-out></testsuite>""",
+        "evidence test did not execute",
+    ),
+    "failed testcase": (
+        """<testsuite><testcase classname="AccountConnectConformanceTest"
+        name="conf01UnauthenticatedExtensionDiscovery"><failure /></testcase></testsuite>""",
+        "evidence test did not pass",
+    ),
+    "skipped testcase": (
+        """<testsuite><testcase classname="AccountConnectConformanceTest"
+        name="conf01UnauthenticatedExtensionDiscovery"><skipped /></testcase></testsuite>""",
+        "evidence test did not pass",
+    ),
+}
+for label, (report, expected) in execution_rejections.items():
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
+        root = Path(directory)
+        materialize(root)
+        result = invoke_execution(root, report)
+        if result.returncode == 0 or expected not in result.stdout:
+            raise AssertionError(
+                f"{label}: expected rejection containing {expected!r}, "
+                f"returncode={result.returncode}, output={result.stdout!r}"
+            )
+
+print("parity-gate mutation and executed-evidence tests pass")

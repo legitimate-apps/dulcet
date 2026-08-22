@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Mutation tests proving the spec evidence-boundary checker rejects regressions."""
+
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+
+
+def materialize(root: Path) -> None:
+    for relative in (
+        "tools/test-spec-evidence-boundaries",
+        "docs/superpowers/specs/2026-08-18-dulcet-design.md",
+        ".github/workflows/parity-gate.yml",
+        ".github/workflows/branch-protection-drift.yml",
+    ):
+        source = REPOSITORY / relative
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
+def invoke(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "tools/test-spec-evidence-boundaries"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-boundary-") as directory:
+    root = Path(directory)
+    materialize(root)
+    baseline = invoke(root)
+    if baseline.returncode != 0:
+        raise AssertionError(f"valid specification rejected: {baseline.stdout}")
+
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    boundary_start = "**Implementation boundary:**"
+    boundary_end = "caller, not an observed product behavior."
+    before, separator, remainder = spec.partition(boundary_start)
+    if not separator:
+        raise AssertionError("account-setup implementation boundary fixture is missing")
+    _boundary, separator, after = remainder.partition(boundary_end)
+    if not separator:
+        raise AssertionError("account-setup implementation boundary terminator is missing")
+    mutated = before + "Phase 1 ships the account-setup feedback described below." + after
+    mutated = mutated.replace(
+        "required future platform presentation (not implemented in Phase 1)",
+        "UI",
+        1,
+    )
+    spec_path.write_text(mutated)
+
+    result = invoke(root)
+    expected = "account-setup implementation boundary"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "removed account-setup implementation boundary was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    declaration = re.search(r"^\*\*Revision:\*\* (\d+)\b", spec, re.MULTILINE)
+    if declaration is None:
+        raise AssertionError("declared revision fixture is missing")
+    declared = int(declaration.group(1))
+    mutated = spec[: declaration.start(1)] + str(declared - 1) + spec[declaration.end(1) :]
+    spec_path.write_text(mutated)
+
+    result = invoke(root)
+    expected = "must equal latest record"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "declared/latest revision mismatch was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+print("spec evidence-boundary mutations are rejected")

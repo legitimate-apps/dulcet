@@ -6,9 +6,51 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 17 — the macOS design-capture boundary now has measured framing evidence and rejects a
-translated or resized AppKit theme frame before encoding. Revision 16 removed invalid macOS Dynamic
-Type evidence. Revision 15 replaced the Apple workload timeout assumption with hosted measurement.
+**Revision:** 54 — embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
+made IPv6 zone identifiers case-sensitive during redirect-host comparison; revision 52 added an
+independent mutation test proving deletion of the numeric revision-integrity
+algorithm fails the parity gate; revision 51 made the parity gate enforce the account-setup
+core-versus-future-presentation boundary it claims; revision 50 confined Funkwhale string-boolean compatibility to the five observed
+`getUser` role fields while account metadata remains strictly typed; revision 49 made redirect-origin
+comparison use bounded ASCII/IP host canonicalization and reject internationalized redirect hosts
+distinctly without adding IDNA; revision 48 made the
+declared revision and record mechanically consistent; revision 47
+completed engine-timeout classification and narrowed account-setup feedback claims to the core
+boundary; revision 46 validates successful extension payloads against one complete positive grammar;
+revision 45 knowingly accepts Funkwhale's unambiguous string-boolean dialect; revision 44 refuses
+cross-origin account redirects by construction; revision 43 narrowed the evidence-boundary check to
+its positive structural observations; revision 42 gave account setup a decided 30-second per-request
+connect/request/socket timeout with a hosted slow-server control; revision 41 made Darwin's default shared response cache
+an explicit accepted Phase-1 property with a bounded wire observation and no general non-reuse claim;
+revision 40 made present
+account metadata and permission fields with the wrong JSON types fail as a malformed envelope instead
+of silently disabling capabilities; revision 39 made raw and
+percent-encoded internationalized hosts share the honest unsupported classification, and §10.1 no
+longer promises unimplemented IDNA conversion; revision 38 made CONF-08
+derive and compare the full cross-origin target request, including method, exact path and raw query,
+and byte-exact body; revision 37 added both advertised form
+authentication and legacy query authentication scenarios; revision 36 made proxy-auth neutralisation explicitly
+ASSUMED and named the exact hosted control required to settle it; revision 35 made required-check drift explicitly a post-merge detector rather
+than a pre-merge live control; revision 34 made raw internationalized hostnames receive an honest unsupported
+classification; revision 33 made Darwin report unsupported authentication challenges distinctly and record its
+fail-closed authentication limitation; revision 32 made bracketed IPv6 zone identifiers use a bounded grammar; revision 31 proved
+cross-origin credential stripping with a closed target-request oracle; revision 30 rejected
+malformed authorities as input before transport; revision 29 made
+structural URL redaction total over malformed input; revision 28 made CONF-07 absence assertions use
+values captured by the receiving wire fixture; revision 27 moved required-check evidence to GitHub's
+protected default branch; revision 26 derived
+credential coverage from every observed header, query parameter, and form field
+and rejects unclassified channels; revision 25 separately observed query/form credential
+keys at the Ktor boundary; revision 24 made typed JVM and Darwin trust failures produce `TlsUntrusted` against
+a generated self-signed endpoint; revision 23 bound parity evidence to the executing required
+job's JUnit results; revision 22 made local HTTP require persisted opt-in and a resolved, pinned local address;
+revision 21 made `DomainError` retain no server-controlled text or URL; revision 20 made CONF-01
+through CONF-08 execute on JVM and macOS against the pinned reference
+server, with preserved behavior-absent red evidence before the production connector. Revision 18
+narrowed the Phase-2 evidence claims to their measured boundary. Revision 17 gave the macOS
+design-capture boundary measured framing evidence and rejects a translated or resized AppKit theme
+frame before encoding. Revision 16 removed invalid macOS Dynamic Type evidence. Revision 15 replaced
+the Apple workload timeout assumption with hosted measurement.
 Revision 14 recorded the progressive-container fallback selected by the strengthened hosted media
 measurement. Revision 13 attempted to narrow the claim to a manifest-rewrite contract, but the hosted
 result did not establish that contract. Revision 12 recorded the original, insufficient first-segment
@@ -765,10 +807,13 @@ A self-hosted client's first failure is almost always the URL, so this is specif
 to the implementation. Given user input, Dulcet:
 
 1. trims whitespace; rejects empty.
-2. if no scheme, tries **`https` first**, then `http` only if the host qualifies for the local
-   exception (§13.5).
-3. accepts `host`, `host:port`, IPv6 literals in brackets, IDNs (converted to punycode for the
-   request, displayed as entered), and an arbitrary base path.
+2. if no scheme, tries **`https` first**. It adds an `http` candidate only after the user explicitly
+   opts into the local exception; the candidate is still unusable until its resolved address passes
+   §13.5 immediately before each request.
+3. accepts ASCII `host`, `host:port`, IPv6 literals in brackets, and an arbitrary base path.
+   Internationalized reg-name hosts are not converted through IDNA in Phase 1: otherwise bounded raw
+   or percent-encoded UTF-8 spellings fail before transport as
+   `Input.InvalidServerUrl(UnsupportedInternationalizedHost)`, distinct from `MalformedHost`.
 4. **strips a trailing `/rest`, `/rest/`, or a trailing `.view` component** if the user pasted an
    endpoint URL, and says so in the UI.
 5. normalizes the base path to have no trailing slash; endpoint URLs are built as
@@ -789,26 +834,50 @@ to the implementation. Given user input, Dulcet:
    (https://opensubsonic.netlify.app/docs/endpoints/getopensubsonicextensions/): the endpoint must be
    publicly accessible. We still send `c` and `f=json`; we send **no** `u`/`t`/`s`, and we send `v`
    because the envelope requires it. A non-envelope response (HTML, a proxy login page, a WAF
-   challenge, a captive portal) is recorded but **not yet interpreted**.
+   challenge, a captive portal) is recorded but **not yet interpreted**. A successful extension
+   envelope has one recognised shape: `openSubsonicExtensions` is an array of object entries, each
+   with a nonblank string `name` and an array of native JSON integer `versions`; names are unique.
+   A present successful payload outside that complete shape is `Protocol.MalformedEnvelope`, never
+   an empty extension set produced by skipping malformed pieces.
 3. **Authenticate with `ping`** using `v=1.16.1` and the salted token (§13.1). **The extension-probe
    result is not trusted until `ping` succeeds** — otherwise a reverse-proxy login page in front of an
    unknown server gets classified as `legacySubsonic` and we start sending credentials to it.
-4. Read envelope metadata: `openSubsonic`, `type`, `serverVersion`, `version`.
-5. Fetch user capabilities/roles (`getUser`): download, playlist, share, jukebox, admin.
+4. Read envelope metadata: `openSubsonic`, `type`, `serverVersion`, `version`. `version` is required.
+   For compatibility with classic servers the other three fields may be absent, but when present
+   `openSubsonic` must be a native JSON boolean and `type`/`serverVersion` must be JSON strings; any
+   other type is `Protocol.MalformedEnvelope`, not a default value.
+5. Fetch user capabilities/roles (`getUser`): download, playlist, share, jukebox, admin. A missing
+   role remains `false` for legacy compatibility. A present role accepts either a JSON boolean or
+   the case-insensitive string spelling `"true"`/`"false"`; every other value fails as
+   `Protocol.MalformedEnvelope`. The string form is a deliberate compatibility exception for the
+   non-conforming but unambiguous dialect emitted by released Funkwhale servers.
 6. Construct a typed `CapabilitySet` from four independent inputs: protocol level, OpenSubsonic
    extensions, user permissions, known quirks (§17).
 7. Cache it per account. Refresh after each login and on the evidence rules in §10.4.
 
+**Account-setup timeout decision:** every network request in this sequence has a 30,000 ms connect
+timeout, 30,000 ms whole-request timeout, and 30,000 ms socket-inactivity timeout. These are
+per-request limits, not one deadline for the entire extension/ping/user sequence or all redirect
+hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
+server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
+cancellable by its caller at the core boundary, and an elapsed limit maps to the distinct content-free
+`Transport.Timeout` error. **Implementation boundary:** this repository has no non-test caller of
+`AccountConnector`, so Phase 1 has not built an account-setup progress indicator, Cancel control, or
+user-facing timeout/error presentation. The presentation below is a requirement for a future platform
+caller, not an observed product behavior.
+
 ### 10.3 The failure modes must be distinguishable
 
-| observation | classification | UI |
+| observation | classification | required future platform presentation (not implemented in Phase 1) |
 |---|---|---|
-| DNS/TCP/TLS failure, timeout, no HTTP response | `ServerUnreachable` | "Can't reach the server" + the normalized URL + retry |
+| DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
+| connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
 | TLS chain/hostname/expiry failure | `TlsUntrusted(reason)` | the specific reason + §13.5 guidance. **Never** an option to ignore it |
 | HTTP reached; extension probe returns 404 or a non-envelope body; **and** `ping` then succeeds | `ExtensionListUnavailable` | login proceeds, server marked `legacySubsonic` |
 | HTTP reached; extension probe non-envelope; **and** `ping` also fails to parse | `NotASubsonicServer` | "This doesn't look like a Subsonic server" — do not retry with credentials |
 | envelope parsed; error code indicates bad credentials | `AuthenticationFailed` | "Wrong username or password" — never "server down" |
 | envelope parsed; error code indicates a version mismatch | `ProtocolIncompatible` | show **what Dulcet sent** and **what the server reported** in its envelope. Do not promise a "required version" — the protocol does not reliably supply one |
+| successful envelope contains present account metadata outside its strict JSON shape, or a role field outside native JSON boolean or case-insensitive string `true`/`false` | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
 
 **OBSERVED:** a missing `getOpenSubsonicExtensions` is consistent with a classic pre-OpenSubsonic
 server. On `ExtensionListUnavailable`: do not fail login; mark `legacySubsonic`; mark every extension
@@ -1257,6 +1326,40 @@ the UTF-8 password concatenated with the salt.
 - **No API-key auth** (§2.3), and no speculative API-key attempts.
 - Plaintext-password auth (`p=`) is never used, even where a server accepts it.
 
+**Decided Phase-1 Darwin limitation:** the URL session challenge handler performs default handling
+only for server-trust challenges. It rejects HTTP Basic, Digest, client-certificate, proxy-auth, and
+every other non-server-trust challenge rather than consulting ambient credentials. A rejected
+challenge maps to `Auth.UnsupportedAuthenticationChallenge`, so the UI can explain that
+authentication added by a reverse proxy or intermediary is unsupported instead of reporting a bare
+`Transport.Unreachable`. **OBSERVED:** the hosted Darwin fixture issues an HTTP Basic challenge,
+receives no ambient `Authorization` or `Proxy-Authorization` value, and requires that distinct domain
+error. **ASSUMED:** proxy-auth challenges fail closed through the same handler. No existing hosted run
+settles that claim: `tools/conformance-env/redirect-server` does not act as a forward proxy or return
+407, so the suite has not observed a proxy challenge reaching the connector, the absence of
+`Proxy-Authorization` on that proxy wire, or the resulting domain error. Promotion to **OBSERVED**
+requires a PR-head `.github/workflows/apple-ci.yml` run whose `apple-ci` job executes
+`DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
+against a future `tools/conformance-env/redirect-server --forward-proxy-auth` loopback fixture that
+returns `407 Proxy Authentication Required` with `Proxy-Authenticate: Basic`, records every received
+`Proxy-Authorization` value, and asserts both zero such values and
+`Auth.UnsupportedAuthenticationChallenge`.
+
+**Decided Phase-1 Darwin response-cache posture:** the account connector's default
+`NSURLSessionConfiguration` clears shared credential storage but retains Foundation's process-wide
+persistent `URLCache`. **OBSERVED:** that shared cache remains attached in the Darwin configuration.
+This is accepted for Phase 1 rather than silently described as per-account cache isolation.
+**OBSERVED, bounded wire control:** hosted `apple-ci` test
+`DarwinURLCacheIsolationConformanceTest.cacheableExtensionProbeIsRefetchedAcrossAccountConnectors`
+gave the unauthenticated extension probe a fresh one-hour cache lifetime, created two sequential
+account connectors for the same URL, observed two source-wire requests, and observed the second
+connector consume the fixture's changed extension response. Thus cross-account response reuse was
+not demonstrated in that concrete path. **No broader claim is made:** reuse behavior for authenticated
+query GETs, other cache directives, redirects, response bodies, and future Foundation versions is
+unverified. The shared-cache existence is OBSERVED; general cross-account reuse and general
+non-reuse are both unestablished. A future decision to disable the cache must first preserve a hosted
+red control that demonstrates the behavior being changed, then set the session `URLCache` to `null`
+through Ktor Darwin's `configureSession` hook.
+
 **Secure storage, specified rather than gestured at:**
 
 | | Apple | Android |
@@ -1307,55 +1410,110 @@ where URLs leak: logs, crash reports, proxy access logs, media-framework diagnos
 
 ### 13.3 Redirects and credential leakage
 
-Signed media URLs must never carry credentials to another origin. Reverse proxies routinely redirect
-HTTP to HTTPS, add or strip trailing slashes, or redirect to object storage on a different host.
-Normative policy, enforced in the transport layer and in the resource loader (§12.4):
+Signed media URLs must never carry credentials to another origin. Account connection and media
+resource loading have different redirect policies because account connection is an authenticated
+capability probe, while the resource loader may later need to consume already-signed object-storage
+URLs. The normative Phase-1 **account-connect** policy, enforced before every redirected request is
+sent, is:
 
 - Follow at most **5** redirects.
-- A redirect changing **scheme, host or port** is cross-origin: credentials are **stripped** from the
-  redirected request. If the target then returns 401 the request fails with
-  `Auth.RedirectCredentialLoss`, with the URL surfaced redacted, rather than being retried with
-  credentials attached.
-- A downgrade from `https` to `http` is **rejected outright**, never followed.
-- Same-origin redirects preserve the query string as issued; credentials are not regenerated
-  mid-redirect, since a fresh salt would invalidate an already-signed URL for no benefit.
+- Preserve same-origin redirects, including path changes. Origin equality never uses Unicode case
+  folding. Each host is percent-decoded once as strict UTF-8; one trailing DNS root dot is removed
+  and ASCII letters in a DNS reg-name are lower-cased with an ASCII-only transform. An IPv6 address
+  is parsed to one numeric spelling, with embedded IPv4 octets restricted to non-empty ASCII decimal
+  digits in the range 0–255, while its optional zone identifier is preserved byte-for-byte because
+  OS interface names are case-sensitive. The scheme-normalised port is then compared. Invalid
+  encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
+- Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
+  `Security.RedirectRejected(UnsupportedInternationalizedHost)`. This is distinct from
+  `Auth.CrossOriginRedirectRejected`, which means two supported canonical hosts were genuinely
+  different. Phase 1 does not use IDNA here: an A-label redirect such as
+  `xn--bcher-kva.invalid` to `bücher.invalid` is deliberately refused even when an IDNA profile could
+  prove them equivalent.
+- Permit one common reverse-proxy carve-out: `http` to `https` on the same canonical host when both
+  sides use their scheme-default ports (`80` and `443`, whether explicit or implicit). A non-default
+  port change, host change, `https` downgrade, or any other scheme change is not covered by this
+  carve-out.
+- Refuse every other origin change **before the next request is sent**, on every hop. The result is
+  the content-free, actionable `Auth.CrossOriginRedirectRejected`, so a deployment requiring such a
+  redirect is reported as an unsupported account-connect topology rather than as unreachable or bad
+  credentials. No account-connect request is intentionally sent to the other origin.
+- Every request in the chain is inventoried at the Ktor send boundary and at the receiving wire
+  fixture as header, query, and form channels. Each observed channel must resolve through an explicit
+  credential-or-metadata classification; an unknown channel fails CONF-08. CONF-08 runs this policy
+  once with advertised `formPost` and again with a source that advertises no `formPost`, requiring the
+  authenticated source request to use GET/query placement in the latter scenario. It also exercises
+  a credential-bearing server-supplied path and an origin change on the second hop. In every
+  cross-origin case, the receiving target's request count must remain zero.
+- The fixture's derived cross-origin target equality oracle remains a **defence-in-depth mutation
+  control only**. It says which deviations the fixture would detect if a forbidden request ever
+  reached the target; it is not the load-bearing proof that credentials were stripped, and it is not
+  a complete proof over server-controlled redirect targets. The load-bearing assertion is that no
+  cross-origin target request occurs.
+- Same-origin redirects preserve the exact method, raw query and body bytes observed at the source;
+  credentials are not regenerated mid-redirect, since a fresh salt would invalidate an already-signed
+  request for no benefit.
+
+The §12.4 media resource loader still owns its entire redirect chain and separately enforces the
+signed-media policy. This account-connect decision does not claim that the Phase-1 connector
+implements cross-origin object-storage handoff.
 - The final resolved URL is **never** handed to `AVPlayer` directly; the resource loader owns the whole
   chain (§12.4) — a second reason inline validation is the right mechanism.
 
 ### 13.4 Redaction as a mechanism, not a discipline
 
-- A single `Redactor` rewrites any URL to `scheme://host/path?<redacted>` before it can reach a
-  `LogSink` or a `DomainError`.
-- `DomainError` carries **`redactedUrl: String`** and has **no field capable of holding a raw URL** — a
-  type-level guarantee.
-- Adapters wrap platform playback errors before surfacing them: `AVFoundation` error `userInfo` and
-  ExoPlayer's `PlaybackException` can both carry the failing URL.
+- A single `Redactor` structurally parses a request URL and renders only its scheme, host, port and
+  path plus a constant query marker before it can reach a `LogSink`. User information, the complete
+  query and the fragment are never copied into the rendered representation. The renderer is total
+  over arbitrary strings: an absent/empty authority, control characters, malformed ports, broken
+  brackets, or any parser exception produces the constant `<unrenderable-url>` rather than throwing
+  or falling through to a partially parsed representation.
+- **`DomainError` does not sanitize or retain server-controlled text at all.** Its fields are limited
+  to closed enums, numeric error/version values, and content-free suppression markers whose
+  `toString()` values are constants. A raw server message or URL therefore has no representable field;
+  this is the type-level guarantee.
+- The wire mapper consumes a server message and request URL only at its boundary and discards both.
+  Adapters similarly translate platform playback errors into closed semantic reasons before
+  surfacing them: `AVFoundation` error `userInfo` and ExoPlayer's `PlaybackException` can both carry a
+  failing URL, so neither exception object nor its message enters `DomainError`.
 - Never log the password, token or salt, at any level, in any build.
 - **Tests use canary values, not pattern matching.** Revision 1 proposed failing on any 32-hex run in
   the logs; that would flag ordinary Navidrome item and artwork IDs, which are themselves hash-like.
-  Instead the conformance environment uses a known canary password, and the tests assert that the
-  canary, its derived tokens, and the exact salts issued during the run appear **nowhere** in captured
-  log output, and that structured log fields carrying URLs are redacted. A second test asserts
-  `DomainError.toString()` on a synthetic signed URL does not contain the token.
+  Instead the conformance environment uses a known canary password; the receiving fixture reports the
+  exact username, tokens, and salts it observed, and the tests assert those observed values appear
+  **nowhere** in captured log output while structured URL fields are redacted. A separate structural test
+  passes a bare credential in a server message and a credential in URL user information, enumerates
+  every `DomainError` subtype, and checks direct rendering, wrapper rendering, logging, exception
+  messages and the explicit diagnostic-JSON serializer.
 
 ### 13.5 TLS trust and the local-HTTP exception
 
 **v1 supports OS-trusted TLS only.** No trust-all, no per-server pinning, and **no user-accepted
-self-signed certificates**. A chain, hostname or expiry failure produces `TlsUntrusted(reason)` with
-the specific reason and a documented remedy (install the CA at OS level, or fix the certificate).
-There is no "continue anyway" button.
+self-signed certificates**. Typed certificate-chain, peer-identity, and validity failures are mapped
+to `TlsUntrusted(reason)` using the most specific category the platform transport exposes; exception
+message text is never a classification input. The documented remedy is to install the CA at OS level
+or fix the certificate. There is no "continue anyway" button. The JVM and Darwin hosted legs each
+connect to a one-run self-signed loopback endpoint and require `TlsUntrusted(CertificateChain)` rather
+than `Transport.Unreachable`; neither fixture installs the certificate or enables a trust override.
 
 This is a deliberate v1 restriction on a real self-hosted use case — private CAs and self-signed certs
 are common — and it is recorded as **OQ-9** rather than pretended away. What we will not do is ship a
 trust-all path and call it a preference.
 
-**The local-HTTP exception** permits plain `http` only when the host is IPv4 RFC1918, IPv4 loopback,
-IPv6 loopback (`::1`), IPv6 unique-local (`fc00::/7`), or a `.local` name — and only after an explicit
-per-server opt-in with a visible warning. Classification is performed on the **resolved address at
-login** and re-checked on every subsequent connection: if a name that resolved privately later
-resolves publicly, requests fail with `Security.LocalExceptionViolated` rather than silently sending
-credentials over the open internet. A redirect from a local host to a public one is rejected (§13.3).
-A Cloudflare-terminated TLS front does not encrypt the final LAN hop, and the docs must not imply it
+**The local-HTTP exception** permits plain `http` only after an explicit per-server opt-in with a
+visible warning. The opt-in is persisted as account state; a URL spelling, including a `.local` name,
+never grants permission by itself. Immediately before **every** plaintext request, the transport
+resolves the logical hostname and requires every returned address to be IPv4 RFC1918, IPv4 loopback,
+IPv6 loopback (`::1`), or IPv6 unique-local (`fc00::/7`). Empty, malformed, mixed local/public, IPv4
+link-local, IPv6 link-local and public answers fail closed with `Security.LocalExceptionViolated`.
+
+The transport then replaces the connection URL's host with one vetted IP literal while preserving the
+logical authority in the HTTP `Host` header. The HTTP engine therefore connects to the address the
+policy actually classified; there is no second DNS lookup between a policy preflight and the socket.
+Resolution is repeated before each later request, even when the client could reuse a connection. If a
+name that resolved privately later resolves publicly, the request fails before credentials are sent.
+A redirect from a local host to a name that does not resolve entirely local is rejected (§13.3). A
+Cloudflare-terminated TLS front does not encrypt the final LAN hop, and the docs must not imply it
 does.
 
 ### 13.6 Local data privacy
@@ -1837,10 +1995,21 @@ Local, redacted diagnostics are still needed, because the user must be able to r
 
 A sealed hierarchy in the core, mapped from the wire in exactly one place:
 
+- `Input.InvalidServerUrl(reason)` — `reason` is a closed enum. URL normalization rejects empty input,
+  malformed authority, a non-HTTP scheme, embedded user information, or non-local plaintext HTTP
+  before client construction or any request. Authority grammar and Ktor parsing both execute inside
+  normalization; bracket errors, ambiguous/empty/non-numeric ports, out-of-range ports, whitespace,
+  and other parser failures therefore produce `MalformedHost`, never `Transport.Unreachable`. The
+  earlier hierarchy omitted every pre-transport failure even though §10.1 normatively requires them.
+  A structurally shaped raw non-ASCII reg-name instead produces
+  `UnsupportedInternationalizedHost`: Phase 1 does not perform IDNA conversion or validation, and
+  therefore does not mislabel `https://müsic.example` as malformed. ASCII A-label input remains
+  subject to the ordinary reg-name grammar.
 - `Transport.Unreachable | Timeout | Cancelled`
-- `Security.TlsUntrusted(reason) | LocalExceptionViolated`
+- `Security.TlsUntrusted(reason) | LocalExceptionViolated` — the TLS reason is a closed enum, never an
+  exception message.
 - `Protocol.MalformedEnvelope | UnexpectedContentType(actual, expected) | UnexpectedBinary`
-- **`Server.Busy(retryAfter: Duration?, message, redactedUrl)`** — **backpressure, and it must be its
+- **`Server.Busy(retryAfter: Duration?)`** — **backpressure, and it must be its
   own class.** **OBSERVED:** the reference server enforces a transcode concurrency cap (a global cap
   plus an optional per-user cap) and rejects over-cap requests with **HTTP 429 and
   `Retry-After: 5`**, carrying a Subsonic envelope whose code is the generic `0`. Without this class,
@@ -1848,18 +2017,24 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   "a generic error" — and becomes indistinguishable from the least retryable.** `Server.Busy` is
   derived from the **HTTP status**, never from the envelope code, precisely because the envelope code
   is uninformative here.
-- `Server.Known(code, message, redactedUrl)` **and `Server.Unknown(code, message, redactedUrl)`** — the
+- `Server.Known(code)` **and `Server.Unknown(code)`** — server messages and request URLs are discarded
+  at the wire boundary. The
   model **must** carry an unrecognized numeric code. **ASSUMED:** the documented Subsonic set is
-  expected to be `{0, 10, 20, 30, 40, 41, 50, 60, 70}`; **CONF-06 tests the mappings it can actually
-  trigger and tests that an unknown code round-trips**, because one server instance cannot establish a
-  closed universe of codes and other compatible servers may return others.
-- `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | RedirectCredentialLoss`
-- `Capability.Unsupported(featureId)` — carries the `FEATURES.yml` id so the UI can say which capability
-  is missing.
-- `Playback.NoPlayableSource | ValidationFailed(detail) | EngineFailed(detail) | CommandRejected(reason)`
+  expected to be `{0, 10, 20, 30, 40, 41, 50, 60, 70}`; **CONF-03 tests the invalid-credential
+  mapping, while CONF-06 tests transport reachability and that an unknown code round-trips**, because
+  one server instance cannot establish a closed universe of codes and other compatible servers may
+  return others.
+- `Auth.InvalidCredentials | TokenAuthUnsupported | Forbidden | UnsupportedAuthenticationChallenge |
+  RedirectCredentialLoss`
+- `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
+  capability is missing.
+- `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
+  — every reason is a closed semantic value rather than retained platform/server text.
 
-Every error is user-presentable: a short user string, a redacted technical detail, and a suggested
-action. "Unknown error" is not a permitted terminal state.
+Every error is user-presentable through a localized mapping from its semantic kind: a short user
+string and a suggested action. Raw technical detail belongs only in non-exported platform diagnostics
+that have independently enforced privacy boundaries; it is never a `DomainError` payload. "Unknown
+error" is not a permitted terminal state.
 
 ---
 
@@ -1894,10 +2069,14 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 **Evidence is a stable identity, not a run id.** Revision 1 required a CI run number in the `evidence`
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
 the number afterwards produces a commit nobody verified. Evidence is therefore
-`{workflow, job, test}` — knowable at commit time — and the gate asserts that (a) the named workflow
-and job exist, (b) the named test exists in the repo, and (c) the workflow is a **required check** on
-the default branch. Whether that test passed on this commit is answered by the required check itself,
-which is exactly the mechanism designed for the question.
+`{workflow, job, test}` — knowable at commit time. The PR static gate asserts that (a) the named
+workflow and job exist, (b) the named test exists in the repo, (c) the job is named by the reviewed
+`.github/required-checks.json` manifest, and (d) the named job invokes the executed-evidence verifier.
+During that same job, after the named test task, the verifier reads the test runner's JUnit XML and
+requires the exact class/method testcase to be present, executed, unskipped, and passing. A source
+method, log line, invented job label, or tuple alone is not evidence. The manifest binding is a
+reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
+records the accepted timing boundary for that live comparison.
 
 **Evidence must match the claim's granularity.** A core unit test does not evidence a platform UI
 capability, and an iPhone simulator run does not evidence iPad navigation, resizing, pointer/keyboard
@@ -1979,6 +2158,31 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
 3. **Referential integrity.** Every `spec:` anchor resolves to a real heading in this document; every
    `conformance:` id exists in `docs/CONFORMANCE.md`; every `blocked_by` id exists.
 4. **Schema validity.** Unknown keys, statuses or platform names fail.
+
+**Required-check timing, a decided gate property:** the pull-request `parity-gate` reads the
+code-owner-reviewed `.github/required-checks.json` required-checks manifest and performs no live
+branch-protection API call. Live branch protection still enforces its configured contexts at merge,
+but agreement between the manifest and the live rule is **post-merge detection, not pre-merge
+prevention**. The `branch-protection-drift` workflow runs after a push to `main` and then compares the
+manifest with classic branch protection through GitHub's REST API. This timing is accepted: a drifted
+manifest requires review of the protected file, and the live rule remains the merge authority, but a
+new mismatch may reach `main` before the drift job reports it. Future readers must not infer that the
+PR gate itself performs the live comparison.
+
+Only `branch-protection-drift` receives the Administration-read repository secret. Its API credential
+and response are outside the pushed change's control. Missing credentials, API errors, malformed
+responses, duplicate contexts, or disagreement between the API's `contexts` and app-bound `checks`
+forms all fail that post-merge job. Test fixtures are accepted only outside GitHub Actions; fixture
+mode in Actions is itself a failure. Pull-request workflows never reference repository secrets.
+
+`tools/test-spec-evidence-boundaries` is deliberately a **positive structural check**. It requires
+the named required-check and proxy evidence-boundary markers to remain in their normative sections,
+requires the marker check to run in the pull-request `parity-gate`, and requires the live verifier to
+run in `branch-protection-drift` after pushes to `main`. It also requires the declared revision to
+equal the highest dated record and requires one unique dated record for every revision from 2 through
+that declaration. It does not search for every possible
+contradictory rewording and does not prove whole-document semantic consistency; review owns that
+wider obligation.
 
 There is no source-annotation scheme. (Revision 1 floated one as a "phase 2 extension"; naming it
 invited building an annotation framework before the basic evidence cycle worked.)
@@ -2118,11 +2322,12 @@ gap; it needs no Docker and no fixture-fidelity argument.
 |---|---|
 | CONF-01 | `getOpenSubsonicExtensions` reachable **unauthenticated** |
 | CONF-02 | the advertised extension set **for the pinned image and configuration**; an unknown new extension is informational drift, **not** a failure (a client that must ignore unknown extensions cannot also fail when one appears); a **missing** previously-required extension **is** a failure |
-| CONF-03 | `ping` with a salted token succeeds; a wrong password yields `AuthenticationFailed`, not `ServerUnreachable` |
-| CONF-04 | a fresh salt on every request, from a request recorder |
+| CONF-03 | `ping` with a salted token succeeds; each authenticated request consumes a fresh 16-byte salt; a wrong password yields `Auth.InvalidCredentials`, not `Transport.Unreachable` |
+| CONF-04 | the client sends 1.16.1, the pinned server reports 1.16.1, and the compatibility rule accepts matching major/client-minor-at-or-below-server-minor versions |
 | CONF-05 | `openSubsonic`, `type`, `serverVersion` present in the envelope |
-| CONF-06 | mappings for every error the harness can trigger, **plus** an unknown code round-tripping to `Server.Unknown` |
-| CONF-07 | `formPost` calls succeed and no credential appears in any request line |
+| CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
+| CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
+| CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits only the same-canonical-host default-port `http`→`https` carve-out; refuses every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -2209,9 +2414,9 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. Future CONF-xx, parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, and fail-loud conformance precondition self-assertion. Future Apple-only measurements and CONF-xx tests join this job, never a second macOS job |
+| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22): `push` to `main` ships DEV, a `v*` tag ships PROD. The only workflow able to read signing secrets |
 
@@ -2731,7 +2936,7 @@ compiles.
 | phase | deliverable | exit criteria |
 |---|---|---|
 | **0** | spec approved; toolchain matrix (§4.4) **incl. the pinned ffmpeg**; dependency licence audit; **public** repo scaffold; CI skeleton; branch protection + `CODEOWNERS` + required checks per §19.3; `docs/APP-REVIEW-NOTES.md` (§23.4); `FEATURES.yml` seeded at `planned`; `apple-ci` timeout calibrated from one real run (§21.1) | `core-ci` and `parity-gate` green on an empty core; both OS-floor settings (§4.1) asserted by a CI check |
-| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync, the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..07, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
+| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync, the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..08, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
 | **2** | **macOS app**, TestFlight | **Signing dry run first, and its job is narrow: prove CREATE permission** (register `com.legitimateapps.dulcet`, create the App ID, generate a profile) **and prove the sandbox entitlements**, by archiving a *sandboxed* hello-world that declares `com.apple.security.network.client` and writes into its container (§23.1, §23.3). macOS submission itself is already proven on this team and is not re-established here. Then: browse, search, play, queue, scrobble, offline **metadata** cache; installed from TestFlight on a real Mac and driven end to end. **No media downloads in Phase 2** — offline means the library browses, not that it plays offline |
 | **3** | iOS + iPadOS; **media downloads on all three Apple surfaces** | background download and background playback observed on a real device; iPad evidence from an iPad job, not an iPhone one |
 | **4** | Android phone/tablet | Media3 engine parity; parser-parity and wire-pathology green on every target |
@@ -2815,6 +3020,525 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 54 (2026-08-22)** — embedded IPv4 tails stopped accepting signed octets.
+
+1. Independent source review found that Kotlin integer parsing accepted a leading plus sign, making
+   `[::ffff:127.0.0.+1]` canonicalize equal to `[::ffff:127.0.0.1]` even though the former is not a
+   valid transport address.
+2. The shared IPv4 parser now requires every octet to contain only ASCII decimal digits before
+   converting it and enforcing the existing 0–255 range. An embedded tail containing `+1` therefore
+   yields `InvalidLocation` instead of a canonical-host match.
+3. Direct common and cross-platform conformance assertions exercise the signed-tail counterexample
+   through `redirectDecision`. Zero-padded digit-only octets remain outside this revision because
+   changing their acceptance is a separate compatibility decision.
+
+**Revision 53 (2026-08-22)** — IPv6 redirect zones stopped using DNS-style case folding.
+
+1. Independent source review found that `[fe80::1%25ETH0]` and `[fe80::1%25eth0]` collapsed to one
+   canonical host even though OS interface names are case-sensitive byte strings and can identify
+   different links.
+2. Redirect canonicalization still parses the IPv6 address into one numeric spelling, but preserves
+   the validated zone identifier exactly. Identical zones on compressed and expanded address
+   spellings remain same-origin; zones differing only by case are `CrossOrigin`.
+3. Direct common and cross-platform conformance assertions pin the case-sensitive decision. They
+   prove policy output only; no claim is made about a platform transport resolving a scoped literal.
+
+**Revision 52 (2026-08-22)** — revision integrity gained a reversion-sensitive mutation proof.
+
+1. Hosted red run `32580533027`, `parity-gate` job `97049085272`, removed the revision-integrity
+   implementation while retaining the workflow invocation and the new independent mutation test.
+   A temporary spec declaring revision 50 while retaining record 51 was accepted, so the mutation
+   step failed with `declared/latest revision mismatch was accepted`.
+2. The numeric checker is restored unchanged: it requires one declaration, unique and continuous
+   dated records from 2 through that declaration, and equality between the declaration and latest
+   record. The retained mutation test derives the current declared number, lowers only that number,
+   and requires the checker to reject the resulting mismatch.
+3. The mutation harness is a separate tool invoked after the production checker, so deleting only
+   the production revision algorithm now makes parity fail. The enforced claim remains numeric
+   integrity; it does not establish semantic correctness of revision prose.
+
+**Revision 51 (2026-08-22)** — the account-setup implementation boundary became parity-enforced.
+
+1. Hosted red run `32580441500`, `parity-gate` job `97048859025`, first accepted the valid spec and
+   then removed the §10.2 implementation-boundary paragraph and retitled §10.3's future-presentation
+   column to `UI`. The production checker still returned success, so the reversion-sensitive mutation
+   step failed with `removed account-setup implementation boundary was accepted`.
+2. `tools/test-spec-evidence-boundaries` now isolates the normative account-setup timeout subsection
+   and failure-mode table. It requires the explicit no-production-caller fact, the absent
+   progress/Cancel/error surface, the future-platform qualification, and the table's
+   `not implemented in Phase 1` label.
+3. The retained mutation test proves that removing the substantive boundary while preserving revision
+   numbering is rejected. This remains a positive structural claim about required markers; detecting
+   an arbitrarily reworded contradiction remains a review obligation under revision 43.
+
+**Revision 50 (2026-08-22)** — Funkwhale compatibility returned to its observed `getUser` scope.
+
+1. Hosted red run `32580092898`, `conformance-env-linux` job `97048045886`, ran 29 JVM conformance
+   tests and failed only `openSubsonicStringBooleanRemainsMalformed`: the unrelated metadata value
+   `"openSubsonic":"TRUE"` produced a connected account instead of `Protocol.MalformedEnvelope`.
+   The ordinary `core-build` job passed.
+2. Successful-envelope parsing now has two closed boolean boundaries. Optional `openSubsonic`
+   metadata accepts only a native JSON boolean. The five optional `getUser` role fields accept native
+   booleans plus the case-insensitive string spellings `"true"` and `"false"` observed in released
+   Funkwhale, while every other present shape remains malformed.
+3. The dedicated metadata-string control fails if that unrequested leniency is reintroduced. The
+   exact Funkwhale 2.0.9 tuple and mixed-case role controls remain the positive compatibility proof;
+   no string coercion was added to metadata or any other envelope field.
+
+**Revision 49 (2026-08-21)** — redirect-host comparison became ASCII-bounded and representation-aware
+without reversing the Phase-1 IDNA decision.
+
+1. Hosted red run `32546596890`, `core-build` job `96966031104`, executed the production redirect
+   contract on JVM and Android host. Five unit tests ran and all three new matrix tests failed: Unicode
+   case folding preserved `i.invalid` to dotless-U+0131 `ı.invalid`; the U+0130 variant and a general
+   Unicode target lacked the distinct unsupported result; trailing-dot, percent-encoded ASCII and
+   equivalent IPv6 spellings were spuriously cross-origin. The unrelated Linux conformance job passed.
+2. Redirect host equality now derives from a closed canonicalization result. It decodes one valid
+   percent-encoding layer as strict UTF-8, rejects any resulting non-ASCII host, strips exactly one
+   DNS root dot, parses IPv6 to eight numeric groups, and lower-cases only ASCII. It never invokes
+   Unicode case folding or IDNA. The plaintext local-network precheck consumes the same result so it
+   cannot disagree with the final redirect decision. Hosted green run `32546777399`, `core-build` job
+   `96966502896`, passed the six cases on JVM and Android host; Linux conformance job `96966502984`
+   also passed.
+3. The identical six-case policy matrix now lives in the cross-platform account-connect conformance
+   suite. Hosted run `32546943649`, `conformance-env-linux` job `96966973642`, passed 28 tests; its
+   `core-build` job `96966973725` also passed. The Apple required job executes the same common test on
+   its Darwin conformance leg; only a completed PR-head Apple run is evidence for that platform.
+4. Internationalized redirect equivalence remains an accepted Phase-1 limitation. Lifting it requires
+   one pinned common-code IDNA profile used identically on every target plus hosted JVM, Android and
+   Darwin `RedirectHostIdnaConformanceTest` vectors proving Unicode/A-label equivalence, deviation
+   handling and rejection behavior. Until then, refusing a non-ASCII redirect host is the security
+   boundary, not a malformed-host or genuine-cross-origin classification.
+
+**Revision 48 (2026-08-21)** — the spec's declared revision and revision record became mechanically
+consistent.
+
+1. The document still declared revision 42 after records 43 through 47 had been added. The declaration
+   now names revision 48, the latest record.
+2. A full numeric audit found the only other record-integrity defect: revision 20 appeared in the
+   summary but had no dated §28 entry. Its omitted historical entry is restored below from the change
+   that introduced CONF-08; revision 44 remains the explicit superseding redirect policy.
+3. The pull-request structural check now requires the declared number to equal the highest dated
+   record and requires exactly one dated record for every revision from 2 through the declaration.
+   This establishes numeric presence and continuity only; it does not claim that revision prose is
+   semantically complete or correct.
+
+**Revision 47 (2026-08-21)** — engine timeout classification was completed and the account-setup UI
+claim was narrowed to the implemented boundary.
+
+1. Hosted red run `32545017139`, `core-build` job `96961834795`, constructed Ktor 3.5.2's concrete
+   `ConnectTimeoutException` and `SocketTimeoutException` values and passed them through the same
+   classifier used by `AccountConnector`. The test failed on both JVM and Android host because each
+   became `Transport.Unreachable`; the unrelated Linux conformance environment passed.
+2. `HttpRequestTimeoutException`, `ConnectTimeoutException`, and `SocketTimeoutException` now all map
+   to `Transport.Timeout` in that production classifier. Hosted green run `32545171328`, `core-build`
+   job `96962240884`, passed the control on JVM and Android host. That mapping is OBSERVED; this test
+   injects the engine exception values and does not itself wait for real networks to cross all three
+   30-second deadlines.
+3. Repository search found no non-test `AccountConnector` caller. The core operation and typed error
+   shipped, but no platform account-setup progress state, Cancel control, or timeout/error rendering
+   shipped with them. Those UI behaviors are therefore unimplemented, not verified or assumed.
+4. What would settle the user-feedback surface: a platform account-setup caller plus a hosted
+   `AccountSetupTimeoutPresentationConformanceTest` in that platform's required CI job, observing the
+   in-flight progress state, invoking Cancel against the live operation, and observing the distinct
+   timeout presentation after a controlled deadline. Until that exists, §10.3's presentation column
+   is a future requirement only.
+
+**Revision 46 (2026-08-21)** — successful extension envelopes now validate one complete recognised
+shape instead of skipping malformed pieces.
+
+1. Hosted red run `32544668674`, job `conformance-env-linux`, ran 27 tests and failed only
+   `malformedExtensionPayloadCannotSilentlyDisableCapabilities`. A successful response containing
+   `"openSubsonicExtensions":{"name":"formPost","versions":[1]}` connected with an empty extension
+   map because the present object was silently treated like an absent array. The core build passed.
+2. A successful extension payload is valid only when the outer value is an array, every element is
+   an object with a nonblank string `name`, every `versions` value is an array containing only native
+   JSON integers, and extension names are unique. Empty arrays and unknown well-shaped extension
+   names remain valid. The parser derives acceptance from that positive grammar; it does not maintain
+   a list of invalid cases to ignore.
+3. A wrong outer type, non-object entry, wrong/missing name, wrong versions container, string-encoded
+   version, duplicate name, or any other deviation from that grammar returns
+   `Protocol.MalformedEnvelope` before credentials are sent according to a silently disabled
+   `formPost` capability. These examples are controls for the positive validator, not the definition
+   of its rejected set.
+4. This extends revision 40's strict successful-envelope decision to the extension surface. Revision
+   45's narrow boolean-string compatibility exception does not weaken extension-version typing.
+
+**Revision 45 (2026-08-21)** — the envelope parser restored compatibility with Funkwhale's
+string-encoded boolean roles.
+
+1. Funkwhale 2.0.9's released `getUser` response shape is a real-world, non-conforming dialect: it
+   encodes all five roles as the JSON strings `"true"` or `"false"`. Dulcet knowingly accepts this
+   dialect because each accepted spelling has one unambiguous boolean meaning and rejecting it broke
+   accounts that connected before revision 40.
+2. Hosted red run `32544374395`, job `conformance-env-linux`, ran 25 tests and failed only
+   `funkwhale209StringBooleanRolesRemainConnectable`: the exact observed Funkwhale role tuple
+   (`true`, `true`, `false`, `true`, `false`) ended as `Protocol.MalformedEnvelope` instead of a
+   connected account. The ordinary core build passed.
+3. The five `getUser` role fields accept native JSON booleans and exact string spellings `"true"` or
+   `"false"`, case-insensitively. Numeric values such as `42`, objects, arrays, null, whitespace-
+   padded strings and every other spelling remain malformed. Missing optional roles retain their
+   legacy-compatible `false` default. Revision 50 clarifies that this exception never applied to the
+   unrelated `openSubsonic` metadata field.
+4. This supersedes revision 40's treatment of `"downloadRole":"true"` as necessarily malformed.
+   Revision 40's closed-shape policy remains in force for values without an unambiguous recognised
+   interpretation; no general string coercion was added.
+
+**Revision 44 (2026-08-21)** — account connect now refuses cross-origin redirects by construction.
+
+1. Hosted red run `32543358654`, job `conformance-env-linux`, executed 24 JVM conformance tests and
+   failed only four new CONF-08 expectations: the existing form-auth and query-auth origin changes,
+   a server-supplied credential-bearing target path on `getUser`, and an origin change on the second
+   redirect hop. Each failure demonstrated that the pre-revision behavior sent a request to the
+   cross-origin target.
+2. Before every redirected send, account connect now permits either the same origin or the explicit
+   same-canonical-host, scheme-default-port `http:80` to `https:443` upgrade. Every other host, port
+   or scheme boundary is refused. The check is repeated hop by hop, so a same-origin first hop cannot
+   introduce a later cross-origin request.
+3. Refusal returns `Auth.CrossOriginRedirectRejected`; it retains no server-controlled URL text. A
+   self-hosted deployment whose account setup requires a host or non-default-port change is therefore
+   a decided Phase-1 limitation with an actionable classification, not `Transport.Unreachable`.
+4. CONF-08's load-bearing observation is now zero requests at the cross-origin target for both auth
+   placements, the reflected credential path, and the later-hop case. The old derived cross-origin
+   target oracle remains only as defence in depth. Its method/path/raw-query/raw-body/channel mutation
+   controls establish that those named deviations are rejected; they do not establish completeness
+   over arbitrary server-selected targets. This supersedes revisions 31, 37 and 38 wherever they
+   describe credential stripping or full target equality as the account-connect safety property.
+5. Same-origin redirects remain supported. Their fixture expectation is derived from the complete
+   observed source request and the fixed fixture target path, and exact method, raw query, body bytes
+   and channel tuple are compared. No claim is made that a real deployment requiring a cross-origin
+   account-connect redirect remains compatible.
+
+**Revision 43 (2026-08-21)** — the evidence-boundary check now claims only its positive observations.
+
+1. The checker requires named boundary markers in §§13.1, 19.2, and 19.3, requires itself to be
+   placed in the pull-request parity workflow, and requires the live branch-protection verifier to be
+   placed in the post-main drift workflow.
+2. Exact-string absence tests for a live-verifier call and two superseded sentences were removed.
+   Rewording could evade those tests, so they could not establish the broader absence or semantic-
+   consistency claims their names implied.
+3. The checker and workflow step now state the bounded result: required markers and workflow
+   placement are present. Detecting an arbitrarily worded contradiction remains a review obligation,
+   not a property attributed to this structural check.
+
+**Revision 42 (2026-08-21)** — the account-setup timeout became a deliberate self-hosted policy.
+
+1. A hosted red fixture delayed one otherwise-valid extension response for 10.5 seconds. The existing
+   connector closed the socket at its incidental ten-second limit; 22 JVM conformance tests ran and
+   only `slowSelfHostedServerCanCompleteAccountNegotiation` failed.
+2. Connect establishment, whole-request duration, and socket inactivity are now each bounded at
+   30,000 ms per request. This is not a single deadline over the entire account sequence or its
+   redirects. Cancellation remains distinct from timeout.
+3. Thirty seconds is the decided Phase-1 tradeoff for self-hosted servers that may wake storage or a
+   cold reverse proxy. At the implemented core boundary, elapsed request, connect, and socket limits
+   are required to return `Transport.Timeout`, distinct from malformed input, bad credentials, or an
+   undifferentiated unreachable server. Revision 42 did not ship a UI: the repository had no non-test
+   `AccountConnector` caller, progress indicator, Cancel control, or error presentation. A platform
+   caller and hosted `AccountSetupTimeoutPresentationConformanceTest` exercising progress, cancellation,
+   and timeout rendering are required to establish that future user-feedback behavior.
+
+**Revision 41 (2026-08-21)** — Darwin response caching became an explicit, bounded decision.
+
+1. Source inspection observed that Darwin clears `URLCredentialStorage` but leaves Foundation's
+   default process-wide persistent `URLCache` attached. That existence claim is OBSERVED; it is not
+   itself wire evidence of cross-account response reuse.
+2. A candidate hosted red control made the extension probe cacheable for one hour and varied the
+   second response. It stayed green before any production change: two sequential account connectors
+   produced two extension-probe wire requests, and the second used the changed response. This
+   concrete non-reuse result is OBSERVED by the Apple-only test; it is not generalized beyond that
+   request and fixture.
+3. Phase 1 accepts the shared cache's existence and records that the transport does not promise
+   per-account response-cache isolation. No claim is made that authenticated query GETs, other cache
+   directives, redirects, or future Foundation versions either do or do not reuse responses. Cache
+   disabling was deliberately not implemented because the required hosted red behavior did not
+   reproduce; the wire control is retained so a future behavior change is detected.
+
+**Revision 40 (2026-08-21)** — malformed successful envelopes stopped becoming connected accounts.
+
+1. A hosted red fixture returned three otherwise-successful account negotiations containing
+   `"openSubsonic":"yes"`, `"type":42`, or `"downloadRole":"true"`; each silently produced a
+   connected account with a false or stringified/defaulted capability value.
+2. Required envelope strings and every present optional account metadata or user-role field now use
+   their actual JSON type. A present wrong-typed field returns `Protocol.MalformedEnvelope` before a
+   `ConnectedAccount` can be constructed.
+3. Field absence remains deliberately lenient for classic-server compatibility: optional metadata
+   retains its empty/false default and an absent role remains `false`. The UI receives the distinct,
+   content-free malformed-envelope error and explains that the server returned invalid account
+   information; it does not present a silently capability-disabled account.
+
+**Revision 39 (2026-08-21)** — percent-encoded internationalized hosts became honestly unsupported.
+
+1. A hosted red control showed that `https://m%C3%BCsic.example` bypassed revision 34's raw non-ASCII
+   classifier and reached transport rather than returning the distinct unsupported classification.
+2. URL normalization now decodes one structurally present reg-name percent-encoding layer as strict
+   UTF-8 solely for classification. If the decoded, otherwise bounded reg-name contains non-ASCII,
+   it returns `Input.InvalidServerUrl(UnsupportedInternationalizedHost)` before transport, matching
+   the raw spelling. This is classification, not IDNA conversion or hostname acceptance.
+3. §10.1's older promise that IDNs are converted to punycode contradicted both revision 34 and the
+   implementation. It is replaced by the decided Phase 1 limitation; malformed ASCII authorities
+   remain `MalformedHost`.
+
+**Revision 38 (2026-08-21)** — the cross-origin oracle became request-exact, not only channel-exact.
+
+1. The hosted red mutation kept the accepted target channel tuple and body but placed the observed
+   username, token, and salt in extra target path segments. The oracle accepted the candidate because
+   request target was not one of its inputs.
+2. The fixture now stores each source request as one observation containing its method, exact path,
+   raw query serialization, raw body bytes, and complete parsed channel tuple, together with the exact
+   redirect location it issued. The permitted target request is derived from those observations.
+3. Credential-classified source fields—and metadata fields whose decoded values duplicate an observed
+   credential—are removed from the raw query and form serializations while every retained field byte
+   and ordering position is preserved. The redirect supplies the exact target path and authority;
+   method is preserved by the 307; content length is derived from the resulting raw body.
+4. The target must equal the resulting full observation. Mutation controls reject the credential-
+   bearing path first, then a GET-with-body method change, reordered byte-equivalent form and query
+   serializations, and target-only metadata values. No codec or request-surface list is used to find a
+   hidden credential.
+
+**Revision 37 (2026-08-21)** — authenticated query redirects entered CONF-08's reachable set.
+
+1. A hosted red control added `conf08EnforcesQueryAuthenticationRedirectCredentialPolicy`; 19 JVM
+   conformance tests ran and only that test failed because the second fixture scenario did not exist.
+2. `/cross-observe-query` advertises no `formPost`, requires the authenticated source request to be a
+   GET with the exact salted-token tuple in its query and no form body, and redirects to a separately
+   observed target route.
+3. The target expectation is derived from that observed query-authenticated source request. Credential
+   channels and metadata channels whose values duplicate a credential are removed; the remaining query
+   metadata must reach the target unchanged before its intentional 401 becomes
+   `Auth.RedirectCredentialLoss`.
+
+**Revision 36 (2026-08-21)** — proxy-auth evidence stopped at the measured boundary.
+
+1. Proxy-auth neutralisation remains **ASSUMED**. The hosted Darwin fixture proves the server-auth
+   path only: it returns 401 and does not perform forward-proxy duties or return 407.
+2. No existing hosted run settles the proxy claim. The unverified links are that a 407 proxy
+   challenge reaches Dulcet's Darwin handler, that the proxy wire receives no `Proxy-Authorization`,
+   and that this path maps to `Auth.UnsupportedAuthenticationChallenge`.
+3. Promotion to **OBSERVED** requires a PR-head `apple-ci` job running
+   `DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
+   against a future `tools/conformance-env/redirect-server --forward-proxy-auth` loopback fixture that
+   emits 407 with `Proxy-Authenticate: Basic`, records the received proxy-auth channels, and asserts
+   the distinct domain error. A green run without those fixture observations does not settle the
+   claim.
+
+**Revision 35 (2026-08-21)** — required-check timing became explicit.
+
+1. The PR parity gate validates evidence against the reviewed required-checks manifest and does not
+   query live branch protection.
+2. Live protection remains the merge authority. The secret-backed `branch-protection-drift` workflow
+   compares it to the manifest only after a push to `main`, making that comparison post-merge
+   detection rather than pre-merge prevention.
+3. This is an accepted gate property, not an invisible weakening: the manifest is code-owner reviewed,
+   live required contexts still apply at merge, and a new mismatch can nevertheless reach `main`
+   before the drift workflow reports it.
+
+**Revision 34 (2026-08-21)** — internationalized-host classification became honest.
+
+1. A hosted red control showed that `https://müsic.example` was classified as `MalformedHost`.
+2. Raw non-ASCII reg-name authorities with an otherwise bounded authority shape now fail before
+   transport as `Input.InvalidServerUrl(UnsupportedInternationalizedHost)`.
+3. Phase 1 deliberately does not claim IDNA conversion or validation. Common code has no built-in
+   IDNA facility, and adding a new cross-platform dependency was not treated as a cheap compatibility
+   patch; malformed ASCII authorities remain `MalformedHost`.
+4. Revision 49 applies the same decision to redirect locations: non-ASCII or percent-encoded UTF-8
+   hosts are rejected distinctly before origin comparison. A Unicode spelling is not treated as
+   equivalent to an A-label until one pinned common-code IDNA profile and hosted cross-target parity
+   controls exist.
+
+**Revision 33 (2026-08-21)** — unsupported Darwin authentication became legible.
+
+1. The Darwin challenge handler remains deliberately fail-closed: only server-trust challenges use
+   default handling; Basic, Digest, client-certificate, proxy-auth, and other challenges are rejected.
+2. The Ktor Darwin delegate retains a content-free typed failure thrown by Dulcet's non-server-trust
+   challenge branch while cancelling the challenge. That marker maps to
+   `Auth.UnsupportedAuthenticationChallenge`, giving UI code a closed, explanatory classification
+   instead of `Transport.Unreachable`; no exception message or Foundation error-code inference is
+   involved.
+3. The hosted Basic-auth fixture proves the distinct error and absence of ambient credentials on the
+   receiving wire. Proxy-auth neutralisation remains **ASSUMED**; revision 36 names the unverified
+   links and the exact hosted fixture/test contract required to settle them.
+
+**Revision 32 (2026-08-21)** — bracketed IPv6 zones became structurally bounded.
+
+1. Hosted red controls demonstrated that empty zones, illegal zone characters, and malformed
+   subsequent percent escapes could reach both safe rendering and transport classification.
+2. A bracketed literal now separates its IPv6 address from either a raw zone delimiter or RFC 6874's
+   encoded `%25` delimiter, requires a non-empty identifier, and accepts only unreserved characters
+   plus well-formed percent escapes. An encoded percent inside the identifier is rejected so a second
+   delimiter cannot be smuggled into the zone.
+3. The shaped corpus now reaches bracketed authorities and combines empty zones, encoded-empty zones,
+   repeated delimiters, bad escapes, illegal metadata characters, and valid or malformed port suffixes.
+
+**Revision 31 (2026-08-21)** — cross-origin verification became a closed oracle.
+
+1. A hosted red control added double-Base64 to the finite representation scanner and demonstrated
+   the inherent next-codec bypass.
+2. The cross-origin target fixture derived the permitted parsed-channel tuple from the already-
+   validated source: credential channels and duplicate credential values were absent, fixed
+   application values remained exact, the authority and byte length were recomputed, and transport
+   metadata was unchanged. **Scope correction in revision 38:** this was channel-exact, not yet a
+   complete-request oracle; method, request target, raw query, and raw body bytes were not inputs.
+3. The finite encoding scanner was removed. Mutation controls place raw, framed, percent-encoded,
+   Base64-family, Base85, hexadecimal, and recursively Base64-encoded values into an otherwise valid
+   target metadata channel; every case fails because it deviates from the expectation, not because a
+   codec was recognized.
+4. The normative claim is narrowed to this equality proof. It explicitly makes no claim to decide
+   whether arbitrary values contain every possible reversible credential encoding.
+
+**Revision 30 (2026-08-21)** — malformed authorities became input failures.
+
+1. URL normalization now applies the same structural authority grammar used by the safe renderer and
+   then invokes Ktor parsing inside the pre-transport boundary.
+2. Embedded user information retains its distinct closed reason; every other structural/parser
+   authority failure returns `Input.InvalidServerUrl(MalformedHost)` before `HttpClient` construction.
+3. Hosted red controls demonstrated that an out-of-range port and unclosed IPv6 bracket previously
+   reached the transport catch-all. A malformed-authority corpus now preserves their input semantics.
+
+**Revision 29 (2026-08-21)** — URL redaction became total.
+
+1. `Redactor` now owns a non-throwing structural authority grammar before invoking Ktor's parser:
+   empty authorities, whitespace/control characters, user information, backslashes, broken IPv6
+   brackets, ambiguous colons, empty/non-numeric ports, and ports outside `0..65535` fail closed.
+2. Every malformed path returns the same content-free marker, and all ordinary parser exceptions are
+   contained. No raw input, partial authority, query, fragment, user information, or exception text is
+   used as a fallback rendering.
+3. A generated malformed-input corpus plus named red controls for broken brackets and out-of-range
+   ports exercise totality, the safe marker, credential absence, and a valid structural control URL.
+
+**Revision 28 (2026-08-21)** — credential absence became wire-observed.
+
+1. A hosted red-proof commit rewrote CONF-07 to request observed credential values from the wire
+   fixture before that endpoint existed. The test client compiled on JVM, eleven tests executed, and
+   only CONF-07 failed; the ordinary core build stayed green.
+2. The loopback redirect fixture now retains the header/query/form channels received by its
+   `/observe` scenario and exposes credential-classified values through an in-memory observation
+   endpoint. It binds only to loopback and never logs those values.
+3. CONF-07 connects through that observer, fetches the username, tokens, and salts that the server
+   actually received, and uses those observations for every absence assertion and synthetic rendering
+   path. It no longer selects expected salts or derives expected tokens from the test fixture.
+
+**Revision 27 (2026-08-21)** — required-check evidence moved outside the gated change.
+
+1. A hosted negative control changed the repository declaration to call `core-build` required, wired
+   that job to the evidence verifier, and named it from `FEATURES.yml`. The old gate returned valid
+   even though GitHub did not require that context, so the mutation test failed the parity job.
+2. The editable declaration was deleted. The production gate now asks GitHub for the repository's
+   default branch, then reads that branch's classic required-status-check protection. Evidence jobs
+   are compared only with the API response.
+3. The response must contain unique, agreeing `contexts` and app-bound `checks` sets. Missing access,
+   transport failures, malformed JSON, missing required-check configuration, and disagreement fail
+   closed.
+4. Mutation tests use a branch-protection fixture only after removing the Actions environment marker.
+   The production gate rejects fixture mode whenever GitHub Actions is present.
+
+**Revision 26 (2026-08-21)** — request-channel coverage became fail-closed.
+
+1. A hosted negative-control commit carried the observed salted token in an `Authorization` header
+   only after an origin-changing redirect. The Linux conformance job ran eleven tests and only CONF-08
+   failed; the ordinary core build remained green.
+2. `RequestTrace` now derives a value-free set of every header, query parameter, and form field name
+   from the completed request. CONF-07 and CONF-08 classify every observed name and reject unknowns.
+3. The wire fixture independently performs the same complete inventory, including engine-added
+   headers. Same-origin hops compare the complete method-and-channel observation. Cross-origin targets
+   reject credential-classified channels and scan every target value against values observed in source
+   credential channels, so a token cannot hide under a permitted metadata header.
+4. Cross-origin stripping also removes non-authentication parameters whose values duplicate an
+   observed authentication value. This closes the `getUser` endpoint's separate `username` parameter
+   without teaching the redirect policy a second list of credential-like field names.
+
+**Revision 25 (2026-08-21)** — credential-channel claims became directly observable.
+
+1. A hosted negative control added two server-observation routes before implementing them. Eleven
+   tests executed; only CONF-07 and CONF-08 failed, while CONF-03 continued to pass after taking
+   ownership of its wrong-password claim.
+2. `RequestTrace` now records separate query and form sets of closed credential-key enums at Ktor's
+   `SendingRequest` boundary. It can represent mixed placement and retains no username, token, salt,
+   or password value.
+3. The disposable observation server rejects authenticated requests unless exactly `u`, `t`, and `s`
+   occupy the form body with no credential key in the query. The cross-origin scenario requires that
+   complete source placement and rejects every credential key at the target; the same-origin scenario
+   compares the raw method, query, and body across the redirect.
+4. The wrong-password assertion moved from CONF-06 into CONF-03, where §20.4 assigns it. CONF-06 is
+   now described by the transport and unknown-server mappings it actually asserts.
+
+**Revision 24 (2026-08-21)** — `TlsUntrusted` became reachable through production transports.
+
+1. JVM/Android map typed certificate exceptions, and Darwin maps Foundation's certificate error
+   codes from Ktor's typed request exception. Neither implementation inspects exception messages.
+2. Both hosted conformance legs generate an ephemeral self-signed loopback certificate, connect with
+   the default OS trust configuration, and require `TlsUntrusted(CertificateChain)`.
+3. The fixture has no trust-all mode, commits no private key, and is restricted to loopback.
+
+**Revision 23 (2026-08-21)** — parity evidence became execution-bound.
+
+1. `FEATURES.yml` evidence still uses stable `{workflow, job, test}` identities, but the static gate
+   now rejects a required job that is not wired to the executed-evidence verifier.
+2. The named hosted job consumes the JUnit XML emitted by its own test task and requires each evidence
+   testcase to be present, executed, unskipped, and passing. Source declarations and log text do not
+   satisfy the verifier.
+3. Mutation controls cover nonexistent tests, required aggregators that execute no tests, absent
+   runtime testcases, self-declared log text, failures, and skips.
+
+**Revision 22 (2026-08-21)** — the local-HTTP exception became explicit and connection-bound.
+
+1. A hosted negative-control commit proved that the production connector authenticated over loopback
+   HTTP without any consent field. `AccountConnectionRequest` now defaults to no plaintext consent,
+   and a successful account retains the explicit per-server choice for later transports.
+2. Hostname spelling no longer classifies a local server. Every plaintext request resolves again and
+   requires an all-local answer across IPv4 RFC1918/loopback and IPv6 unique-local/loopback ranges.
+   This covers `.local` through its answer rather than through its suffix, rejects mixed answers, and
+   fails a private-to-public DNS change before the next credential-bearing request.
+3. The validated answer is not merely advisory: the request URL is rewritten to a selected vetted IP
+   literal and the original logical authority is carried in `Host`. That binds the engine's actual TCP
+   destination to the address the policy checked and closes the DNS-rebinding interval between a
+   separate lookup and connection.
+
+**Revision 21 (2026-08-21)** — arbitrary server text was removed from the domain-error model.
+
+1. The previous `RedactedText` denylist retained any attacker string that did not match its handful
+   of credential spellings, while `RedactedUrl` retained URL user information. Both types rendered
+   their retained strings through `toString()`, so Kotlin data-class rendering made the values public
+   again. A hosted negative-control commit demonstrated the failure with a bare credential before the
+   production change.
+2. `DomainError` now contains only closed enums, numeric error/version values, and content-free marker
+   objects. The mapper discards server messages and URLs instead of attempting to sanitize arbitrary
+   text. The same property covers generated `toString()`, account-result wrappers, logging, exception
+   messages and the explicit diagnostic-JSON path because none can retrieve text that was never
+   retained.
+3. URL rendering remains necessary for request traces, but it is separate from domain errors and is
+   structural: parse the URL and reconstruct scheme, host, port and path while omitting user
+   information, query contents and fragments. No credential-shape denylist remains.
+
+**Revision 20 (2026-08-21)** — cross-origin redirect behavior joined the executable account-connect
+conformance contract.
+
+1. CONF-08 was added to the JVM and macOS account-connect suite and to the Phase-1 conformance subset.
+   At that revision it exercised bounded redirect following, same-origin credential preservation,
+   credential stripping across an origin change, a distinct stripped-chain authentication failure,
+   and HTTPS-downgrade rejection.
+2. Revisions 31, 37, and 38 subsequently strengthened the observation oracle. Revision 44 superseded
+   the cross-origin stripping policy entirely: account connect now refuses such sends by construction,
+   while same-origin redirects and the narrowly defined same-authority HTTP-to-HTTPS upgrade remain.
+
+**Revision 19 (2026-08-21)** — the account-connect conformance identifiers were reconciled before
+their first executable run.
+
+1. `docs/CONFORMANCE.md` had reserved CONF-04 as version compatibility and CONF-07 as diagnostic
+   redaction, while §20.4 assigned CONF-04 only to salt freshness and narrowed CONF-07 to form POST
+   request lines. Stable registry identifiers win: CONF-03 now owns salted-token success plus the
+   per-request fresh-salt rule, CONF-04 owns the 1.16.1 compatibility contract, and CONF-07 covers
+   form POST plus the complete §13.4 redaction mechanism.
+2. The conformance suite is a distinct KMP module rather than part of ordinary unit-test discovery.
+   Its JVM and `macosArm64` tasks run only after the existing fail-loud health gate, inside the same
+   disposable Navidrome lifecycle. A missing environment is an error; there is no skip path.
+3. The first commit deliberately supplies only the typed account-connect contract and an explicit
+   behavior-unavailable result. That makes all seven tests compile and execute, with assertion-level
+   failures attributable to absent production behavior rather than to an unresolved symbol or broken
+   server fixture. Production code follows only after both hosted legs preserve that red evidence.
+4. §18.12 previously had no error capable of representing §10.1 URL-normalization rejection. Added
+   `Input.InvalidServerUrl(reason)` rather than misclassifying malformed user input as a transport or
+   server failure.
+
 **Revision 18 (2026-08-21)** — the Phase-2 evidence claims were narrowed to their measured boundary.
 
 1. Capture distinctness is measured on normalized decoded pixels, not JPEG bytes. A negative control
@@ -2863,7 +3587,6 @@ argue against the recorded rationale — not as filling in a blank.
 3. The macOS accessibility score remains unreportable until a platform-applicable text-resizing
    mechanism has its own changed-pixel evidence. The iOS/iPadOS and Android scaling requirements are
    unchanged.
-
 **Revision 15 (2026-08-21)** — the combined Apple workload replaced its timeout assumption.
 
 1. A successful standard-hosted `macos-26` run measured the complete serial `apple-ci` workload at
