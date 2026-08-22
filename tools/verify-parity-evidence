@@ -16,8 +16,8 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-if len(sys.argv) != 2:
-    fail("usage: verify-parity-evidence <JUnit-results-directory>")
+if len(sys.argv) < 2:
+    fail("usage: verify-parity-evidence <JUnit-results-directory> [...]")
 
 workflow = os.environ.get("GITHUB_WORKFLOW")
 job = os.environ.get("GITHUB_JOB")
@@ -53,10 +53,15 @@ for feature in document.get("features", []):
 if not expected:
     fail(f"no FEATURES.yml evidence targets the executing job {workflow}/{job}")
 
-results = Path(sys.argv[1])
-files = sorted(results.rglob("*.xml")) if results.is_dir() else []
+result_roots = [Path(value) for value in sys.argv[1:]]
+files = sorted(
+    path
+    for results in result_roots
+    if results.is_dir()
+    for path in results.rglob("*.xml")
+)
 if not files:
-    fail(f"no JUnit XML results found under {results}")
+    fail(f"no JUnit XML results found under {result_roots}")
 
 observed: dict[tuple[str, str], list[ET.Element]] = {}
 

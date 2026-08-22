@@ -3,6 +3,8 @@ import Observation
 public enum DulcetPresentationAction: Sendable, Hashable {
     case selectDestination(DulcetSidebarDestination)
     case updateSearchQuery(String)
+    case submitAccountConnection(DulcetAccountConnectRequest)
+    case cancelAccountConnection
 }
 
 /// The presentation boundary implemented by the deterministic fixture today and live data later.
@@ -31,6 +33,10 @@ public final class DulcetPresentationStore {
             source.send(.updateSearchQuery(searchQuery))
         }
     }
+    public var accountServerURL: String
+    public var accountUsername: String
+    public var accountPassword: String
+    public var accountAllowLocalHTTP: Bool
 
     public init(source: any DulcetDataSource) {
         self.source = source
@@ -38,6 +44,10 @@ public final class DulcetPresentationStore {
         snapshot = initialSnapshot
         selectedDestination = initialSnapshot.selectedDestination
         searchQuery = initialSnapshot.searchQuery
+        accountServerURL = initialSnapshot.accountForm.serverURL
+        accountUsername = initialSnapshot.accountForm.username
+        accountPassword = initialSnapshot.accountForm.password
+        accountAllowLocalHTTP = initialSnapshot.accountForm.allowLocalHTTP
 
         source.setSnapshotHandler { [weak self] snapshot in
             self?.receive(snapshot)
@@ -50,11 +60,28 @@ public final class DulcetPresentationStore {
         source.send(.selectDestination(destination))
     }
 
+    public func submitAccountConnection() {
+        source.send(.submitAccountConnection(DulcetAccountConnectRequest(
+            serverURL: accountServerURL,
+            username: accountUsername,
+            password: accountPassword,
+            allowLocalHTTP: accountAllowLocalHTTP
+        )))
+    }
+
+    public func cancelAccountConnection() {
+        source.send(.cancelAccountConnection)
+    }
+
     private func receive(_ snapshot: DulcetSnapshot) {
         isApplyingSourceSnapshot = true
         self.snapshot = snapshot
         selectedDestination = snapshot.selectedDestination
         searchQuery = snapshot.searchQuery
+        accountServerURL = snapshot.accountForm.serverURL
+        accountUsername = snapshot.accountForm.username
+        accountPassword = snapshot.accountForm.password
+        accountAllowLocalHTTP = snapshot.accountForm.allowLocalHTTP
         isApplyingSourceSnapshot = false
     }
 }

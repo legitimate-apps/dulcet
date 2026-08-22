@@ -14,6 +14,12 @@ the detailed assertion.
 | CONF-06 | transport reachability and server-error mappings |
 | CONF-07 | wire-observed credential channels and credential-free diagnostics |
 | CONF-08 | fail-closed request-channel inventory; same-origin preservation and pre-send cross-origin refusal on every account-connect hop |
+| CONF-09a | macOS account-connect progress and active-operation cancellation |
+| CONF-09b | macOS account-connect render-state inventory |
+| CONF-09c | total actionable macOS account-error presentation |
+| CONF-10a | an unentitled macOS caller gets a typed data-protection-Keychain entitlement failure without an active-account pointer or legacy-Keychain fallback |
+| CONF-10b | macOS explicit reconnect after persisted-credential prefill |
+| CONF-10c | Darwin 407 proxy-auth challenge rejects ambient credentials |
 | CONF-11 | successful stream signature validation |
 | CONF-12 | legacy stream error-envelope detection |
 | CONF-13 | ranged stream behavior |

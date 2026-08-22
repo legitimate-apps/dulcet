@@ -2,6 +2,8 @@
 import SwiftUI
 
 struct DulcetEmptyLibraryView: View {
+    var onConnect: () -> Void = {}
+
     var body: some View {
         VStack(spacing: DulcetSpacing.xl) {
             Spacer(minLength: DulcetSpacing.xl)
@@ -31,7 +33,7 @@ struct DulcetEmptyLibraryView: View {
             }
 
             VStack(spacing: DulcetSpacing.sm) {
-                Button(DulcetStrings.connectServer, systemImage: "plus") {}
+                Button(DulcetStrings.connectServer, systemImage: "plus", action: onConnect)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel(DulcetStrings.connectServer)

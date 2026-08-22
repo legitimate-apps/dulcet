@@ -77,6 +77,8 @@ class RedirectState:
         self.redirect_locations: dict[tuple[str, str], str] = {}
         self.ambient_auth_challenges = 0
         self.ambient_authentication_observed = False
+        self.proxy_auth_challenges = 0
+        self.proxy_authorization_values: list[str] = []
         self.cacheable_extension_requests = 0
         self.target_requests: dict[tuple[str, str], int] = {}
 
@@ -143,6 +145,15 @@ class RedirectState:
     def ambient_auth_outcome(self) -> tuple[int, bool]:
         with self.lock:
             return self.ambient_auth_challenges, self.ambient_authentication_observed
+
+    def record_proxy_auth_challenge(self, values: list[str]) -> None:
+        with self.lock:
+            self.proxy_auth_challenges += 1
+            self.proxy_authorization_values.extend(values)
+
+    def proxy_auth_outcome(self) -> tuple[int, tuple[str, ...]]:
+        with self.lock:
+            return self.proxy_auth_challenges, tuple(self.proxy_authorization_values)
 
     def record_cacheable_extension_request(self) -> int:
         with self.lock:
@@ -977,11 +988,84 @@ class RedirectHandler(BaseHTTPRequestHandler):
             return
 
 
+class ForwardProxyAuthenticationHandler(BaseHTTPRequestHandler):
+    """HTTP forward proxy that never forwards and exposes only its 407 wire observation."""
+
+    protocol_version = "HTTP/1.1"
+
+    def do_CONNECT(self) -> None:  # noqa: N802
+        self._challenge()
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._challenge()
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlsplit(self.path)
+        if parsed.path == "/health":
+            self._send(200, b"ok", "text/plain")
+            return
+        if parsed.path == "/observations/proxy-auth":
+            challenge_count, authorization_values = STATE.proxy_auth_outcome()
+            if challenge_count == 0:
+                self._send_json(409, {"error": "proxy authentication challenge was not reached"})
+                return
+            if authorization_values:
+                self._send_json(409, {"error": "proxy authorization reached the wire"})
+                return
+            self._send_json(
+                200,
+                {"challenge_count": challenge_count, "proxy_authorization_values": []},
+            )
+            return
+        self._challenge()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _challenge(self) -> None:
+        values = self.headers.get_all("Proxy-Authorization", failobj=[]) or []
+        STATE.record_proxy_auth_challenge(values)
+        self.send_response(407, "Proxy Authentication Required")
+        self.send_header("Proxy-Authenticate", 'Basic realm="dulcet-forward-proxy"')
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+    def _send_json(self, status: int, value: object) -> None:
+        self._send(
+            status,
+            json.dumps(value, separators=(",", ":")).encode(),
+            "application/json",
+        )
+
+    def _send(self, status: int, body: bytes, content_type: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=4540)
     parser.add_argument("--target-port", type=int, default=4541)
+    parser.add_argument("--forward-proxy-auth", action="store_true")
     args = parser.parse_args()
+
+    if args.forward_proxy_auth:
+        proxy = ThreadingHTTPServer(
+            ("127.0.0.1", args.port),
+            ForwardProxyAuthenticationHandler,
+        )
+        try:
+            proxy.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            proxy.server_close()
+        return 0
 
     source = ThreadingHTTPServer(("127.0.0.1", args.port), RedirectHandler)
     target = ThreadingHTTPServer(("127.0.0.1", args.target_port), RedirectHandler)

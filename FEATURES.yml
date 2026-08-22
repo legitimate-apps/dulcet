@@ -7,7 +7,7 @@
       "title": "Connect an OpenSubsonic server",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
       "gates": ["protocol:subsonic-1.16.1"],
-      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08"],
+      "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08", "CONF-09a", "CONF-09b", "CONF-09c", "CONF-10a", "CONF-10b", "CONF-10c"],
       "platforms": {
         "macos": {
           "status": "partial",
@@ -59,9 +59,45 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"
+            },
+            {
+              "conformance": "CONF-09a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation"
+            },
+            {
+              "conformance": "CONF-09b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/fixtureRendersEveryDeclaredDistinctState"
+            },
+            {
+              "conformance": "CONF-09c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/accountDomainErrorsHaveATotalActionablePresentation"
+            },
+            {
+              "conformance": "CONF-10a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/unentitledKeychainWriteFailsClosedWithoutLegacyFallback"
+            },
+            {
+              "conformance": "CONF-10b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect"
+            },
+            {
+              "conformance": "CONF-10c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
             }
           ],
-          "reason": "CONF-01..08 prove the macOS core and Darwin transport; account UI and credential persistence are not wired."
+          "reason": "All fourteen controls prove their bounded core/Darwin and presentation claims. CONF-10a proves that an unentitled SwiftPM process receives missingDataProtectionKeychainEntitlement and creates neither an active-account pointer nor a legacy-Keychain item; the signed data-protection-Keychain accessibility and non-sync attributes remain ASSUMED. Promote that storage claim only after signed-release-validation / entitled-keychain executes DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility from a signed host carrying the production keychain-access-group entitlement and reads both attributes back from the real item. Separately, no app-level test drives Connect in the built DulcetMac process through the Kotlin main dispatcher to @MainActor completion, Keychain save, and the connected UI. Promote that seam only after apple-ci executes DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade against the real facade and fixture."
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}

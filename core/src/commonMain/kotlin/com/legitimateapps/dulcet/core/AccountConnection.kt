@@ -39,7 +39,9 @@ public data class AccountConnectionRequest(
     val username: String,
     val password: String,
     val allowLocalHttp: Boolean = false,
-)
+) {
+    override fun toString(): String = "AccountConnectionRequest(<redacted>)"
+}
 
 /** Authentication placement observed at the transport boundary, without retaining credential values. */
 public enum class AuthenticationLocation {
@@ -215,8 +217,9 @@ public object SuppressedRedirectUrl {
 
 /**
  * Semantic failures safe for rendering, logging, exception wrapping, and diagnostic serialization.
- * Server-controlled messages and URLs are discarded before construction; fields contain only closed
- * enums, numeric values, or content-free markers.
+ * Server-controlled messages and URLs are discarded before construction. Fields contain only closed
+ * enums, numeric values, content-free markers, or the separately validated canonical target host
+ * that the cross-origin refusal UI is explicitly allowed to display.
  */
 public sealed interface DomainError {
     public sealed interface Input : DomainError {
@@ -269,11 +272,24 @@ public sealed interface DomainError {
         public data object UnsupportedAuthenticationChallenge : Auth
         /** Account connect refused to send a request across an origin boundary. */
         public data class CrossOriginRedirectRejected(
+            val targetHost: RedirectTargetHost,
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
     }
 
     public data class CapabilityUnsupported(val featureId: CapabilityFeature) : DomainError
+}
+
+/** A canonical host safe to show without exposing a redirect path, query, or user information. */
+public data class RedirectTargetHost(public val value: String) {
+    init {
+        val canonical = value.canonicalRedirectHost()
+        require(canonical is CanonicalRedirectHost.Canonical && canonical.value == value) {
+            "RedirectTargetHost must be an already-canonical ASCII host"
+        }
+    }
+
+    override fun toString(): String = "<redirect-host>"
 }
 
 private val DomainError.diagnosticKind: String
@@ -346,11 +362,35 @@ public fun interface SaltSource {
 }
 
 /** Account-connect entry point shared by every platform shell. */
-public class AccountConnector(
+public class AccountConnector private constructor(
     private val saltSource: SaltSource? = null,
     private val logSink: LogSink? = null,
     hostResolver: HostResolver = systemHostResolver(),
+    private val clientTransport: AccountClientTransport,
 ) {
+    public constructor(
+        saltSource: SaltSource? = null,
+        logSink: LogSink? = null,
+        hostResolver: HostResolver = systemHostResolver(),
+    ) : this(
+        saltSource = saltSource,
+        logSink = logSink,
+        hostResolver = hostResolver,
+        clientTransport = AccountClientTransport.Default,
+    )
+
+    internal constructor(
+        forwardProxy: AccountForwardProxy,
+        saltSource: SaltSource? = null,
+        logSink: LogSink? = null,
+        hostResolver: HostResolver = systemHostResolver(),
+    ) : this(
+        saltSource = saltSource,
+        logSink = logSink,
+        hostResolver = hostResolver,
+        clientTransport = AccountClientTransport.ForwardProxy(forwardProxy),
+    )
+
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
 
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult {
@@ -361,7 +401,7 @@ public class AccountConnector(
         normalized as NormalizedServerUrl.Valid
 
         val traceRecorder = RequestTraceRecorder(logSink)
-        val client = createAccountHttpClient {
+        val client = createAccountHttpClient(clientTransport) {
             expectSuccess = false
             followRedirects = false
             install(RequestTracePlugin) {
@@ -620,7 +660,10 @@ public class AccountConnector(
                 )
             if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
                 throw RedirectPolicyFailure(
-                    DomainError.Auth.CrossOriginRedirectRejected(SuppressedRedirectUrl),
+                    DomainError.Auth.CrossOriginRedirectRejected(
+                        targetHost = nextUrl.redirectTargetHost(),
+                        redactedUrl = SuppressedRedirectUrl,
+                    ),
                 )
             }
             when (
@@ -633,7 +676,10 @@ public class AccountConnector(
                 RedirectPolicyDecision.PreserveCredentials -> Unit
                 is RedirectPolicyDecision.Reject -> {
                     val error = if (decision.reason == RedirectRejectionReason.CrossOrigin) {
-                        DomainError.Auth.CrossOriginRedirectRejected(SuppressedRedirectUrl)
+                        DomainError.Auth.CrossOriginRedirectRejected(
+                            targetHost = nextUrl.redirectTargetHost(),
+                            redactedUrl = SuppressedRedirectUrl,
+                        )
                     } else {
                         DomainError.Security.RedirectRejected(
                             decision.reason,
@@ -727,8 +773,19 @@ private class RequestTracePluginConfig {
 }
 
 internal expect fun createAccountHttpClient(
+    transport: AccountClientTransport,
     configure: HttpClientConfig<*>.() -> Unit,
 ): HttpClient
+
+internal data class AccountForwardProxy(
+    val host: String,
+    val port: Int,
+)
+
+internal sealed interface AccountClientTransport {
+    data object Default : AccountClientTransport
+    data class ForwardProxy(val proxy: AccountForwardProxy) : AccountClientTransport
+}
 
 private val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
     val observe = pluginConfig.observe
@@ -829,6 +886,14 @@ private fun String.withoutQuery(): String = URLBuilder().apply {
     parameters.clear()
     fragment = ""
 }.buildString()
+
+private fun String.redirectTargetHost(): RedirectTargetHost {
+    val canonical = Url(this).host.canonicalRedirectHost()
+    check(canonical is CanonicalRedirectHost.Canonical) {
+        "Cross-origin decisions require a canonical target host"
+    }
+    return RedirectTargetHost(canonical.value)
+}
 
 private fun Url.normalizedRedirectPort(): Int? = when {
     protocol.name == "http" && port == 80 -> null

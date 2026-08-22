@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Mutation controls for Swift Testing-to-JUnit evidence conversion."""
+
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+PASSING = """\
+◇ Test firstClaim() started.
+◇ Test secondClaim() started.
+✔ Test secondClaim() passed after 0.01 seconds.
+✔ Test firstClaim() passed after 0.02 seconds.
+✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.
+"""
+
+
+def invoke(transcript: str) -> tuple[subprocess.CompletedProcess[str], Path, tempfile.TemporaryDirectory[str]]:
+    directory = tempfile.TemporaryDirectory(prefix="dulcet-swift-junit-")
+    root = Path(directory.name)
+    log = root / "swift-testing.log"
+    output = root / "TEST-DulcetKitTests.xml"
+    log.write_text(transcript)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPOSITORY / "tools/swift-testing-junit"),
+            str(log),
+            str(output),
+            "DulcetKitTests",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    return result, output, directory
+
+
+result, output, directory = invoke(PASSING)
+try:
+    if result.returncode != 0:
+        raise AssertionError(f"passing Swift transcript rejected: {result.stdout}")
+    identities = {
+        (case.get("classname"), case.get("name"))
+        for case in ET.parse(output).getroot().iter("testcase")
+    }
+    expected = {
+        ("DulcetKitTests", "firstClaim"),
+        ("DulcetKitTests", "secondClaim"),
+    }
+    if identities != expected:
+        raise AssertionError(f"wrong JUnit identities: {identities}")
+finally:
+    directory.cleanup()
+
+rejections = {
+    "missing passed-test line": PASSING.replace(
+        "✔ Test firstClaim() passed after 0.02 seconds.\n",
+        "",
+    ),
+    "duplicate passed-test line": PASSING.replace(
+        "✔ Test firstClaim() passed after 0.02 seconds.\n",
+        "✔ Test firstClaim() passed after 0.02 seconds.\n"
+        "✔ Test firstClaim() passed after 0.03 seconds.\n",
+    ),
+    "failed run summary": PASSING.replace(
+        "✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.",
+        "✘ Test run with 2 tests in 0 suites failed after 0.02 seconds.",
+    ),
+}
+for label, transcript in rejections.items():
+    result, output, directory = invoke(transcript)
+    try:
+        if result.returncode == 0 or output.exists():
+            raise AssertionError(
+                f"{label} produced evidence: returncode={result.returncode}, output={result.stdout!r}"
+            )
+    finally:
+        directory.cleanup()
+
+print("Swift Testing JUnit evidence mutations are rejected")

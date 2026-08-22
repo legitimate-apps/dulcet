@@ -18,6 +18,7 @@ import com.legitimateapps.dulcet.core.RequestObservationBoundary
 import com.legitimateapps.dulcet.core.RequestChannelLocation
 import com.legitimateapps.dulcet.core.RedirectPolicyDecision
 import com.legitimateapps.dulcet.core.RedirectRejectionReason
+import com.legitimateapps.dulcet.core.RedirectTargetHost
 import com.legitimateapps.dulcet.core.Redactor
 import com.legitimateapps.dulcet.core.SaltSource
 import com.legitimateapps.dulcet.core.TlsTrustFailure
@@ -396,7 +397,9 @@ class AccountConnectConformanceTest {
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
-            DomainError.Auth.CrossOriginRedirectRejected(),
+            DomainError.Auth.CrossOriginRedirectRejected(
+                RedirectTargetHost("redirect.example.invalid"),
+            ),
             DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
         )
         val logging = mutableListOf<String>()
@@ -735,9 +738,12 @@ class AccountConnectConformanceTest {
             targetRequestCount(redirectRoot, "cross-observe", "getOpenSubsonicExtensions"),
             "CONF-08 sent an unauthenticated account-connect request across an origin boundary",
         )
-        assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
+        val crossOriginRejection = assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
+        assertEquals("127.0.0.1", crossOriginRejection.targetHost.value)
+        assertFalse(crossOriginRejection.targetHost.value.contains('/'))
+        assertFalse(crossOriginRejection.targetHost.value.contains('?'))
 
         val redirectLoop = fixture().connect("$redirectRoot/loop")
         val loopRejection = assertIs<DomainError.Security.RedirectRejected>(

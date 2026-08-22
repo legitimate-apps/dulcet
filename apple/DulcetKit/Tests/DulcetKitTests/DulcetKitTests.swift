@@ -4,13 +4,13 @@ import Testing
 @testable import DulcetKit
 
 @Test @MainActor
-func fixtureRendersExactlySevenDistinctStates() {
+func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()
     let snapshots = DulcetPresentationState.allCases.map(source.snapshot)
 
-    #expect(snapshots.count == 7)
-    #expect(Set(snapshots.map(\.state)).count == 7)
-    #expect(snapshots.filter(\.accountConnected).count == 6)
+    #expect(snapshots.count == 18)
+    #expect(Set(snapshots.map(\.state)).count == 18)
+    #expect(snapshots.filter(\.accountConnected).count == 7)
 }
 
 @Test @MainActor

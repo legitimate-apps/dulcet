@@ -15,6 +15,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 def materialize(root: Path) -> None:
     for relative in (
         "tools/test-spec-evidence-boundaries",
+        "FEATURES.yml",
         "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
         "docs/superpowers/specs/2026-08-18-dulcet-design.md",
         ".github/workflows/parity-gate.yml",
@@ -46,17 +47,17 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-boundary-") as directory:
 
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    boundary_start = "**Implementation boundary:**"
-    boundary_end = "caller, not an observed product behavior."
+    boundary_start = "**macOS implementation boundary:**"
+    boundary_end = "Android TV. This paragraph makes no shipped account-setup UI claim for them."
     before, separator, remainder = spec.partition(boundary_start)
     if not separator:
         raise AssertionError("account-setup implementation boundary fixture is missing")
     _boundary, separator, after = remainder.partition(boundary_end)
     if not separator:
         raise AssertionError("account-setup implementation boundary terminator is missing")
-    mutated = before + "Phase 1 ships the account-setup feedback described below." + after
+    mutated = before + "Account setup is available where supported." + after
     mutated = mutated.replace(
-        "required future platform presentation (not implemented in Phase 1)",
+        "required macOS presentation (other platform callers remain future work)",
         "UI",
         1,
     )
@@ -90,12 +91,37 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+with tempfile.TemporaryDirectory(prefix="dulcet-live-app-boundary-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    boundary_start = "**ASSUMED live-app seam:**"
+    boundary_end = "persistence effect in that app process."
+    before, separator, remainder = spec.partition(boundary_start)
+    if not separator:
+        raise AssertionError("live-app seam fixture is missing")
+    _boundary, separator, after = remainder.partition(boundary_end)
+    if not separator:
+        raise AssertionError("live-app seam terminator is missing")
+    spec_path.write_text(before + "The app is connected end to end." + after)
+
+    result = invoke(root)
+    expected = "account-setup live-app evidence boundary"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "removed live-app seam boundary was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
 with tempfile.TemporaryDirectory(prefix="dulcet-error-presentation-") as directory:
     root = Path(directory)
     materialize(root)
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    boundary_start = "**Implementation boundary (not implemented in Phase 1):**"
+    boundary_start = (
+        "**macOS implementation boundary:** the Apple facade maps every `DomainError` subtype"
+    )
     boundary_end = '"Unknown error" is not a permitted terminal state.'
     before, separator, remainder = spec.partition(boundary_start)
     if not separator:
@@ -110,6 +136,33 @@ with tempfile.TemporaryDirectory(prefix="dulcet-error-presentation-") as directo
     if result.returncode == 0 or expected not in result.stdout:
         raise AssertionError(
             "removed §18.12 error-presentation boundary was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-proxy-evidence-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    boundary_start = "**OBSERVED, bounded proxy wire control:**"
+    boundary_end = "would settle that additional path."
+    before, separator, remainder = spec.partition(boundary_start)
+    if not separator:
+        raise AssertionError("proxy evidence boundary fixture is missing")
+    _boundary, separator, after = remainder.partition(boundary_end)
+    if not separator:
+        raise AssertionError("proxy evidence boundary terminator is missing")
+    spec_path.write_text(
+        before
+        + "Proxy authentication is neutralized on Darwin."
+        + after
+    )
+
+    result = invoke(root)
+    expected = "proxy evidence boundary"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "removed bounded proxy wire evidence was accepted: "
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 

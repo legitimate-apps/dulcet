@@ -6,8 +6,22 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 60 — platform evidence pins one executed testcase per declared conformance id;
-revision 59 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
+**Revision:** 72 — unentitled data-protection-Keychain access now fails with a typed error and no
+legacy fallback, while the signed item's accessibility remains explicitly ASSUMED; revision 71
+selected the data-protection Keychain; revision 70 made replacement submissions
+cancel the operation they supersede; revision 69 made
+a late Cancel invalidate queued success before persistence; revision 68 recorded the intended
+after-first-unlock/device-only policy; revision 67 made
+credential-bearing request and snapshot values use redacted string and mirror
+representations; revision 66 returned macOS `account.connect` to partial because the live app seam remains
+unexecuted; revision 65 added schema-2 evidence covering its
+core, Darwin, presentation, capture-state, Keychain, relaunch, and 407 claims; revision 64 made
+proxy-auth credential neutralisation observed
+at its explicit forward-proxy boundary; revision 63 added macOS Keychain persistence with explicit reconnect;
+revision 62 added a total, actionable mapping for the closed domain-error taxonomy; revision 61 added
+a reachable form, progress state, and real cancellation; revision 60 made platform
+evidence pin one executed testcase per declared conformance id; revision 59
+made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
 revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
 localized DomainError presentation explicitly future account-UI work; revision
 56 made the documented and sealed authentication-error taxonomies match; revision 55
@@ -867,14 +881,36 @@ per-request limits, not one deadline for the entire extension/ping/user sequence
 hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
 server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
 cancellable by its caller at the core boundary, and an elapsed limit maps to the distinct content-free
-`Transport.Timeout` error. **Implementation boundary:** this repository has no non-test caller of
-`AccountConnector`, so Phase 1 has not built an account-setup progress indicator, Cancel control, or
-user-facing timeout/error presentation. The presentation below is a requirement for a future platform
-caller, not an observed product behavior.
+`Transport.Timeout` error. **macOS implementation boundary:** `DulcetMacApp` constructs the live
+`AppleAccountConnectionClient` through a Swift presentation adapter. The Connection surface accepts
+server URL, username and password, publishes an explicit in-progress state, and its visible Cancel
+control invokes the synchronously returned operation handle, which cancels the child coroutine and
+in-flight Ktor request. Cancel also advances the presentation generation before invoking that handle
+and immediately returns the form to idle. A success already queued for main-actor delivery is stale,
+cannot publish a connected account, and cannot write credentials after the person's last instruction
+was Cancel. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
+Android TV. This paragraph makes no shipped account-setup UI claim for them.
+
+The account data source enforces one active submission independently of view state. A replacement
+submission advances the generation, detaches and cancels the prior handle, then starts the new
+request. Any late prior outcome is stale; it cannot publish or persist. The view's disabled controls
+are usability feedback, not the concurrency invariant.
+
+**ASSUMED live-app seam:** the fourteen `account.connect/macos` evidence entries prove the real
+core/Darwin wire half and the Swift presentation half independently, and the hosted Xcode build
+compile-checks their production wiring. No gate drives Connect in the built `DulcetMac` app process
+through `AppleAccountConnectionClient` on the Kotlin main dispatcher, receives its completion on
+Swift `@MainActor`, saves the credential through the production Keychain store, and observes the
+connected UI. The macOS cell therefore remains `partial`; the compile-checked seam is not promoted to
+an observation by joining two separately observed halves. Promotion to `shipped` requires hosted
+`apple-ci` to execute
+`DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade` against the real
+facade and deterministic server fixture, drive the built app's Connect action, and observe both the
+connected UI and the production persistence effect in that app process.
 
 ### 10.3 The failure modes must be distinguishable
 
-| observation | classification | required future platform presentation (not implemented in Phase 1) |
+| observation | classification | required macOS presentation (other platform callers remain future work) |
 |---|---|---|
 | DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
 | connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
@@ -1339,16 +1375,20 @@ challenge maps to `Auth.UnsupportedAuthenticationChallenge`, so the UI can expla
 authentication added by a reverse proxy or intermediary is unsupported instead of reporting a bare
 `Transport.Unreachable`. **OBSERVED:** the hosted Darwin fixture issues an HTTP Basic challenge,
 receives no ambient `Authorization` or `Proxy-Authorization` value, and requires that distinct domain
-error. **ASSUMED:** proxy-auth challenges fail closed through the same handler. No existing hosted run
-settles that claim: `tools/conformance-env/redirect-server` does not act as a forward proxy or return
-407, so the suite has not observed a proxy challenge reaching the connector, the absence of
-`Proxy-Authorization` on that proxy wire, or the resulting domain error. Promotion to **OBSERVED**
-requires a PR-head `.github/workflows/apple-ci.yml` run whose `apple-ci` job executes
+error. **OBSERVED, bounded proxy wire control:** PR-head hosted `apple-ci` run `32590761419`, job
+`97074117183`, executes
 `DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
-against a future `tools/conformance-env/redirect-server --forward-proxy-auth` loopback fixture that
+against `tools/conformance-env/redirect-server --forward-proxy-auth`, a loopback HTTP forward proxy
+that
 returns `407 Proxy Authentication Required` with `Proxy-Authenticate: Basic`, records every received
-`Proxy-Authorization` value, and asserts both zero such values and
-`Auth.UnsupportedAuthenticationChallenge`.
+`Proxy-Authorization` value, and refuses to forward. The test preloads an ambient proxy credential in
+Foundation's shared credential store, routes an HTTPS account request through that proxy, observes at
+least one challenge and zero `Proxy-Authorization` values on the proxy wire, and requires
+`Auth.UnsupportedAuthenticationChallenge`. This establishes the fail-closed result for the explicit
+Darwin forward-proxy configuration exercised by that fixture. **No broader proxy-routing claim is
+made:** automatic discovery from macOS system proxy settings, PAC/WPAD, authenticated SOCKS proxies,
+and non-Basic proxy-auth schemes remain unverified. A hosted Apple test that configures each such
+route and observes its proxy wire would settle that additional path.
 
 **Decided Phase-1 Darwin response-cache posture:** the account connector's default
 `NSURLSessionConfiguration` clears shared credential storage but retains Foundation's process-wide
@@ -1371,16 +1411,53 @@ through Ktor Darwin's `configureSession` hook.
 | | Apple | Android |
 |---|---|---|
 | item | Keychain generic password | Keystore-backed encrypted store |
-| accessibility | `kSecAttrAccessibleAfterFirstUnlock` — not `...ThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
+| store | data-protection Keychain (`kSecUseDataProtectionKeychain = true` on every add, update, read, and delete query); signed-item behavior is **ASSUMED** pending the entitled control below | platform Keystore |
+| accessibility | **ASSUMED:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
 | key | `service = "${BUNDLE_PREFIX}"`, `account = server_id` (the local UUID, not the username or URL) | alias `${BUNDLE_PREFIX}.<server_id>` |
-| iCloud Keychain sync | off (`kSecAttrSynchronizable = false`) | n/a |
-| device migration / backup restore | credentials do not migrate; the user re-enters the password on a new device | same |
+| iCloud Keychain sync | **ASSUMED for the signed item:** off (`kSecAttrSynchronizable = false`) | n/a |
+| device migration / backup restore | **ASSUMED:** the intended `ThisDeviceOnly` item does not migrate, so the user re-enters the password on a new device | same |
 | key invalidation (lock screen removed, keystore reset) | detected on read; the account enters a re-auth state and cached library data is retained | same |
 | logout | credential deleted before any other cleanup (§14.7) | same |
 
-**Background downloads after a reboot** read the credential like any other consumer;
-`kSecAttrAccessibleAfterFirstUnlock` is chosen precisely so a background task can run before the user
-opens the app. A download whose credential read fails is **paused with a re-auth reason**, not failed.
+**macOS Phase-1 relaunch decision — explicit reconnect:** in the signed application, after a
+successful account negotiation, the complete connection request is intended to be encoded into one
+Keychain generic-password value under
+`service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
+is retained in preferences as the active-account pointer; neither the URL, username, nor password is
+used as a Keychain index. Every `SecItemAdd`, `SecItemUpdate`, `SecItemCopyMatching`, and
+`SecItemDelete` query selects the data-protection Keychain with
+`kSecUseDataProtectionKeychain = true`; on macOS the legacy file-based Keychain does not preserve
+the declared accessibility attribute. The source requests disabled iCloud Keychain synchronization
+and `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; both properties of the real signed item are
+**ASSUMED** until the entitled control below reads them back. On relaunch Dulcet reads the item and
+prefills the secure account form, but performs **no network request until the person chooses
+Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
+surface instead of silently attempting a connection or discarding the condition. The storage API's
+delete path removes the Keychain item before clearing its active-account pointer; an account-management
+logout control is outside this account-connect surface.
+
+**OBSERVED unentitled fail-closed boundary:** pull-request `apple-ci` intentionally runs an unsigned,
+unentitled SwiftPM test binary. Hosted run `32595294491`, job `apple-ci` (`97085139126`), returned
+`errSecMissingEntitlement` when that process selected the data-protection Keychain. The store exposes
+that status as `DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement`; it never retries
+against the legacy Keychain, never records an active-account pointer, and the control requires that
+no matching legacy generic-password item exists. This proves the failure is loud and prevents a
+silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
+
+**ASSUMED signed-Keychain properties and promotion condition:** the accessibility, non-sync, and
+resulting device-migration properties above are promoted to OBSERVED only when workflow
+`signed-release-validation`, job `entitled-keychain`, executes
+`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` in a signed host carrying
+the production keychain-access-group entitlement. That check must add, update, read, and delete the
+real data-protection-Keychain item, read back
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and `kSecAttrSynchronizable = false`, and observe
+the item absent after deletion. Pull-request workflows receive no signing identity, so CONF-10a does
+not claim those properties.
+
+**ASSUMED background behavior:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is intended to
+let a background task run after the device's first post-reboot unlock while preventing migration to
+another device. A download whose credential read fails is specified to be **paused with a re-auth
+reason**, not failed; neither lifecycle behavior is established by the unentitled control.
 
 ### 13.2 The threat model, stated correctly
 
@@ -2042,12 +2119,17 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
-**Implementation boundary (not implemented in Phase 1):** no platform code references `DomainError`,
-so the repository does not yet provide localized error text, suggested actions, or rendering. A
-future account UI must map every semantic kind to a short localized string and suggested action; that
-is a requirement, not an observed product behavior. Raw technical detail must remain confined to
-non-exported platform diagnostics with independently enforced privacy boundaries and must never
-become a `DomainError` payload. "Unknown error" is not a permitted terminal state.
+**macOS implementation boundary:** the Apple facade maps every `DomainError` subtype through an
+exhaustive Kotlin `when` into a closed presentation key and safe display fields; the Swift presenter
+then maps every closed macOS failure kind through an exhaustive `switch` with no default branch.
+Together those compiler-checked boundaries provide localized titles, explanations, and suggested
+actions for every account-connect failure. The cross-origin error exposes only the canonical target
+host: its copy explains that an SSO or identity-provider sign-in intercepted account setup and tells
+the operator to exempt `/rest/` or enter an endpoint outside that layer. An internationalized-host
+input names punycode as the available workaround, and TLS failures direct the operator to install a
+private CA at the macOS operating-system level. Raw paths, queries, credentials, and technical
+exception detail remain unavailable to presentation. Other platform presentation mappings remain
+future work. "Unknown error" is not a permitted terminal state.
 
 ---
 
@@ -2087,11 +2169,19 @@ knowable at commit time. The PR static gate requires exact, duplicate-free confo
 asserts for every entry that (a) the named workflow and job exist, (b) the named test exists in the
 repo, (c) the job is named by the reviewed `.github/required-checks.json` manifest, and (d) the named
 job invokes the executed-evidence verifier. During that same job, after the named test task, the
-verifier reads the test runner's JUnit XML and requires every exact class/method testcase to be
+verifier reads the test runners' JUnit XML and requires every exact class/method testcase to be
 present, executed, unskipped, and passing. A source method, log line, invented job label, tuple alone,
 or one representative testcase for a multi-CONF claim is not evidence. The manifest binding is a
 reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
 records the accepted timing boundary for that live comparison.
+
+Swift Testing does not emit JUnit in this workflow. The Apple job therefore retains its complete
+console transcript and converts it only after the test command succeeds. The converter requires one
+successful run summary, one unique passed-test line per summary count, and emits those executed
+identities as JUnit; an incomplete, duplicate, failed, or summary-free transcript emits no evidence.
+The executed-evidence verifier unions that report with Kotlin/Native's JUnit. This is a transport
+adapter for runner evidence, not a source-name assertion: deleting or filtering a named Swift test
+removes its passed-test line and fails the manifest binding.
 
 **Evidence must match the claim's granularity.** A core unit test does not evidence a platform UI
 capability, and an iPhone simulator run does not evidence iPad navigation, resizing, pointer/keyboard
@@ -2343,6 +2433,12 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-06 | an unreachable endpoint maps to `Transport.Unreachable`, **plus** an unknown code round-trips to `Server.Unknown` |
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
 | CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits same-canonical-host `http`→`https` only when scheme-normalised ports are equal, including both default `80`→`443` and equal non-default ports; rejects asymmetric `80`→`80` and `443`→`443` spellings plus every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
+| CONF-09a | the macOS account surface publishes progress on submission and Cancel invokes the active operation handle |
+| CONF-09b | the deterministic macOS fixture renders every declared account-connect state, including idle, in-progress, connected, and each error family |
+| CONF-09c | every closed account-error presentation kind has actionable copy; TLS, internationalized-host, and cross-origin redirect remedies retain their decided specifics |
+| CONF-10a | an unentitled macOS caller receives `missingDataProtectionKeychainEntitlement`, leaves no active-account pointer, and creates no matching legacy-Keychain item; signed-item accessibility and non-sync properties remain ASSUMED |
+| CONF-10b | persisted credentials prefill the form after relaunch without a network request until explicit Connect |
+| CONF-10c | an explicitly configured Darwin HTTP forward proxy returns 407 Basic while a matching ambient credential is present; account connect emits `Auth.UnsupportedAuthenticationChallenge` and no `Proxy-Authorization` reaches the fixture |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
@@ -3034,6 +3130,180 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 72 (2026-08-22)** — data-protection-Keychain persistence became fail-closed and its
+unexecutable pull-request claim became explicitly ASSUMED.
+
+1. Hosted run `32595294491`, job `apple-ci` (`97085139126`), observed
+   `errSecMissingEntitlement` from the unentitled SwiftPM process. This is the expected boundary for
+   a data-protection-Keychain client without a validated application identifier or Keychain access
+   group, not evidence that the store should fall back.
+2. `errSecMissingEntitlement` now maps to the typed
+   `DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement`. CONF-10a requires that
+   failure, no active-account pointer, and no matching item in the legacy Keychain. A future retry
+   against the legacy store would therefore fail the hosted control.
+3. Accessibility, synchronization, migration, and background-after-first-unlock claims for the real
+   signed item are ASSUMED. The named promotion check is
+   `signed-release-validation` / `entitled-keychain` /
+   `DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility`, executed from a signed
+   host carrying the production keychain-access-group entitlement. Pull-request CI is deliberately
+   unentitled and receives no signing identity.
+
+**Revision 71 (2026-08-22)** — Apple credential queries selected the data-protection Keychain, but
+the signed item's security attributes remained ASSUMED.
+
+1. Hosted run `32594779871`, job `apple-ci` (`97083951915`), falsified revision 68's
+   source-reasoned claim: the legacy macOS Keychain accepted the accessibility input but returned no
+   `kSecAttrAccessible` attribute from the real inserted item.
+2. Every add, update, read, and delete query now selects the data-protection Keychain with
+   `kSecUseDataProtectionKeychain = true`. The source requests `kSecAttrSynchronizable = false` and
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; revision 72 records why their effect on a real
+   signed item is not executable in pull-request CI.
+3. Run `32595294491` showed that the unentitled hosted control cannot insert or inspect that item;
+   its former read-back claim is superseded by revision 72's fail-closed control and entitled-host
+   promotion condition. There is no legacy-item migration: no Dulcet build containing this store has
+   shipped and no user credential exists to migrate.
+
+**Revision 70 (2026-08-22)** — programmatic replacement submissions became single-flight.
+
+1. Starting a submission now advances the generation, detaches and cancels the previous operation,
+   and only then starts the replacement. This invariant lives in `DulcetAccountDataSource`; it does
+   not rely on SwiftUI hiding or disabling a second submit action.
+2. A late outcome from the superseded operation remains generation-stale and cannot render or save.
+   The replacement is the only operation whose outcome can own the presentation and Keychain write.
+3. The hosted Swift control bypasses the UI and submits two distinct requests, requires the first
+   handle to be cancelled, deliberately delivers both successes, and requires that only the second
+   request reaches connected presentation and credential persistence. Removing the cancellation
+   leaves the first handle orphaned and fails the test.
+
+**Revision 69 (2026-08-22)** — Cancel wins over an already-completed but not-yet-rendered request.
+
+1. While account setup is connecting, Cancel first advances the presentation generation, detaches
+   the operation handle, invokes cancellation, and publishes the idle form. A queued outcome from the
+   previous generation is discarded before its connected or failure branch runs.
+2. Consequently a success that races behind Cancel cannot publish the connected UI or save the
+   request to the Keychain. Cancel outside the connecting state remains a no-op and cannot tear down
+   an already-rendered account.
+3. The hosted Swift control submits, cancels, then deliberately delivers a queued connected outcome.
+   It requires one handle cancellation, idle/non-connected presentation, and zero credential-store
+   writes; removing the generation invalidation restores the late save and fails the test.
+
+**Revision 68 (2026-08-22)** — recorded the intended Keychain accessibility and non-migration
+policy; revision 72 marks its signed-item effect ASSUMED.
+
+1. Apple account credentials are specified to use
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, with intended background availability after
+   the first post-reboot unlock and no migration through restore to another device.
+2. The secure-storage table's accessibility and migration rows now describe the same policy. The
+   latter remains unchanged: a person re-enters the password on a new device.
+3. The intended evidence was a hosted read-back of the inserted item's `ThisDeviceOnly` value.
+   Run `32595294491` later established that the unentitled test host cannot create that item; the
+   property is ASSUMED pending revision 72's signed, entitled control.
+
+**Revision 67 (2026-08-22)** — credential-bearing account values became non-printable by default.
+
+1. Kotlin `AccountConnectionRequest.toString()` now emits only its type and a redaction marker; it
+   cannot print the server URL, username, or password through data-class interpolation.
+2. Swift `DulcetAccountConnectRequest` and its enclosing `DulcetSnapshot` provide redacted normal,
+   debug, and custom-mirror representations. Ordinary interpolation, reflection, and `dump` therefore
+   cannot recover credential fields from either the direct value or its presentation container.
+3. Common and hosted Swift tests use distinct URL, username, and password canaries and require every
+   supported rendering path to omit all three while retaining an explicit redaction marker. Removing
+   either platform's override restores the canary and fails its test.
+
+**Revision 66 (2026-08-22)** — the macOS account-connect status was narrowed to the last observed
+boundary.
+
+1. All fourteen schema-2 evidence entries remain attached to `account.connect/macos`: they are
+   earned observations of the core/Darwin and Swift presentation halves and make `partial` precise.
+2. No hosted test drives Connect in the built `DulcetMac` process through the real Kotlin facade,
+   Kotlin main dispatcher, Swift `@MainActor` completion, production Keychain save, and connected UI.
+   That link remains ASSUMED even though both halves pass independently and Xcode compiles their
+   production wiring.
+3. The cell therefore returns from `shipped` to `partial`. Promotion requires `apple-ci` to execute
+   `DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade` against the real
+   facade and fixture and observe the connected UI plus persistence effect in the built app process.
+   Revision 65's evidence mechanism remains valid but its status conclusion is superseded here.
+
+**Revision 65 (2026-08-22)** — macOS account connect gained complete, execution-bound platform
+evidence and moved from `partial` to `shipped`.
+
+1. `account.connect/macos` now declares six claim-sized controls in addition to CONF-01 through
+   CONF-08: progress/cancellation, declared render states, total actionable error presentation,
+   Keychain round-trip/delete, explicit reconnect, and the bounded Darwin 407 proxy path. Schema 2
+   requires exactly one evidence entry for each of all fourteen ids; no representative test stands
+   in for another claim.
+2. Hosted red run `32591604026`, `apple-ci` job `97076245047`, passed the Swift presentation suite
+   and Darwin conformance suite, then failed the executed-evidence verifier because its Kotlin-only
+   JUnit roots did not contain
+   `DulcetKitTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation`. That isolates
+   the evidence transport gap rather than a product or test failure.
+3. The Apple job now captures Swift Testing's transcript after a successful command, requires the
+   successful summary count to equal its unique passed-test lines, converts those identities to
+   JUnit, and verifies the union of Swift and Kotlin/Native reports. Mutation controls reject a
+   missing passed-test line, a duplicate identity, a failed/missing summary, and omission of a
+   manifest-named Swift presentation test.
+4. `shipped` means the macOS capability is reachable and has executed evidence for every declared
+   claim. It makes no reachability claim for iOS, iPadOS, tvOS, Android, or Android TV, whose cells
+   remain `planned`; it also does not widen revision 64's bounded proxy observation.
+
+**Revision 64 (2026-08-22)** — proxy-auth credential neutralisation gained a bounded Darwin wire
+observation.
+
+1. Hosted red run `32590193514`, `apple-ci` job `97072702397`, started and health-checked the new 407
+   fixture but failed because the Darwin forward-proxy conformance connector did not exist. Thus the
+   test could not route account connect through a proxy or establish the claimed observation.
+2. `tools/conformance-env/redirect-server --forward-proxy-auth` now implements an HTTP forward proxy
+   that answers CONNECT, GET, and POST with `407 Proxy Authentication Required`, records every
+   received `Proxy-Authorization` value, and exposes a successful observation only after a challenge
+   occurred with no such value. It never forwards the request.
+3. The Darwin control preloads a matching ambient proxy credential, explicitly routes an HTTPS
+   account request through the fixture, requires `Auth.UnsupportedAuthenticationChallenge`, and then
+   requires the fixture's zero-credential observation. Hosted green run `32590761419`, `apple-ci` job
+   `97074117183`, executed and passed that test in the macOS/arm64 conformance suite.
+4. The result is OBSERVED only for that explicit HTTP forward-proxy and Basic-challenge path. System
+   proxy discovery, PAC/WPAD, SOCKS, and other authentication schemes are not exercised and remain
+   unverified; revision 36's general ASSUMED marker is superseded only to this bounded extent.
+
+**Revision 63 (2026-08-22)** — macOS account credentials gained Keychain persistence.
+
+1. A successful account negotiation writes the server URL, username, password, and local-HTTP choice
+   into a Keychain generic-password item. The service is the stable bundle prefix, the account key is
+   a generated local UUID, synchronization is off, and accessibility is
+   `kSecAttrAccessibleAfterFirstUnlock`.
+2. Relaunch uses explicit reconnect: the saved values prefill the secure form, while the connector is
+   not invoked until the person chooses Connect. Keychain read/write failures use the decided
+   credential-persistence presentation rather than appearing connected or silently losing state.
+3. The hosted Apple control round-trips and deletes a real test Keychain item, then separately proves
+   that a seeded credential store causes zero connector requests before explicit submission and is
+   updated after a successful connection.
+
+**Revision 62 (2026-08-22)** — macOS account errors became total and actionable.
+
+1. The Apple facade exhaustively derives a closed presentation key from every concrete
+   `DomainError`; adding a domain subtype without deciding its user-facing mapping is a compile
+   error. The Swift presenter independently uses an exhaustive, default-free switch over its closed
+   failure kind, so adding a presentation kind without copy is also a compile error.
+2. Every kind has a localized title, explanation, and recovery. The internationalized-host case
+   gives the punycode remedy, TLS names OS-level CA installation, and unsupported intermediary
+   authentication is distinct from transport reachability.
+3. A refused cross-origin redirect now carries only a validated canonical target host into the
+   presentation boundary. The UI names that host and the `/rest/` SSO-bypass remedy without gaining
+   access to the redirect path, query, user information, or credential-bearing request.
+
+**Revision 61 (2026-08-22)** — macOS account setup became reachable and cancellable.
+
+1. The macOS app no longer boots the deterministic library fixture. Its Connection destination owns
+   server URL, username and password fields, an explicit connecting state, and a visible Cancel
+   control wired to the active operation handle.
+2. `AppleAccountConnectionClient` wraps the suspending connector in the §7.2 completion-plus-handle
+   contract: it returns the handle synchronously, confines completion to the Apple main dispatcher,
+   maps cancellation to `Transport.Cancelled`, and prevents Kotlin exceptions crossing the boundary.
+3. The deterministic Swift source and hosted Swift test drive the same presentation actions. The
+   control requires submission to publish progress and requires Cancel to invoke the returned handle;
+   captures include idle, progress, connected, and typed error-family surfaces in both appearances.
+4. This revision implements the caller only on macOS. It does not claim account setup is reachable
+   from the other platform shells.
 
 **Revision 60 (2026-08-22)** — executed platform evidence became complete over each row's conformance set.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Require named evidence-boundary markers and their workflow placement."""
 
+import json
 from pathlib import Path
 import re
 
@@ -13,6 +14,7 @@ def section(document: str, start: str, end: str) -> str:
 
 
 spec = Path("docs/superpowers/specs/2026-08-18-dulcet-design.md").read_text()
+features = json.loads(Path("FEATURES.yml").read_text())
 account_connection_source = Path(
     "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt"
 ).read_text()
@@ -32,6 +34,28 @@ normalized_failure_modes = " ".join(failure_modes.split())
 normalized_error_model = " ".join(error_model.split())
 
 errors: list[str] = []
+
+account_connect = next(
+    feature for feature in features["features"] if feature["id"] == "account.connect"
+)
+macos_account_connect = account_connect["platforms"]["macos"]
+if macos_account_connect.get("status") != "partial":
+    errors.append("account.connect/macos must remain partial until the live app seam executes")
+account_reason = macos_account_connect.get("reason", "")
+for marker in (
+    "no app-level test drives Connect in the built DulcetMac process",
+    "Kotlin main dispatcher to @MainActor completion",
+    "Keychain save",
+    "connected UI",
+    "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
+    "unentitled SwiftPM process",
+    "missingDataProtectionKeychainEntitlement",
+    "legacy-Keychain item",
+    "signed-release-validation / entitled-keychain",
+    "DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility",
+):
+    if marker not in account_reason:
+        errors.append(f"account.connect/macos partial reason is missing {marker!r}")
 
 declared_revision_match = re.search(r"^\*\*Revision:\*\* (\d+)\b", spec, re.MULTILINE)
 revision_records = [
@@ -85,29 +109,67 @@ for marker in (
         errors.append(f"§19.3 must state the gate timing boundary with {marker!r}")
 
 for marker in (
-    "**ASSUMED:** proxy-auth challenges fail closed",
-    "No existing hosted run settles that claim",
-    "does not act as a forward proxy or return 407",
+    "**OBSERVED, bounded proxy wire control:**",
+    "32590761419",
+    "97074117183",
     "DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials",
     "tools/conformance-env/redirect-server --forward-proxy-auth",
     "407 Proxy Authentication Required",
     "records every received `Proxy-Authorization` value",
-    "zero such values and `Auth.UnsupportedAuthenticationChallenge`",
+    "zero `Proxy-Authorization` values",
+    "`Auth.UnsupportedAuthenticationChallenge`",
+    "No broader proxy-routing claim is made",
+    "automatic discovery from macOS system proxy settings",
 ):
     if marker not in normalized_authentication:
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 for marker in (
-    "**Implementation boundary:**",
-    "no non-test caller of `AccountConnector`",
-    "has not built an account-setup progress indicator, Cancel control, or user-facing timeout/error presentation",
-    "requirement for a future platform caller, not an observed product behavior",
+    "**macOS Phase-1 relaunch decision — explicit reconnect:**",
+    "one Keychain generic-password value",
+    "generated local UUID",
+    "data-protection Keychain",
+    "kSecUseDataProtectionKeychain = true",
+    "**OBSERVED unentitled fail-closed boundary:**",
+    "32595294491",
+    "97085139126",
+    "DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement",
+    "no matching legacy generic-password item exists",
+    "**ASSUMED signed-Keychain properties and promotion condition:**",
+    "`signed-release-validation`, job `entitled-keychain`",
+    "DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility",
+    "Pull-request workflows receive no signing identity",
+    "performs **no network request until the person chooses Connect**",
+    "credential-persistence error surface",
+):
+    if marker not in normalized_authentication:
+        errors.append(f"Keychain/relaunch implementation boundary is missing {marker!r}")
+
+for marker in (
+    "**macOS implementation boundary:**",
+    "`DulcetMacApp` constructs the live `AppleAccountConnectionClient`",
+    "publishes an explicit in-progress state",
+    "visible Cancel control invokes the synchronously returned operation handle",
+    "other platform shells remain future work",
 ):
     if marker not in normalized_account_setup:
         errors.append(f"account-setup implementation boundary is missing {marker!r}")
 
-if "required future platform presentation (not implemented in Phase 1)" not in normalized_failure_modes:
-    errors.append("account-setup implementation boundary is missing the future-presentation table label")
+for marker in (
+    "**ASSUMED live-app seam:**",
+    "fourteen `account.connect/macos` evidence entries",
+    "built `DulcetMac` app process",
+    "Kotlin main dispatcher",
+    "Swift `@MainActor`",
+    "production Keychain store",
+    "connected UI",
+    "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
+):
+    if marker not in normalized_account_setup:
+        errors.append(f"account-setup live-app evidence boundary is missing {marker!r}")
+
+if "required macOS presentation (other platform callers remain future work)" not in normalized_failure_modes:
+    errors.append("account-setup implementation boundary is missing the macOS-presentation table label")
 
 auth_source = section(
     account_connection_source,
@@ -132,10 +194,14 @@ else:
         )
 
 for marker in (
-    "**Implementation boundary (not implemented in Phase 1):**",
-    "no platform code references `DomainError`",
-    "future account UI",
-    "not an observed product behavior",
+    "**macOS implementation boundary:**",
+    "exhaustive Kotlin `when`",
+    "exhaustive `switch` with no default branch",
+    "exposes only the canonical target host",
+    "exempt `/rest/`",
+    "punycode as the available workaround",
+    "install a private CA at the macOS operating-system level",
+    "Other platform presentation mappings remain future work",
 ):
     if marker not in normalized_error_model:
         errors.append(f"§18.12 error-presentation implementation boundary is missing {marker!r}")
