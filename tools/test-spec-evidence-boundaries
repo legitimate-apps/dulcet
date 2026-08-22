@@ -18,9 +18,13 @@ drift_workflow = Path(".github/workflows/branch-protection-drift.yml").read_text
 evidence_schema = section(spec, "### 19.2 Row schema", "### 19.3 The gate")
 gate = section(spec, "### 19.3 The gate", "### 19.4 As a delegate brief")
 authentication = section(spec, "### 13.1 Authentication", "### 13.2 The threat model, stated correctly")
+account_setup = section(spec, "**Account-setup timeout decision:**", "### 10.3 The failure modes")
+failure_modes = section(spec, "### 10.3 The failure modes", "### 10.4 Gates are conjunctions")
 normalized_evidence_schema = " ".join(evidence_schema.split())
 normalized_gate = " ".join(gate.split())
 normalized_authentication = " ".join(authentication.split())
+normalized_account_setup = " ".join(account_setup.split())
+normalized_failure_modes = " ".join(failure_modes.split())
 
 errors: list[str] = []
 
@@ -87,6 +91,18 @@ for marker in (
 ):
     if marker not in normalized_authentication:
         errors.append(f"proxy evidence boundary is missing {marker!r}")
+
+for marker in (
+    "**Implementation boundary:**",
+    "no non-test caller of `AccountConnector`",
+    "has not built an account-setup progress indicator, Cancel control, or user-facing timeout/error presentation",
+    "requirement for a future platform caller, not an observed product behavior",
+):
+    if marker not in normalized_account_setup:
+        errors.append(f"account-setup implementation boundary is missing {marker!r}")
+
+if "required future platform presentation (not implemented in Phase 1)" not in normalized_failure_modes:
+    errors.append("account-setup implementation boundary is missing the future-presentation table label")
 
 if errors:
     raise SystemExit("\n".join(errors))
