@@ -343,7 +343,6 @@ struct DulcetTLSUntrustedView: View {
                         .buttonStyle(.bordered)
                         .accessibilityLabel(DulcetStrings.connectionSettings)
                 }
-                .buttonBorderShape(.roundedRectangle(radius: 5))
             }
             .padding(DulcetSpacing.md)
             .frame(maxWidth: 760)
