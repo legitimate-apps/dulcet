@@ -189,11 +189,10 @@ struct DulcetSearchView: View {
                     .lineLimit(nil)
             }
 
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.bestMatches)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
                 Text(DulcetStrings.trackCount(snapshot.searchResults.count))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
