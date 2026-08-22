@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+
+"""Prove fixture literals in SwiftUI copy positions fail the string-catalog policy."""
+
+from __future__ import annotations
+
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+
+TOOLS_ROOT = Path(__file__).parent
+VERIFIER_PATH = TOOLS_ROOT / "verify_string_catalog_policy.py"
+FIXTURE_PATH = TOOLS_ROOT / "fixtures/string-catalog-policy/UncatalogedCopy.swift"
+verifier = SourceFileLoader("verify_string_catalog_policy", str(VERIFIER_PATH)).load_module()
+
+
+def main() -> None:
+    try:
+        verifier.verify_source_paths([FIXTURE_PATH])
+    except verifier.StringCatalogPolicyError as error:
+        observed = set(str(error).splitlines())
+        expected = {
+            f"{FIXTURE_PATH.as_posix()}:6:18: "
+            "string literal in Text copy argument must use DulcetStrings",
+            f"{FIXTURE_PATH.as_posix()}:10:15: "
+            "string literal in help copy argument must use DulcetStrings",
+        }
+        if observed != expected:
+            raise SystemExit(
+                "string catalog policy fixture rejected for the wrong reason:\n"
+                f"{error}"
+            ) from error
+    else:
+        raise SystemExit("string catalog policy unexpectedly accepted its negative control")
+
+    print(
+        "STRING CATALOG POLICY NEGATIVE CONTROL PASS "
+        "fixture-literal-rejected=true "
+        "fixture-help-literal-rejected=true "
+        "non-copy-fixture-literals-accepted=true"
+    )
+
+
+if __name__ == "__main__":
+    main()
