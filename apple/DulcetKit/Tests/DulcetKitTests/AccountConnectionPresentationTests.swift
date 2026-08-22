@@ -73,6 +73,33 @@ func accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation() {
     #expect(connector.operation.cancelCount == 1)
 }
 
+@Test @MainActor
+func lateCancelSuppressesQueuedSuccessAndCredentialPersistence() {
+    let connector = ControlledAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials
+    )
+    let store = DulcetPresentationStore(source: source)
+
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+
+    store.cancelAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+
+    #expect(connector.operation.cancelCount == 1)
+    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(!store.snapshot.accountConnected)
+    #expect(credentials.saved.isEmpty)
+}
+
 @Test
 func accountDomainErrorsHaveATotalActionablePresentation() {
     let presentations = DulcetAccountFailureKind.allCases.map { kind in

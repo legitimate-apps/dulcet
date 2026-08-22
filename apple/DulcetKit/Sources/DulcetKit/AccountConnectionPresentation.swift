@@ -257,8 +257,21 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .submitAccountConnection(request):
             submit(request)
         case .cancelAccountConnection:
-            activeOperation?.cancel()
+            cancelActiveSubmission()
         }
+    }
+
+    private func cancelActiveSubmission() {
+        guard currentSnapshot.state == .accountConnecting else { return }
+        generation += 1
+        let operation = activeOperation
+        activeOperation = nil
+        operation?.cancel()
+        publish(
+            state: .accountConnectIdle,
+            form: currentSnapshot.accountForm,
+            status: .idle
+        )
     }
 
     private func submit(_ request: DulcetAccountConnectRequest) {

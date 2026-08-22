@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 68 — Apple credentials became after-first-unlock and device-only; revision 67 made
+**Revision:** 69 — a late Cancel now invalidates queued success before persistence; revision 68 made
+Apple credentials after-first-unlock and device-only; revision 67 made
 credential-bearing request and snapshot values use redacted string and mirror
 representations; revision 66 returned macOS `account.connect` to partial because the live app seam remains
 unexecuted; revision 65 added schema-2 evidence covering its
@@ -880,7 +881,10 @@ cancellable by its caller at the core boundary, and an elapsed limit maps to the
 `AppleAccountConnectionClient` through a Swift presentation adapter. The Connection surface accepts
 server URL, username and password, publishes an explicit in-progress state, and its visible Cancel
 control invokes the synchronously returned operation handle, which cancels the child coroutine and
-in-flight Ktor request. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
+in-flight Ktor request. Cancel also advances the presentation generation before invoking that handle
+and immediately returns the form to idle. A success already queued for main-actor delivery is stale,
+cannot publish a connected account, and cannot write credentials after the person's last instruction
+was Cancel. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
 Android TV. This paragraph makes no shipped account-setup UI claim for them.
 
 **ASSUMED live-app seam:** the fourteen `account.connect/macos` evidence entries prove the real
@@ -3093,6 +3097,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 69 (2026-08-22)** — Cancel wins over an already-completed but not-yet-rendered request.
+
+1. While account setup is connecting, Cancel first advances the presentation generation, detaches
+   the operation handle, invokes cancellation, and publishes the idle form. A queued outcome from the
+   previous generation is discarded before its connected or failure branch runs.
+2. Consequently a success that races behind Cancel cannot publish the connected UI or save the
+   request to the Keychain. Cancel outside the connecting state remains a no-op and cannot tear down
+   an already-rendered account.
+3. The hosted Swift control submits, cancels, then deliberately delivers a queued connected outcome.
+   It requires one handle cancellation, idle/non-connected presentation, and zero credential-store
+   writes; removing the generation invalidation restores the late save and fails the test.
 
 **Revision 68 (2026-08-22)** — Keychain accessibility now delivers both background access and the
 decided non-migration property.
