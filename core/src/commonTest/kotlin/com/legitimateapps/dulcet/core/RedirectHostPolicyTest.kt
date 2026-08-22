@@ -55,6 +55,38 @@ class RedirectHostPolicyTest {
         )
     }
 
+    @Test
+    fun ipv6ZonesEmbeddedIpv4AndInvalidHostsAreClassifiedThroughRedirectPolicy() {
+        listOf(
+            "https://[fe80::1%25eth0]/rest/ping.view" to
+                "https://[fe80:0:0:0:0:0:0:1%25eth0]/collect",
+            "https://[::ffff:127.0.0.1]/rest/ping.view" to
+                "https://[::ffff:7f00:1]/collect",
+        ).forEach { (current, target) ->
+            assertEquals(
+                RedirectPolicyDecision.PreserveCredentials,
+                redirect(current, target),
+                "$current -> $target",
+            )
+        }
+
+        listOf(
+            "https://[fe80::1%25]/collect",
+            "https://[fe80::1%25eth%7C0]/collect",
+            "https://[fe80::1%25eth0%2525nested]/collect",
+            "https://[1::2::3]/collect",
+            "https://[1:2:3:4:5:6:7:8:9]/collect",
+            "https://[12345::1]/collect",
+            "https://%zz.invalid/collect",
+        ).forEach { target ->
+            assertEquals(
+                RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation),
+                redirect("https://music.invalid/rest/ping.view", target),
+                target,
+            )
+        }
+    }
+
     private fun redirect(current: String, target: String): RedirectPolicyDecision =
         AccountConnectionContract.redirectDecision(
             currentUrl = current,
