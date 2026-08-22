@@ -114,6 +114,45 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+      - name: Capture non-deterministic macOS shipping reference
+        id: shipping_reference
+        continue-on-error: true
+        env:
+          SHIPPING_REFERENCE_ROOT: ${{ runner.temp }}/dulcet-macos-shipping-reference
+        run: |
+          swift run --package-path apple/DulcetKit DulcetShippingReferenceCapture \
+            --output "$SHIPPING_REFERENCE_ROOT" \
+            --pinned-control-directory \
+              apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls
+          python3 - "$SHIPPING_REFERENCE_ROOT/manifest.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          print(manifest["warning"])
+          print(
+              "shipping captures="
+              f'{manifest["successfulShippingCaptureCount"]}/'
+              f'{manifest["expectedShippingCaptureCount"]}'
+          )
+          for missing in manifest["missingCaptures"]:
+              print(
+                  "missing "
+                  f'{missing["fixtureState"]}/{missing["appearance"]}: '
+                  f'{missing["error"]}'
+              )
+          PY
+      - name: Upload non-deterministic macOS shipping reference
+        if: ${{ always() && steps.shipping_reference.outcome != 'skipped' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-shipping-reference-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-macos-shipping-reference
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
       - name: Build iOS and iPadOS shell
         run: >-
           xcodebuild build
