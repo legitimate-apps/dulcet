@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 59 — IPv6 zone validation distinguishes raw delimiter syntax from decoded identifiers;
+**Revision:** 60 — platform evidence pins one executed testcase per declared conformance id;
+revision 59 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
 revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
 localized DomainError presentation explicitly future account-UI work; revision
 56 made the documented and sealed authentication-error taxonomies match; revision 55
@@ -2066,11 +2067,11 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
   gates: [extension:transcodeOffset, engine:seekable]
   conformance: [CONF-14a]
   platforms:
-    macos:     { status: shipped, evidence: { workflow: apple-ci, job: macos-tests,  test: PlaybackSeekTests/testServerOffsetSeek } }
-    ios:       { status: shipped, evidence: { workflow: apple-ci, job: ios-sim-tests, test: PlaybackSeekTests/testServerOffsetSeek } }
-    ipados:    { status: shipped, evidence: { workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekOnIPadLayout } }
+    macos:     { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: macos-tests,  test: PlaybackSeekTests/testServerOffsetSeek }] }
+    ios:       { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: ios-sim-tests, test: PlaybackSeekTests/testServerOffsetSeek }] }
+    ipados:    { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekOnIPadLayout }] }
     tvos:      { status: planned }
-    android:   { status: shipped, evidence: { workflow: android-ci, job: instrumented, test: PlaybackSeekTest#serverOffsetSeek } }
+    android:   { status: shipped, evidence: [{ conformance: CONF-14a, workflow: android-ci, job: instrumented, test: PlaybackSeekTest#serverOffsetSeek }] }
     androidtv: { status: planned }
 ```
 
@@ -2080,13 +2081,15 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 
 **Evidence is a stable identity, not a run id.** Revision 1 required a CI run number in the `evidence`
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
-the number afterwards produces a commit nobody verified. Evidence is therefore
-`{workflow, job, test}` — knowable at commit time. The PR static gate asserts that (a) the named
-workflow and job exist, (b) the named test exists in the repo, (c) the job is named by the reviewed
-`.github/required-checks.json` manifest, and (d) the named job invokes the executed-evidence verifier.
-During that same job, after the named test task, the verifier reads the test runner's JUnit XML and
-requires the exact class/method testcase to be present, executed, unskipped, and passing. A source
-method, log line, invented job label, or tuple alone is not evidence. The manifest binding is a
+the number afterwards produces a commit nobody verified. Evidence is therefore a non-empty list of
+`{conformance, workflow, job, test}` entries, one for every conformance id declared by the row and
+knowable at commit time. The PR static gate requires exact, duplicate-free conformance coverage and
+asserts for every entry that (a) the named workflow and job exist, (b) the named test exists in the
+repo, (c) the job is named by the reviewed `.github/required-checks.json` manifest, and (d) the named
+job invokes the executed-evidence verifier. During that same job, after the named test task, the
+verifier reads the test runner's JUnit XML and requires every exact class/method testcase to be
+present, executed, unskipped, and passing. A source method, log line, invented job label, tuple alone,
+or one representative testcase for a multi-CONF claim is not evidence. The manifest binding is a
 reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
 records the accepted timing boundary for that live comparison.
 
@@ -3031,6 +3034,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 60 (2026-08-22)** — executed platform evidence became complete over each row's conformance set.
+
+1. `FEATURES.yml` schema 2 represents evidence as one `{conformance, workflow, job, test}` entry per
+   declared conformance id. The static gate requires exact, duplicate-free coverage rather than one
+   representative test for a cell carrying several protocol claims.
+2. The `account.connect/macos` cell now pins CONF-01 through CONF-08 individually. The Darwin verifier
+   therefore requires all eight named testcases to appear, execute unskipped, and pass in the Apple
+   job's own JUnit XML.
+3. The mutation harness removes one manifest entry and separately removes one testcase from an
+   otherwise-passing report; both states must fail. Per-test evidence was chosen over a report-wide
+   skipped scan because it also detects a task filter that omits a testcase entirely.
 
 **Revision 59 (2026-08-22)** — raw IPv6 zone syntax and decoded zone identity stopped being conflated.
 

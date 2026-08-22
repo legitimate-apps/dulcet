@@ -115,9 +115,9 @@ Binding. A violation is a stop-work, not a style note.
     *larger* runner label (those are billed even on public repos), and keep the Apple matrix narrow
     because hosted macOS concurrency is capped and a wide matrix queues rather than fans out. Every
     workflow keeps `concurrency: cancel-in-progress` and `timeout-minutes`, now for queue hygiene.
-16. **A `shipped` cell in `FEATURES.yml` requires evidence** — a workflow, job and test that is a
-    required check, at the granularity of the claim. "It builds" is not evidence, and neither is a
-    delegate's report.
+16. **A `shipped` cell in `FEATURES.yml` requires evidence** — one workflow, job and test identity per
+    declared CONF id, each in a required check and at the granularity of the claim. "It builds" is
+    not evidence, and neither is a delegate's report.
 17. **A test that cannot fail is worse than no test.** A Navidrome without ffmpeg does not error — it
     silently direct-plays, so every transcode test would pass while measuring nothing. Every
     conformance test that depends on a server-side capability asserts that capability first and

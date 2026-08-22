@@ -68,7 +68,7 @@ def mutate(root: Path, change: Callable[[dict[str, object]], None]) -> None:
     path.write_text(json.dumps(document, indent=2) + "\n")
 
 
-def macos_evidence(document: dict[str, object]) -> dict[str, str]:
+def macos_evidence(document: dict[str, object]) -> list[dict[str, str]]:
     features = document["features"]
     assert isinstance(features, list)
     account = features[0]
@@ -78,7 +78,7 @@ def macos_evidence(document: dict[str, object]) -> dict[str, str]:
     macos = platforms["macos"]
     assert isinstance(macos, dict)
     evidence = macos["evidence"]
-    assert isinstance(evidence, dict)
+    assert isinstance(evidence, list)
     return evidence
 
 
@@ -108,29 +108,51 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-gate-") as directory:
 
 expect_rejection(
     "existing but non-required job",
-    lambda document: macos_evidence(document).update(workflow="core-ci", job="core-build"),
+    lambda document: macos_evidence(document)[0].update(workflow="core-ci", job="core-build"),
     "evidence job is not required by branch protection",
 )
 expect_rejection(
     "missing workflow and job",
-    lambda document: macos_evidence(document).update(workflow="missing-ci", job="missing-ci"),
+    lambda document: macos_evidence(document)[0].update(
+        workflow="missing-ci",
+        job="missing-ci",
+    ),
     "evidence workflow/job does not exist",
 )
 expect_rejection(
     "missing test",
-    lambda document: macos_evidence(document).update(test="MissingTest/missingTest"),
+    lambda document: macos_evidence(document)[0].update(test="MissingTest/missingTest"),
     "evidence test does not exist",
 )
 expect_rejection(
     "required aggregator that never verifies executed tests",
-    lambda document: macos_evidence(document).update(workflow="core-ci", job="core-ci"),
+    lambda document: macos_evidence(document)[0].update(workflow="core-ci", job="core-ci"),
     "evidence job is not wired to executed-test verification",
+)
+expect_rejection(
+    "missing conformance evidence entry",
+    lambda document: macos_evidence(document).pop(),
+    "evidence must cover each declared conformance id exactly once",
 )
 
 passing_report = """\
-<testsuite tests="1" failures="0" errors="0" skipped="0">
+<testsuite tests="8" failures="0" errors="0" skipped="0">
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf02ReferenceServerExtensionSet[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf03BaselinePingAuthentication[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf04VersionCompatibility[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf05OpenSubsonicEnvelopeFields[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf06DistinguishesAuthenticationAndTransportFailures[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf07RedactsCredentialsFromDiagnostics[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf08EnforcesRedirectCredentialPolicy[macosArm64]" time="0.1" />
 </testsuite>
 """
 with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
@@ -141,6 +163,14 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory
         raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
 
 execution_rejections = {
+    "filtered report omits one declared conformance test": (
+        passing_report.replace(
+            """  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
+            name="conf08EnforcesRedirectCredentialPolicy[macosArm64]" time="0.1" />\n""",
+            "",
+        ),
+        "evidence test did not execute",
+    ),
     "existing but unexecuted source test": (
         """<testsuite><testcase classname="AccountConnectConformanceTest"
         name="conf02RedirectPolicy" /></testsuite>""",

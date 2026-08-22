@@ -100,8 +100,9 @@ def validate(document: dict, source: str) -> dict[str, dict]:
     unknown = set(document) - TOP_KEYS
     if unknown:
         fail(f"{source}: unknown top-level keys: {sorted(unknown)}")
-    if document.get("schema_version") != 1:
-        fail(f"{source}: schema_version must be 1")
+    schema_version = document.get("schema_version")
+    if schema_version not in {1, 2}:
+        fail(f"{source}: schema_version must be 1 or 2")
     if not isinstance(document.get("accepted_regressions"), list):
         fail(f"{source}: accepted_regressions must be a list")
     features = document.get("features")
@@ -158,26 +159,54 @@ def validate(document: dict, source: str) -> dict[str, dict]:
             if status == "shipped" and evidence is None:
                 fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
             if evidence is not None:
-                if (
-                    not isinstance(evidence, dict)
-                    or set(evidence) != {"workflow", "job", "test"}
-                    or any(not isinstance(value, str) or not value for value in evidence.values())
-                ):
-                    fail(f"{source}: {feature_id}/{platform} evidence requires workflow/job/test strings")
-                if (evidence["workflow"], evidence["job"]) not in jobs:
-                    fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
-                if evidence["test"].split("/")[-1].split("#")[-1] not in tests:
-                    fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
-                if evidence["job"] not in required_checks:
-                    fail(
-                        f"{source}: {feature_id}/{platform} evidence job is not required "
-                        "by branch protection"
-                    )
-                if (evidence["workflow"], evidence["job"]) not in execution_jobs:
-                    fail(
-                        f"{source}: {feature_id}/{platform} evidence job is not wired "
-                        "to executed-test verification"
-                    )
+                if schema_version == 1:
+                    entries = [evidence]
+                    required_evidence_keys = {"workflow", "job", "test"}
+                else:
+                    if not isinstance(evidence, list) or not evidence:
+                        fail(f"{source}: {feature_id}/{platform} evidence must be a non-empty list")
+                    entries = evidence
+                    required_evidence_keys = {"conformance", "workflow", "job", "test"}
+
+                evidence_conformance: list[str] = []
+                for entry in entries:
+                    if (
+                        not isinstance(entry, dict)
+                        or set(entry) != required_evidence_keys
+                        or any(not isinstance(value, str) or not value for value in entry.values())
+                    ):
+                        fail(
+                            f"{source}: {feature_id}/{platform} evidence entries require "
+                            f"{sorted(required_evidence_keys)} strings"
+                        )
+                    if schema_version == 2:
+                        evidence_conformance.append(entry["conformance"])
+                    if (entry["workflow"], entry["job"]) not in jobs:
+                        fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
+                    if entry["test"].split("/")[-1].split("#")[-1] not in tests:
+                        fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
+                    if entry["job"] not in required_checks:
+                        fail(
+                            f"{source}: {feature_id}/{platform} evidence job is not required "
+                            "by branch protection"
+                        )
+                    if (entry["workflow"], entry["job"]) not in execution_jobs:
+                        fail(
+                            f"{source}: {feature_id}/{platform} evidence job is not wired "
+                            "to executed-test verification"
+                        )
+
+                if schema_version == 2:
+                    declared_conformance = feature.get("conformance", [])
+                    if (
+                        len(evidence_conformance) != len(set(evidence_conformance))
+                        or set(evidence_conformance) != set(declared_conformance)
+                    ):
+                        fail(
+                            f"{source}: {feature_id}/{platform} evidence must cover each "
+                            f"declared conformance id exactly once; declared={declared_conformance}, "
+                            f"evidenced={evidence_conformance}"
+                        )
     return by_id
 
 
