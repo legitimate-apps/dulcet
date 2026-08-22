@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 65 — macOS `account.connect` became shipped only after schema-2 evidence covered its
+**Revision:** 66 — macOS `account.connect` returned to partial because the live app seam remains
+unexecuted; revision 65 added schema-2 evidence covering its
 core, Darwin, presentation, capture-state, Keychain, relaunch, and 407 claims; revision 64 made
 proxy-auth credential neutralisation observed
 at its explicit forward-proxy boundary; revision 63 added macOS Keychain persistence with explicit reconnect;
@@ -879,6 +880,18 @@ server URL, username and password, publishes an explicit in-progress state, and 
 control invokes the synchronously returned operation handle, which cancels the child coroutine and
 in-flight Ktor request. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
 Android TV. This paragraph makes no shipped account-setup UI claim for them.
+
+**ASSUMED live-app seam:** the fourteen `account.connect/macos` evidence entries prove the real
+core/Darwin wire half and the Swift presentation half independently, and the hosted Xcode build
+compile-checks their production wiring. No gate drives Connect in the built `DulcetMac` app process
+through `AppleAccountConnectionClient` on the Kotlin main dispatcher, receives its completion on
+Swift `@MainActor`, saves the credential through the production Keychain store, and observes the
+connected UI. The macOS cell therefore remains `partial`; the compile-checked seam is not promoted to
+an observation by joining two separately observed halves. Promotion to `shipped` requires hosted
+`apple-ci` to execute
+`DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade` against the real
+facade and deterministic server fixture, drive the built app's Connect action, and observe both the
+connected UI and the production persistence effect in that app process.
 
 ### 10.3 The failure modes must be distinguishable
 
@@ -3077,6 +3090,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 66 (2026-08-22)** — the macOS account-connect status was narrowed to the last observed
+boundary.
+
+1. All fourteen schema-2 evidence entries remain attached to `account.connect/macos`: they are
+   earned observations of the core/Darwin and Swift presentation halves and make `partial` precise.
+2. No hosted test drives Connect in the built `DulcetMac` process through the real Kotlin facade,
+   Kotlin main dispatcher, Swift `@MainActor` completion, production Keychain save, and connected UI.
+   That link remains ASSUMED even though both halves pass independently and Xcode compiles their
+   production wiring.
+3. The cell therefore returns from `shipped` to `partial`. Promotion requires `apple-ci` to execute
+   `DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade` against the real
+   facade and fixture and observe the connected UI plus persistence effect in the built app process.
+   Revision 65's evidence mechanism remains valid but its status conclusion is superseded here.
 
 **Revision 65 (2026-08-22)** — macOS account connect gained complete, execution-bound platform
 evidence and moved from `partial` to `shipped`.

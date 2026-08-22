@@ -10,7 +10,7 @@
       "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08", "CONF-09a", "CONF-09b", "CONF-09c", "CONF-10a", "CONF-10b", "CONF-10c"],
       "platforms": {
         "macos": {
-          "status": "shipped",
+          "status": "partial",
           "evidence": [
             {
               "conformance": "CONF-01",
@@ -96,7 +96,8 @@
               "job": "apple-ci",
               "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
             }
-          ]
+          ],
+          "reason": "All fourteen controls prove the core/Darwin and presentation halves, but no app-level test drives Connect in the built DulcetMac process through the Kotlin main dispatcher to @MainActor completion, Keychain save, and the connected UI. Promote only after apple-ci executes DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade against the real facade and fixture."
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}

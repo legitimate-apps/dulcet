@@ -15,6 +15,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 def materialize(root: Path) -> None:
     for relative in (
         "tools/test-spec-evidence-boundaries",
+        "FEATURES.yml",
         "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
         "docs/superpowers/specs/2026-08-18-dulcet-design.md",
         ".github/workflows/parity-gate.yml",
@@ -87,6 +88,29 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
     if result.returncode == 0 or expected not in result.stdout:
         raise AssertionError(
             "declared/latest revision mismatch was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-live-app-boundary-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    boundary_start = "**ASSUMED live-app seam:**"
+    boundary_end = "persistence effect in that app process."
+    before, separator, remainder = spec.partition(boundary_start)
+    if not separator:
+        raise AssertionError("live-app seam fixture is missing")
+    _boundary, separator, after = remainder.partition(boundary_end)
+    if not separator:
+        raise AssertionError("live-app seam terminator is missing")
+    spec_path.write_text(before + "The app is connected end to end." + after)
+
+    result = invoke(root)
+    expected = "account-setup live-app evidence boundary"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "removed live-app seam boundary was accepted: "
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 

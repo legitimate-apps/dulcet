@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Require named evidence-boundary markers and their workflow placement."""
 
+import json
 from pathlib import Path
 import re
 
@@ -13,6 +14,7 @@ def section(document: str, start: str, end: str) -> str:
 
 
 spec = Path("docs/superpowers/specs/2026-08-18-dulcet-design.md").read_text()
+features = json.loads(Path("FEATURES.yml").read_text())
 account_connection_source = Path(
     "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt"
 ).read_text()
@@ -32,6 +34,23 @@ normalized_failure_modes = " ".join(failure_modes.split())
 normalized_error_model = " ".join(error_model.split())
 
 errors: list[str] = []
+
+account_connect = next(
+    feature for feature in features["features"] if feature["id"] == "account.connect"
+)
+macos_account_connect = account_connect["platforms"]["macos"]
+if macos_account_connect.get("status") != "partial":
+    errors.append("account.connect/macos must remain partial until the live app seam executes")
+account_reason = macos_account_connect.get("reason", "")
+for marker in (
+    "no app-level test drives Connect in the built DulcetMac process",
+    "Kotlin main dispatcher to @MainActor completion",
+    "Keychain save",
+    "connected UI",
+    "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
+):
+    if marker not in account_reason:
+        errors.append(f"account.connect/macos partial reason is missing {marker!r}")
 
 declared_revision_match = re.search(r"^\*\*Revision:\*\* (\d+)\b", spec, re.MULTILINE)
 revision_records = [
@@ -119,6 +138,19 @@ for marker in (
 ):
     if marker not in normalized_account_setup:
         errors.append(f"account-setup implementation boundary is missing {marker!r}")
+
+for marker in (
+    "**ASSUMED live-app seam:**",
+    "fourteen `account.connect/macos` evidence entries",
+    "built `DulcetMac` app process",
+    "Kotlin main dispatcher",
+    "Swift `@MainActor`",
+    "production Keychain store",
+    "connected UI",
+    "DulcetMacAccountConnectAppTest/connectReachesConnectedUIThroughLiveKotlinFacade",
+):
+    if marker not in normalized_account_setup:
+        errors.append(f"account-setup live-app evidence boundary is missing {marker!r}")
 
 if "required macOS presentation (other platform callers remain future work)" not in normalized_failure_modes:
     errors.append("account-setup implementation boundary is missing the macOS-presentation table label")
