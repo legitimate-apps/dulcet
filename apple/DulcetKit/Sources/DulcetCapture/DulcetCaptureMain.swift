@@ -284,7 +284,7 @@ private struct DulcetCaptureMain {
             widthPixels: width,
             heightPixels: height,
             captureSurface: "titled-nswindow-with-standard-chrome",
-            windowTitlePolicy: "visible-centered-standard-window-title",
+            windowTitlePolicy: "visible-centered-expanded-toolbar-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
             preflightRender: "discarded-library-browse-light-before-recording",
             jpegCompression: jpegCompression,
@@ -349,6 +349,7 @@ private struct DulcetCaptureMain {
         window.backgroundColor = NSColor.windowBackgroundColor
         window.title = "Dulcet"
         window.titleVisibility = .visible
+        window.toolbarStyle = .expanded
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
         window.contentView = hostingView
