@@ -3,6 +3,24 @@ import SwiftUI
 import Testing
 @testable import DulcetKit
 
+@Test
+func localizedLibraryCountsSelectPluralCategoriesForVisibleAndAccessibilityCopy() {
+    #expect(DulcetStrings.albumCount(0) == "0 albums")
+    #expect(DulcetStrings.albumCount(1) == "1 album")
+    #expect(DulcetStrings.albumCount(2) == "2 albums")
+    #expect(DulcetStrings.trackCount(0) == "0 tracks")
+    #expect(DulcetStrings.trackCount(1) == "1 track")
+    #expect(DulcetStrings.trackCount(2) == "2 tracks")
+
+    let accessibility = DulcetStrings.albumAccessibility(
+        "One Track",
+        artists: "Fixture Artist",
+        tracks: DulcetStrings.trackCount(1)
+    )
+    #expect(accessibility == "One Track, Fixture Artist, 1 track")
+    #expect(!accessibility.contains("1 tracks"))
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()

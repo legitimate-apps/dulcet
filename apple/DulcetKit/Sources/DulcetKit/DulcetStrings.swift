@@ -79,11 +79,11 @@ enum DulcetStrings {
     static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
 
     static func albumCount(_ count: Int) -> String {
-        formatted("library.albumCount", "%d albums", count)
+        pluralized("library.albumCount", fallback: "%d albums", count: count)
     }
 
     static func trackCount(_ count: Int) -> String {
-        formatted("library.trackCount", "%d tracks", count)
+        pluralized("library.trackCount", fallback: "%d tracks", count: count)
     }
 
     static func discTitle(_ number: Int) -> String {
@@ -211,6 +211,15 @@ enum DulcetStrings {
             locale: Locale.current,
             arguments: arguments
         )
+    }
+
+    private static func pluralized(
+        _ key: String,
+        fallback: String,
+        count: Int
+    ) -> String {
+        let format = Bundle.module.localizedString(forKey: key, value: fallback, table: nil)
+        return String.localizedStringWithFormat(format, count)
     }
 
     private static func text(

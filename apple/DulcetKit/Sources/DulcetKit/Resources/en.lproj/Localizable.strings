@@ -140,8 +140,6 @@
 "account.error.credentialPersistenceFailed.message" = "The server accepted the account, but the system Keychain did not save it.";
 "account.error.credentialPersistenceFailed.recovery" = "Review Keychain access for Dulcet, then connect again.";
 "action.cancel" = "Cancel";
-"library.albumCount" = "%d albums";
-"library.trackCount" = "%d tracks";
 "album.discNumber" = "Disc %d";
 "status.server" = "%@ · Online";
 "status.serverConnectionFailed" = "%@ · Connection failed";
