@@ -28,32 +28,6 @@ normalized_failure_modes = " ".join(failure_modes.split())
 
 errors: list[str] = []
 
-declared_revision_match = re.search(r"^\*\*Revision:\*\* (\d+)\b", spec, re.MULTILINE)
-revision_records = [
-    int(value)
-    for value in re.findall(r"^\*\*Revision (\d+) \(\d{4}-\d{2}-\d{2}\)\*\*", spec, re.MULTILINE)
-]
-if declared_revision_match is None:
-    errors.append("spec must declare its revision")
-elif not revision_records:
-    errors.append("spec must contain dated revision records")
-else:
-    declared_revision = int(declared_revision_match.group(1))
-    recorded_revisions = set(revision_records)
-    expected_revisions = set(range(2, declared_revision + 1))
-    if len(revision_records) != len(recorded_revisions):
-        errors.append("spec revision records must not contain duplicate numbers")
-    if declared_revision != max(recorded_revisions):
-        errors.append(
-            f"declared revision {declared_revision} must equal latest record {max(recorded_revisions)}"
-        )
-    missing_revisions = sorted(expected_revisions - recorded_revisions)
-    unexpected_revisions = sorted(recorded_revisions - expected_revisions)
-    if missing_revisions:
-        errors.append(f"spec revision record is missing: {missing_revisions}")
-    if unexpected_revisions:
-        errors.append(f"spec revision record exceeds its declaration: {unexpected_revisions}")
-
 if "pull_request:" not in parity_workflow:
     errors.append("parity-gate must execute on pull requests")
 if "python3 tools/test-spec-evidence-boundaries" not in parity_workflow:

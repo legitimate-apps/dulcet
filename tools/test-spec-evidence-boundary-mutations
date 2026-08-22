@@ -68,4 +68,22 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-boundary-") as directory:
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    mutated = spec.replace("**Revision:** 51 ", "**Revision:** 50 ", 1)
+    if mutated == spec:
+        raise AssertionError("declared revision fixture is missing")
+    spec_path.write_text(mutated)
+
+    result = invoke(root)
+    expected = "must equal latest record"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "declared/latest revision mismatch was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
 print("spec evidence-boundary mutations are rejected")
