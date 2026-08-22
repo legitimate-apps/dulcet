@@ -106,12 +106,17 @@ struct DulcetLibraryBrowseView: View {
                                 track: track,
                                 showAlbum: true,
                                 index: index + 1,
-                                surface: .window
+                                surface: .control
                             )
                             if track.id != snapshot.recentlyAddedTracks.last?.id {
                                 Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
                             }
                         }
+                    }
+                    .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
                     }
                 }
             }
