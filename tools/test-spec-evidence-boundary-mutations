@@ -115,4 +115,31 @@ with tempfile.TemporaryDirectory(prefix="dulcet-error-presentation-") as directo
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+with tempfile.TemporaryDirectory(prefix="dulcet-proxy-evidence-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    boundary_start = "**OBSERVED, bounded proxy wire control:**"
+    boundary_end = "would settle that additional path."
+    before, separator, remainder = spec.partition(boundary_start)
+    if not separator:
+        raise AssertionError("proxy evidence boundary fixture is missing")
+    _boundary, separator, after = remainder.partition(boundary_end)
+    if not separator:
+        raise AssertionError("proxy evidence boundary terminator is missing")
+    spec_path.write_text(
+        before
+        + "Proxy authentication is neutralized on Darwin."
+        + after
+    )
+
+    result = invoke(root)
+    expected = "proxy evidence boundary"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "removed bounded proxy wire evidence was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
 print("spec evidence-boundary mutations are rejected")

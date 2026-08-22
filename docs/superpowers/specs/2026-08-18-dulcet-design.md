@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 63 — macOS account credentials gained Keychain persistence with explicit reconnect;
+**Revision:** 64 — a hosted Darwin 407 fixture made proxy-auth credential neutralisation observed
+at its explicit forward-proxy boundary; revision 63 added macOS Keychain persistence with explicit reconnect;
 revision 62 added a total, actionable mapping for the closed domain-error taxonomy; revision 61 added
 a reachable form, progress state, and real cancellation; revision 60 made platform
 evidence pin one executed testcase per declared conformance id; revision 59
@@ -1344,16 +1345,20 @@ challenge maps to `Auth.UnsupportedAuthenticationChallenge`, so the UI can expla
 authentication added by a reverse proxy or intermediary is unsupported instead of reporting a bare
 `Transport.Unreachable`. **OBSERVED:** the hosted Darwin fixture issues an HTTP Basic challenge,
 receives no ambient `Authorization` or `Proxy-Authorization` value, and requires that distinct domain
-error. **ASSUMED:** proxy-auth challenges fail closed through the same handler. No existing hosted run
-settles that claim: `tools/conformance-env/redirect-server` does not act as a forward proxy or return
-407, so the suite has not observed a proxy challenge reaching the connector, the absence of
-`Proxy-Authorization` on that proxy wire, or the resulting domain error. Promotion to **OBSERVED**
-requires a PR-head `.github/workflows/apple-ci.yml` run whose `apple-ci` job executes
+error. **OBSERVED, bounded proxy wire control:** PR-head hosted `apple-ci` run `32590761419`, job
+`97074117183`, executes
 `DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials`
-against a future `tools/conformance-env/redirect-server --forward-proxy-auth` loopback fixture that
+against `tools/conformance-env/redirect-server --forward-proxy-auth`, a loopback HTTP forward proxy
+that
 returns `407 Proxy Authentication Required` with `Proxy-Authenticate: Basic`, records every received
-`Proxy-Authorization` value, and asserts both zero such values and
-`Auth.UnsupportedAuthenticationChallenge`.
+`Proxy-Authorization` value, and refuses to forward. The test preloads an ambient proxy credential in
+Foundation's shared credential store, routes an HTTPS account request through that proxy, observes at
+least one challenge and zero `Proxy-Authorization` values on the proxy wire, and requires
+`Auth.UnsupportedAuthenticationChallenge`. This establishes the fail-closed result for the explicit
+Darwin forward-proxy configuration exercised by that fixture. **No broader proxy-routing claim is
+made:** automatic discovery from macOS system proxy settings, PAC/WPAD, authenticated SOCKS proxies,
+and non-Basic proxy-auth schemes remain unverified. A hosted Apple test that configures each such
+route and observes its proxy wire would settle that additional path.
 
 **Decided Phase-1 Darwin response-cache posture:** the account connector's default
 `NSURLSessionConfiguration` clears shared credential storage but retains Foundation's process-wide
@@ -3056,6 +3061,24 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 64 (2026-08-22)** — proxy-auth credential neutralisation gained a bounded Darwin wire
+observation.
+
+1. Hosted red run `32590193514`, `apple-ci` job `97072702397`, started and health-checked the new 407
+   fixture but failed because the Darwin forward-proxy conformance connector did not exist. Thus the
+   test could not route account connect through a proxy or establish the claimed observation.
+2. `tools/conformance-env/redirect-server --forward-proxy-auth` now implements an HTTP forward proxy
+   that answers CONNECT, GET, and POST with `407 Proxy Authentication Required`, records every
+   received `Proxy-Authorization` value, and exposes a successful observation only after a challenge
+   occurred with no such value. It never forwards the request.
+3. The Darwin control preloads a matching ambient proxy credential, explicitly routes an HTTPS
+   account request through the fixture, requires `Auth.UnsupportedAuthenticationChallenge`, and then
+   requires the fixture's zero-credential observation. Hosted green run `32590761419`, `apple-ci` job
+   `97074117183`, executed and passed that test in the macOS/arm64 conformance suite.
+4. The result is OBSERVED only for that explicit HTTP forward-proxy and Basic-challenge path. System
+   proxy discovery, PAC/WPAD, SOCKS, and other authentication schemes are not exercised and remain
+   unverified; revision 36's general ASSUMED marker is superseded only to this bounded extent.
 
 **Revision 63 (2026-08-22)** — macOS account credentials gained Keychain persistence.
 

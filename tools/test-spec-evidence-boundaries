@@ -85,14 +85,17 @@ for marker in (
         errors.append(f"§19.3 must state the gate timing boundary with {marker!r}")
 
 for marker in (
-    "**ASSUMED:** proxy-auth challenges fail closed",
-    "No existing hosted run settles that claim",
-    "does not act as a forward proxy or return 407",
+    "**OBSERVED, bounded proxy wire control:**",
+    "32590761419",
+    "97074117183",
     "DarwinProxyAuthenticationConformanceTest.proxyChallengeFailsClosedWithoutAmbientCredentials",
     "tools/conformance-env/redirect-server --forward-proxy-auth",
     "407 Proxy Authentication Required",
     "records every received `Proxy-Authorization` value",
-    "zero such values and `Auth.UnsupportedAuthenticationChallenge`",
+    "zero `Proxy-Authorization` values",
+    "`Auth.UnsupportedAuthenticationChallenge`",
+    "No broader proxy-routing claim is made",
+    "automatic discovery from macOS system proxy settings",
 ):
     if marker not in normalized_authentication:
         errors.append(f"proxy evidence boundary is missing {marker!r}")
