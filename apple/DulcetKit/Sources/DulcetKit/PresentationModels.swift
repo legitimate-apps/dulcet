@@ -51,7 +51,8 @@ public enum DulcetConnectionFailure: Sendable, Hashable {
     }
 }
 
-public struct DulcetAccountConnectRequest: Sendable, Hashable {
+public struct DulcetAccountConnectRequest: Sendable, Hashable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let serverURL: String
     public let username: String
     public let password: String
@@ -75,6 +76,20 @@ public struct DulcetAccountConnectRequest: Sendable, Hashable {
         password: "",
         allowLocalHTTP: false
     )
+
+    public var description: String {
+        "DulcetAccountConnectRequest(<redacted>)"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [("accountConnectRequest", "<redacted>" as Any)],
+            displayStyle: .struct
+        )
+    }
 }
 
 public struct DulcetConnectedAccountSummary: Sendable, Hashable {
@@ -375,7 +390,8 @@ public struct DulcetTLSFailure: Sendable, Hashable {
     }
 }
 
-public struct DulcetSnapshot: Sendable, Hashable {
+public struct DulcetSnapshot: Sendable, Hashable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let state: DulcetPresentationState
     public let selectedDestination: DulcetSidebarDestination
     public let accountConnected: Bool
@@ -421,5 +437,24 @@ public struct DulcetSnapshot: Sendable, Hashable {
         self.captureDate = captureDate
         self.accountForm = accountForm
         self.accountConnection = accountConnection
+    }
+
+    public var description: String {
+        "DulcetSnapshot(state=\(state.rawValue), accountConnected=\(accountConnected), "
+            + "accountForm=<redacted>)"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                ("state", state.rawValue as Any),
+                ("accountConnected", accountConnected as Any),
+                ("accountForm", "<redacted>" as Any),
+            ],
+            displayStyle: .struct
+        )
     }
 }

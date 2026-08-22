@@ -2,6 +2,49 @@ import Foundation
 import Testing
 @testable import DulcetKit
 
+@Test
+func credentialBearingPresentationValuesCannotPrintCredentials() {
+    let credentialValues = [
+        "https://listener:request-secret@music.example.invalid",
+        "print-canary-username",
+        "print-canary-password",
+    ]
+    let request = DulcetAccountConnectRequest(
+        serverURL: credentialValues[0],
+        username: credentialValues[1],
+        password: credentialValues[2],
+        allowLocalHTTP: false
+    )
+    let snapshot = DulcetSnapshot(
+        state: .accountConnectIdle,
+        selectedDestination: .settings,
+        accountConnected: false,
+        connectivity: .unavailable,
+        albums: [],
+        looseTracks: [],
+        recentlyAddedTracks: [],
+        captureDate: Date(timeIntervalSince1970: 0),
+        accountForm: request
+    )
+    var requestDump = ""
+    var snapshotDump = ""
+    dump(request, to: &requestDump)
+    dump(snapshot, to: &snapshotDump)
+    let rendered = [
+        String(describing: request),
+        String(reflecting: request),
+        requestDump,
+        String(describing: snapshot),
+        String(reflecting: snapshot),
+        snapshotDump,
+    ]
+
+    for value in credentialValues {
+        #expect(rendered.allSatisfy { !$0.contains(value) })
+    }
+    #expect(rendered.allSatisfy { $0.contains("<redacted>") })
+}
+
 @Test @MainActor
 func accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation() {
     let connector = ControlledAccountConnector()

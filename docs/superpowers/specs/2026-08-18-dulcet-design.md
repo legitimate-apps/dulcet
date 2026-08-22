@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 66 — macOS `account.connect` returned to partial because the live app seam remains
+**Revision:** 67 — credential-bearing request and snapshot values gained redacted string and mirror
+representations; revision 66 returned macOS `account.connect` to partial because the live app seam remains
 unexecuted; revision 65 added schema-2 evidence covering its
 core, Darwin, presentation, capture-state, Keychain, relaunch, and 407 claims; revision 64 made
 proxy-auth credential neutralisation observed
@@ -3090,6 +3091,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 67 (2026-08-22)** — credential-bearing account values became non-printable by default.
+
+1. Kotlin `AccountConnectionRequest.toString()` now emits only its type and a redaction marker; it
+   cannot print the server URL, username, or password through data-class interpolation.
+2. Swift `DulcetAccountConnectRequest` and its enclosing `DulcetSnapshot` provide redacted normal,
+   debug, and custom-mirror representations. Ordinary interpolation, reflection, and `dump` therefore
+   cannot recover credential fields from either the direct value or its presentation container.
+3. Common and hosted Swift tests use distinct URL, username, and password canaries and require every
+   supported rendering path to omit all three while retaining an explicit redaction marker. Removing
+   either platform's override restores the canary and fails its test.
 
 **Revision 66 (2026-08-22)** — the macOS account-connect status was narrowed to the last observed
 boundary.

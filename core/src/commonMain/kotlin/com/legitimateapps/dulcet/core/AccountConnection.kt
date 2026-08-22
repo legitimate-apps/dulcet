@@ -39,7 +39,9 @@ public data class AccountConnectionRequest(
     val username: String,
     val password: String,
     val allowLocalHttp: Boolean = false,
-)
+) {
+    override fun toString(): String = "AccountConnectionRequest(<redacted>)"
+}
 
 /** Authentication placement observed at the transport boundary, without retaining credential values. */
 public enum class AuthenticationLocation {
