@@ -15,6 +15,9 @@ enum DulcetSpacing {
 enum DulcetMetrics {
     static let sidebarMinWidth: CGFloat = 210
     static let artworkCornerRadius: CGFloat = 12
+    static let denseRowArtworkSize: CGFloat = 28
+    static let denseRowSeparatorInset: CGFloat = 36
+    static let denseRowVerticalPadding: CGFloat = 2
     static let captureWidth: CGFloat = 1180
     static let captureHeight: CGFloat = 760
 }

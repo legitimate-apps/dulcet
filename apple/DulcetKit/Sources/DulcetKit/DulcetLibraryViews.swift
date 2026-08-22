@@ -109,7 +109,7 @@ struct DulcetLibraryBrowseView: View {
                                 surface: .control
                             )
                             if track.id != snapshot.recentlyAddedTracks.last?.id {
-                                Divider().padding(.leading, 52)
+                                Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
                             }
                         }
                     }
@@ -238,7 +238,7 @@ struct DulcetTrackRow: View {
 
     var body: some View {
         Button(action: {}) {
-            HStack(alignment: .center, spacing: DulcetSpacing.sm) {
+            HStack(alignment: .center, spacing: DulcetSpacing.xs) {
                 Group {
                     if offline {
                         Image(systemName: "cloud.slash")
@@ -249,14 +249,18 @@ struct DulcetTrackRow: View {
                             .dulcetForeground(surface.secondaryPair)
                     }
                 }
-                .frame(width: 24)
+                .frame(width: 20)
                 .accessibilityHidden(true)
 
-                DulcetArtworkView(artwork: track.artwork, size: 34, muted: offline)
+                DulcetArtworkView(
+                    artwork: track.artwork,
+                    size: DulcetMetrics.denseRowArtworkSize,
+                    muted: offline
+                )
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text(track.title)
-                        .font(.body.weight(.medium))
+                        .font(.callout.weight(.medium))
                         .dulcetForeground(surface.primaryPair)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     Text(trackSubtitle)
@@ -265,7 +269,7 @@ struct DulcetTrackRow: View {
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
 
-                Spacer(minLength: DulcetSpacing.sm)
+                Spacer(minLength: DulcetSpacing.xs)
 
                 if offline {
                     Text(DulcetStrings.offlineUnavailable)
@@ -282,8 +286,8 @@ struct DulcetTrackRow: View {
                     .dulcetForeground(surface.secondaryPair)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, DulcetSpacing.sm)
-            .padding(.vertical, DulcetSpacing.xs)
+            .padding(.horizontal, DulcetSpacing.xs)
+            .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -344,7 +348,7 @@ struct DulcetAlbumDetailView: View {
                                     surface: .window
                                 )
                                 if track.id != tracks.last?.id {
-                                    Divider().padding(.leading, 52)
+                                    Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
                                 }
                             }
                         }
@@ -476,7 +480,7 @@ struct DulcetOfflineLibraryView: View {
                             surface: .control
                         )
                         if track.id != tracks.last?.id {
-                            Divider().padding(.leading, 52)
+                            Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
                         }
                     }
                 }
