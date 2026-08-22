@@ -298,7 +298,7 @@ jobs:
               -configuration Debug \
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
-              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureUI \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \

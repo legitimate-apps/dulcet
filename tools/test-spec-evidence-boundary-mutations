@@ -96,7 +96,10 @@ with tempfile.TemporaryDirectory(prefix="dulcet-live-app-boundary-") as director
     materialize(root)
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    boundary_start = "**ASSUMED live-app seam:**"
+    boundary_start = (
+        "**OBSERVED live-app seam through the unentitled persistence boundary; "
+        "ASSUMED signed effects:**"
+    )
     boundary_end = "persistence effect in that app process."
     before, separator, remainder = spec.partition(boundary_start)
     if not separator:

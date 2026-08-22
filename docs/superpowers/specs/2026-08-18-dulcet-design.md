@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 73 — hosted launch now observes that an ad-hoc app carrying the production Keychain
+**Revision:** 74 — the unentitled hosted app now observes the live Kotlin/Swift seam through the
+typed persistence-failure state while explicitly excluding offscreen SwiftUI accessibility;
+revision 73 observed that an ad-hoc app carrying the production Keychain
 access group cannot execute, and scopes the unentitled app control to the live Kotlin/Swift seam;
 revision 72 made unentitled data-protection-Keychain access fail with a typed error and no
 legacy fallback, while the signed item's accessibility remains explicitly ASSUMED; revision 71
@@ -898,29 +900,36 @@ submission advances the generation, detaches and cancels the prior handle, then 
 request. Any late prior outcome is stale; it cannot publish or persist. The view's disabled controls
 are usability feedback, not the concurrency invariant.
 
-**ASSUMED live-app seam:** the fourteen `account.connect/macos` evidence entries prove the real
-core/Darwin wire half and the Swift presentation half independently. `DulcetMacApp` and its hosted
-control now consume the same `DulcetMacProduction` composition root, so the test does not reconstruct
-the shipping connector, data source, credential store, presentation store, or root view. **OBSERVED
-entitlement/launch boundary:** hosted run `32598531311`, job `apple-ci`, built that app and test host,
-then launchd refused to spawn the ad-hoc-signed host while it declared the production
-`keychain-access-groups` entitlement; no application or test code ran. Pull-request CI therefore does
-not claim that ad-hoc signing can inspect a data-protection-Keychain item. The production target keeps
-its entitlement, while the app-hosted pull-request invocation clears that entitlement so the host can
-launch without a signing identity, certificate, provisioning profile, or repository secret.
+**OBSERVED live-app seam through the unentitled persistence boundary; ASSUMED signed effects:** the
+fourteen `account.connect/macos` evidence entries prove the real core/Darwin wire half and the Swift
+presentation half independently. `DulcetMacApp` and its hosted control consume the same
+`DulcetMacProduction.makePresentationStore` composition, so the test does not reconstruct the
+shipping connector, data source, credential store, or presentation store. The app's production root
+view remains compiled but is not instantiated by this state-level control. Hosted run `32598531311`, job
+`apple-ci`, first built that app and test host, then observed launchd refuse to spawn the
+ad-hoc-signed host while it declared the production `keychain-access-groups` entitlement; no
+application or test code ran. The production target keeps that entitlement, while the app-hosted
+pull-request invocation clears it so the host can launch without a signing identity, certificate,
+provisioning profile, or repository secret.
 
-The unentitled control
-`DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureUI` is
-deliberately narrower: against the real deterministic server it submits through the production
-composition and requires the successful wire outcome to cross `AppleAccountConnectionClient` on the
-Kotlin main dispatcher into Swift `@MainActor`. Because the unentitled production credential store
-then fails closed, the terminal app state must be the rendered, typed `credentialPersistenceFailed`
-surface, with no active-account pointer or persisted credential. Until hosted `apple-ci` executes
-that control successfully, even this narrower live seam remains ASSUMED. A passing control will not
-establish a production Keychain save or connected UI in the real app process; connected-state
-presentation remains bounded by CONF-09a and CONF-10b against a fake connector. The macOS cell
-therefore remains `partial`. Promotion to `shipped` still requires a signed, entitled host to drive
-the production connection and observe both the connected UI and the production persistence effect in that app process.
+Hosted run `32599896419`, job `apple-ci`, then launched the unentitled app host, supplied the real
+pinned conformance URL, and ran the production composition. Every state assertion before the view
+probe passed: the request left `accountConnecting`, reached `accountErrorPersistence`, carried
+`credentialPersistenceFailed` in both status and connectivity, retained no active-account pointer,
+and loaded no persisted credential. Reaching those guards requires the real server success to cross
+`AppleAccountConnectionClient` on the Kotlin main dispatcher into Swift `@MainActor` and enter the
+production connected-result persistence branch. The run's only XCTest failures were two later
+offscreen-accessibility string lookups; the runner subsequently reported an unexpected app exit and
+restart. That accessibility tree is therefore not evidence of what SwiftUI renders in this hosted
+environment. The control
+`DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState`
+pins only the observed production state boundary. SwiftUI rendering of that live-derived state
+remains compile-checked in the app and independently bounded by the fake-connector presentation and
+deterministic capture controls.
+
+The macOS cell remains `partial`: a production Keychain save, its signed-item attributes, and the
+connected UI in the real app process remain ASSUMED. Promotion to `shipped` still requires a signed,
+entitled host to drive the production connection and observe both the connected UI and the production persistence effect in that app process.
 
 ### 10.3 The failure modes must be distinguishable
 
@@ -3144,6 +3153,23 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 74 (2026-08-22)** — the live app-process claim was narrowed to the state the hosted
+process can actually observe.
+
+1. Run `32599896419`, job `apple-ci`, launched the unentitled app host, delivered the pinned fixture
+   URL, and executed the production connector against the real server. The assertions for
+   `accountErrorPersistence`, both `credentialPersistenceFailed` representations, absence of the
+   active-account pointer, and absence of a stored credential all passed. Only the two subsequent
+   offscreen-accessibility string assertions failed.
+2. Those passing guards observe the real success callback crossing the Kotlin main dispatcher into
+   Swift `@MainActor` and entering the production persistence branch. They do not observe SwiftUI
+   rendering: the app-hosted offscreen accessibility tree omitted the expected strings, and the test
+   process later exited unexpectedly. The unstable view probe was removed rather than treated as an
+   application rendering failure.
+3. The renamed control continuously pins the live-derived persistence-failure **state**. The cell
+   remains `partial`; actual production persistence, signed-item attributes, the connected UI in the
+   live app process, and the live-derived SwiftUI render remain ASSUMED under their named boundaries.
 
 **Revision 73 (2026-08-22)** — the hosted app-process control was split at the signing boundary it
 actually encountered.
