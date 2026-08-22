@@ -182,6 +182,7 @@ struct DulcetSearchView: View {
                     .accessibilityAddTraits(.isHeader)
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                 Text(DulcetStrings.searchSummary)
                     .font(.caption)
@@ -218,8 +219,6 @@ struct DulcetSearchView: View {
                 }
                 .width(min: 132, ideal: 150, max: 180)
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
-            .controlSize(.small)
         }
         .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)
