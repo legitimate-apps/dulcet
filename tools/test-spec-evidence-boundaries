@@ -13,6 +13,9 @@ def section(document: str, start: str, end: str) -> str:
 
 
 spec = Path("docs/superpowers/specs/2026-08-18-dulcet-design.md").read_text()
+account_connection_source = Path(
+    "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt"
+).read_text()
 parity_workflow = Path(".github/workflows/parity-gate.yml").read_text()
 drift_workflow = Path(".github/workflows/branch-protection-drift.yml").read_text()
 evidence_schema = section(spec, "### 19.2 Row schema", "### 19.3 The gate")
@@ -20,11 +23,13 @@ gate = section(spec, "### 19.3 The gate", "### 19.4 As a delegate brief")
 authentication = section(spec, "### 13.1 Authentication", "### 13.2 The threat model, stated correctly")
 account_setup = section(spec, "**Account-setup timeout decision:**", "### 10.3 The failure modes")
 failure_modes = section(spec, "### 10.3 The failure modes", "### 10.4 Gates are conjunctions")
+error_model = section(spec, "### 18.12 Error model", "## 19. `FEATURES.yml`")
 normalized_evidence_schema = " ".join(evidence_schema.split())
 normalized_gate = " ".join(gate.split())
 normalized_authentication = " ".join(authentication.split())
 normalized_account_setup = " ".join(account_setup.split())
 normalized_failure_modes = " ".join(failure_modes.split())
+normalized_error_model = " ".join(error_model.split())
 
 errors: list[str] = []
 
@@ -103,6 +108,28 @@ for marker in (
 
 if "required future platform presentation (not implemented in Phase 1)" not in normalized_failure_modes:
     errors.append("account-setup implementation boundary is missing the future-presentation table label")
+
+auth_source = section(
+    account_connection_source,
+    "public sealed interface Auth : DomainError {",
+    "public data class CapabilityUnsupported",
+)
+source_auth_types = set(
+    re.findall(r"public data (?:object|class) (\w+)", auth_source)
+)
+documented_auth_match = re.search(r"- `Auth\.([^`]+)`", normalized_error_model)
+if documented_auth_match is None:
+    errors.append("§18.12 must enumerate DomainError.Auth")
+else:
+    documented_auth_types = {
+        value.strip().removeprefix("Auth.")
+        for value in documented_auth_match.group(1).split("|")
+    }
+    if documented_auth_types != source_auth_types:
+        errors.append(
+            "§18.12 Auth enumeration must match DomainError.Auth: "
+            f"documented={sorted(documented_auth_types)}, source={sorted(source_auth_types)}"
+        )
 
 if errors:
     raise SystemExit("\n".join(errors))

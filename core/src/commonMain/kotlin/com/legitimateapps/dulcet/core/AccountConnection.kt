@@ -271,9 +271,6 @@ public sealed interface DomainError {
         public data class CrossOriginRedirectRejected(
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
-        public data class RedirectCredentialLoss(
-            val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
-        ) : Auth
     }
 
     public data class CapabilityUnsupported(val featureId: CapabilityFeature) : DomainError
@@ -298,7 +295,6 @@ private val DomainError.diagnosticKind: String
         DomainError.Auth.Forbidden -> "Auth.Forbidden"
         DomainError.Auth.UnsupportedAuthenticationChallenge -> "Auth.UnsupportedAuthenticationChallenge"
         is DomainError.Auth.CrossOriginRedirectRejected -> "Auth.CrossOriginRedirectRejected"
-        is DomainError.Auth.RedirectCredentialLoss -> "Auth.RedirectCredentialLoss"
         is DomainError.CapabilityUnsupported -> "Capability.Unsupported"
     }
 
@@ -331,7 +327,6 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
             is DomainError.Auth.CrossOriginRedirectRejected,
-            is DomainError.Auth.RedirectCredentialLoss,
             -> Unit
             is DomainError.CapabilityUnsupported -> put(
                 "featureId",
