@@ -14,6 +14,75 @@ The `apple-ci` job produces the artifact named `dulcet-macos-design-captures-<ru
 `run-a` directory is the evidence set. The job renders a second complete `run-b` directory and
 requires a recursive byte comparison before uploading `run-a`.
 
+### 1.1 Capture composition and claim boundary
+
+The current artifact does **not** render the shipping root composition. The macOS application
+installs `DulcetRootView`, whose standard branch places `DulcetSidebar` and the selected state surface
+inside a balanced SwiftUI `NavigationSplitView`. The capture executable instead installs
+`DulcetCaptureView`, a fixed-composition sibling that places the same `DulcetSidebar` and state surface
+inside a `GeometryReader` and plain `HStack`, with a fixed 232-point sidebar frame and an explicit
+divider.
+
+This sibling exists because `NavigationSplitView` places its sidebar in a separate AppKit compositor
+subtree that `NSHostingView.cacheDisplay` does not include. Capturing `DulcetRootView` through that
+path therefore omits the sidebar. Reusing the sidebar and state-surface components preserves their
+contents, but it does not make the two root containers visually or behaviorally equivalent.
+
+The captures are evidence for the pixels produced by those shared content components **as embedded
+in `DulcetCaptureView`**, together with the fixed fixture payload, appearance, capture-window chrome,
+and geometry recorded by the manifest. They are **not** evidence for:
+
+- the end-to-end pixels produced by the shipping `DulcetRootView` composition;
+- `NavigationSplitView` sidebar material, backdrop, selection appearance, divider, column allocation,
+  collapse, or resizing behavior;
+- window, toolbar, navigation-title, or compositor integration that depends on the shipping
+  `NavigationSplitView` hierarchy; or
+- pixel parity between the design artifact and the shipping macOS application.
+
+This boundary is a measured limitation, not an untried assumption. Hosted `apple-ci` experiments on
+2026-08-22 installed the actual `DulcetRootView` in the titled window and retained both the exact
+1180 × 760 geometry guard and the recursive byte comparison:
+
+- `NSWindow.dataWithPDF(inside:)` was byte-deterministic in run `32553554450`, but the resulting
+  pixels were not faithful. The PDF retained only fragments such as the window title, an empty
+  selection shape, and a scrollbar while omitting sidebar labels and detail content. The existing
+  distinct-state gate rejected the artifact because the empty-library and offline dark captures
+  decoded to identical pixels.
+- `SCScreenshotManager` with a desktop-independent filter for the exact `NSWindow.windowNumber`
+  captured the complete shipping composition, including the native sidebar material, selection,
+  split-view divider, toolbar integration, and detail content. It was not byte-deterministic in run
+  `32554080215`. Pre-sizing the window before display, disabling window animation, and increasing
+  post-layout compositor settling from 80 ms to 500 ms eliminated the sidebar-edge differences, but
+  run `32554336276` still differed in `offline-metadata-only-light`: 237 decoded pixels (0.0264% of
+  the image) inside the GPU-muted artwork region at `x=552…815`, `y=248…383`, with channel deltas of
+  one to three levels.
+- `CGWindowListCreateImage` was then exercised against the same settled on-screen window in run
+  `32554568474`. It reproduced the same sole failing file, the same 237 changed decoded pixels, the
+  same bounding box, and the same per-channel delta distribution. This independently confirmed that
+  the residual variance comes from the shared WindowServer/compositor output rather than
+  ScreenCaptureKit's JPEG path.
+
+The measurements do not support claiming that sidebar material is intrinsically nondeterministic:
+the settling configuration made every sidebar pixel byte-stable. They do establish that, on the
+hosted evidence platform, no tested faithful window-level path captures the complete shipping
+composition while also satisfying exact byte determinism across the declared states. Pixel
+tolerances, post-capture normalization, and a weaker geometry rule were deliberately not adopted.
+The fixed sibling therefore remains the deterministic regression-evidence path. A design rating of
+that artifact is a rating of the fixed capture sibling, not of the shipping view, and no stronger
+shipping-UI claim should be made from it.
+
+`apple-ci` separately publishes
+`dulcet-macos-shipping-reference-<run>-<attempt>`. This second artifact captures the actual
+`DulcetRootView` balanced `NavigationSplitView` composition once per state and appearance through
+`SCScreenshotManager`; it is not compared with another render and its variability cannot fail CI.
+Its manifest labels the set as non-deterministic, design-rating-only, and inadmissible as regression
+evidence. The manifest also enumerates every successful capture and any missing state/appearance;
+the executable never fills a gap with `DulcetCaptureView`. This reference set is valid for design
+rating and visual review of the shipping composition, but not for pixel parity, regression testing,
+or run-to-run diff claims. The two artifacts are independent evidence sets and their claims must not
+be merged. The first hosted reference artifact, run `32555697776`, contained all seven states in both
+light and dark at 1180 × 760 plus both hash-pinned control images, with no missing captures.
+
 Every image is a compressed JPEG of the complete titled `NSWindow` at exactly 1180 × 760 pixels.
 The standard AppKit title bar, title, and traffic-light controls are inside the evidence boundary;
 content-only or borderless renders are not eligible to calibrate the native-macOS lens. The render
@@ -35,8 +104,8 @@ environment is fixed:
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
-- redundant window-title text hidden while retaining standard AppKit title-bar chrome; each content
-  surface carries its own visible state heading and debug target suffixes are excluded;
+- the standard centered AppKit window title remains visible, while each content surface carries its
+  own visible state heading and debug target suffixes are excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
   and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
@@ -69,7 +138,7 @@ Type treatment, translated capture bounds, an inactive rendered control state, a
 control JPEG whose ordinary manifest evidence was updated; the pinned digest must still reject the
 control substitution.
 
-### 1.1 Standard set: 16 JPEGs
+### 1.2 Standard set: 16 JPEGs
 
 Each reference state appears in light and dark:
 
@@ -106,7 +175,7 @@ They intentionally contain broken spacing, a clashing accent, inconsistent typog
 contrast, arbitrary card styling, and mismatched hierarchy. They are calibration evidence, never a
 product design.
 
-### 1.2 Pinned negative-control baseline
+### 1.3 Pinned negative-control baseline
 
 The two bad-control JPEGs are reviewed, checked-in resources under
 `apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls`. A normal capture with
@@ -139,7 +208,7 @@ resources as one reviewable commit, and updating the expected hashes in `DulcetC
 every previously recorded score must be re-run with two fresh raters. Scores from before and after the
 control change must never be compared, averaged, or presented as a trend.**
 
-### 1.3 No macOS Dynamic Type capture
+### 1.4 No macOS Dynamic Type capture
 
 **OBSERVED 2026-08-21 ([Apple SwiftUI API reference](https://developer.apple.com/documentation/swiftui/environmentvalues/dynamictypesize)):**
 `EnvironmentValues.dynamicTypeSize` does not affect text size on macOS. The earlier `accessibility5`
@@ -190,6 +259,16 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   override foreground/background pairs outside the registry. Those native-control surfaces remain
   visible in the artifact and subject to the §5 evaluation rubric, but the automated gate makes no
   exhaustive WCAG claim for them;
+- **Registry coverage is deliberately smaller than it once was.** Adopting stock `.borderedProminent`
+  buttons and stock sidebar selection removed the authored `DulcetPrimaryActionFill`,
+  `DulcetPrimaryActionLabel`, and `DulcetSelectionBackground` colors, and with them the
+  `primary-button-label/primary-action-fill` and `selected-sidebar-label/selection-fill` registry
+  entries. Those two were the *only* authored interactive-state fills the automated WCAG probe ever
+  measured — the fifteen remaining entries are all text or icon over a static window, control,
+  material, or tint surface; they are now system-drawn and fall under the limit stated immediately above. The gate did
+  not get weaker at catching authored mistakes — there are two fewer authored pairs to get wrong — but
+  primary-action and selection contrast is now Apple's guarantee, asserted nowhere in this repository.
+  Recorded here so a later reader does not mistake the smaller registry for broader coverage;
 - explicit accessibility labels attached to controls in the SwiftUI source;
 - semantic fonts, content-sized rows, and native focusable controls.
 

@@ -92,8 +92,6 @@ struct DulcetNowPlayingView: View {
                     .accessibilityLabel(DulcetStrings.previous)
                 Button(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: player.isPlaying ? "pause.fill" : "play.fill") {}
                     .buttonStyle(.borderedProminent)
-                    .tint(.dulcetPrimaryActionFill)
-                    .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                     .controlSize(.large)
                     .font(.title2)
                     .keyboardShortcut(.space, modifiers: [])
@@ -157,7 +155,7 @@ struct DulcetNowPlayingView: View {
                         surface: .regularMaterial
                     )
                     if track.id != player.queue.last?.id {
-                        Divider().padding(.leading, 52)
+                        Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
                     }
                 }
             }
@@ -177,26 +175,25 @@ struct DulcetSearchView: View {
     @Binding var searchQuery: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.searchTitle)
-                    .font(.largeTitle.weight(.bold))
+                    .font(.title.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .textFieldStyle(.roundedBorder)
-                    .font(.title3)
+                    .controlSize(.small)
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                 Text(DulcetStrings.searchSummary)
-                    .font(.subheadline)
+                    .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
             }
 
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.bestMatches)
-                    .font(.title2.weight(.semibold))
+                    .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
                 Text(DulcetStrings.trackCount(snapshot.searchResults.count))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -222,9 +219,8 @@ struct DulcetSearchView: View {
                 }
                 .width(min: 132, ideal: 150, max: 180)
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
         }
-        .padding(DulcetSpacing.xl)
+        .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.search)
@@ -236,26 +232,28 @@ private struct DulcetSearchResultIdentity: View {
     let result: DulcetSearchResult
 
     var body: some View {
-        HStack(alignment: .top, spacing: DulcetSpacing.sm) {
-            DulcetArtworkView(artwork: result.artwork, size: 40)
+        HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+            DulcetArtworkView(artwork: result.artwork, size: DulcetMetrics.denseRowArtworkSize)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(result.title)
-                    .font(.headline)
-                    .dulcetForeground(.primaryTextOnWindow)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: DulcetSpacing.xxs) {
+                    Text(result.title)
+                        .font(.callout.weight(.medium))
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    if result.refreshedFromServer {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .accessibilityLabel(DulcetStrings.refreshed)
+                    }
+                }
                 Text(result.subtitle)
-                    .font(.subheadline)
+                    .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                if result.refreshedFromServer {
-                    Label(DulcetStrings.refreshed, systemImage: "arrow.clockwise")
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                }
             }
         }
-        .padding(.vertical, 2)
         .accessibilityLabel(DulcetStrings.searchResultAccessibility(
             title: result.title,
             subtitle: result.subtitle,
@@ -298,29 +296,28 @@ struct DulcetTLSUntrustedView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: DulcetSpacing.md) {
+                    HStack(alignment: .top, spacing: DulcetSpacing.sm) {
                         shield
                         heading
                     }
-                    VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         shield
                         heading
                     }
                 }
 
                 GroupBox(DulcetStrings.tlsWhy) {
-                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                         Text(failure.reason)
                             .font(.headline)
                             .lineLimit(nil)
                         Text(failure.technicalDetail)
-                            .font(.body)
+                            .font(.callout)
                             .dulcetForeground(.secondaryTextOnWindow)
                             .lineLimit(nil)
                     }
-                    .padding(.vertical, DulcetSpacing.xxs)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -332,8 +329,7 @@ struct DulcetTLSUntrustedView: View {
                         Image(systemName: "checkmark.shield")
                             .dulcetForeground(.accentIconOnWindow)
                     }
-                    .font(.body)
-                    .padding(.vertical, DulcetSpacing.xxs)
+                    .font(.callout)
                 }
 
                 HStack(spacing: DulcetSpacing.sm) {
@@ -341,8 +337,6 @@ struct DulcetTLSUntrustedView: View {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
                     }
                         .buttonStyle(.borderedProminent)
-                        .tint(.dulcetPrimaryActionFill)
-                        .dulcetForeground(.primaryButtonLabelOnPrimaryActionFill)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
                     Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}
@@ -350,8 +344,8 @@ struct DulcetTLSUntrustedView: View {
                         .accessibilityLabel(DulcetStrings.connectionSettings)
                 }
             }
-            .padding(DulcetSpacing.lg)
-            .frame(maxWidth: 720)
+            .padding(DulcetSpacing.md)
+            .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
         .background(Color.dulcetWindow)
@@ -363,9 +357,9 @@ struct DulcetTLSUntrustedView: View {
         ZStack {
             Circle()
                 .fill(Color.dulcetDanger.opacity(0.11))
-                .frame(width: 72, height: 72)
+                .frame(width: 56, height: 56)
             Image(systemName: "exclamationmark.shield.fill")
-                .font(.system(size: 32, weight: .semibold))
+                .font(.system(size: 26, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
                 .dulcetForeground(.dangerIconOnTint)
                 .accessibilityHidden(true)
@@ -373,16 +367,16 @@ struct DulcetTLSUntrustedView: View {
     }
 
     private var heading: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Text(DulcetStrings.tlsTitle)
-                .font(.largeTitle.weight(.bold))
+                .font(.title.weight(.bold))
                 .lineLimit(nil)
                 .accessibilityAddTraits(.isHeader)
             Text(failure.serverName)
-                .font(.title3.weight(.medium))
+                .font(.headline)
                 .lineLimit(nil)
             Text(DulcetStrings.tlsBody)
-                .font(.body)
+                .font(.callout)
                 .dulcetForeground(.secondaryTextOnWindow)
                 .lineLimit(nil)
         }
