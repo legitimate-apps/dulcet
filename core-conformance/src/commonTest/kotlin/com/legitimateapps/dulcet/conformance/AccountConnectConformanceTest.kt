@@ -223,6 +223,24 @@ class AccountConnectConformanceTest {
     }
 
     @Test
+    fun knownStringBooleanSpellingsAreCaseInsensitive() = runTest {
+        val connected = assertIs<AccountConnectionResult.Connected>(
+            fixture().connect("${redirectConformanceRoot()}/mixed-case-string-roles"),
+        ).account
+
+        assertEquals(
+            UserPermissions(
+                download = true,
+                playlist = true,
+                share = false,
+                jukebox = false,
+                admin = true,
+            ),
+            connected.capabilities.permissions,
+        )
+    }
+
+    @Test
     fun slowSelfHostedServerCanCompleteAccountNegotiation() = runTest {
         assertIs<AccountConnectionResult.Connected>(
             fixture().connect("${redirectConformanceRoot()}/slow-account"),

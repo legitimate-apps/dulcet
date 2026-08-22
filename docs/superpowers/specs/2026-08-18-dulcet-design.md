@@ -827,11 +827,14 @@ to the implementation. Given user input, Dulcet:
    unknown server gets classified as `legacySubsonic` and we start sending credentials to it.
 4. Read envelope metadata: `openSubsonic`, `type`, `serverVersion`, `version`. `version` is required.
    For compatibility with classic servers the other three fields may be absent, but when present
-   `openSubsonic` must be a JSON boolean and `type`/`serverVersion` must be JSON strings; a wrong type
-   is `Protocol.MalformedEnvelope`, not a default value.
+   `openSubsonic` must be either a JSON boolean or the unambiguous string spelling `"true"`/`"false"`
+   (case-insensitive), and `type`/`serverVersion` must be JSON strings; any other type or boolean
+   spelling is `Protocol.MalformedEnvelope`, not a default value.
 5. Fetch user capabilities/roles (`getUser`): download, playlist, share, jukebox, admin. A missing
-   role remains `false` for legacy compatibility; every present role must be a JSON boolean or the
-   connection fails as `Protocol.MalformedEnvelope`.
+   role remains `false` for legacy compatibility. A present role accepts either a JSON boolean or
+   the case-insensitive string spelling `"true"`/`"false"`; every other value fails as
+   `Protocol.MalformedEnvelope`. The string form is a deliberate compatibility exception for the
+   non-conforming but unambiguous dialect emitted by released Funkwhale servers.
 6. Construct a typed `CapabilitySet` from four independent inputs: protocol level, OpenSubsonic
    extensions, user permissions, known quirks (§17).
 7. Cache it per account. Refresh after each login and on the evidence rules in §10.4.
@@ -854,7 +857,7 @@ cancellable, and an elapsed limit maps to the distinct content-free `Transport.T
 | HTTP reached; extension probe non-envelope; **and** `ping` also fails to parse | `NotASubsonicServer` | "This doesn't look like a Subsonic server" — do not retry with credentials |
 | envelope parsed; error code indicates bad credentials | `AuthenticationFailed` | "Wrong username or password" — never "server down" |
 | envelope parsed; error code indicates a version mismatch | `ProtocolIncompatible` | show **what Dulcet sent** and **what the server reported** in its envelope. Do not promise a "required version" — the protocol does not reliably supply one |
-| successful envelope contains present account metadata or role fields with the wrong JSON type | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
+| successful envelope contains present account metadata or role fields outside the recognised valid shapes (including a boolean value other than native JSON boolean or case-insensitive string `true`/`false`) | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
 
 **OBSERVED:** a missing `getOpenSubsonicExtensions` is consistent with a classic pre-OpenSubsonic
 server. On `ExtensionListUnavailable`: do not fail login; mark `legacySubsonic`; mark every extension
@@ -2983,6 +2986,25 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 45 (2026-08-21)** — the envelope parser restored compatibility with Funkwhale's
+string-encoded boolean roles.
+
+1. Funkwhale 2.0.9's released `getUser` response shape is a real-world, non-conforming dialect: it
+   encodes all five roles as the JSON strings `"true"` or `"false"`. Dulcet knowingly accepts this
+   dialect because each accepted spelling has one unambiguous boolean meaning and rejecting it broke
+   accounts that connected before revision 40.
+2. Hosted red run `32544374395`, job `conformance-env-linux`, ran 25 tests and failed only
+   `funkwhale209StringBooleanRolesRemainConnectable`: the exact observed Funkwhale role tuple
+   (`true`, `true`, `false`, `true`, `false`) ended as `Protocol.MalformedEnvelope` instead of a
+   connected account. The ordinary core build passed.
+3. Boolean envelope fields now accept native JSON booleans and exact string spellings `"true"` or
+   `"false"`, case-insensitively. Numeric values such as `42`, objects, arrays, null, whitespace-
+   padded strings and every other spelling remain malformed. Missing optional roles retain their
+   legacy-compatible `false` default.
+4. This supersedes revision 40's treatment of `"downloadRole":"true"` as necessarily malformed.
+   Revision 40's closed-shape policy remains in force for values without an unambiguous recognised
+   interpretation; no general string coercion was added.
 
 **Revision 44 (2026-08-21)** — account connect now refuses cross-origin redirects by construction.
 
