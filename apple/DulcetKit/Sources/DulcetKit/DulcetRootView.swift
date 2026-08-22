@@ -38,10 +38,8 @@ public struct DulcetRootView: View {
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
         .toolbar {
-            if store.snapshot.state != .nowPlaying {
-                ToolbarItem(placement: .principal) {
-                    Text(DulcetStrings.appName)
-                }
+            ToolbarItem(placement: .principal) {
+                Text(DulcetStrings.appName)
             }
         }
     }
@@ -93,10 +91,8 @@ public struct DulcetCaptureView: View {
             .background(Color.dulcetWindow)
             .dulcetForeground(.primaryTextOnWindow)
             .toolbar {
-                if store.snapshot.state != .nowPlaying {
-                    ToolbarItem(placement: .principal) {
-                        Text(DulcetStrings.appName)
-                    }
+                ToolbarItem(placement: .principal) {
+                    Text(DulcetStrings.appName)
                 }
             }
         }

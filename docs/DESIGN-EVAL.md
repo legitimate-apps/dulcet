@@ -35,9 +35,9 @@ environment is fixed:
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
-- a native SwiftUI principal toolbar item centers the app title on content surfaces with their own
-  visible state heading; Now Playing instead uses its native state-specific window title beside the
-  traffic-light controls, and debug target suffixes are excluded;
+- a native SwiftUI principal toolbar item centers the app title while the redundant default title is
+  hidden; each content surface carries its own visible state heading and debug target suffixes are
+  excluded;
 - one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
   and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
