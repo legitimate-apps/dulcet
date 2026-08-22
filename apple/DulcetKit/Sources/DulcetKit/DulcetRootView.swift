@@ -31,7 +31,6 @@ public struct DulcetRootView: View {
                         DulcetStateSurface(snapshot: store.snapshot, searchQuery: $store.searchQuery)
                     }
                     .navigationSplitViewStyle(.balanced)
-                    .buttonBorderShape(.roundedRectangle(radius: 6))
                     .dulcetForeground(.primaryTextOnWindow)
                 }
             }
@@ -85,7 +84,6 @@ public struct DulcetCaptureView: View {
                 )
             }
             .background(Color.dulcetWindow)
-            .buttonBorderShape(.roundedRectangle(radius: 6))
             .dulcetForeground(.primaryTextOnWindow)
         }
     }
@@ -95,31 +93,32 @@ private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-            Text(DulcetStrings.appName)
-                .font(.title2.weight(.bold))
-                .padding(.horizontal, DulcetSpacing.xs)
+        VStack(spacing: 0) {
+            List(selection: selection) {
+                Section {
+                    sidebarRow(DulcetStrings.library, symbol: "rectangle.grid.2x2", destination: .library)
+                    sidebarRow(DulcetStrings.search, symbol: "magnifyingglass", destination: .search)
+                    sidebarRow(DulcetStrings.nowPlaying, symbol: "waveform", destination: .nowPlaying)
+                } header: {
+                    Text(DulcetStrings.browseSection)
+                        .textCase(.uppercase)
+                }
 
-            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                sidebarSectionTitle(DulcetStrings.browseSection)
-                sidebarRow(DulcetStrings.library, symbol: "rectangle.grid.2x2", destination: .library)
-                sidebarRow(DulcetStrings.search, symbol: "magnifyingglass", destination: .search)
-                sidebarRow(DulcetStrings.nowPlaying, symbol: "waveform", destination: .nowPlaying)
+                Section {
+                    sidebarRow(DulcetStrings.settings, symbol: "server.rack", destination: .settings)
+                } header: {
+                    Text(DulcetStrings.accountSection)
+                        .textCase(.uppercase)
+                }
             }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
 
-            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                sidebarSectionTitle(DulcetStrings.accountSection)
-                sidebarRow(DulcetStrings.settings, symbol: "server.rack", destination: .settings)
-            }
-
-            Spacer(minLength: DulcetSpacing.md)
             Divider()
             serverStatus
-                .padding(.horizontal, DulcetSpacing.xs)
+                .padding(DulcetSpacing.sm)
         }
-        .padding(DulcetSpacing.sm)
         .background(.thinMaterial)
-        .dulcetForeground(.primaryTextOnThinMaterial)
         .navigationSplitViewColumnWidth(
             min: DulcetMetrics.sidebarMinWidth,
             ideal: 232,
@@ -132,37 +131,20 @@ private struct DulcetSidebar: View {
         symbol: String,
         destination: DulcetSidebarDestination
     ) -> some View {
-        Button {
-            store.selectDestination(destination)
-        } label: {
-            Label(title, systemImage: symbol)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DulcetSpacing.xs)
-                .padding(.vertical, 6)
-                .background {
-                    if store.selectedDestination == destination {
-                        Capsule()
-                            .fill(Color.dulcetSelectionBackground)
-                    }
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .dulcetForeground(
-            store.selectedDestination == destination
-                ? .selectedSidebarLabelOnSelectionFill
-                : .primaryTextOnThinMaterial
-        )
+        Label(title, systemImage: symbol)
+            .tag(destination)
             .accessibilityLabel(title)
-            .accessibilityAddTraits(store.selectedDestination == destination ? [.isSelected] : [])
     }
 
-    private func sidebarSectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.caption2.weight(.semibold))
-            .dulcetForeground(.secondaryTextOnThinMaterial)
-            .padding(.horizontal, DulcetSpacing.xs)
-            .accessibilityAddTraits(.isHeader)
+    private var selection: Binding<DulcetSidebarDestination?> {
+        Binding(
+            get: { store.selectedDestination },
+            set: { destination in
+                if let destination {
+                    store.selectDestination(destination)
+                }
+            }
+        )
     }
 
     @ViewBuilder

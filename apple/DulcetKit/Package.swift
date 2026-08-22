@@ -12,6 +12,10 @@ let package = Package(
     products: [
         .library(name: "DulcetKit", targets: ["DulcetKit"]),
         .executable(name: "DulcetCapture", targets: ["DulcetCapture"]),
+        .executable(
+            name: "DulcetShippingReferenceCapture",
+            targets: ["DulcetShippingReferenceCapture"]
+        ),
     ],
     targets: [
         .target(
@@ -22,6 +26,10 @@ let package = Package(
             name: "DulcetCapture",
             dependencies: ["DulcetKit"],
             resources: [.copy("Resources/PinnedControls")]
+        ),
+        .executableTarget(
+            name: "DulcetShippingReferenceCapture",
+            dependencies: ["DulcetKit"]
         ),
         .testTarget(name: "DulcetKitTests", dependencies: ["DulcetKit"]),
     ]
