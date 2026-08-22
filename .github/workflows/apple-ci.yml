@@ -104,7 +104,7 @@ jobs:
             echo
             echo 'Two complete render runs were byte-identical.'
             echo
-            echo 'Artifact contains 14 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
+            echo 'Artifact contains 36 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload macOS design evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

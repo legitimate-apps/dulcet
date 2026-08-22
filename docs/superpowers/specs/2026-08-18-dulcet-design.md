@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 60 — platform evidence pins one executed testcase per declared conformance id;
-revision 59 made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
+**Revision:** 61 — macOS account setup gained a reachable form, progress state, and real cancellation;
+revision 60 made platform evidence pin one executed testcase per declared conformance id; revision 59
+made IPv6 zone validation distinguish raw delimiter syntax from decoded identifiers;
 revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
 localized DomainError presentation explicitly future account-UI work; revision
 56 made the documented and sealed authentication-error taxonomies match; revision 55
@@ -867,14 +868,16 @@ per-request limits, not one deadline for the entire extension/ping/user sequence
 hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
 server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
 cancellable by its caller at the core boundary, and an elapsed limit maps to the distinct content-free
-`Transport.Timeout` error. **Implementation boundary:** this repository has no non-test caller of
-`AccountConnector`, so Phase 1 has not built an account-setup progress indicator, Cancel control, or
-user-facing timeout/error presentation. The presentation below is a requirement for a future platform
-caller, not an observed product behavior.
+`Transport.Timeout` error. **macOS implementation boundary:** `DulcetMacApp` constructs the live
+`AppleAccountConnectionClient` through a Swift presentation adapter. The Connection surface accepts
+server URL, username and password, publishes an explicit in-progress state, and its visible Cancel
+control invokes the synchronously returned operation handle, which cancels the child coroutine and
+in-flight Ktor request. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
+Android TV. This paragraph makes no shipped account-setup UI claim for them.
 
 ### 10.3 The failure modes must be distinguishable
 
-| observation | classification | required future platform presentation (not implemented in Phase 1) |
+| observation | classification | required macOS presentation (other platform callers remain future work) |
 |---|---|---|
 | DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
 | connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
@@ -3034,6 +3037,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 61 (2026-08-22)** — macOS account setup became reachable and cancellable.
+
+1. The macOS app no longer boots the deterministic library fixture. Its Connection destination owns
+   server URL, username and password fields, an explicit connecting state, and a visible Cancel
+   control wired to the active operation handle.
+2. `AppleAccountConnectionClient` wraps the suspending connector in the §7.2 completion-plus-handle
+   contract: it returns the handle synchronously, confines completion to the Apple main dispatcher,
+   maps cancellation to `Transport.Cancelled`, and prevents Kotlin exceptions crossing the boundary.
+3. The deterministic Swift source and hosted Swift test drive the same presentation actions. The
+   control requires submission to publish progress and requires Cancel to invoke the returned handle;
+   captures include idle, progress, connected, and typed error-family surfaces in both appearances.
+4. This revision implements the caller only on macOS. It does not claim account setup is reachable
+   from the other platform shells.
 
 **Revision 60 (2026-08-22)** — executed platform evidence became complete over each row's conformance set.
 
