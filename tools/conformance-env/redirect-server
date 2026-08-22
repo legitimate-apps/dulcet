@@ -293,6 +293,7 @@ def envelope(
     *,
     advertise_form_post: bool = True,
     malformed_success_field: str | None = None,
+    funkwhale_string_roles: bool = False,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": "ok",
@@ -320,6 +321,14 @@ def envelope(
             "jukeboxRole": False,
             "adminRole": True,
         }
+        if funkwhale_string_roles:
+            payload["user"] = {
+                "downloadRole": "true",
+                "playlistRole": "true",
+                "shareRole": "false",
+                "jukeboxRole": "true",
+                "adminRole": "false",
+            }
     if endpoint == "ping" and malformed_success_field == "open-subsonic":
         payload["openSubsonic"] = "yes"
     elif endpoint == "ping" and malformed_success_field == "type":
@@ -327,7 +336,7 @@ def envelope(
     elif endpoint == "getUser" and malformed_success_field == "download-role":
         user = payload["user"]
         assert isinstance(user, dict)
-        user["downloadRole"] = "true"
+        user["downloadRole"] = 42
     return {"subsonic-response": payload}
 
 
@@ -447,6 +456,13 @@ class RedirectHandler(BaseHTTPRequestHandler):
                 200,
                 envelope(endpoint, malformed_success_field=scenario),
             )
+            return
+
+        if parsed.path.startswith("/funkwhale-2-0-9/rest/"):
+            if not self._observes_expected_channels(endpoint, channels, body):
+                self._send_json(500, {"error": "Funkwhale fixture request channels failed"})
+                return
+            self._send_json(200, envelope(endpoint, funkwhale_string_roles=True))
             return
 
         if parsed.path.startswith("/cacheable-account/rest/"):
