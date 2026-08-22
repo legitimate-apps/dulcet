@@ -14,6 +14,35 @@ The `apple-ci` job produces the artifact named `dulcet-macos-design-captures-<ru
 `run-a` directory is the evidence set. The job renders a second complete `run-b` directory and
 requires a recursive byte comparison before uploading `run-a`.
 
+### 1.1 Capture composition and claim boundary
+
+The current artifact does **not** render the shipping root composition. The macOS application
+installs `DulcetRootView`, whose standard branch places `DulcetSidebar` and the selected state surface
+inside a balanced SwiftUI `NavigationSplitView`. The capture executable instead installs
+`DulcetCaptureView`, a fixed-composition sibling that places the same `DulcetSidebar` and state surface
+inside a `GeometryReader` and plain `HStack`, with a fixed 232-point sidebar frame and an explicit
+divider.
+
+This sibling exists because `NavigationSplitView` places its sidebar in a separate AppKit compositor
+subtree that `NSHostingView.cacheDisplay` does not include. Capturing `DulcetRootView` through that
+path therefore omits the sidebar. Reusing the sidebar and state-surface components preserves their
+contents, but it does not make the two root containers visually or behaviorally equivalent.
+
+The captures are evidence for the pixels produced by those shared content components **as embedded
+in `DulcetCaptureView`**, together with the fixed fixture payload, appearance, capture-window chrome,
+and geometry recorded by the manifest. They are **not** evidence for:
+
+- the end-to-end pixels produced by the shipping `DulcetRootView` composition;
+- `NavigationSplitView` sidebar material, backdrop, selection appearance, divider, column allocation,
+  collapse, or resizing behavior;
+- window, toolbar, navigation-title, or compositor integration that depends on the shipping
+  `NavigationSplitView` hierarchy; or
+- pixel parity between the design artifact and the shipping macOS application.
+
+Until the shipping composition can be captured while retaining the geometry and byte-determinism
+gates below, a design rating of this artifact is a rating of the fixed capture sibling, not of the
+shipping view. No stronger shipping-UI claim should be made from it.
+
 Every image is a compressed JPEG of the complete titled `NSWindow` at exactly 1180 × 760 pixels.
 The standard AppKit title bar, title, and traffic-light controls are inside the evidence boundary;
 content-only or borderless renders are not eligible to calibrate the native-macOS lens. The render
@@ -69,7 +98,7 @@ Type treatment, translated capture bounds, an inactive rendered control state, a
 control JPEG whose ordinary manifest evidence was updated; the pinned digest must still reject the
 control substitution.
 
-### 1.1 Standard set: 16 JPEGs
+### 1.2 Standard set: 16 JPEGs
 
 Each reference state appears in light and dark:
 
@@ -106,7 +135,7 @@ They intentionally contain broken spacing, a clashing accent, inconsistent typog
 contrast, arbitrary card styling, and mismatched hierarchy. They are calibration evidence, never a
 product design.
 
-### 1.2 Pinned negative-control baseline
+### 1.3 Pinned negative-control baseline
 
 The two bad-control JPEGs are reviewed, checked-in resources under
 `apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls`. A normal capture with
@@ -139,7 +168,7 @@ resources as one reviewable commit, and updating the expected hashes in `DulcetC
 every previously recorded score must be re-run with two fresh raters. Scores from before and after the
 control change must never be compared, averaged, or presented as a trend.**
 
-### 1.3 No macOS Dynamic Type capture
+### 1.4 No macOS Dynamic Type capture
 
 **OBSERVED 2026-08-21 ([Apple SwiftUI API reference](https://developer.apple.com/documentation/swiftui/environmentvalues/dynamictypesize)):**
 `EnvironmentValues.dynamicTypeSize` does not affect text size on macOS. The earlier `accessibility5`
