@@ -195,6 +195,14 @@ resource comparison, and pixel-distinctness gate are the protections described a
 active-control fields on a pinned record describe the reviewed baseline image; they are not a claim
 that the control was re-rendered in the current run.
 
+The eligible shipping-reference images and the pinned controls do not share one capture provenance.
+The good images are current-run renders of the real titled `DulcetRootView` composition; the controls
+are byte-pinned renders of the deterministic sibling composition. In particular, the good images
+contain the standard centered window title while the controls do not. The missing title is itself a
+genuine native-macOS-idiom defect, so it does not invalidate the §6 control gate, but it means the
+measured `platform_idiom` gap is a composite of authored content and window-composition cues. A report
+must state that caveat and must not describe the gap as isolating authored content styling alone.
+
 Control regeneration is an explicit candidate-producing act:
 
 ```sh
@@ -287,9 +295,29 @@ A screenshot description must never promote an interaction or network behavior t
 A valid rating run requires two independent external evaluation models from different model families.
 Two samples from the same model are not two raters.
 
+Every product rating uses one artifact class consistently: the complete
+`dulcet-macos-shipping-reference-<run>-<attempt>` set, containing all 14 successful shipping
+state/appearance captures, both hash-pinned controls, and a manifest with an empty
+`missingCaptures` list. A rater must not substitute the deterministic `run-a` sibling or combine
+category scores from the two artifact classes.
+
+The artifact-to-claim mapping is:
+
+| Claim or lens | Eligible artifact | Ineligible evidence |
+|---|---|---|
+| `platform_idiom` | Shipping-reference good images and the matching pinned controls in that artifact | Deterministic `DulcetCaptureView` `run-a`, content-only renders, or mixed-artifact scores |
+| `information_design` | The same complete shipping-reference set and matching pinned controls | A product aggregate derived from `run-a`, or categories combined across artifacts |
+| Per-state taste, light/dark deltas, and `product_taste_score` | The same shipping-reference set used for both calibrated lenses | Any aggregate that replaces one appearance or category with a deterministic-sibling score |
+| Pixel-level accessibility observations | Shipping-reference pixels; source, interaction, and CI evidence remain separately classified under §2 | Treating either screenshot class as an interaction trace |
+| Byte determinism, geometry, payload integrity, and state distinctness | Deterministic `run-a`/`run-b` plus their manifest and verifier | The non-deterministic shipping reference |
+
+`run-a` remains useful diagnostic evidence about shared components. Any rating of it must be labeled
+`capture-sibling`, cannot populate the §7 product schema, cannot calibrate `platform_idiom`, and
+cannot be combined with shipping-reference scores.
+
 Both raters receive the same immutable inputs:
 
-- the complete `run-a` artifact, including manifests and controls;
+- the complete eligible shipping-reference artifact, including its manifest and controls;
 - this document;
 - no score, prose, or hidden chain of reasoning from the other rater;
 - no implementation author's self-rating.
@@ -476,8 +504,9 @@ praise or criticism without evidence is invalid.
 
 ## 8. Reproduction
 
-The hosted job is authoritative. The same native-only steps can be run on a compatible Mac without
-invoking the Kotlin build:
+The hosted job is authoritative. The following native-only steps reproduce the deterministic
+regression artifact on a compatible Mac without invoking the Kotlin build; they do **not** produce
+the shipping-reference artifact required for the product-rating lenses in §§3–7:
 
 ```sh
 swift test --package-path apple/DulcetKit
@@ -486,5 +515,18 @@ swift run --package-path apple/DulcetKit DulcetCapture \
   --state all --appearance all --include-control
 python3 tools/verify_design_captures.py "$RUNNER_TEMP/dulcet-design/run-a"
 ```
+
+The eligible design-rating artifact is produced separately from the shipping root composition:
+
+```sh
+swift run --package-path apple/DulcetKit DulcetShippingReferenceCapture \
+  --output "$RUNNER_TEMP/dulcet-macos-shipping-reference" \
+  --pinned-control-directory \
+    apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls
+```
+
+Before rating, its manifest must enumerate all 14 state/appearance captures and both controls, with
+an empty `missingCaptures` list. It remains design-rating-only and is never accepted as deterministic
+regression evidence.
 
 The output directories must not already exist. The harness refuses to merge old and new evidence.
