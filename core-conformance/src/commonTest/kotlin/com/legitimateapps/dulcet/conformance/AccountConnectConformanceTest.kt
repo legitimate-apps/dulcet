@@ -881,6 +881,8 @@ class AccountConnectConformanceTest {
         listOf(
             "https://[fe80::1%25eth0]/rest/ping.view" to
                 "https://[fe80:0:0:0:0:0:0:1%25eth0]/collect",
+            "https://[fe80::1%2525]/rest/ping.view" to
+                "https://[fe80:0:0:0:0:0:0:1%2525]/collect",
             "https://[::ffff:127.0.0.1]/rest/ping.view" to
                 "https://[::ffff:7f00:1]/collect",
         ).forEach { (current, target) ->

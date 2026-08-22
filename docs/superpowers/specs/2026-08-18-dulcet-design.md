@@ -6,8 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 58 — embedded IPv4 syntax is accepted only at the end of a complete IPv6 address;
-revision 57 made localized DomainError presentation explicitly future account-UI work; revision
+**Revision:** 59 — IPv6 zone validation distinguishes raw delimiter syntax from decoded identifiers;
+revision 58 restricted embedded IPv4 syntax to the end of a complete IPv6 address; revision 57 made
+localized DomainError presentation explicitly future account-UI work; revision
 56 made the documented and sealed authentication-error taxonomies match; revision 55
 made the HTTP-to-HTTPS carve-out match the equal-normalized-port policy implemented by account
 connect; revision 54 made embedded IPv4 octets in redirect hosts require ASCII decimal digits; revision 53
@@ -1427,7 +1428,9 @@ sent, is:
   is parsed to one numeric spelling, with an embedded IPv4 tail permitted only in the final 32 bits
   of the complete address and its octets restricted to non-empty ASCII decimal digits in the range
   0–255, while its optional zone identifier is preserved byte-for-byte because
-  OS interface names are case-sensitive. The scheme-normalised port is then compared. Invalid
+  OS interface names are case-sensitive. Raw `%25` delimiter syntax is handled before the decoded
+  identifier is validated, so a decoded zone identifier literally named `25` remains valid. The
+  scheme-normalised port is then compared. Invalid
   encodings or host shapes fail as `Security.RedirectRejected(InvalidLocation)`.
 - Any raw or percent-decoded non-ASCII redirect host is refused before comparison as
   `Security.RedirectRejected(UnsupportedInternationalizedHost)`. This is distinct from
@@ -3028,6 +3031,16 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 59 (2026-08-22)** — raw IPv6 zone syntax and decoded zone identity stopped being conflated.
+
+1. The authority validator still consumes the raw `%25` zone delimiter and rejects an empty or
+   nested delimiter, but canonical redirect comparison validates the already-decoded identifier
+   without stripping a second `25` prefix.
+2. A valid zone literally named `25`, written as `%2525` in a URL host, now canonicalizes and compares
+   like every other byte-preserved zone rather than failing as `InvalidLocation`.
+3. Direct canonical-host and public conformance assertions pin the compressed/expanded equivalence;
+   existing empty-zone and nested-`%25` cases continue to pin the raw grammar's fail-closed boundary.
 
 **Revision 58 (2026-08-22)** — embedded IPv4 tails became positionally valid IPv6 syntax.
 

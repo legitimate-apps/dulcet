@@ -856,7 +856,7 @@ internal fun String.canonicalRedirectHost(): CanonicalRedirectHost {
         val address = if (zoneDelimiter >= 0) unbracketed.substring(0, zoneDelimiter) else unbracketed
         val zone = if (zoneDelimiter >= 0) {
             unbracketed.substring(zoneDelimiter + 1)
-                .takeIf { it.isValidIpv6ZoneSuffix() }
+                .takeIf { it.isValidIpv6ZoneIdentifier() }
                 ?: return CanonicalRedirectHost.Invalid
         } else {
             null
@@ -1056,7 +1056,7 @@ private fun String.isStructurallyValidUrlAuthority(): Boolean {
         val literal = substring(1, closingBracket)
         val address = literal.substringBefore('%').lowercase()
         if (!address.isValidIpv6Literal()) return false
-        if ('%' in literal && !literal.substringAfter('%').isValidIpv6ZoneSuffix()) return false
+        if ('%' in literal && !literal.substringAfter('%').isValidRawIpv6ZoneSuffix()) return false
         val suffix = substring(closingBracket + 1)
         return suffix.isEmpty() || suffix.isValidExplicitUrlPort()
     }
@@ -1121,25 +1121,27 @@ private fun String.decodePercentEncodedAsciiRegName(): String? {
     }
 }
 
-private fun String.isValidIpv6ZoneSuffix(): Boolean {
-    val zoneIdentifier = if (startsWith("25")) drop(2) else this
-    if (zoneIdentifier.isEmpty()) return false
+private fun String.isValidRawIpv6ZoneSuffix(): Boolean =
+    (if (startsWith("25")) drop(2) else this).isValidIpv6ZoneIdentifier()
+
+private fun String.isValidIpv6ZoneIdentifier(): Boolean {
+    if (isEmpty()) return false
     var index = 0
-    while (index < zoneIdentifier.length) {
-        val character = zoneIdentifier[index]
+    while (index < length) {
+        val character = this[index]
         when {
             character in 'a'..'z' || character in 'A'..'Z' || character in '0'..'9' ||
                 character in "-._~" -> index += 1
 
             character == '%' -> {
                 if (
-                    index + 2 >= zoneIdentifier.length ||
-                    !zoneIdentifier[index + 1].isAsciiHexDigit() ||
-                    !zoneIdentifier[index + 2].isAsciiHexDigit()
+                    index + 2 >= length ||
+                    !this[index + 1].isAsciiHexDigit() ||
+                    !this[index + 2].isAsciiHexDigit()
                 ) {
                     return false
                 }
-                if (zoneIdentifier.substring(index + 1, index + 3).equals("25", ignoreCase = true)) {
+                if (substring(index + 1, index + 3).equals("25", ignoreCase = true)) {
                     return false
                 }
                 index += 3

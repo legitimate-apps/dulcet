@@ -99,6 +99,23 @@ class RedirectHostPolicyTest {
     }
 
     @Test
+    fun decodedIpv6ZoneNamed25RemainsValid() {
+        assertEquals(
+            CanonicalRedirectHost.Canonical(
+                "[fe80:0000:0000:0000:0000:0000:0000:0001%25]",
+            ),
+            "[fe80::1%2525]".canonicalRedirectHost(),
+        )
+        assertEquals(
+            RedirectPolicyDecision.PreserveCredentials,
+            redirect(
+                "https://[fe80::1%2525]/rest/ping.view",
+                "https://[fe80:0:0:0:0:0:0:1%2525]/collect",
+            ),
+        )
+    }
+
+    @Test
     fun embeddedIpv4OctetsRejectNonDigits() {
         assertEquals(
             CanonicalRedirectHost.Invalid,
