@@ -98,6 +98,21 @@ class RedirectHostPolicyTest {
         )
     }
 
+    @Test
+    fun embeddedIpv4OctetsRejectNonDigits() {
+        assertEquals(
+            CanonicalRedirectHost.Invalid,
+            "[::ffff:127.0.0.+1]".canonicalRedirectHost(),
+        )
+        assertEquals(
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.InvalidLocation),
+            redirect(
+                "https://[::ffff:127.0.0.1]/rest/ping.view",
+                "https://[::ffff:127.0.0.+1]/collect",
+            ),
+        )
+    }
+
     private fun redirect(current: String, target: String): RedirectPolicyDecision =
         AccountConnectionContract.redirectDecision(
             currentUrl = current,

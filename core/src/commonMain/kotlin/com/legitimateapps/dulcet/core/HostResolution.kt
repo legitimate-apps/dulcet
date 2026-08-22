@@ -99,7 +99,10 @@ private fun String.isIpAddressLiteral(): Boolean = parseIpv4() != null || ':' in
 internal fun String.parseIpv4(): List<Int>? {
     val octets = split('.')
     if (octets.size != 4) return null
-    return octets.map { it.toIntOrNull() ?: return null }
+    return octets.map { octet ->
+        if (octet.isEmpty() || !octet.all { it in '0'..'9' }) return null
+        octet.toIntOrNull() ?: return null
+    }
         .takeIf { values -> values.all { it in 0..255 } }
 }
 
