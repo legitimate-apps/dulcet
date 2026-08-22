@@ -6,8 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 49 — redirect-origin comparison now uses bounded ASCII/IP host canonicalization and
-rejects internationalized redirect hosts distinctly without adding IDNA; revision 48 made the
+**Revision:** 50 — Funkwhale string-boolean compatibility is confined to the five observed `getUser`
+role fields while account metadata remains strictly typed; revision 49 made redirect-origin
+comparison use bounded ASCII/IP host canonicalization and reject internationalized redirect hosts
+distinctly without adding IDNA; revision 48 made the
 declared revision and record mechanically consistent; revision 47
 completed engine-timeout classification and narrowed account-setup feedback claims to the core
 boundary; revision 46 validates successful extension payloads against one complete positive grammar;
@@ -838,9 +840,8 @@ to the implementation. Given user input, Dulcet:
    unknown server gets classified as `legacySubsonic` and we start sending credentials to it.
 4. Read envelope metadata: `openSubsonic`, `type`, `serverVersion`, `version`. `version` is required.
    For compatibility with classic servers the other three fields may be absent, but when present
-   `openSubsonic` must be either a JSON boolean or the unambiguous string spelling `"true"`/`"false"`
-   (case-insensitive), and `type`/`serverVersion` must be JSON strings; any other type or boolean
-   spelling is `Protocol.MalformedEnvelope`, not a default value.
+   `openSubsonic` must be a native JSON boolean and `type`/`serverVersion` must be JSON strings; any
+   other type is `Protocol.MalformedEnvelope`, not a default value.
 5. Fetch user capabilities/roles (`getUser`): download, playlist, share, jukebox, admin. A missing
    role remains `false` for legacy compatibility. A present role accepts either a JSON boolean or
    the case-insensitive string spelling `"true"`/`"false"`; every other value fails as
@@ -872,7 +873,7 @@ caller, not an observed product behavior.
 | HTTP reached; extension probe non-envelope; **and** `ping` also fails to parse | `NotASubsonicServer` | "This doesn't look like a Subsonic server" — do not retry with credentials |
 | envelope parsed; error code indicates bad credentials | `AuthenticationFailed` | "Wrong username or password" — never "server down" |
 | envelope parsed; error code indicates a version mismatch | `ProtocolIncompatible` | show **what Dulcet sent** and **what the server reported** in its envelope. Do not promise a "required version" — the protocol does not reliably supply one |
-| successful envelope contains present account metadata or role fields outside the recognised valid shapes (including a boolean value other than native JSON boolean or case-insensitive string `true`/`false`) | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
+| successful envelope contains present account metadata outside its strict JSON shape, or a role field outside native JSON boolean or case-insensitive string `true`/`false` | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
 
 **OBSERVED:** a missing `getOpenSubsonicExtensions` is consistent with a classic pre-OpenSubsonic
 server. On `ExtensionListUnavailable`: do not fail login; mark `legacySubsonic`; mark every extension
@@ -3013,6 +3014,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 50 (2026-08-22)** — Funkwhale compatibility returned to its observed `getUser` scope.
+
+1. Hosted red run `32580092898`, `conformance-env-linux` job `97048045886`, ran 29 JVM conformance
+   tests and failed only `openSubsonicStringBooleanRemainsMalformed`: the unrelated metadata value
+   `"openSubsonic":"TRUE"` produced a connected account instead of `Protocol.MalformedEnvelope`.
+   The ordinary `core-build` job passed.
+2. Successful-envelope parsing now has two closed boolean boundaries. Optional `openSubsonic`
+   metadata accepts only a native JSON boolean. The five optional `getUser` role fields accept native
+   booleans plus the case-insensitive string spellings `"true"` and `"false"` observed in released
+   Funkwhale, while every other present shape remains malformed.
+3. The dedicated metadata-string control fails if that unrequested leniency is reintroduced. The
+   exact Funkwhale 2.0.9 tuple and mixed-case role controls remain the positive compatibility proof;
+   no string coercion was added to metadata or any other envelope field.
+
 **Revision 49 (2026-08-21)** — redirect-host comparison became ASCII-bounded and representation-aware
 without reversing the Phase-1 IDNA decision.
 
@@ -3103,10 +3118,11 @@ string-encoded boolean roles.
    `funkwhale209StringBooleanRolesRemainConnectable`: the exact observed Funkwhale role tuple
    (`true`, `true`, `false`, `true`, `false`) ended as `Protocol.MalformedEnvelope` instead of a
    connected account. The ordinary core build passed.
-3. Boolean envelope fields now accept native JSON booleans and exact string spellings `"true"` or
+3. The five `getUser` role fields accept native JSON booleans and exact string spellings `"true"` or
    `"false"`, case-insensitively. Numeric values such as `42`, objects, arrays, null, whitespace-
    padded strings and every other spelling remain malformed. Missing optional roles retain their
-   legacy-compatible `false` default.
+   legacy-compatible `false` default. Revision 50 clarifies that this exception never applied to the
+   unrelated `openSubsonic` metadata field.
 4. This supersedes revision 40's treatment of `"downloadRole":"true"` as necessarily malformed.
    Revision 40's closed-shape policy remains in force for values without an unambiguous recognised
    interpretation; no general string coercion was added.

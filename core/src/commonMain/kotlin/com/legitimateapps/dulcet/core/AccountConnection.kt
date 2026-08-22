@@ -498,7 +498,7 @@ public class AccountConnector(
             ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
         if (
             listOf("downloadRole", "playlistRole", "shareRole", "jukeboxRole", "adminRole")
-                .any { !user.hasOptionalBoolean(it) }
+                .any { !user.hasOptionalCompatibleRoleBoolean(it) }
         ) {
             return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
         }
@@ -515,11 +515,11 @@ public class AccountConnector(
                 capabilities = CapabilitySet(
                     extensions = effectiveExtensions,
                     permissions = UserPermissions(
-                        download = user.boolean("downloadRole") ?: false,
-                        playlist = user.boolean("playlistRole") ?: false,
-                        share = user.boolean("shareRole") ?: false,
-                        jukebox = user.boolean("jukeboxRole") ?: false,
-                        admin = user.boolean("adminRole") ?: false,
+                        download = user.compatibleRoleBoolean("downloadRole") ?: false,
+                        playlist = user.compatibleRoleBoolean("playlistRole") ?: false,
+                        share = user.compatibleRoleBoolean("shareRole") ?: false,
+                        jukebox = user.compatibleRoleBoolean("jukeboxRole") ?: false,
+                        admin = user.compatibleRoleBoolean("adminRole") ?: false,
                     ),
                     legacySubsonic = extensionListUnavailable,
                 ),
@@ -1340,7 +1340,10 @@ private fun JsonElement?.toExtensionMapOrNull(): Map<String, Set<Int>>? {
 private fun JsonObject.string(name: String): String? =
     (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
-private fun JsonObject.boolean(name: String): Boolean? {
+private fun JsonObject.boolean(name: String): Boolean? =
+    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+
+private fun JsonObject.compatibleRoleBoolean(name: String): Boolean? {
     val value = get(name) as? JsonPrimitive ?: return null
     if (!value.isString) return value.booleanOrNull
     return when {
@@ -1355,6 +1358,9 @@ private fun JsonObject.hasOptionalString(name: String): Boolean =
 
 private fun JsonObject.hasOptionalBoolean(name: String): Boolean =
     name !in this || boolean(name) != null
+
+private fun JsonObject.hasOptionalCompatibleRoleBoolean(name: String): Boolean =
+    name !in this || compatibleRoleBoolean(name) != null
 
 private fun JsonObject.int(name: String): Int? =
     (get(name) as? JsonPrimitive)?.intOrNull
