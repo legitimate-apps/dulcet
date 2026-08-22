@@ -81,6 +81,7 @@ jobs:
           test ! -e "$RUNNER_TEMP/rejected-dynamic-type"
           echo "DYNAMIC TYPE NEGATIVE CONTROL PASS setup=binary-built exact-diagnostic=true label=accessibility5 rejected=true output-created=false"
       - name: Capture deterministic macOS design evidence twice
+        id: design_capture
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
         run: |
@@ -107,11 +108,12 @@ jobs:
             echo 'Artifact contains 14 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload macOS design evidence
+        if: ${{ always() && steps.design_capture.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-macos-design-captures-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dulcet-design-captures/run-a
-          if-no-files-found: error
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 14
       - name: Build iOS and iPadOS shell
