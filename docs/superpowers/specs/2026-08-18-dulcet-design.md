@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 67 — credential-bearing request and snapshot values gained redacted string and mirror
+**Revision:** 68 — Apple credentials became after-first-unlock and device-only; revision 67 made
+credential-bearing request and snapshot values use redacted string and mirror
 representations; revision 66 returned macOS `account.connect` to partial because the live app seam remains
 unexecuted; revision 65 added schema-2 evidence covering its
 core, Darwin, presentation, capture-state, Keychain, relaunch, and 407 claims; revision 64 made
@@ -1397,7 +1398,7 @@ through Ktor Darwin's `configureSession` hook.
 | | Apple | Android |
 |---|---|---|
 | item | Keychain generic password | Keystore-backed encrypted store |
-| accessibility | `kSecAttrAccessibleAfterFirstUnlock` — not `...ThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
+| accessibility | `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | key usable once the device has been unlocked after boot; no biometric/auth-bound key |
 | key | `service = "${BUNDLE_PREFIX}"`, `account = server_id` (the local UUID, not the username or URL) | alias `${BUNDLE_PREFIX}.<server_id>` |
 | iCloud Keychain sync | off (`kSecAttrSynchronizable = false`) | n/a |
 | device migration / backup restore | credentials do not migrate; the user re-enters the password on a new device | same |
@@ -1409,7 +1410,7 @@ the complete connection request is encoded into one Keychain generic-password va
 `service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
 is retained in preferences as the active-account pointer; neither the URL, username, nor password is
 used as a Keychain index. Synchronization is explicitly disabled and accessibility is
-`kSecAttrAccessibleAfterFirstUnlock`, as required above. On relaunch Dulcet reads the item and
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, as required above. On relaunch Dulcet reads the item and
 prefills the secure account form, but performs **no network request until the person chooses
 Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition. The storage API's
@@ -1417,8 +1418,9 @@ delete path removes the Keychain item before clearing its active-account pointer
 logout control is outside this account-connect surface.
 
 **Background downloads after a reboot** read the credential like any other consumer;
-`kSecAttrAccessibleAfterFirstUnlock` is chosen precisely so a background task can run before the user
-opens the app. A download whose credential read fails is **paused with a re-auth reason**, not failed.
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is chosen precisely so a background task can run
+after the device's first post-reboot unlock but the item cannot migrate to another device. A download
+whose credential read fails is **paused with a re-auth reason**, not failed.
 
 ### 13.2 The threat model, stated correctly
 
@@ -3091,6 +3093,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 68 (2026-08-22)** — Keychain accessibility now delivers both background access and the
+decided non-migration property.
+
+1. Apple account credentials use `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. They remain
+   available to background work after the first post-reboot unlock, without a biometric or per-read
+   user-presence gate, and cannot migrate through backup restore to another device.
+2. The secure-storage table's accessibility and migration rows now describe the same policy. The
+   latter remains unchanged: a person re-enters the password on a new device.
+3. The hosted Keychain control reads the actual inserted item's attributes and requires the
+   `ThisDeviceOnly` accessibility value. A source constant assertion would not establish what
+   Security.framework stored and is deliberately not used.
 
 **Revision 67 (2026-08-22)** — credential-bearing account values became non-printable by default.
 

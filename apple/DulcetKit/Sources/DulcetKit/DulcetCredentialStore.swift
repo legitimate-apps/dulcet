@@ -66,7 +66,8 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
         if updateStatus == errSecItemNotFound {
             var item = query
             item[kSecValueData as String] = data
-            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            item[kSecAttrAccessible as String] =
+                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             finalStatus = SecItemAdd(item as CFDictionary, nil)
         } else {
             finalStatus = updateStatus

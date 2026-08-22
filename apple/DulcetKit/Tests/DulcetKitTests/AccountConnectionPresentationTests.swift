@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import DulcetKit
 
@@ -116,11 +117,13 @@ func accountDomainErrorsHaveATotalActionablePresentation() {
 func keychainCredentialsRoundTripAndDelete() throws {
     let identifier = UUID().uuidString
     let suiteName = "com.legitimateapps.dulcet.tests.\(identifier)"
+    let service = "com.legitimateapps.dulcet.tests.\(identifier)"
+    let activeAccountKey = "active-account"
     let defaults = try #require(UserDefaults(suiteName: suiteName))
     let store = DulcetKeychainCredentialStore(
-        service: "com.legitimateapps.dulcet.tests.\(identifier)",
+        service: service,
         defaults: defaults,
-        activeAccountKey: "active-account"
+        activeAccountKey: activeAccountKey
     )
     let request = DulcetAccountConnectRequest(
         serverURL: "https://music.example.invalid",
@@ -135,6 +138,22 @@ func keychainCredentialsRoundTripAndDelete() throws {
 
     try store.save(request)
     #expect(try store.load() == request)
+    let accountID = try #require(defaults.string(forKey: activeAccountKey))
+    var attributesResult: CFTypeRef?
+    let attributesStatus = SecItemCopyMatching([
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: service,
+        kSecAttrAccount as String: accountID,
+        kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+        kSecReturnAttributes as String: kCFBooleanTrue as Any,
+        kSecMatchLimit as String: kSecMatchLimitOne,
+    ] as CFDictionary, &attributesResult)
+    #expect(attributesStatus == errSecSuccess)
+    let attributes = try #require(attributesResult as? [String: Any])
+    #expect(
+        attributes[kSecAttrAccessible as String] as? String
+            == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
+    )
 
     try store.delete()
     #expect(try store.load() == nil)
