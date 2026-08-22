@@ -360,11 +360,35 @@ public fun interface SaltSource {
 }
 
 /** Account-connect entry point shared by every platform shell. */
-public class AccountConnector(
+public class AccountConnector private constructor(
     private val saltSource: SaltSource? = null,
     private val logSink: LogSink? = null,
     hostResolver: HostResolver = systemHostResolver(),
+    private val clientTransport: AccountClientTransport,
 ) {
+    public constructor(
+        saltSource: SaltSource? = null,
+        logSink: LogSink? = null,
+        hostResolver: HostResolver = systemHostResolver(),
+    ) : this(
+        saltSource = saltSource,
+        logSink = logSink,
+        hostResolver = hostResolver,
+        clientTransport = AccountClientTransport.Default,
+    )
+
+    internal constructor(
+        forwardProxy: AccountForwardProxy,
+        saltSource: SaltSource? = null,
+        logSink: LogSink? = null,
+        hostResolver: HostResolver = systemHostResolver(),
+    ) : this(
+        saltSource = saltSource,
+        logSink = logSink,
+        hostResolver = hostResolver,
+        clientTransport = AccountClientTransport.ForwardProxy(forwardProxy),
+    )
+
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
 
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult {
@@ -375,7 +399,7 @@ public class AccountConnector(
         normalized as NormalizedServerUrl.Valid
 
         val traceRecorder = RequestTraceRecorder(logSink)
-        val client = createAccountHttpClient {
+        val client = createAccountHttpClient(clientTransport) {
             expectSuccess = false
             followRedirects = false
             install(RequestTracePlugin) {
@@ -747,8 +771,19 @@ private class RequestTracePluginConfig {
 }
 
 internal expect fun createAccountHttpClient(
+    transport: AccountClientTransport,
     configure: HttpClientConfig<*>.() -> Unit,
 ): HttpClient
+
+internal data class AccountForwardProxy(
+    val host: String,
+    val port: Int,
+)
+
+internal sealed interface AccountClientTransport {
+    data object Default : AccountClientTransport
+    data class ForwardProxy(val proxy: AccountForwardProxy) : AccountClientTransport
+}
 
 private val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
     val observe = pluginConfig.observe

@@ -30,7 +30,7 @@ class DarwinProxyAuthenticationConformanceTest {
     fun proxyChallengeFailsClosedWithoutAmbientCredentials() = runTest {
         val protectionSpace = NSURLProtectionSpace(
             proxyHost = PROXY_HOST,
-            port = PROXY_PORT,
+            port = PROXY_PORT.toLong(),
             type = NSURLProtectionSpaceHTTPProxy,
             realm = PROXY_REALM,
             authenticationMethod = NSURLAuthenticationMethodHTTPBasic,
