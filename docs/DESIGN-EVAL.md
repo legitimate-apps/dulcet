@@ -315,21 +315,37 @@ The artifact-to-claim mapping is:
 `capture-sibling`, cannot populate the §7 product schema, cannot calibrate `platform_idiom`, and
 cannot be combined with shipping-reference scores.
 
-Both raters receive the same immutable inputs:
+Across their isolated requests, both raters are evaluated against the same immutable corpus:
 
 - the complete eligible shipping-reference artifact, including its manifest and controls;
 - this document;
 - no score, prose, or hidden chain of reasoning from the other rater;
 - no implementation author's self-rating.
 
-Each rater starts in a fresh context and returns the schema in §7. Results are revealed together only
-after both are complete. A malformed or incomplete response is replaced before either valid score is
-used. The replacement sees the original inputs, not the failed response.
+The complete artifact is the immutable corpus, not a whole-set prompt. For each model family, the
+harness presents every standard image in a separate fresh request. A normal request contains exactly
+one standard image. The `library-browse` request also contains the matching-appearance pinned control
+so the same response can establish the §6 comparison. No request contains the opposite appearance,
+an earlier response, an earlier score, or an aggregate. Thus light and dark are derived without access
+to one another's result.
+
+Each request carries a harness-generated nonce and the filenames and SHA-256 digests of its image
+inputs. The rater copies those values into the appearance record in §7 and supplies appearance-specific
+observations before a later mechanical step assembles the 14 records. The raw per-request responses
+are part of the rating evidence; an aggregate JSON reconstructed without them is invalid. This makes
+failure to derive an appearance independently visible in the rater's own output rather than relying
+on an unexplained final delta.
+
+Results from the two model families are revealed together only after all records are complete. A
+malformed or incomplete appearance record is replaced before any valid score is used. Its replacement
+gets a new nonce and sees only the original single-appearance inputs, never the failed response or any
+other score.
 
 If the two product taste scores differ by more than 20 points, or the two accessibility scores differ
 by more than 15 points, a third independent model adjudicates the disputed categories. The third
-rater must also pass the control gate. The final report keeps all raw scores and states which rater
-supplied the adjudicated category; it never hides disagreement behind an average.
+rater must also pass the control gate and the same isolated-per-appearance derivation contract; it
+does not receive either prior rater's score or prose. The final report keeps all raw scores and states
+which rater supplied the adjudicated category; it never hides disagreement behind an average.
 
 ## 4. Taste rubric — 100 points, scored per standard image
 
@@ -352,9 +368,20 @@ These categories form two independently calibrated lenses:
 
 An earlier synthetic good/bad calibration pair produced an `information_design` gap of 1.21 on a
 normalized 0–10 scale but only a `platform_idiom` gap of 0.43. Neither synthetic image contained real
-window chrome. Therefore that experiment calibrated only information design; platform idiom remains
-**unproven until the titled-window artifact defined in §1 passes §6**. The synthetic result must not
+window chrome. That experiment calibrated only information design and the synthetic result must not
 be quoted as a Dulcet product score.
+
+**OBSERVED 2026-08-22:** the titled shipping-reference artifact from hosted run `32555697776` passed
+the §6 `platform_idiom` threshold on three independent instruments. Kimi K3 measured gaps of 7.6 in
+light and 7.6 in dark; GPT-5.6 measured 8.8 and 8.8; Gemini 2.5 Pro, invoked one image comparison per
+request, measured 3.72 and 5.14. All exceed the 1.0 threshold, so the shipping-reference
+`platform_idiom` lens is calibrated. The earlier 0.43 synthetic result remains the historical reason
+real titled-window calibration was required; it is not superseded as though it never happened.
+
+The same run exposed a separate measurement defect: both whole-set raters returned identical light
+and dark category vectors for all seven product states. Those reported zero deltas are unmeasured,
+not evidence that the appearances are equal. The isolated-request contract in §3 applies to future
+product appearance scores; it does not erase the independently observed control-gate calibration.
 
 A lens is calibrated only when, for every rater and appearance, its normalized good-browse score is
 at least 1.0 point above its deliberately bad control score. If either lens is uncalibrated, the run
@@ -368,7 +395,12 @@ Score every reference JPEG separately, then compute:
 2. the mean of the seven state means as `product_taste_score`;
 3. the light/dark delta for each state.
 
-A light/dark delta above 12 points is a named inconsistency, even if the average is high.
+A light/dark delta is always computed mechanically from two valid appearance records; a rater never
+supplies the delta directly. A delta of exactly zero is valid when the records have distinct request
+nonces, the correct distinct artifact digests, and independently stated appearance-specific
+observations. Without those derivation records the delta is `null`, not zero, and the product rating
+is void. A measured light/dark delta above 12 points is a named inconsistency, even if the average is
+high.
 
 ### 4.1 State-specific questions
 
@@ -422,7 +454,8 @@ rater, relax the threshold, prompt the same rater to lower the control, or repor
 uncalibrated lens. Record the failed lens and gap, leave lens and aggregate scores `null`, and start a
 new run with two fresh independent raters. A rating harness that cannot produce a decisively low
 score is not measuring the intended range. The real titled-window captures are the first evidence
-eligible to settle the currently unproven platform-idiom calibration.
+that settled platform-idiom calibration; the observed 2026-08-22 results and historical synthetic
+result are recorded in §4.
 
 ## 7. Required rater output
 
@@ -431,6 +464,7 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
 ```json
 {
   "rater": {"model_family": "...", "model": "..."},
+  "derivation_protocol": "isolated-per-appearance-v1",
   "control_gate": {
     "light": {
       "score": 0,
@@ -451,8 +485,28 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
     "run_valid": true
   },
   "states": {
-    "empty-library-no-account": {
+    "library-browse": {
       "light": {
+        "derivation": {
+          "request_nonce": "harness-generated unique value",
+          "context_scope": "fresh-no-prior-scores",
+          "input_images": [
+            {
+              "role": "standard",
+              "filename": "macos-library-browse-light.jpg",
+              "sha256": "..."
+            },
+            {
+              "role": "control",
+              "filename": "macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg",
+              "sha256": "..."
+            }
+          ],
+          "appearance_specific_observations": [
+            {"category": "platform_idiom", "observation": "visible evidence in this appearance"},
+            {"category": "coherence_and_finish", "observation": "visible evidence in this appearance"}
+          ]
+        },
         "taste": 0,
         "categories": {
           "platform_idiom": 0,
@@ -461,9 +515,39 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
           "state_clarity_and_primary_action": 0,
           "coherence_and_finish": 0
         },
-        "findings": []
+        "findings": [],
+        "control_assessment": {
+          "taste": 0,
+          "categories": {
+            "platform_idiom": 0,
+            "hierarchy_and_typography": 0,
+            "spacing_and_density": 0,
+            "state_clarity_and_primary_action": 0,
+            "coherence_and_finish": 0
+          }
+        }
       },
       "dark": {
+        "derivation": {
+          "request_nonce": "a different harness-generated unique value",
+          "context_scope": "fresh-no-prior-scores",
+          "input_images": [
+            {
+              "role": "standard",
+              "filename": "macos-library-browse-dark.jpg",
+              "sha256": "..."
+            },
+            {
+              "role": "control",
+              "filename": "macos-CONTROL-DELIBERATELY-BAD-library-browse-dark.jpg",
+              "sha256": "..."
+            }
+          ],
+          "appearance_specific_observations": [
+            {"category": "platform_idiom", "observation": "visible evidence in this appearance"},
+            {"category": "coherence_and_finish", "observation": "visible evidence in this appearance"}
+          ]
+        },
         "taste": 0,
         "categories": {
           "platform_idiom": 0,
@@ -472,7 +556,17 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
           "state_clarity_and_primary_action": 0,
           "coherence_and_finish": 0
         },
-        "findings": []
+        "findings": [],
+        "control_assessment": {
+          "taste": 0,
+          "categories": {
+            "platform_idiom": 0,
+            "hierarchy_and_typography": 0,
+            "spacing_and_density": 0,
+            "state_clarity_and_primary_action": 0,
+            "coherence_and_finish": 0
+          }
+        }
       }
     }
   },
@@ -496,11 +590,20 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
 }
 ```
 
-All seven state keys and all five category scores are required for a valid run. Point-weighted
-category scores and aggregate scores are integers; normalized control gaps may be decimals. For a
-void run, `lens_scores`, every per-image `taste`, and `product_taste_score` are `null`; the calibration
-gaps and failure evidence remain populated. Findings name the file and the rubric category; generic
-praise or criticism without evidence is invalid.
+All seven state keys, both appearance records under each state, and all five category scores are
+required for a valid run. The 14 request nonces must be unique. Each filename and digest must match
+the artifact manifest; each normal record must list exactly its one standard image, and each browse
+record must additionally list only its matching-appearance pinned control. Opposite-appearance input,
+a repeated nonce, a missing raw response, a digest mismatch, or generic observations that do not
+identify visible evidence in that appearance invalidate the derivation. Identical light/dark score
+vectors do not by themselves invalidate records that satisfy these independent-derivation checks.
+
+Point-weighted category scores and aggregate scores are integers; normalized control gaps may be
+decimals. The aggregator computes control gaps, state means, product means, and light/dark deltas from
+the retained records; it does not accept rater-supplied aggregates as evidence. For a void run,
+`lens_scores`, every per-image `taste`, every light/dark delta, and `product_taste_score` are `null`;
+the calibration gaps and failure evidence remain populated. Findings name the file and the rubric
+category; generic praise or criticism without evidence is invalid.
 
 ## 8. Reproduction
 
