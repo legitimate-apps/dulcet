@@ -101,3 +101,7 @@ schemes:
     test:
       targets:
         - DulcetMacTests
+      environmentVariables:
+        - variable: DULCET_CONFORMANCE_BASE_URL
+          value: "$(DULCET_TEST_CONFORMANCE_BASE_URL)"
+          isEnabled: true
