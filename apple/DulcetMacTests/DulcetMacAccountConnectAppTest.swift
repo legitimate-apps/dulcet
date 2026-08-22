@@ -236,7 +236,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber,
                 context: nil,
-                characters: key.characters,
+                characters: modifiers.contains(.shift)
+                    ? key.shiftedCharacters
+                    : key.characters,
                 charactersIgnoringModifiers: key.characters,
                 isARepeat: false,
                 keyCode: key.keyCode
@@ -264,6 +266,13 @@ private enum KeyboardKey {
         case .tab: 48
         case .returnKey: 36
         case .escape: 53
+        }
+    }
+
+    var shiftedCharacters: String {
+        switch self {
+        case .tab: "\u{19}"
+        case .returnKey, .escape: characters
         }
     }
 }
