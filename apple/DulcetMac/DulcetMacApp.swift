@@ -13,7 +13,7 @@ struct DulcetMacApp: App {
             DulcetRootView(store: presentation)
                 .frame(minWidth: 900, minHeight: 600)
         }
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowToolbarStyle(.expanded)
         .defaultSize(width: 1180, height: 760)
     }
 }
