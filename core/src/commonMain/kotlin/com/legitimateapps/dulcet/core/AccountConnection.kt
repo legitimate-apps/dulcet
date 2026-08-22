@@ -74,13 +74,13 @@ public enum class RequestObservationBoundary {
 public enum class RedirectRejectionReason {
     HttpsDowngrade,
     LocalToPublic,
+    CrossOrigin,
     TooManyRedirects,
     InvalidLocation,
 }
 
 public sealed interface RedirectPolicyDecision {
     public data object PreserveCredentials : RedirectPolicyDecision
-    public data object StripCredentials : RedirectPolicyDecision
     public data class Reject(val reason: RedirectRejectionReason) : RedirectPolicyDecision
 }
 
@@ -264,6 +264,10 @@ public sealed interface DomainError {
         public data object Forbidden : Auth
         /** The server or an intermediary requested an authentication mechanism Phase 1 does not support. */
         public data object UnsupportedAuthenticationChallenge : Auth
+        /** Account connect refused to send a request across an origin boundary. */
+        public data class CrossOriginRedirectRejected(
+            val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
+        ) : Auth
         public data class RedirectCredentialLoss(
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
         ) : Auth
@@ -290,6 +294,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Auth.TokenAuthUnsupported -> "Auth.TokenAuthUnsupported"
         DomainError.Auth.Forbidden -> "Auth.Forbidden"
         DomainError.Auth.UnsupportedAuthenticationChallenge -> "Auth.UnsupportedAuthenticationChallenge"
+        is DomainError.Auth.CrossOriginRedirectRejected -> "Auth.CrossOriginRedirectRejected"
         is DomainError.Auth.RedirectCredentialLoss -> "Auth.RedirectCredentialLoss"
         is DomainError.CapabilityUnsupported -> "Capability.Unsupported"
     }
@@ -322,6 +327,7 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
+            is DomainError.Auth.CrossOriginRedirectRejected,
             is DomainError.Auth.RedirectCredentialLoss,
             -> Unit
             is DomainError.CapabilityUnsupported -> put(
@@ -591,8 +597,6 @@ public class AccountConnector(
             }
         }
         var followedRedirects = 0
-        var credentialsStripped = false
-
         while (true) {
             val response = sendRequest(
                 client = client,
@@ -603,13 +607,6 @@ public class AccountConnector(
                 allowLocalHttp = allowLocalHttp,
             )
             if (response.status.value !in REDIRECT_STATUS_CODES) {
-                if (response.status.value == 401 && credentialsStripped) {
-                    throw RedirectPolicyFailure(
-                        DomainError.Auth.RedirectCredentialLoss(
-                            SuppressedRedirectUrl,
-                        ),
-                    )
-                }
                 return WireResponse(
                     statusCode = response.status.value,
                     body = response.bodyAsText(),
@@ -633,10 +630,7 @@ public class AccountConnector(
                 )
             if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
                 throw RedirectPolicyFailure(
-                    DomainError.Security.RedirectRejected(
-                        RedirectRejectionReason.LocalToPublic,
-                        SuppressedRedirectUrl,
-                    ),
+                    DomainError.Auth.CrossOriginRedirectRejected(SuppressedRedirectUrl),
                 )
             }
             when (
@@ -647,19 +641,17 @@ public class AccountConnector(
                 )
             ) {
                 RedirectPolicyDecision.PreserveCredentials -> Unit
-                RedirectPolicyDecision.StripCredentials -> {
-                    val credentialValues = queryParameters.authenticationValues() +
-                        formParameters.authenticationValues()
-                    credentialsStripped = credentialsStripped || credentialValues.isNotEmpty()
-                    queryParameters = queryParameters.withoutCredentialChannels(credentialValues)
-                    formParameters = formParameters.withoutCredentialChannels(credentialValues)
+                is RedirectPolicyDecision.Reject -> {
+                    val error = if (decision.reason == RedirectRejectionReason.CrossOrigin) {
+                        DomainError.Auth.CrossOriginRedirectRejected(SuppressedRedirectUrl)
+                    } else {
+                        DomainError.Security.RedirectRejected(
+                            decision.reason,
+                            SuppressedRedirectUrl,
+                        )
+                    }
+                    throw RedirectPolicyFailure(error)
                 }
-                is RedirectPolicyDecision.Reject -> throw RedirectPolicyFailure(
-                    DomainError.Security.RedirectRejected(
-                        decision.reason,
-                        SuppressedRedirectUrl,
-                    ),
-                )
             }
             currentUrl = nextUrl.withoutQuery()
             followedRedirects += 1
@@ -837,19 +829,11 @@ private fun String.withoutQuery(): String = URLBuilder().apply {
     fragment = ""
 }.buildString()
 
-private fun Parameters.authenticationValues(): Set<String> =
-    AUTHENTICATION_PARAMETER_KEYS.flatMap { getAll(it).orEmpty() }.toSet()
-
-private fun Parameters.withoutCredentialChannels(credentialValues: Set<String>): Parameters =
-    Parameters.build {
-        this@withoutCredentialChannels.entries().forEach { (key, values) ->
-            if (key !in AUTHENTICATION_PARAMETER_KEYS) {
-                values.filterNot { it in credentialValues }.forEach { value -> append(key, value) }
-            }
-        }
-    }
-
-private val AUTHENTICATION_PARAMETER_KEYS = setOf("u", "t", "s", "p")
+private fun Url.normalizedRedirectPort(): Int? = when {
+    protocol.name == "http" && port == 80 -> null
+    protocol.name == "https" && port == 443 -> null
+    else -> port
+}
 
 /** Stable protocol functions shared by transport, tests, and future account refreshes. */
 public object AccountConnectionContract {
@@ -888,19 +872,16 @@ public object AccountConnectionContract {
         if (current.protocol.name == "https" && target.protocol.name == "http") {
             return RedirectPolicyDecision.Reject(RedirectRejectionReason.HttpsDowngrade)
         }
-        if (
-            current.host.isPermittedLocalHttpAddress() &&
-            !target.host.isPermittedLocalHttpAddress()
-        ) {
-            return RedirectPolicyDecision.Reject(RedirectRejectionReason.LocalToPublic)
-        }
-        val sameOrigin = current.protocol == target.protocol &&
-            current.host.equals(target.host, ignoreCase = true) &&
-            current.port == target.port
-        return if (sameOrigin) {
+        val sameAuthority = current.host.equals(target.host, ignoreCase = true) &&
+            current.normalizedRedirectPort() == target.normalizedRedirectPort()
+        val sameOrigin = current.protocol == target.protocol && sameAuthority
+        val sameAuthorityUpgrade = current.protocol.name == "http" &&
+            target.protocol.name == "https" &&
+            sameAuthority
+        return if (sameOrigin || sameAuthorityUpgrade) {
             RedirectPolicyDecision.PreserveCredentials
         } else {
-            RedirectPolicyDecision.StripCredentials
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin)
         }
     }
 

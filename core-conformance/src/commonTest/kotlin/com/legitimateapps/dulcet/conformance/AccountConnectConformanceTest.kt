@@ -335,6 +335,7 @@ class AccountConnectConformanceTest {
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
+            DomainError.Auth.CrossOriginRedirectRejected(),
             DomainError.Auth.RedirectCredentialLoss(),
             DomainError.CapabilityUnsupported(CapabilityFeature.AccountConnect),
         )
@@ -674,10 +675,9 @@ class AccountConnectConformanceTest {
             targetRequestCount(redirectRoot, "cross-observe", "getOpenSubsonicExtensions"),
             "CONF-08 sent an unauthenticated account-connect request across an origin boundary",
         )
-        val crossOriginRejection = assertIs<DomainError.Security.RedirectRejected>(
+        assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
-        assertEquals("CrossOrigin", crossOriginRejection.reason.name)
 
         val redirectLoop = fixture().connect("$redirectRoot/loop")
         val loopRejection = assertIs<DomainError.Security.RedirectRejected>(
@@ -694,7 +694,7 @@ class AccountConnectConformanceTest {
             ),
         )
         assertEquals(
-            RedirectPolicyDecision.Reject(RedirectRejectionReason.LocalToPublic),
+            RedirectPolicyDecision.Reject(RedirectRejectionReason.CrossOrigin),
             AccountConnectionContract.redirectDecision(
                 currentUrl = "http://127.0.0.1/rest/ping.view",
                 targetUrl = "https://music.invalid/rest/ping.view",
@@ -708,7 +708,7 @@ class AccountConnectConformanceTest {
                 redirectsAlreadyFollowed = 0,
             ),
         )
-        assertEquals("CrossOrigin", crossOriginDecision.reason.name)
+        assertEquals(RedirectRejectionReason.CrossOrigin, crossOriginDecision.reason)
         assertEquals(
             RedirectPolicyDecision.PreserveCredentials,
             AccountConnectionContract.redirectDecision(
@@ -728,10 +728,9 @@ class AccountConnectConformanceTest {
             targetRequestCount(redirectRoot, "cross-observe-query", "getOpenSubsonicExtensions"),
             "CONF-08 sent the query-auth scenario across an origin boundary",
         )
-        val rejection = assertIs<DomainError.Security.RedirectRejected>(
+        assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(crossOrigin).error,
         )
-        assertEquals("CrossOrigin", rejection.reason.name)
     }
 
     @Test
@@ -743,10 +742,9 @@ class AccountConnectConformanceTest {
             targetRequestCount(redirectRoot, "cross-reflected-get-user", "getUser"),
             "credential-bearing redirect path reached the cross-origin target wire",
         )
-        val rejection = assertIs<DomainError.Security.RedirectRejected>(
+        assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(result).error,
         )
-        assertEquals("CrossOrigin", rejection.reason.name)
     }
 
     @Test
@@ -758,10 +756,9 @@ class AccountConnectConformanceTest {
             targetRequestCount(redirectRoot, "two-hop-get-user", "getUser"),
             "second-hop origin change reached the cross-origin target wire",
         )
-        val rejection = assertIs<DomainError.Security.RedirectRejected>(
+        assertIs<DomainError.Auth.CrossOriginRedirectRejected>(
             assertIs<AccountConnectionResult.Failed>(result).error,
         )
-        assertEquals("CrossOrigin", rejection.reason.name)
     }
 
     private fun assertEveryRequestChannelAccountedFor(trace: RequestTrace) {
