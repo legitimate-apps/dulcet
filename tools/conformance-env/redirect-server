@@ -785,7 +785,10 @@ class RedirectHandler(BaseHTTPRequestHandler):
         if cache_control is not None:
             self.send_header("Cache-Control", cache_control)
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
 
 def main() -> int:
