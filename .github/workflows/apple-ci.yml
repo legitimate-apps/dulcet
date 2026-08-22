@@ -254,11 +254,15 @@ jobs:
           python3 tools/conformance-env/untrusted-tls-server --port 4542 \
             --certificate "$ROOT/untrusted-tls.crt" --key "$ROOT/untrusted-tls.key" &
           tls_pid=$!
+          python3 tools/conformance-env/redirect-server --port 4543 --forward-proxy-auth &
+          proxy_pid=$!
           cleanup() {
             kill "$redirect_pid" >/dev/null 2>&1 || true
             wait "$redirect_pid" 2>/dev/null || true
             kill "$tls_pid" >/dev/null 2>&1 || true
             wait "$tls_pid" 2>/dev/null || true
+            kill "$proxy_pid" >/dev/null 2>&1 || true
+            wait "$proxy_pid" 2>/dev/null || true
             kill "$navidrome_pid" >/dev/null 2>&1 || true
             wait "$navidrome_pid" 2>/dev/null || true
             tail -200 "$ROOT/logs/navidrome.log" || true
@@ -266,11 +270,13 @@ jobs:
           trap cleanup EXIT
           for attempt in {1..20}; do
             if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
-              curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null; then break; fi
+              curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null && \
+              curl --fail --silent http://127.0.0.1:4543/health >/dev/null; then break; fi
             sleep 0.1
           done
           curl --fail --silent http://127.0.0.1:4540/health >/dev/null
           curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null
+          curl --fail --silent http://127.0.0.1:4543/health >/dev/null
           tools/conformance-env/health-check \
             --base-url http://127.0.0.1:4533 \
             --runtime darwin/arm64 \
