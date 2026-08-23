@@ -163,6 +163,16 @@ passing_report = """\
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="accountConnectRootLoadsForIOS" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"
             name="proxyChallengeFailsClosedWithoutAmbientCredentials[macosArm64]" time="0.1" />
 </testsuite>

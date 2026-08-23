@@ -416,7 +416,22 @@ jobs:
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
+          # Same suite, iOS target. A per-platform matrix is worthless if one
+          # platform's run is cited as another's evidence, so account.connect/ios
+          # names THIS run. The simulator shares the host loopback, so it reaches
+          # the same 4533/4540/4542 servers the macOS run uses.
+          conformance_sim="$(xcrun simctl create \
+            dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+          xcrun simctl boot "$conformance_sim"
+          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
+            DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
+            -Pdulcet.iosSimulatorUdid="$conformance_sim"
+          xcrun simctl shutdown "$conformance_sim" || true
+          xcrun simctl delete "$conformance_sim" || true
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test \
+            core-conformance/build/test-results/iosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit"

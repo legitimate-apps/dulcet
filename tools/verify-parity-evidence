@@ -71,6 +71,27 @@ def runner_identity(value: str) -> str:
     return re.sub(r"\[[A-Za-z][A-Za-z0-9_-]*\]$", "", value)
 
 
+# ⚠️ KNOWN LIMITATION — this checker is PLATFORM-BLIND, by construction.
+#
+# runner_identity() strips the Kotlin/Native target decoration, and every results
+# root passed in is pooled into one `observed` map. So a FEATURES.yml cell for ANY
+# platform is satisfied by a matching test in ANY of the supplied result roots: a
+# macosArm64-only run will happily satisfy an `ios` cell.
+#
+# That is not hypothetical. On 2026-08-23 account.connect/ios carried 14 evidence
+# rows naming AccountConnectConformanceTest/conf01..conf10c while
+# :core-conformance: declared only macosArm64() — those ids had never executed on
+# iOS and could not. This gate passed the whole time, because "did it execute" is
+# a strictly weaker question than "did it execute on the platform being claimed",
+# and CORPUS §16 requires evidence "at the granularity of the claim".
+#
+# It is now satisfied honestly: apple-ci runs :core-conformance:iosSimulatorArm64Test
+# and the same 14 conformance methods pass on both targets (measured, identical
+# passing sets, zero iOS-only failures). But nothing HERE enforces that. If you add
+# a platform cell, confirm that platform's suite actually runs in CI — this tool
+# will not catch you.
+
+
 for path in files:
     try:
         root = ET.parse(path).getroot()
