@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Capture the macOS design surface AT AN ARBITRARY GIT REF, so "did this branch
+# change macOS rendering?" stays answerable by anyone, on any clone, forever.
+#
+# WHY THIS EXISTS (2026-08-23): the iOS port regressed macOS rendering — 13.59% of
+# pixels in macos-library-browse-dark, from a macOS-only Table modifier dropped
+# during the port. It was caught only because a pre-change baseline happened to
+# exist at state/ios-parity-baseline-captures. That directory is GITIGNORED
+# (.gitignore:12 ignores state/), so it lived on one machine, untracked, and a
+# `rm -rf` or a fresh clone would have made the single most important check on the
+# branch unreproducible. Regenerating it by hand needs someone to know which commit
+# preceded the port — which nobody would.
+#
+# 🚨 BOTH SIDES MUST BE CAPTURED THE SAME WAY. The comparison is exact-byte, so it
+# is sensitive to the build environment and not only to the source. Measured
+# 2026-08-23: a capture of ref X taken IN-PLACE in the working tree differs from a
+# capture of the SAME ref taken in a fresh worktree — in macos-library-browse and
+# macos-search-mixed-sources, the two most content-dense views, which shift first
+# under any environmental difference. Comparing across methods produced four
+# differing images and read exactly like a code regression. The same two refs
+# compared worktree-to-worktree were byte-identical.
+#
+# So: capture both sides with THIS script, on the same machine, or the diff is
+# measuring your build environment rather than the branch. Never carry JPEGs
+# between machines and expect them to match.
+#
+#   tools/capture-macos-parity-baseline <git-ref> <output-directory>
+#   tools/capture-macos-parity-baseline 83d92f5^ state/baseline-before-ios-port
+#
+# Then:
+#   swift run --package-path apple/DulcetKit DulcetCapture --output <now> \
+#     --state all --appearance all --include-control
+#   diff -qr <baseline> <now>            # rc=0 means byte-identical
+#   python3 tools/design_capture_forensics.py <baseline> <now> --output <report>
+#
+# ⚠️ Confirm the diff can still FAIL before trusting an rc=0: `diff` against a
+#    MISSING directory prints nothing and exits non-zero in a way that reads like
+#    success if you only eyeball the output. Check both file counts, and diff two
+#    genuinely different images as a positive control.
+set -euo pipefail
+
+if [[ "$#" -ne 2 ]]; then
+  echo "usage: tools/capture-macos-parity-baseline <git-ref> <output-directory>" >&2
+  exit 2
+fi
+
+ref=$1
+output=$2
+if [[ -e "$output" ]]; then
+  echo "output directory must not exist: $output" >&2
+  exit 2
+fi
+
+repository_root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$repository_root"
+
+git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1 || {
+  echo "not a commit: $ref" >&2
+  exit 2
+}
+
+# A worktree, not a stash or a checkout: capturing must never disturb the tree the
+# caller is working in, and this runs while a branch is mid-review.
+worktree=$(mktemp -d "${TMPDIR:-/tmp}/dulcet-parity-baseline.XXXXXX")
+rmdir "$worktree"
+cleanup() { git worktree remove --force "$worktree" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+git worktree add --detach "$worktree" "$ref" >/dev/null
+
+output_absolute=$(cd "$(dirname "$output")" && pwd)/$(basename "$output")
+swift run --package-path "$worktree/apple/DulcetKit" DulcetCapture \
+  --output "$output_absolute" \
+  --state all --appearance all --include-control
+
+echo "PARITY BASELINE CAPTURED ref=$(git rev-parse --short "$ref") output=$output_absolute files=$(find "$output_absolute" -type f | wc -l | tr -d ' ')"
