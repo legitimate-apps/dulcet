@@ -228,6 +228,14 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         modifiers: NSEvent.ModifierFlags = [],
         to window: NSWindow
     ) throws {
+        if modifiers.contains(.shift) {
+            try postQuartzKey(keyCode: 56, keyDown: true, flags: .maskShift)
+            try postQuartzKey(keyCode: key.keyCode, keyDown: true, flags: .maskShift)
+            try postQuartzKey(keyCode: key.keyCode, keyDown: false, flags: .maskShift)
+            try postQuartzKey(keyCode: 56, keyDown: false, flags: [])
+            return
+        }
+
         for eventType in [NSEvent.EventType.keyDown, .keyUp] {
             let event = try XCTUnwrap(NSEvent.keyEvent(
                 with: eventType,
@@ -236,15 +244,27 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber,
                 context: nil,
-                characters: modifiers.contains(.shift)
-                    ? key.shiftedCharacters
-                    : key.characters,
+                characters: key.characters,
                 charactersIgnoringModifiers: key.characters,
                 isARepeat: false,
                 keyCode: key.keyCode
             ))
             window.sendEvent(event)
         }
+    }
+
+    private func postQuartzKey(
+        keyCode: UInt16,
+        keyDown: Bool,
+        flags: CGEventFlags
+    ) throws {
+        let event = try XCTUnwrap(CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: CGKeyCode(keyCode),
+            keyDown: keyDown
+        ))
+        event.flags = flags
+        event.postToPid(ProcessInfo.processInfo.processIdentifier)
     }
 }
 
@@ -266,13 +286,6 @@ private enum KeyboardKey {
         case .tab: 48
         case .returnKey: 36
         case .escape: 53
-        }
-    }
-
-    var shiftedCharacters: String {
-        switch self {
-        case .tab: "\u{19}"
-        case .returnKey, .escape: characters
         }
     }
 }
