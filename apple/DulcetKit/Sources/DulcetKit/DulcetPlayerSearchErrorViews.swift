@@ -219,7 +219,9 @@ struct DulcetSearchView: View {
                 }
                 .width(min: 132, ideal: 180, max: .infinity)
             }
-            .dulcetAlternatingRowsDisabled()
+#if os(macOS)
+            .alternatingRowBackgrounds(.disabled)
+#endif
         }
         .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)
