@@ -14,6 +14,16 @@ The `apple-ci` job produces the artifact named `dulcet-macos-design-captures-<ru
 `run-a` directory is the evidence set. The job renders a second complete `run-b` directory and
 requires a recursive byte comparison before uploading `run-a`.
 
+If that exact comparison fails, the job remains failed and instead publishes
+`dulcet-macos-design-capture-forensics-<run>-<attempt>`. For every byte-different image pair, that
+artifact retains both original files and reports the differing decoded-pixel count and percentage,
+the top-left-origin inclusive bounding box, and signed and absolute per-channel delta distributions.
+It also retains both versions of every other differing file and the recursive byte-diff output.
+These measurements describe the observed delta; they do not identify its cause. Distinguishing a
+compositor or GPU residual from a genuine rendering change still requires human review of the
+retained images and relevant rendering context. No measured delta, however small, passes the exact
+comparison.
+
 ### 1.1 Capture composition and claim boundary
 
 The current artifact does **not** render the shipping root composition. The macOS application

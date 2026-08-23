@@ -97,7 +97,10 @@ jobs:
           grep -Fxq 'DULCET CAPTURE ERROR macOS capture cannot claim Dynamic Type accessibility5: SwiftUI dynamicTypeSize does not affect text size on macOS' <<< "$capture_output"
           test ! -e "$RUNNER_TEMP/rejected-dynamic-type"
           echo "DYNAMIC TYPE NEGATIVE CONTROL PASS setup=binary-built exact-diagnostic=true label=accessibility5 rejected=true output-created=false"
+      - name: Prove deterministic capture mismatch forensics measure a known delta
+        run: python3 tools/test-design-capture-forensics
       - name: Capture deterministic macOS design evidence twice
+        id: deterministic_design_capture
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
         run: |
@@ -107,7 +110,44 @@ jobs:
           swift run --package-path apple/DulcetKit DulcetCapture \
             --output "$CAPTURE_ROOT/run-b/standard" \
             --state all --appearance all --include-control
-          diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b"
+          set +e
+          diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b" \
+            > "$CAPTURE_ROOT/recursive-byte-diff.txt" 2>&1
+          diff_status=$?
+          set -e
+          if [[ "$diff_status" -ne 0 ]]; then
+            cat "$CAPTURE_ROOT/recursive-byte-diff.txt"
+            if [[ "$diff_status" -eq 1 ]]; then
+              set +e
+              python3 tools/design_capture_forensics.py \
+                "$CAPTURE_ROOT/run-a" \
+                "$CAPTURE_ROOT/run-b" \
+                --output "$CAPTURE_ROOT/forensics"
+              forensics_status=$?
+              set -e
+              if [[ -f "$CAPTURE_ROOT/forensics/report.json" ]]; then
+                cp \
+                  "$CAPTURE_ROOT/recursive-byte-diff.txt" \
+                  "$CAPTURE_ROOT/forensics/recursive-byte-diff.txt"
+                echo 'forensics_available=true' >> "$GITHUB_OUTPUT"
+                {
+                  echo '## Deterministic macOS capture mismatch'
+                  echo
+                  echo 'The exact byte gate failed. Both differing image versions and decoded-pixel measurements are retained in the failure artifact.'
+                  echo
+                  echo '```text'
+                  cat "$CAPTURE_ROOT/forensics/summary.txt"
+                  echo '```'
+                } >> "$GITHUB_STEP_SUMMARY"
+              fi
+              if [[ "$forensics_status" -ne 1 ]]; then
+                echo "DESIGN CAPTURE FORENSICS unexpected-exit=$forensics_status"
+              fi
+            else
+              echo "DESIGN CAPTURE DIFF ERROR exit=$diff_status"
+            fi
+            exit 1
+          fi
           for appearance in light dark; do
             control="macos-CONTROL-DELIBERATELY-BAD-library-browse-${appearance}.jpg"
             cmp \
@@ -123,6 +163,15 @@ jobs:
             echo
             echo 'Artifact contains 36 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload deterministic macOS capture mismatch forensics
+        if: ${{ always() && steps.deterministic_design_capture.outputs.forensics_available == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-design-capture-forensics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-design-captures/forensics
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Upload macOS design evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

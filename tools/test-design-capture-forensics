@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+
+"""Negative control for deterministic design-capture mismatch forensics."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+
+FORENSICS = Path(__file__).with_name("design_capture_forensics.py")
+
+
+def write_bmp(path: Path, width: int, height: int, pixels: list[tuple[int, int, int]]) -> None:
+    if len(pixels) != width * height:
+        raise ValueError("fixture pixel count does not match its dimensions")
+    stride = (width * 3 + 3) & ~3
+    pixel_bytes = bytearray()
+    for y in reversed(range(height)):
+        row = bytearray()
+        for red, green, blue in pixels[y * width:(y + 1) * width]:
+            row.extend((blue, green, red))
+        row.extend(b"\0" * (stride - len(row)))
+        pixel_bytes.extend(row)
+
+    pixel_offset = 14 + 40
+    file_size = pixel_offset + len(pixel_bytes)
+    header = struct.pack("<2sIHHI", b"BM", file_size, 0, 0, pixel_offset)
+    dib = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        height,
+        1,
+        24,
+        0,
+        len(pixel_bytes),
+        2835,
+        2835,
+        0,
+        0,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(header + dib + pixel_bytes)
+
+
+def assert_equal(observed: object, expected: object, label: str) -> None:
+    if observed != expected:
+        raise SystemExit(f"{label} mismatch: expected {expected!r}, observed {observed!r}")
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-forensics-negative-control-") as temporary:
+        root = Path(temporary)
+        run_a = root / "run-a"
+        run_b = root / "run-b"
+        output = root / "forensics"
+        fixture = Path("fixtures") / "deliberate-delta.bmp"
+        pixels_a = [(10, 20, 30)] * 12
+        pixels_b = list(pixels_a)
+        pixels_b[1] = (12, 17, 30)
+        pixels_b[11] = (9, 20, 34)
+        write_bmp(run_a / fixture, 4, 3, pixels_a)
+        write_bmp(run_b / fixture, 4, 3, pixels_b)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(FORENSICS),
+                str(run_a),
+                str(run_b),
+                "--output",
+                str(output),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if result.returncode != 1:
+            raise SystemExit(
+                "forensics negative control did not preserve the failing gate: "
+                f"exit={result.returncode} output={result.stdout!r}"
+            )
+
+        report = json.loads((output / "report.json").read_text())
+        assert_equal(report["differingFileCount"], 1, "differing file count")
+        assert_equal(report["differingImageCount"], 1, "differing image count")
+        assert_equal(report["measurementErrorCount"], 0, "measurement error count")
+        delta = report["differingImages"][0]["decodedPixelDelta"]
+        assert_equal(delta["differingPixels"], 2, "differing pixel count")
+        assert_equal(delta["totalPixels"], 12, "total pixel count")
+        assert_equal(
+            delta["differingPixelPercentage"],
+            16.6666666667,
+            "differing pixel percentage",
+        )
+        assert_equal(
+            delta["boundingBoxInclusive"],
+            {"minX": 1, "minY": 0, "maxX": 3, "maxY": 2, "width": 3, "height": 3},
+            "bounding box",
+        )
+        assert_equal(
+            delta["signedChannelDeltaDistribution"],
+            {
+                "red": [{"delta": -1, "pixels": 1}, {"delta": 2, "pixels": 1}],
+                "green": [{"delta": -3, "pixels": 1}, {"delta": 0, "pixels": 1}],
+                "blue": [{"delta": 0, "pixels": 1}, {"delta": 4, "pixels": 1}],
+            },
+            "signed per-channel distribution",
+        )
+        assert_equal(
+            delta["absoluteChannelDeltaDistribution"],
+            {
+                "red": [{"delta": 1, "pixels": 1}, {"delta": 2, "pixels": 1}],
+                "green": [{"delta": 0, "pixels": 1}, {"delta": 3, "pixels": 1}],
+                "blue": [{"delta": 0, "pixels": 1}, {"delta": 4, "pixels": 1}],
+            },
+            "absolute per-channel distribution",
+        )
+        for expected_log_fragment in (
+            "differing-pixels=2/12",
+            "bbox=x=1..3,y=0..2,width=3,height=3",
+            "R[-1:1,2:1] G[-3:1,0:1] B[0:1,4:1]",
+        ):
+            if expected_log_fragment not in result.stdout:
+                raise SystemExit(
+                    "forensics negative control log omitted "
+                    f"{expected_log_fragment!r}: {result.stdout!r}"
+                )
+
+        for run in ("run-a", "run-b"):
+            retained = output / "retained" / run / fixture
+            original = root / run / fixture
+            if not retained.is_file():
+                raise SystemExit(f"missing retained negative-control image: {retained}")
+            assert_equal(
+                hashlib.sha256(retained.read_bytes()).hexdigest(),
+                hashlib.sha256(original.read_bytes()).hexdigest(),
+                f"retained {run} bytes",
+            )
+
+        second_output = root / "identical-forensics"
+        shutil.copyfile(run_a / fixture, run_b / fixture)
+        identical = subprocess.run(
+            [
+                sys.executable,
+                str(FORENSICS),
+                str(run_a),
+                str(run_b),
+                "--output",
+                str(second_output),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if identical.returncode != 0:
+            raise SystemExit(
+                "forensics negative control rejected identical fixtures: "
+                f"exit={identical.returncode} output={identical.stdout!r}"
+            )
+
+    print(
+        "DESIGN CAPTURE FORENSICS NEGATIVE CONTROL PASS "
+        "differing-pixels=2 total-pixels=12 "
+        "bbox=x=1..3,y=0..2 retained-both=true exact-gate-failed=true "
+        "identical-control-passed=true"
+    )
+
+
+if __name__ == "__main__":
+    main()
