@@ -11,6 +11,11 @@ kotlin {
         }
     }
     macosArm64()
+    iosSimulatorArm64 {
+        providers.gradleProperty("dulcet.iosSimulatorUdid").orNull?.let { simulatorUdid ->
+            testRuns["test"].deviceId = simulatorUdid
+        }
+    }
 
     sourceSets {
         commonTest.dependencies {
@@ -23,7 +28,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.ktor.client.cio)
         }
-        macosArm64Test.dependencies {
+        appleTest.dependencies {
             implementation(libs.ktor.client.darwin)
         }
     }
