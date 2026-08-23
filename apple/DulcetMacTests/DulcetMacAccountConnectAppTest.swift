@@ -228,12 +228,12 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         modifiers: NSEvent.ModifierFlags = [],
         to window: NSWindow
     ) throws {
-        if modifiers.contains(.shift) {
-            try postQuartzKey(keyCode: 56, keyDown: true, flags: .maskShift)
-            try postQuartzKey(keyCode: key.keyCode, keyDown: true, flags: .maskShift)
-            try postQuartzKey(keyCode: key.keyCode, keyDown: false, flags: .maskShift)
-            try postQuartzKey(keyCode: 56, keyDown: false, flags: [])
-            return
+        let characters: String
+        switch (key, modifiers.contains(.shift)) {
+        case (.tab, true):
+            characters = "\u{19}" // NSBackTabCharacter
+        default:
+            characters = key.characters
         }
 
         for eventType in [NSEvent.EventType.keyDown, .keyUp] {
@@ -244,27 +244,13 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber,
                 context: nil,
-                characters: key.characters,
-                charactersIgnoringModifiers: key.characters,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
                 isARepeat: false,
                 keyCode: key.keyCode
             ))
             window.sendEvent(event)
         }
-    }
-
-    private func postQuartzKey(
-        keyCode: UInt16,
-        keyDown: Bool,
-        flags: CGEventFlags
-    ) throws {
-        let event = try XCTUnwrap(CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(keyCode),
-            keyDown: keyDown
-        ))
-        event.flags = flags
-        event.postToPid(ProcessInfo.processInfo.processIdentifier)
     }
 }
 
