@@ -13,8 +13,8 @@
           "status": "partial",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "operator-signing-identity-decision",
-            "reason": "No workflow, job, or test can be named until the operator selects the signed execution environment and signing identity. The earlier signed-release-validation / entitled-keychain / DulcetMacEntitledKeychainTests candidate does not resolve in this repository and is not a promotion condition."
+            "blocked_on": "signed-host-validation-workflow",
+            "reason": "The signing identity is no longer an open decision. The release target now archives and signs with Apple Distribution (team 3LTL47SJ8C), hardened runtime enabled, and the keychain-access-groups entitlement was read back out of the signed binary rather than assumed from the build settings. What is still missing is a workflow that RUNS that entitled signed host and asserts the Keychain accessibility and non-sync attributes, which remain ASSUMED. No such workflow, job, or test exists in this repository, so none can be honestly named. The earlier signed-release-validation / entitled-keychain / DulcetMacEntitledKeychainTests candidate still does not resolve here and is not a promotion condition."
           },
           "evidence": [
             {
