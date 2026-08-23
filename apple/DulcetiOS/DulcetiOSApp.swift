@@ -1,12 +1,13 @@
-import DulcetCore
+import DulcetKit
 import SwiftUI
 
 @main
 struct DulcetiOSApp: App {
+    @State private var presentation = DulcetAppleProduction.makePresentationStore()
+
     var body: some Scene {
         WindowGroup {
-            Text(ScaffoldKt.scaffoldName())
-                .padding()
+            DulcetRootView(store: presentation)
         }
     }
 }

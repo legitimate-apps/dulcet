@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS)
 import SwiftUI
 
 public enum DulcetRenderVariant: Sendable {
@@ -9,6 +9,9 @@ public enum DulcetRenderVariant: Sendable {
 public struct DulcetRootView: View {
     @Bindable private var store: DulcetPresentationStore
     private let variant: DulcetRenderVariant
+#if os(iOS)
+    @State private var preferredCompactColumn: NavigationSplitViewColumn = .detail
+#endif
 
     public init(
         store: DulcetPresentationStore,
@@ -19,6 +22,7 @@ public struct DulcetRootView: View {
     }
 
     public var body: some View {
+#if os(macOS)
         Group {
             if variant == .deliberatelyBadControl {
                 DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
@@ -37,9 +41,29 @@ public struct DulcetRootView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
+#elseif os(iOS)
+        Group {
+            if variant == .deliberatelyBadControl {
+                DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
+            } else {
+                ZStack {
+                    Color.dulcetWindow.ignoresSafeArea()
+                    NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+                        DulcetSidebar(store: store)
+                    } detail: {
+                        DulcetStateSurface(store: store)
+                    }
+                    .navigationSplitViewStyle(.balanced)
+                    .dulcetForeground(.primaryTextOnWindow)
+                }
+            }
+        }
+        .tint(.dulcetAccent)
+#endif
     }
 }
 
+#if os(macOS)
 /// Fixed-composition sibling of ``DulcetRootView`` for offscreen evidence rendering.
 ///
 /// `NavigationSplitView` places its sidebar in a separate AppKit compositor subtree, which
@@ -88,6 +112,7 @@ public struct DulcetCaptureView: View {
         }
     }
 }
+#endif
 
 private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore

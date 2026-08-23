@@ -24,6 +24,7 @@ targets:
     platform: macOS
     sources:
       - DulcetMac
+      - DulcetAppleShared
     dependencies:
       - package: DulcetKit
     settings:
@@ -46,6 +47,7 @@ targets:
     platform: macOS
     sources:
       - DulcetMac
+      - DulcetAppleShared
     dependencies:
       - package: DulcetKit
     settings:
@@ -114,9 +116,12 @@ targets:
     platform: iOS
     sources:
       - DulcetiOS
+      - DulcetAppleShared
+    dependencies:
+      - package: DulcetKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
     preBuildScripts:
@@ -128,6 +133,16 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetKitIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - DulcetKit/Tests/DulcetKitTests
+    dependencies:
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.tests
   DulcetTV:
     type: application
     platform: tvOS
@@ -147,6 +162,15 @@ targets:
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
 schemes:
+  DulcetiOS:
+    build:
+      targets:
+        DulcetiOS: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - DulcetKitIOSTests
   DulcetMac:
     build:
       targets:

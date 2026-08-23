@@ -224,7 +224,12 @@ func unentitledKeychainWriteFailsClosedWithoutLegacyFallback() throws {
 
     #expect(observedError == .missingDataProtectionKeychainEntitlement)
     #expect(defaults.string(forKey: activeAccountKey) == nil)
-    #expect(SecItemCopyMatching(legacyQuery as CFDictionary, nil) == errSecItemNotFound)
+    let legacyLookupStatus = SecItemCopyMatching(legacyQuery as CFDictionary, nil)
+#if os(macOS)
+    #expect(legacyLookupStatus == errSecItemNotFound)
+#else
+    #expect(legacyLookupStatus == errSecMissingEntitlement)
+#endif
 }
 
 @Test @MainActor

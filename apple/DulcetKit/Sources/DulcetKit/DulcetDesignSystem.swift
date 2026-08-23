@@ -1,5 +1,9 @@
+#if os(macOS) || os(iOS)
 #if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import SwiftUI
 
 enum DulcetSpacing {
@@ -23,6 +27,7 @@ enum DulcetMetrics {
 }
 
 extension Color {
+#if os(macOS)
     static let dulcetAccent = Color(nsColor: DulcetContrastColor.accent)
     static let dulcetSecondaryText = Color(nsColor: DulcetContrastColor.secondaryText)
     static let dulcetOffline = Color(nsColor: DulcetContrastColor.offline)
@@ -30,9 +35,19 @@ extension Color {
     static let dulcetWindow = Color(nsColor: .windowBackgroundColor)
     static let dulcetControl = Color(nsColor: .controlBackgroundColor)
     static let dulcetSeparator = Color(nsColor: .separatorColor)
+#elseif os(iOS)
+    static let dulcetAccent = Color(uiColor: DulcetContrastColor.accent)
+    static let dulcetSecondaryText = Color(uiColor: DulcetContrastColor.secondaryText)
+    static let dulcetOffline = Color(uiColor: DulcetContrastColor.offline)
+    static let dulcetDanger = Color(uiColor: DulcetContrastColor.danger)
+    static let dulcetWindow = Color(uiColor: .systemBackground)
+    static let dulcetControl = Color(uiColor: .secondarySystemBackground)
+    static let dulcetSeparator = Color(uiColor: .separator)
+#endif
 }
 
 enum DulcetContrastColor {
+#if os(macOS)
     static let accent = adaptive(
         name: "DulcetAccent",
         light: NSColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
@@ -59,6 +74,30 @@ enum DulcetContrastColor {
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
         }
     }
+#elseif os(iOS)
+    static let accent = adaptive(
+        light: UIColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
+        dark: UIColor(red: 0.47, green: 0.64, blue: 1.00, alpha: 1)
+    )
+    static let secondaryText = adaptive(
+        light: UIColor(red: 0.36, green: 0.36, blue: 0.38, alpha: 1),
+        dark: UIColor(red: 0.74, green: 0.74, blue: 0.77, alpha: 1)
+    )
+    static let offline = adaptive(
+        light: UIColor(red: 0.52, green: 0.27, blue: 0.02, alpha: 1),
+        dark: UIColor(red: 1.00, green: 0.68, blue: 0.28, alpha: 1)
+    )
+    static let danger = adaptive(
+        light: UIColor(red: 0.68, green: 0.10, blue: 0.14, alpha: 1),
+        dark: UIColor(red: 1.00, green: 0.46, blue: 0.49, alpha: 1)
+    )
+
+    private static func adaptive(light: UIColor, dark: UIColor) -> UIColor {
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        }
+    }
+#endif
 }
 
 /// Explicit authored color pairs. Native-control and state-driven pairs are outside this registry.
@@ -154,6 +193,33 @@ extension View {
         perform action: @escaping (Set<DulcetRegisteredContrastPair>) -> Void
     ) -> some View {
         onPreferenceChange(DulcetRegisteredContrastPairPreferenceKey.self, perform: action)
+    }
+
+    @ViewBuilder
+    func dulcetOnExitCommand(perform action: @escaping () -> Void) -> some View {
+#if os(macOS)
+        onExitCommand(perform: action)
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetLinkButtonStyle() -> some View {
+#if os(macOS)
+        buttonStyle(.link)
+#else
+        buttonStyle(.plain)
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetAlternatingRowsDisabled() -> some View {
+#if os(macOS)
+        alternatingRowBackgrounds(.disabled)
+#else
+        self
+#endif
     }
 }
 

@@ -1,5 +1,7 @@
+#if os(macOS) || os(iOS)
 #if os(macOS)
 import AppKit
+#endif
 import SwiftUI
 
 enum DulcetAccountConnectionFocus: String, Sendable {
@@ -45,7 +47,7 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
-        .onExitCommand {
+        .dulcetOnExitCommand {
             if isConnecting {
                 store.cancelAccountConnection()
             }
@@ -226,7 +228,7 @@ struct DulcetAccountConnectionView: View {
         if isConnecting {
             if let submissionTimestamp = lastSubmissionTimestamp {
                 let interval = actionTimestamp - submissionTimestamp
-                if interval >= 0, interval <= NSEvent.doubleClickInterval {
+                if interval >= 0, interval <= rapidRepeatSuppressionInterval {
                     // Ignore any primary-action activation too close to the submission. This
                     // consumes a rapid repeated Return and also a pointer click in the same
                     // system-defined double-click window; Escape remains an immediate cancel.
@@ -240,6 +242,14 @@ struct DulcetAccountConnectionView: View {
             lastSubmissionTimestamp = actionTimestamp
             store.submitAccountConnection()
         }
+    }
+
+    private var rapidRepeatSuppressionInterval: TimeInterval {
+#if os(macOS)
+        NSEvent.doubleClickInterval
+#else
+        0.35
+#endif
     }
 
     private func failurePanel(_ failure: DulcetAccountFailurePresentation) -> some View {

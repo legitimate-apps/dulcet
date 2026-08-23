@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS)
 import SwiftUI
 
 struct DulcetEmptyLibraryView: View {
@@ -39,7 +39,7 @@ struct DulcetEmptyLibraryView: View {
                     .accessibilityLabel(DulcetStrings.connectServer)
 
                 Button(DulcetStrings.browseHelp) {}
-                    .buttonStyle(.link)
+                    .dulcetLinkButtonStyle()
                     .accessibilityLabel(DulcetStrings.browseHelp)
             }
 

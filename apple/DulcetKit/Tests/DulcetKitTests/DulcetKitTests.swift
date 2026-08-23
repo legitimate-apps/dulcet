@@ -1,7 +1,10 @@
-import AppKit
+import Foundation
 import SwiftUI
 import Testing
 @testable import DulcetKit
+#if os(macOS)
+import AppKit
+#endif
 
 @Test
 func localizedLibraryCountsSelectPluralCategoriesForVisibleAndAccessibilityCopy() {
@@ -183,6 +186,7 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
     #expect(store.selectedDestination == .library)
 }
 
+#if os(macOS)
 @Test @MainActor
 func registeredColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
@@ -263,6 +267,7 @@ func contrastInstrumentRejectsLegacyCombinedSourceTagPairInBothAppearances() thr
         )
     }
 }
+#endif
 
 @MainActor
 private final class PushingTestDataSource: DulcetDataSource {
@@ -285,6 +290,7 @@ private final class PushingTestDataSource: DulcetDataSource {
     }
 }
 
+#if os(macOS)
 private struct RenderedContrastSample {
     let foreground: NSColor
     let background: NSColor
@@ -386,3 +392,4 @@ private extension NSColor {
         )
     }
 }
+#endif

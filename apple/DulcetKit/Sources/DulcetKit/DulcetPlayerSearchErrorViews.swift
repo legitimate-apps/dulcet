@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS)
 import SwiftUI
 
 struct DulcetNowPlayingView: View {
@@ -219,7 +219,7 @@ struct DulcetSearchView: View {
                 }
                 .width(min: 132, ideal: 180, max: .infinity)
             }
-            .alternatingRowBackgrounds(.disabled)
+            .dulcetAlternatingRowsDisabled()
         }
         .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)
