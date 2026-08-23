@@ -1,0 +1,21 @@
+#!/bin/bash
+# Regenerate apple/DulcetMac/Dulcet.icns from tools/icon/dulcet.svg.
+# The .icns is committed so the build never depends on cairosvg being installed.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+python3 -c "
+import cairosvg
+cairosvg.svg2png(url='$HERE/dulcet.svg', write_to='$WORK/icon_1024.png',
+                 output_width=1024, output_height=1024)
+from PIL import Image
+src = Image.open('$WORK/icon_1024.png').convert('RGBA')
+import os; os.makedirs('$WORK/Dulcet.iconset', exist_ok=True)
+for px, name in [(16,'16x16'),(32,'16x16@2x'),(32,'32x32'),(64,'32x32@2x'),
+                 (128,'128x128'),(256,'128x128@2x'),(256,'256x256'),
+                 (512,'256x256@2x'),(512,'512x512'),(1024,'512x512@2x')]:
+    src.resize((px,px), Image.LANCZOS).save(f'$WORK/Dulcet.iconset/icon_{name}.png')
+"
+iconutil -c icns "$WORK/Dulcet.iconset" -o "$REPO/apple/DulcetMac/Dulcet.icns"
+echo "wrote apple/DulcetMac/Dulcet.icns"

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#12474A"/>
+      <stop offset="55%" stop-color="#0C3134"/>
+      <stop offset="100%" stop-color="#071E20"/>
+    </linearGradient>
+    <linearGradient id="brass" gradientUnits="userSpaceOnUse" x1="400" y1="280" x2="640" y2="790">
+      <stop offset="0%"   stop-color="#F7D89A"/>
+      <stop offset="38%"  stop-color="#E8B65C"/>
+      <stop offset="72%"  stop-color="#C98A2E"/>
+      <stop offset="100%" stop-color="#A96E1F"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="45%" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.34" r="0.62">
+      <stop offset="0%" stop-color="#E8B65C" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#E8B65C" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- macOS icon grid: 824x824 squircle centred on a 1024 canvas -->
+  <g>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#ground)"/>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+
+    <!-- resonance: the tone the fork is producing, kept faint so it never fights the glyph -->
+    <g fill="none" stroke="#E8B65C" stroke-linecap="round" opacity="0.30">
+      <path d="M330 388 A 118 118 0 0 0 330 606" stroke-width="17"/>
+      <path d="M262 350 A 186 186 0 0 0 262 644" stroke-width="15" opacity="0.55"/>
+      <path d="M694 388 A 118 118 0 0 1 694 606" stroke-width="17"/>
+      <path d="M762 350 A 186 186 0 0 1 762 644" stroke-width="15" opacity="0.55"/>
+    </g>
+
+    <!-- tuning fork: "dulcet" = a pure, sweet tone -->
+    <g fill="none" stroke="url(#brass)" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M436 300 L436 512 C436 578 464 606 512 606 C560 606 588 578 588 512 L588 300"/>
+      <path d="M512 572 L512 730"/>
+    </g>
+    <rect x="466" y="712" width="92" height="52" rx="26" fill="url(#brass)"/>
+
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+  </g>
+</svg>

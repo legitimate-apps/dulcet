@@ -60,9 +60,23 @@ targets:
         PROVISIONING_PROFILE_SPECIFIER: "Dulcet Mac App Store"
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
-        INFOPLIST_KEY_CFBundleDisplayName: Dulcet
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
-        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
+    info:
+      # An explicit plist, NOT INFOPLIST_KEY_* settings: that mechanism only honours a fixed
+      # allowlist, and CFBundleIconFile/CFBundleIconName are not on it — they were silently
+      # dropped from the generated plist while the build still succeeded.
+      path: DulcetMac/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Dulcet
+        CFBundleIconFile: Dulcet
+        CFBundleIconName: Dulcet
+        # XcodeGen defaults these to a literal "1.0"/"1", which silently shipped a version
+        # that disagreed with MARKETING_VERSION. Bind them to the build settings instead.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
