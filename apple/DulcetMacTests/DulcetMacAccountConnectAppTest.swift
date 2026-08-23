@@ -11,6 +11,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixturePassword = "dulcet-ci-canary-password"
 
     func accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction() async throws {
+        try await assertDefaultActionShortcutDelivery()
+
         let request = DulcetAccountConnectRequest(
             serverURL: "https://music.example.invalid",
             username: "listener",
@@ -207,6 +209,44 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
     }
 
+    private func assertDefaultActionShortcutDelivery() async throws {
+        let probe = DefaultActionShortcutProbe()
+        let hostingView = NSHostingView(rootView: Button(
+            "Default Action Shortcut Positive Control",
+            action: probe.fire
+        )
+        .keyboardShortcut(.defaultAction)
+        .onAppear(perform: probe.markAppeared))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        hostingView.layoutSubtreeIfNeeded()
+
+        try await waitUntil(
+            timeout: .seconds(2),
+            failureMessage: "the default-action shortcut control did not become ready in the key window"
+        ) {
+            probe.didAppear && window.isKeyWindow
+        }
+        try sendKey(.returnKey, to: window)
+        try await waitUntil(
+            timeout: .seconds(2),
+            failureMessage: "NSApp event delivery did not fire the default-action shortcut control"
+        ) {
+            probe.fireCount == 1
+        }
+        XCTAssertEqual(probe.fireCount, 1)
+        print("ACCOUNT CONNECT KEYBOARD POSITIVE CONTROL defaultAction=return:fired")
+    }
+
     private func waitUntil(
         timeout: Duration,
         failureMessage: String,
@@ -249,7 +289,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 isARepeat: false,
                 keyCode: key.keyCode
             ))
-            window.sendEvent(event)
+            NSApp.sendEvent(event)
         }
     }
 }
@@ -273,6 +313,19 @@ private enum KeyboardKey {
         case .returnKey: 36
         case .escape: 53
         }
+    }
+}
+
+private final class DefaultActionShortcutProbe {
+    private(set) var didAppear = false
+    private(set) var fireCount = 0
+
+    func markAppeared() {
+        didAppear = true
+    }
+
+    func fire() {
+        fireCount += 1
     }
 }
 
