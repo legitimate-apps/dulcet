@@ -6,8 +6,7 @@ enum DulcetAccountConnectionFocus: String, Sendable {
     case username
     case password
     case allowLocalHTTP
-    case connect
-    case cancel
+    case primaryAction
     case tryAgain
 }
 
@@ -52,10 +51,11 @@ struct DulcetAccountConnectionView: View {
         .onChange(of: store.snapshot.accountConnection) { previous, current in
             switch (previous, current) {
             case (_, .connecting):
-                // The replacement connecting branch owns its focus destination once it exists.
+                // The primary action keeps both its view and focus identity while its behavior
+                // changes from Connect to Cancel, so there is no replacement control to focus.
                 break
             case (.connecting, .idle):
-                focusedControl = .connect
+                focusedControl = .primaryAction
             case (_, .failed):
                 focusedControl = .tryAgain
             case (_, .connected):
@@ -128,52 +128,8 @@ struct DulcetAccountConnectionView: View {
     @ViewBuilder
     private var statusPanel: some View {
         switch store.snapshot.accountConnection {
-        case .idle:
-            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                Button(DulcetStrings.connect, systemImage: "link") {
-                    store.submitAccountConnection()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .focused($focusedControl, equals: .connect)
-                .disabled(
-                    store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || store.accountUsername.isEmpty
-                        || store.accountPassword.isEmpty
-                )
-                Text(DulcetStrings.accountCredentialFootnote)
-                    .font(.footnote)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .lineLimit(nil)
-            }
-        case .connecting:
-            HStack(alignment: .center, spacing: DulcetSpacing.md) {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel(DulcetStrings.connecting)
-                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                    Text(DulcetStrings.connecting)
-                        .font(.headline)
-                    Text(DulcetStrings.connectingBody)
-                        .font(.callout)
-                        .dulcetForeground(.secondaryTextOnControl)
-                        .lineLimit(nil)
-                }
-                Spacer(minLength: DulcetSpacing.md)
-                Button(DulcetStrings.cancel, role: .cancel) {
-                    store.cancelAccountConnection()
-                }
-                .keyboardShortcut(.cancelAction)
-                .focused($focusedControl, equals: .cancel)
-                .onAppear {
-                    // Request focus from the replacement control's own lifecycle, after its
-                    // FocusState binding exists, rather than from the outgoing idle branch.
-                    focusedControl = .cancel
-                }
-            }
-            .padding(DulcetSpacing.md)
-            .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
-            .dulcetForeground(.primaryTextOnControl)
+        case .idle, .connecting:
+            accountPrimaryActionPanel
         case let .connected(account):
             Label {
                 VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
@@ -193,6 +149,72 @@ struct DulcetAccountConnectionView: View {
         case let .failed(failure):
             failurePanel(failure)
         }
+    }
+
+    private var accountPrimaryActionPanel: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            HStack(alignment: .top, spacing: DulcetSpacing.md) {
+                accountPrimaryAction
+
+                if isConnecting {
+                    connectingStatus
+                }
+            }
+
+            if !isConnecting {
+                Text(DulcetStrings.accountCredentialFootnote)
+                    .font(.footnote)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(nil)
+            }
+        }
+        .padding(DulcetSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isConnecting ? Color.dulcetControl.opacity(0.52) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
+    private var connectingStatus: some View {
+        HStack(alignment: .top, spacing: DulcetSpacing.md) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel(DulcetStrings.connecting)
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                Text(DulcetStrings.connecting)
+                    .font(.headline)
+                Text(DulcetStrings.connectingBody)
+                    .font(.callout)
+                    .dulcetForeground(.secondaryTextOnControl)
+                    .lineLimit(nil)
+            }
+        }
+        .dulcetForeground(.primaryTextOnControl)
+    }
+
+    private var accountPrimaryAction: some View {
+        Button(role: isConnecting ? .cancel : nil) {
+            if isConnecting {
+                store.cancelAccountConnection()
+            } else {
+                store.submitAccountConnection()
+            }
+        } label: {
+            Label(
+                isConnecting ? DulcetStrings.cancel : DulcetStrings.connect,
+                systemImage: isConnecting ? "xmark" : "link"
+            )
+        }
+        .buttonStyle(.borderedProminent)
+        .keyboardShortcut(isConnecting ? .cancelAction : .defaultAction)
+        .focused($focusedControl, equals: .primaryAction)
+        .disabled(
+            !isConnecting
+                && (store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || store.accountUsername.isEmpty
+                    || store.accountPassword.isEmpty)
+        )
     }
 
     private func failurePanel(_ failure: DulcetAccountFailurePresentation) -> some View {
@@ -247,7 +269,7 @@ struct DulcetAccountConnectionView: View {
         case .idle:
             .serverAddress
         case .connecting:
-            .cancel
+            .primaryAction
         case .connected:
             nil
         case .failed:

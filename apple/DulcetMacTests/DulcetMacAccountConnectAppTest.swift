@@ -66,7 +66,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             DulcetAccountConnectionFocus.username,
             .password,
             .allowLocalHTTP,
-            .connect,
+            .primaryAction,
         ] {
             try sendKey(.tab, to: window)
             try await waitUntil(
@@ -95,7 +95,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             DulcetAccountConnectionFocus.username,
             .password,
             .allowLocalHTTP,
-            .connect,
+            .primaryAction,
         ] {
             try sendKey(.tab, to: window)
             try await waitUntil(
@@ -126,28 +126,33 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         try await waitUntil(
             timeout: .seconds(2),
             failureMessage:
-                "Return focus mismatch; expected=\(DulcetAccountConnectionFocus.cancel.rawValue)"
+                "Return focus mismatch; expected=\(DulcetAccountConnectionFocus.primaryAction.rawValue)"
                 + " actual=\(observedFocus?.rawValue ?? "nil")"
         ) {
-            observedFocus == .cancel
+            observedFocus == .primaryAction
         }
 
         try sendKey(.escape, to: window)
         try await waitUntil(
             timeout: .seconds(2),
-            failureMessage: "Escape did not dismiss connecting and restore focus to Connect"
+            failureMessage:
+                "Escape did not invoke the focused Primary Action's connecting-state Cancel behavior"
         ) {
             store.snapshot.state == .accountConnectIdle
                 && connector.operation.cancelCount == 1
-                && observedFocus == .connect
+                && connector.requests == [request]
+                && observedFocus == .primaryAction
         }
 
+        // Exact equality rejects any transient repair to another control after Return. The single
+        // primaryAction entry spans Connect and Cancel; the Escape assertion above proves that the
+        // focused control's connecting-state behavior is cancellation, not another submission.
         let expectedTrace: [DulcetAccountConnectionFocus] = [
             .serverAddress,
             .username,
             .password,
             .allowLocalHTTP,
-            .connect,
+            .primaryAction,
             .allowLocalHTTP,
             .password,
             .username,
@@ -155,9 +160,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             .username,
             .password,
             .allowLocalHTTP,
-            .connect,
-            .cancel,
-            .connect,
+            .primaryAction,
         ]
         XCTAssertEqual(focusTrace, expectedTrace)
         print(
