@@ -323,11 +323,13 @@ Across their isolated requests, both raters are evaluated against the same immut
 - no implementation author's self-rating.
 
 The complete artifact is the immutable corpus, not a whole-set prompt. For each model family, the
-harness presents every standard image in a separate fresh request. A normal request contains exactly
-one standard image. The `library-browse` request also contains the matching-appearance pinned control
-so the same response can establish the §6 comparison. No request contains the opposite appearance,
-an earlier response, an earlier score, or an aggregate. Thus light and dark are derived without access
-to one another's result.
+repository harness, `tools/design_rating.py`, presents every standard image in a separate fresh
+request. A normal request contains exactly one standard image. The `library-browse` request also
+contains the matching-appearance pinned control so the same response can establish the §6 comparison.
+No request contains the opposite appearance, an earlier response, an earlier score, or an aggregate.
+Thus light and dark are derived without access to one another's result. Each `rate-one` invocation
+makes exactly one provider request, so it can run as one small `secret exec` child without placing a
+14-request batch inside the broker's execution deadline.
 
 Each request carries a harness-generated nonce and the filenames and SHA-256 digests of its image
 inputs. The rater copies those values into the appearance record in §7 and supplies appearance-specific
@@ -605,6 +607,14 @@ the retained records; it does not accept rater-supplied aggregates as evidence. 
 the calibration gaps and failure evidence remain populated. Findings name the file and the rubric
 category; generic praise or criticism without evidence is invalid.
 
+`tools/design_rating.py assemble` is that aggregator. It revalidates every rater-copied nonce,
+context scope, filename, digest, input role, category range, and raw-response presence against the
+immutable plan before computing a score. A missing or malformed derivation writes a void report and
+exits nonzero; it cannot become a zero delta or a numeric aggregate. `combine` additionally refuses
+two otherwise-valid reports whose `model_family` values are equal or whose artifact-manifest digests
+differ. Gemini's OpenAI-compatible endpoint and OpenRouter's chat-completions endpoint are supported
+provider transports; the model family remains an explicit, separately checked property of each run.
+
 ## 8. Reproduction
 
 The hosted job is authoritative. The following native-only steps reproduce the deterministic
@@ -631,5 +641,48 @@ swift run --package-path apple/DulcetKit DulcetShippingReferenceCapture \
 Before rating, its manifest must enumerate all 14 state/appearance captures and both controls, with
 an empty `missingCaptures` list. It remains design-rating-only and is never accepted as deterministic
 regression evidence.
+
+Prepare one run in a new output directory. Preparation verifies the manifest and every required input
+digest, creates 14 unique nonces, and records the exact one- or two-image request scope:
+
+```sh
+python3 tools/design_rating.py prepare \
+  "$SHIPPING_REFERENCE_ROOT" "$RATING_ROOT/gemini" \
+  --provider gemini --model gemini-2.5-pro --model-family Gemini
+```
+
+Make each request as its own sequential broker child. `secret exec` resets the child working
+directory, so both the harness and run directory are passed as absolute paths. The credential value
+is read only from `SECRET`; it is not written to the retained request, raw response, record, or log:
+
+```sh
+repository="$(pwd)"
+rating_run="$(cd "$RATING_ROOT/gemini" && pwd)"
+for index in $(seq 0 13); do
+  secret exec "Google Gen AI API key (Gemini eval — design + coach harnesses)" -- \
+    /usr/bin/python3 "$repository/tools/design_rating.py" rate-one \
+      --run "$rating_run" --index "$index"
+done
+python3 tools/design_rating.py assemble --run "$rating_run"
+```
+
+Prepare a second independent family in a different new directory. For example, an OpenAI-family
+model available through OpenRouter uses `--provider openrouter`, its exact provider model identifier,
+and `--model-family OpenAI`; run its 14 isolated requests through the matching broker entry and
+assemble it in the same way. Only then reveal the reports together:
+
+```sh
+python3 tools/design_rating.py combine \
+  --first "$RATING_ROOT/gemini/report.json" \
+  --second "$RATING_ROOT/openai/report.json" \
+  --output "$RATING_ROOT/two-rater-report.json"
+```
+
+`raw/` retains each provider response and its nonce-bound request evidence; `records/` retains only
+validated appearance records. Neither directory may be reconstructed from an aggregate. A malformed
+response is not repaired in place. Run `python3 tools/design_rating.py replace` with the run directory
+and failed index; it retains the failed raw response and supersedes only that request with a new nonce
+and the same isolated image scope, as required by §3. Run that index again through its broker child
+before assembly.
 
 The output directories must not already exist. The harness refuses to merge old and new evidence.

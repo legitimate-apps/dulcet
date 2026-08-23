@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""Negative controls for the isolated per-appearance design-rating harness."""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+SPEC = importlib.util.spec_from_file_location(
+    "design_rating", REPOSITORY / "tools/design_rating.py"
+)
+if SPEC is None or SPEC.loader is None:
+    raise AssertionError("cannot import tools/design_rating.py")
+rating = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(rating)
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def make_artifact(root: Path) -> Path:
+    artifact = root / "artifact"
+    artifact.mkdir()
+    captures = []
+    for state in rating.STATES:
+        for appearance in rating.APPEARANCES:
+            filename = f"macos-{state}-{appearance}.jpg"
+            data = f"standard:{state}:{appearance}".encode()
+            (artifact / filename).write_bytes(data)
+            captures.append(
+                {
+                    "variant": "shipping-reference",
+                    "fixtureState": state,
+                    "appearance": appearance,
+                    "file": filename,
+                    "sha256": digest(data),
+                }
+            )
+    for appearance in rating.APPEARANCES:
+        filename = f"macos-CONTROL-DELIBERATELY-BAD-library-browse-{appearance}.jpg"
+        data = f"control:{appearance}".encode()
+        (artifact / filename).write_bytes(data)
+        sha = digest(data)
+        captures.append(
+            {
+                "variant": "deliberately-bad-control",
+                "fixtureState": "library-browse",
+                "appearance": appearance,
+                "file": filename,
+                "sha256": sha,
+                "pinnedControlSha256": sha,
+            }
+        )
+    (artifact / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifactClass": "NON-DETERMINISTIC-SHIPPING-DESIGN-REFERENCE",
+                "admissibleUses": ["pairwise-design-rating"],
+                "missingCaptures": [],
+                "captures": captures,
+            }
+        )
+    )
+    return artifact
+
+
+def prepare(root: Path, family: str = "Gemini") -> Path:
+    artifact = make_artifact(root)
+    run = root / "run"
+    rating.prepare_run(
+        argparse.Namespace(
+            artifact=str(artifact),
+            output=str(run),
+            provider="gemini",
+            model="gemini-test",
+            model_family=family,
+        )
+    )
+    return run
+
+
+def response_for(request: dict, *, failed_calibration: bool = False) -> dict:
+    categories = {
+        "platform_idiom": 22,
+        "hierarchy_and_typography": 17,
+        "spacing_and_density": 17,
+        "state_clarity_and_primary_action": 18,
+        "coherence_and_finish": 13 if request["appearance"] == "light" else 14,
+    }
+    control = None
+    if request["state"] == "library-browse":
+        control_categories = (
+            dict(categories)
+            if failed_calibration
+            else {
+                "platform_idiom": 4,
+                "hierarchy_and_typography": 5,
+                "spacing_and_density": 5,
+                "state_clarity_and_primary_action": 5,
+                "coherence_and_finish": 4,
+            }
+        )
+        control = {
+            "categories": control_categories,
+            "findings": ["The clashing card treatment disrupts the visible hierarchy."],
+        }
+    filename = request["input_images"][0]["filename"]
+    return {
+        "derivation": {
+            "request_nonce": request["request_nonce"],
+            "context_scope": rating.CONTEXT_SCOPE,
+            "input_images": request["input_images"],
+            "appearance_specific_observations": [
+                {
+                    "category": "platform_idiom",
+                    "observation": "The visible source-list sidebar uses compact native Mac spacing.",
+                },
+                {
+                    "category": "coherence_and_finish",
+                    "observation": "The visible title, content edges, and controls align consistently.",
+                },
+            ],
+        },
+        "categories": categories,
+        "findings": [
+            {
+                "rubric": "taste",
+                "category": "platform_idiom",
+                "finding": "The titled window and source-list hierarchy read as native macOS.",
+            }
+        ],
+        "accessibility_findings": [
+            {
+                "status": "ASSUMED",
+                "category": "keyboard_and_focus",
+                "finding": "Keyboard traversal is not established by this image.",
+                "evidence": "interaction trace needed",
+            }
+        ],
+        "claims": [
+            {
+                "status": "OBSERVED",
+                "claim": "A titled window is visible.",
+                "evidence": filename,
+            }
+        ],
+        "control_assessment": control,
+    }
+
+
+def populate(run: Path, *, failed_calibration: bool = False) -> dict:
+    plan = rating.read_json(run / "plan.json")
+    for request in plan["requests"]:
+        filename = rating.record_filename(request)
+        rating.write_json_exclusive(
+            run / "raw" / filename,
+            {"request": {"request_nonce": request["request_nonce"]}, "provider_response": {}},
+        )
+        rating.write_json_exclusive(
+            run / "records" / filename,
+            response_for(request, failed_calibration=failed_calibration),
+        )
+    return plan
+
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-") as directory:
+    root = Path(directory)
+    run = prepare(root)
+    plan = rating.read_json(run / "plan.json")
+    if len(plan["requests"]) != 14:
+        raise AssertionError("prepare did not produce exactly 14 request plans")
+    if len({request["request_nonce"] for request in plan["requests"]}) != 14:
+        raise AssertionError("prepare reused a request nonce")
+    for request in plan["requests"]:
+        expected_inputs = 2 if request["state"] == "library-browse" else 1
+        if len(request["input_images"]) != expected_inputs:
+            raise AssertionError(f"wrong image isolation for request {request['index']}")
+
+    artifact = Path(plan["artifact"]["directory"])
+    normal = plan["requests"][0]
+    browse = next(request for request in plan["requests"] if request["state"] == "library-browse")
+    for provider in ("gemini", "openrouter"):
+        for request, expected_images in ((normal, 1), (browse, 2)):
+            messages = rating.build_messages(request, artifact)
+            api_request, body = rating.provider_request(provider, "model", messages, "sentinel-key")
+            if api_request.full_url != rating.PROVIDER_ENDPOINTS[provider]:
+                raise AssertionError(f"{provider} adapter used the wrong endpoint")
+            if api_request.get_header("Authorization") != "Bearer sentinel-key":
+                raise AssertionError(f"{provider} adapter omitted bearer authentication")
+            image_count = sum(
+                item.get("type") == "image_url"
+                for item in body["messages"][1]["content"]
+            )
+            if image_count != expected_images:
+                raise AssertionError(
+                    f"{provider} adapter sent {image_count} images, expected {expected_images}"
+                )
+
+    populate(run)
+    report, errors = rating.assemble(run)
+    if errors or not report["control_gate"]["run_valid"]:
+        raise AssertionError(f"valid isolated records were rejected: {errors}")
+    if report["product_taste_score"] != 88:
+        raise AssertionError(f"product score was not assembled mechanically: {report}")
+    if report["states"]["now-playing"]["light_dark_delta"] != 1:
+        raise AssertionError("light/dark delta was not assembled from the two records")
+    if report["lens_scores"] != {"platform_idiom": 22, "information_design": 66}:
+        raise AssertionError(f"lens scores were not assembled mechanically: {report['lens_scores']}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-replace-") as directory:
+    root = Path(directory)
+    run = prepare(root)
+    plan = rating.read_json(run / "plan.json")
+    request = plan["requests"][3]
+    old_nonce = request["request_nonce"]
+    old_inputs = copy.deepcopy(request["input_images"])
+    old_raw = run / "raw" / rating.record_filename(request)
+    old_raw.write_text(json.dumps({"provider_response": {"malformed": True}}))
+    rating.replace_failed_request(argparse.Namespace(run=str(run), index=3))
+    replaced = rating.read_json(run / "plan.json")
+    new_request = replaced["requests"][3]
+    if new_request["request_nonce"] == old_nonce:
+        raise AssertionError("failed response replacement reused its nonce")
+    if new_request["input_images"] != old_inputs:
+        raise AssertionError("failed response replacement changed the isolated inputs")
+    if not old_raw.is_file() or replaced["superseded_requests"][0]["request_nonce"] != old_nonce:
+        raise AssertionError("failed response replacement discarded its raw evidence")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-nonce-") as directory:
+    root = Path(directory)
+    run = prepare(root)
+    plan = populate(run)
+    request = plan["requests"][0]
+    record_path = run / "records" / rating.record_filename(request)
+    record = rating.read_json(record_path)
+    record["derivation"]["request_nonce"] = "rater-invented-nonce"
+    record_path.write_text(json.dumps(record))
+    report, errors = rating.assemble(run)
+    if not errors or report["derivation_valid"]:
+        raise AssertionError("a rater-invented nonce was accepted")
+    if report["product_taste_score"] is not None or any(
+        score is not None for score in report["lens_scores"].values()
+    ):
+        raise AssertionError("invalid derivation became a zero or numeric aggregate")
+    for state in rating.STATES:
+        if report["states"][state]["light_dark_delta"] is not None:
+            raise AssertionError("invalid derivation became a zero light/dark delta")
+        for appearance in rating.APPEARANCES:
+            if report["states"][state][appearance]["taste"] is not None:
+                raise AssertionError("invalid derivation retained a per-image taste score")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-control-") as directory:
+    root = Path(directory)
+    run = prepare(root)
+    populate(run, failed_calibration=True)
+    report, errors = rating.assemble(run)
+    if errors or report["derivation_valid"] is not True:
+        raise AssertionError("calibration control unexpectedly invalidated derivation")
+    if report["control_gate"]["run_valid"]:
+        raise AssertionError("failed negative control passed the calibration gate")
+    if report["product_taste_score"] is not None:
+        raise AssertionError("failed calibration became a numeric product score")
+    if any(
+        report["states"][state][appearance]["taste"] is not None
+        for state in rating.STATES
+        for appearance in rating.APPEARANCES
+    ):
+        raise AssertionError("failed calibration retained per-image taste scores")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-combine-") as directory:
+    root = Path(directory)
+    run = prepare(root)
+    populate(run)
+    first, errors = rating.assemble(run)
+    if errors:
+        raise AssertionError(errors)
+    second = copy.deepcopy(first)
+    second["rater"]["model_family"] = "OpenAI"
+    first_path = root / "first.json"
+    second_path = root / "second.json"
+    first_path.write_text(json.dumps(first))
+    second_path.write_text(json.dumps(second))
+    combined_path = root / "combined.json"
+    rating.combine_reports(
+        argparse.Namespace(first=str(first_path), second=str(second_path), output=str(combined_path))
+    )
+    combined = rating.read_json(combined_path)
+    if combined["model_families"] != ["Gemini", "OpenAI"]:
+        raise AssertionError("distinct model families were not retained")
+    same_family = copy.deepcopy(second)
+    same_family["rater"]["model_family"] = "gemini"
+    same_path = root / "same.json"
+    same_path.write_text(json.dumps(same_family))
+    try:
+        rating.combine_reports(
+            argparse.Namespace(
+                first=str(first_path),
+                second=str(same_path),
+                output=str(root / "must-not-exist.json"),
+            )
+        )
+    except rating.RatingError as error:
+        if "distinct model families" not in str(error):
+            raise
+    else:
+        raise AssertionError("same-family reports were accepted as two independent raters")
+
+print(
+    "design-rating harness isolates images, supports Gemini and OpenRouter, "
+    "assembles scores mechanically, and nulls invalid derivations"
+)
