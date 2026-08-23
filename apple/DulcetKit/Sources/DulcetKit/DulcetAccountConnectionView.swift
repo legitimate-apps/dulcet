@@ -14,7 +14,7 @@ enum DulcetAccountConnectionFocus: String, Sendable {
 struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
-    @State private var lastReturnSubmissionTimestamp: TimeInterval?
+    @State private var lastSubmissionTimestamp: TimeInterval?
 
     private let focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)?
 
@@ -221,46 +221,25 @@ struct DulcetAccountConnectionView: View {
     }
 
     private func performAccountPrimaryAction() {
-        let returnTimestamp = currentReturnKeyTimestamp
+        let actionTimestamp = ProcessInfo.processInfo.systemUptime
 
         if isConnecting {
-            if let event = NSApp.currentEvent {
-                print(
-                    "ACCOUNT CONNECT CURRENT EVENT state=connecting"
-                        + " type=\(event.type.rawValue)"
-                        + " keyCode=\(event.keyCode)"
-                        + " timestamp=\(event.timestamp)"
-                )
-            } else {
-                print("ACCOUNT CONNECT CURRENT EVENT state=connecting event=nil")
-            }
-
-            if let returnTimestamp,
-               let submissionTimestamp = lastReturnSubmissionTimestamp {
-                let interval = returnTimestamp - submissionTimestamp
+            if let submissionTimestamp = lastSubmissionTimestamp {
+                let interval = actionTimestamp - submissionTimestamp
                 if interval >= 0, interval <= NSEvent.doubleClickInterval {
-                    // A rapid second Return belongs to the activation that submitted this
-                    // connection. Consume only that keyboard repeat; pointer activation and a
-                    // later deliberate Return still reach the real Cancel action.
+                    // Ignore any primary-action activation too close to the submission. This
+                    // consumes a rapid repeated Return and also a pointer click in the same
+                    // system-defined double-click window; Escape remains an immediate cancel.
                     return
                 }
             }
 
-            lastReturnSubmissionTimestamp = nil
+            lastSubmissionTimestamp = nil
             store.cancelAccountConnection()
         } else {
-            lastReturnSubmissionTimestamp = returnTimestamp
+            lastSubmissionTimestamp = actionTimestamp
             store.submitAccountConnection()
         }
-    }
-
-    private var currentReturnKeyTimestamp: TimeInterval? {
-        guard let event = NSApp.currentEvent,
-              event.type == .keyDown,
-              event.keyCode == 36 || event.keyCode == 76 else {
-            return nil
-        }
-        return event.timestamp
     }
 
     private func failurePanel(_ failure: DulcetAccountFailurePresentation) -> some View {
