@@ -23,6 +23,10 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require partial promotion conditions to resolve or declare a block
+        run: python3 tools/verify_promotion_conditions.py
+      - name: Prove nonexistent promotion targets are rejected
+        run: python3 tools/test-promotion-condition-resolvability
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"

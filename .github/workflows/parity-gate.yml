@@ -26,6 +26,10 @@ jobs:
         run: python3 tools/test-pr-workflow-secret-boundary
       - name: Require evidence-boundary markers and revision integrity
         run: python3 tools/test-spec-evidence-boundaries
+      - name: Require partial promotion conditions to resolve or declare a block
+        run: python3 tools/verify_promotion_conditions.py
+      - name: Prove nonexistent promotion targets are rejected
+        run: python3 tools/test-promotion-condition-resolvability
       - name: Prove spec evidence-boundary regressions are rejected
         run: python3 tools/test-spec-evidence-boundary-mutations
       - name: Prove design ratings are isolated and mechanically assembled

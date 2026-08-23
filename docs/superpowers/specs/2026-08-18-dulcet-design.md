@@ -6,7 +6,10 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 74 — the unentitled hosted app now observes the live Kotlin/Swift seam through the
+**Revision:** 75 — partial-feature promotion conditions now resolve named workflow, job, and test
+targets against the repository or declare an explicit block; the signed-Keychain condition is
+blocked on the operator's signing-identity decision because its three earlier target names do not
+exist; revision 74 made the unentitled hosted app observe the live Kotlin/Swift seam through the
 typed persistence-failure state while explicitly excluding offscreen SwiftUI accessibility;
 revision 73 observed that an ad-hoc app carrying the production Keychain
 access group cannot execute, and scopes the unentitled app control to the live Kotlin/Swift seam;
@@ -1467,15 +1470,21 @@ against the legacy Keychain, never records an active-account pointer, and the co
 no matching legacy generic-password item exists. This proves the failure is loud and prevents a
 silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
 
-**ASSUMED signed-Keychain properties and promotion condition:** the accessibility, non-sync, and
-resulting device-migration properties above are promoted to OBSERVED only when workflow
-`signed-release-validation`, job `entitled-keychain`, executes
-`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` in a signed host carrying
-the production keychain-access-group entitlement. That check must add, update, read, and delete the
-real data-protection-Keychain item, read back
-`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and `kSecAttrSynchronizable = false`, and observe
-the item absent after deletion. Pull-request workflows receive no signing identity, so CONF-10a does
-not claim those properties.
+**ASSUMED signed-Keychain properties; no resolvable promotion condition:** the accessibility,
+non-sync, and resulting device-migration properties above remain ASSUMED. The earlier proposed
+workflow `signed-release-validation`, job `entitled-keychain`, and test
+`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` do not resolve to repository
+definitions and are not a runnable promotion plan. `FEATURES.yml` therefore records
+`promotion_condition.status = blocked` on `operator-signing-identity-decision`, names no runnable
+target, and leaves `account.connect / macos` at `partial`. Pull-request workflows receive no signing
+identity, and hosted run `32598531311` already established that an ad-hoc-signed host carrying the
+production Keychain access group cannot launch. The operator must first select the signed execution
+environment and signing identity. After that decision, a real workflow, job, and test may be added;
+the machine-readable promotion condition may name them only after each resolves in the repository.
+The eventual entitled control must add, update, read, and delete the real data-protection-Keychain
+item, read back `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and
+`kSecAttrSynchronizable = false`, and observe the item absent after deletion. CONF-10a does not claim
+those properties.
 
 **ASSUMED background behavior:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is intended to
 let a background task run after the device's first post-reboot unlock while preventing migration to
@@ -3153,6 +3162,23 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 75 (2026-08-22)** — promotion conditions became repository-resolved declarations rather
+than authoritative-looking prose.
+
+1. Every `partial` platform cell now requires a machine-readable `promotion_condition`. A `named`
+   condition must resolve every workflow against `.github/workflows`, every job inside its named
+   workflow, and every suite/test pair in repository test sources. A `blocked` condition must give a
+   specific reason and cannot carry named targets.
+2. The negative control expresses revision 72's proposed `signed-release-validation` /
+   `entitled-keychain` / `DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility`
+   chain as a named condition and requires all three resolution failures. No stub definition was
+   created to make that chain pass.
+3. `account.connect / macos` remains `partial`. Its condition is explicitly blocked on
+   `operator-signing-identity-decision`: hosted evidence already showed why ad-hoc signing cannot
+   execute this control, and choosing a real signing identity or self-hosted signed environment is
+   outside this revision. Once that choice is made, the condition can name only targets that actually
+   exist.
 
 **Revision 74 (2026-08-22)** — the live app-process claim was narrowed to the state the hosted
 process can actually observe.

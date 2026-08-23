@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 
+from verify_promotion_conditions import validate as validate_promotion_conditions
+
 
 def section(document: str, start: str, end: str) -> str:
     try:
@@ -34,6 +36,7 @@ normalized_failure_modes = " ".join(failure_modes.split())
 normalized_error_model = " ".join(error_model.split())
 
 errors: list[str] = []
+errors.extend(validate_promotion_conditions(Path.cwd()))
 
 account_connect = next(
     feature for feature in features["features"] if feature["id"] == "account.connect"
@@ -63,8 +66,14 @@ for marker in (
     "unentitled SwiftPM process",
     "missingDataProtectionKeychainEntitlement",
     "legacy-Keychain item",
-    "signed-release-validation / entitled-keychain",
+    "NO RESOLVABLE PROMOTION CONDITION",
+    "workflow signed-release-validation",
+    "job entitled-keychain",
     "DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility",
+    "absent from the repository",
+    "explicitly rejected as promotion targets",
+    "operator decision",
+    "promotion_condition remains blocked",
 ):
     if marker not in account_reason:
         errors.append(f"account.connect/macos partial reason is missing {marker!r}")
@@ -147,9 +156,13 @@ for marker in (
     "97085139126",
     "DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement",
     "no matching legacy generic-password item exists",
-    "**ASSUMED signed-Keychain properties and promotion condition:**",
-    "`signed-release-validation`, job `entitled-keychain`",
+    "**ASSUMED signed-Keychain properties; no resolvable promotion condition:**",
+    "workflow `signed-release-validation`, job `entitled-keychain`",
     "DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility",
+    "do not resolve to repository definitions",
+    "`promotion_condition.status = blocked`",
+    "`operator-signing-identity-decision`",
+    "names no runnable target",
     "Pull-request workflows receive no signing identity",
     "performs **no network request until the person chooses Connect**",
     "credential-persistence error surface",

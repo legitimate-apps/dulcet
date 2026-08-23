@@ -13,7 +13,7 @@ STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
 LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
 TOP_KEYS = {"schema_version", "accepted_regressions", "features"}
 FEATURE_KEYS = {"id", "title", "spec", "gates", "conformance", "platforms"}
-CELL_KEYS = {"status", "evidence", "reason", "blocked_by"}
+CELL_KEYS = {"status", "evidence", "reason", "blocked_by", "promotion_condition"}
 
 
 def fail(message: str) -> None:

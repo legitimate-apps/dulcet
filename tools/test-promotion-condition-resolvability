@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Negative controls for repository-resolved feature promotion conditions."""
+
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+import sys
+import tempfile
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPOSITORY / "tools"))
+import verify_promotion_conditions as verifier  # noqa: E402
+
+
+def account_macos(features: dict) -> dict:
+    account = next(feature for feature in features["features"] if feature["id"] == "account.connect")
+    return account["platforms"]["macos"]
+
+
+features = json.loads((REPOSITORY / "FEATURES.yml").read_text())
+baseline_errors = verifier.validate(REPOSITORY)
+if baseline_errors:
+    raise AssertionError(f"valid promotion declarations were rejected: {baseline_errors}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-unresolved-promotion-") as directory:
+    root = Path(directory)
+    mutated = copy.deepcopy(features)
+    account_macos(mutated)["promotion_condition"] = {
+        "status": "named",
+        "targets": [
+            {"kind": "workflow", "name": "signed-release-validation"},
+            {
+                "kind": "job",
+                "workflow": "signed-release-validation",
+                "name": "entitled-keychain",
+            },
+            {
+                "kind": "test",
+                "name": (
+                    "DulcetMacEntitledKeychainTests/"
+                    "credentialsCarryDeviceOnlyAccessibility"
+                ),
+            },
+        ],
+    }
+    path = root / "FEATURES.yml"
+    path.write_text(json.dumps(mutated))
+    errors = verifier.validate(REPOSITORY, path)
+    for expected in (
+        "workflow 'signed-release-validation' does not resolve",
+        "job 'entitled-keychain' names unresolved workflow 'signed-release-validation'",
+        (
+            "test 'DulcetMacEntitledKeychainTests/"
+            "credentialsCarryDeviceOnlyAccessibility' does not resolve"
+        ),
+    ):
+        if not any(expected in error for error in errors):
+            raise AssertionError(
+                f"unresolvable named target was accepted: expected={expected!r}, errors={errors}"
+            )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-resolved-promotion-") as directory:
+    root = Path(directory)
+    mutated = copy.deepcopy(features)
+    account_macos(mutated)["promotion_condition"] = {
+        "status": "named",
+        "targets": [
+            {"kind": "workflow", "name": "apple-ci"},
+            {"kind": "job", "workflow": "apple-ci", "name": "apple-ci"},
+            {
+                "kind": "test",
+                "name": (
+                    "DulcetMacAccountConnectAppTest/"
+                    "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState"
+                ),
+            },
+        ],
+    }
+    path = root / "FEATURES.yml"
+    path.write_text(json.dumps(mutated))
+    errors = verifier.validate(REPOSITORY, path)
+    if errors:
+        raise AssertionError(f"real workflow/job/test targets did not resolve: {errors}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-missing-promotion-") as directory:
+    root = Path(directory)
+    mutated = copy.deepcopy(features)
+    del account_macos(mutated)["promotion_condition"]
+    path = root / "FEATURES.yml"
+    path.write_text(json.dumps(mutated))
+    errors = verifier.validate(REPOSITORY, path)
+    if not any("no machine-readable promotion_condition" in error for error in errors):
+        raise AssertionError(f"partial feature without a promotion condition was accepted: {errors}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-blocked-target-") as directory:
+    root = Path(directory)
+    mutated = copy.deepcopy(features)
+    account_macos(mutated)["promotion_condition"]["targets"] = [
+        {"kind": "workflow", "name": "apple-ci"}
+    ]
+    path = root / "FEATURES.yml"
+    path.write_text(json.dumps(mutated))
+    errors = verifier.validate(REPOSITORY, path)
+    if not any("named targets are not permitted" in error for error in errors):
+        raise AssertionError(f"blocked condition with a runnable target was accepted: {errors}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-nonpartial-promotion-") as directory:
+    root = Path(directory)
+    mutated = copy.deepcopy(features)
+    account_macos(mutated)["status"] = "shipped"
+    path = root / "FEATURES.yml"
+    path.write_text(json.dumps(mutated))
+    errors = verifier.validate(REPOSITORY, path)
+    if not any("only while status is partial" in error for error in errors):
+        raise AssertionError(f"non-partial cell retained a promotion condition: {errors}")
+
+print(
+    "promotion conditions resolve real workflow/job/test targets and reject the nonexistent "
+    "signed-release-validation candidate"
+)
