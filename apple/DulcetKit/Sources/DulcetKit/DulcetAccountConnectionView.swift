@@ -101,6 +101,7 @@ struct DulcetAccountConnectionView: View {
                         text: $store.accountServerURL
                     )
                     .textFieldStyle(.roundedBorder)
+                    .dulcetCredentialInput(.serverAddress)
                     .accessibilityLabel(DulcetStrings.serverAddress)
                     .focused($focusedControl, equals: .serverAddress)
                 }
@@ -108,6 +109,7 @@ struct DulcetAccountConnectionView: View {
                     Text(DulcetStrings.username)
                     TextField(DulcetStrings.username, text: $store.accountUsername)
                         .textFieldStyle(.roundedBorder)
+                        .dulcetCredentialInput(.username)
                         .accessibilityLabel(DulcetStrings.username)
                         .focused($focusedControl, equals: .username)
                 }
@@ -115,6 +117,7 @@ struct DulcetAccountConnectionView: View {
                     Text(DulcetStrings.password)
                     SecureField(DulcetStrings.password, text: $store.accountPassword)
                         .textFieldStyle(.roundedBorder)
+                        .dulcetCredentialInput(.password)
                         .accessibilityLabel(DulcetStrings.password)
                         .focused($focusedControl, equals: .password)
                 }
@@ -313,4 +316,60 @@ struct DulcetAccountConnectionView: View {
     }
 
 }
+
+/// Which credential a field collects, so the touch platforms can pick the right
+/// keyboard and content type.
+enum DulcetCredentialInputKind: Sendable {
+    case serverAddress
+    case username
+    case password
+}
+
+extension View {
+    /// Text-input traits that only matter on the touch platforms.
+    ///
+    /// On macOS this is deliberately the identity transform: there is no
+    /// autocapitalization and no software keyboard, so applying nothing keeps the
+    /// deterministic macOS capture byte-identical.
+    ///
+    /// On iOS the SwiftUI defaults are actively WRONG for credentials, and both
+    /// failures break a real login rather than merely looking untidy. Sentence
+    /// capitalization rewrites `https://…` as `HTTPS://…` and a lowercase username
+    /// as `Username`; autocorrect can silently substitute a hostname. Measured on
+    /// an iPhone 17 Pro simulator 2026-08-23 by typing into the live field — the
+    /// build was green and the view rendered correctly, so only driving the UI
+    /// surfaced it.
+    func dulcetCredentialInput(_ kind: DulcetCredentialInputKind) -> some View {
+        #if os(iOS)
+        return
+            self
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(kind.keyboardType)
+            .textContentType(kind.textContentType)
+        #else
+        return self
+        #endif
+    }
+}
+
+#if os(iOS)
+extension DulcetCredentialInputKind {
+    var keyboardType: UIKeyboardType {
+        switch self {
+        case .serverAddress: .URL
+        case .username, .password: .asciiCapable
+        }
+    }
+
+    var textContentType: UITextContentType? {
+        switch self {
+        case .serverAddress: .URL
+        case .username: .username
+        case .password: .password
+        }
+    }
+}
+#endif
+
 #endif
