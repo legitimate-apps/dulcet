@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 from collections import OrderedDict
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
@@ -23,8 +24,9 @@ import urllib.error
 import urllib.request
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DERIVATION_PROTOCOL = "isolated-per-appearance-v1"
+WITHIN_IMAGE_VARIATION_PROTOCOL = "same-image-repeat-range-v1"
 CONTEXT_SCOPE = "fresh-no-prior-scores"
 STATES = (
     "empty-library-no-account",
@@ -99,6 +101,172 @@ def replace_json(path: Path, value: Any) -> None:
 
 def round_integer(value: float) -> int:
     return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def validate_within_image_variation(
+    value: Any,
+    expected_rater: dict[str, str],
+    prepared_on: str,
+) -> list[str]:
+    """Validate declared repeated-rating evidence without trusting its derived spread."""
+    if not isinstance(value, dict):
+        return ["within-image variation evidence must be an object"]
+    expected_keys = {
+        "measurement_protocol",
+        "derivation_protocol",
+        "rater",
+        "measured_on",
+        "valid_through",
+        "measurements",
+    }
+    errors: list[str] = []
+    if set(value) != expected_keys:
+        errors.append(
+            "within-image variation evidence keys mismatch: "
+            f"missing={sorted(expected_keys - set(value))} "
+            f"unexpected={sorted(set(value) - expected_keys)}"
+        )
+    if value.get("measurement_protocol") != WITHIN_IMAGE_VARIATION_PROTOCOL:
+        errors.append("within-image variation evidence has the wrong measurement protocol")
+    if value.get("derivation_protocol") != DERIVATION_PROTOCOL:
+        errors.append("within-image variation evidence has the wrong rating derivation protocol")
+    if value.get("rater") != expected_rater:
+        errors.append("within-image variation evidence does not match this run's exact rater")
+
+    parsed_dates: dict[str, date] = {}
+    for field in ("measured_on", "valid_through"):
+        candidate = value.get(field)
+        try:
+            parsed_dates[field] = date.fromisoformat(candidate)
+        except (TypeError, ValueError):
+            errors.append(f"within-image variation evidence {field} must be an ISO date")
+    try:
+        prepared_date = date.fromisoformat(prepared_on)
+    except (TypeError, ValueError):
+        errors.append("rating plan prepared_on must be an ISO date")
+        prepared_date = None
+    if set(parsed_dates) == {"measured_on", "valid_through"} and prepared_date is not None:
+        if not parsed_dates["measured_on"] <= prepared_date <= parsed_dates["valid_through"]:
+            errors.append("within-image variation evidence was not valid when this run was prepared")
+
+    measurements = value.get("measurements")
+    if not isinstance(measurements, list) or not measurements:
+        errors.append("within-image variation evidence needs at least one repeated-image measurement")
+        return errors
+    seen_images: set[str] = set()
+    seen_sample_nonces: set[str] = set()
+    for measurement_index, measurement in enumerate(measurements):
+        label = f"within-image measurement {measurement_index}"
+        if not isinstance(measurement, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        if set(measurement) != {"image", "prompt_sha256", "samples"}:
+            errors.append(f"{label} must contain only image, prompt_sha256, and samples")
+        image = measurement.get("image")
+        if not isinstance(image, dict) or set(image) != {"filename", "sha256"}:
+            errors.append(f"{label}.image must contain only filename and sha256")
+        else:
+            filename = image.get("filename")
+            image_digest = image.get("sha256")
+            if not isinstance(filename, str) or Path(filename).name != filename:
+                errors.append(f"{label}.image.filename must be a basename")
+            if not valid_sha256(image_digest):
+                errors.append(f"{label}.image.sha256 must be a lowercase SHA-256")
+            elif image_digest in seen_images:
+                errors.append(f"{label}.image.sha256 repeats an earlier measurement")
+            else:
+                seen_images.add(image_digest)
+        if not valid_sha256(measurement.get("prompt_sha256")):
+            errors.append(f"{label}.prompt_sha256 must be a lowercase SHA-256")
+        samples = measurement.get("samples")
+        if not isinstance(samples, list) or len(samples) < 2:
+            errors.append(f"{label}.samples needs at least two independent draws")
+            continue
+        for sample_index, sample in enumerate(samples):
+            sample_label = f"{label}.samples[{sample_index}]"
+            if not isinstance(sample, dict) or set(sample) != {"request_nonce", "taste"}:
+                errors.append(f"{sample_label} must contain only request_nonce and taste")
+                continue
+            nonce = sample.get("request_nonce")
+            if not isinstance(nonce, str) or not nonce.strip():
+                errors.append(f"{sample_label}.request_nonce must be non-empty")
+            elif nonce in seen_sample_nonces:
+                errors.append(f"{sample_label}.request_nonce repeats within the evidence")
+            else:
+                seen_sample_nonces.add(nonce)
+            score = sample.get("taste")
+            if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+                errors.append(f"{sample_label}.taste must be an integer 0..100")
+    return errors
+
+
+def derive_within_image_variation(
+    value: Any,
+    expected_rater: dict[str, str],
+    prepared_on: Any,
+) -> tuple[dict[str, Any], bool]:
+    if value is None:
+        return (
+            {
+                "measurement_protocol": WITHIN_IMAGE_VARIATION_PROTOCOL,
+                "evidence_available": False,
+                "measured_on": None,
+                "valid_through": None,
+                "maximum_observed_spread": None,
+                "measurements": [],
+                "errors": ["no within-image variation evidence was supplied"],
+            },
+            False,
+        )
+    errors = validate_within_image_variation(value, expected_rater, prepared_on)
+    if errors:
+        return (
+            {
+                "measurement_protocol": WITHIN_IMAGE_VARIATION_PROTOCOL,
+                "evidence_available": False,
+                "measured_on": value.get("measured_on") if isinstance(value, dict) else None,
+                "valid_through": value.get("valid_through") if isinstance(value, dict) else None,
+                "maximum_observed_spread": None,
+                "measurements": [],
+                "errors": errors,
+            },
+            False,
+        )
+
+    derived_measurements = []
+    for measurement in value["measurements"]:
+        scores = [sample["taste"] for sample in measurement["samples"]]
+        derived_measurements.append(
+            {
+                "image": measurement["image"],
+                "prompt_sha256": measurement["prompt_sha256"],
+                "sample_count": len(scores),
+                "samples": measurement["samples"],
+                "observed_spread": max(scores) - min(scores),
+            }
+        )
+    return (
+        {
+            "measurement_protocol": WITHIN_IMAGE_VARIATION_PROTOCOL,
+            "evidence_available": True,
+            "measured_on": value["measured_on"],
+            "valid_through": value["valid_through"],
+            "maximum_observed_spread": max(
+                measurement["observed_spread"] for measurement in derived_measurements
+            ),
+            "measurements": derived_measurements,
+            "errors": [],
+        },
+        True,
+    )
 
 
 def capture_index(manifest: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
@@ -198,9 +366,26 @@ def prepare_run(args: argparse.Namespace) -> None:
             raise RatingError(f"{name} must be non-empty")
 
     manifest, requests = validate_artifact(artifact)
+    rater = {
+        "provider": args.provider,
+        "model_family": args.model_family.strip(),
+        "model": args.model.strip(),
+    }
+    prepared_on = date.today().isoformat()
+    variation_path = getattr(args, "within_image_variation_evidence", None)
+    variation_evidence = read_json(Path(variation_path).resolve()) if variation_path else None
+    if variation_evidence is not None:
+        variation_errors = validate_within_image_variation(
+            variation_evidence, rater, prepared_on
+        )
+        if variation_errors:
+            raise RatingError(
+                "invalid within-image variation evidence: " + "; ".join(variation_errors)
+            )
     plan = {
         "schema_version": SCHEMA_VERSION,
         "derivation_protocol": DERIVATION_PROTOCOL,
+        "prepared_on": prepared_on,
         "artifact": {
             "directory": str(artifact),
             "manifest_filename": "manifest.json",
@@ -208,11 +393,8 @@ def prepare_run(args: argparse.Namespace) -> None:
             "artifact_class": manifest["artifactClass"],
             "expected_standard_record_count": 14,
         },
-        "rater": {
-            "provider": args.provider,
-            "model_family": args.model_family.strip(),
-            "model": args.model.strip(),
-        },
+        "rater": rater,
+        "within_image_variation_evidence": variation_evidence,
         "requests": requests,
     }
     output.mkdir(parents=True)
@@ -627,6 +809,12 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
     if len(set(nonces)) != 14:
         assembly_errors.append("the 14 planned request nonces are not unique")
 
+    within_image_variation, delta_evidence_valid = derive_within_image_variation(
+        plan.get("within_image_variation_evidence"),
+        plan.get("rater", {}),
+        plan.get("prepared_on"),
+    )
+
     records: dict[tuple[str, str], dict[str, Any] | None] = {}
     accessibility_findings: list[dict[str, Any]] = []
     claims: list[dict[str, Any]] = []
@@ -751,8 +939,15 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
             raw_mean = sum(state_scores) / 2
             state_raw_means[state] = raw_mean
             state_output["state_mean"] = round_integer(raw_mean)
-            state_output["light_dark_delta"] = state_scores[1] - state_scores[0]
-            state_output["light_dark_inconsistency"] = abs(state_scores[1] - state_scores[0]) > 12
+            if delta_evidence_valid:
+                delta = state_scores[1] - state_scores[0]
+                state_output["light_dark_delta"] = delta
+                state_output["light_dark_inconsistency"] = (
+                    abs(delta) > within_image_variation["maximum_observed_spread"]
+                )
+            else:
+                state_output["light_dark_delta"] = None
+                state_output["light_dark_inconsistency"] = None
         else:
             state_output["state_mean"] = None
             state_output["light_dark_delta"] = None
@@ -776,6 +971,7 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
     report = {
         "schema_version": SCHEMA_VERSION,
         "rater": {
+            "provider": plan["rater"]["provider"],
             "model_family": plan["rater"]["model_family"],
             "model": plan["rater"]["model"],
         },
@@ -788,6 +984,7 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
         "derivation_valid": derivation_valid,
         "derivation_errors": assembly_errors,
         "control_gate": control_gate,
+        "within_image_variation": within_image_variation,
         "states": states,
         "lens_scores": lens_scores,
         "product_taste_score": product_score,
@@ -873,6 +1070,10 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--provider", choices=sorted(PROVIDER_ENDPOINTS), required=True)
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--model-family", required=True)
+    prepare.add_argument(
+        "--within-image-variation-evidence",
+        help="JSON evidence from repeated ratings of identical image bytes and prompt",
+    )
     prepare.set_defaults(function=prepare_run)
 
     one = commands.add_parser("rate-one", help="make one fresh provider request using SECRET")

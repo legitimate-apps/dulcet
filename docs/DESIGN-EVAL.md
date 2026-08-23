@@ -408,11 +408,42 @@ Score every reference JPEG separately, then compute:
 3. the light/dark delta for each state.
 
 A light/dark delta is always computed mechanically from two valid appearance records; a rater never
-supplies the delta directly. A delta of exactly zero is valid when the records have distinct request
-nonces, the correct distinct artifact digests, and independently stated appearance-specific
-observations. Without those derivation records the delta is `null`, not zero, and the product rating
-is void. A measured light/dark delta above 12 points is a named inconsistency, even if the average is
-high.
+supplies the delta directly. Once the within-image evidence below is also valid, a delta of exactly
+zero is valid when the appearance records have distinct request nonces, the correct distinct artifact
+digests, and independently stated appearance-specific observations. Without those appearance
+derivation records the delta is `null`, not zero, and the product rating is void.
+
+A valid appearance pair is necessary but no longer sufficient to report or name a light/dark delta.
+The assembler also requires current within-image variation evidence for the exact provider, model
+family, and model that produced the pair. That evidence uses protocol
+`same-image-repeat-range-v1`: at least two nonce-distinct ratings of identical image bytes under one
+identical prompt digest. The evidence declares its measurement and validity dates. A provider,
+model, harness-prompt, or material rater-configuration change requires a fresh measurement, and the
+measurement must be refreshed no later than its declared `valid_through` date.
+
+The assembler derives each repeated image's range (`max(taste) - min(taste)`) and uses the maximum
+observed range as that rater's within-image spread. It never accepts a supplied spread or a fixed
+delta threshold. A light/dark inconsistency is named only when the absolute mechanically derived
+delta **strictly exceeds** the measured spread. A delta equal to or inside the spread is retained
+with `light_dark_inconsistency: false`. If the evidence is absent, malformed, outside its validity
+window, or belongs to a different rater, both `light_dark_delta` and
+`light_dark_inconsistency` are `null`; missing evidence never becomes either zero or “no
+inconsistency.” This delta-evidence failure does not alter §6's independent control gate or null an
+otherwise valid product score.
+
+The declared evidence manifest was chosen instead of automatically doubling all 14 product-image
+requests. Identical-image repeats can be measured and refreshed on their own cadence, while the
+assembler still owns every consequential derived number and fails closed when the evidence is not
+usable. The manifest retains image and prompt SHA-256 values, exact rater identity, validity dates,
+and nonce-bound raw taste scores so its applicability and arithmetic remain auditable.
+
+**OBSERVED 2026-08-23:** two fresh ratings of identical
+`macos-now-playing-dark.jpg` bytes under the identical harness prompt scored 90 and 80. The observed
+within-image range was therefore 10 points; `platform_idiom` alone moved from 22 to 15 and
+`coherence_and_finish` from 14 to 11. **OBSERVED:** run `32604884404` had reported light/dark
+deltas of +18, +12, and -16 without same-rater within-image variation evidence. Under this rule all
+three deltas are `null` and none is a named inconsistency. This does not reinterpret that run's
+§6 control gaps, which were 9.2–9.6 against the unchanged 1.0 threshold.
 
 ### 4.1 State-specific questions
 
@@ -475,8 +506,28 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
 
 ```json
 {
-  "rater": {"model_family": "...", "model": "..."},
+  "rater": {"provider": "...", "model_family": "...", "model": "..."},
   "derivation_protocol": "isolated-per-appearance-v1",
+  "within_image_variation": {
+    "measurement_protocol": "same-image-repeat-range-v1",
+    "evidence_available": true,
+    "measured_on": "YYYY-MM-DD",
+    "valid_through": "YYYY-MM-DD",
+    "maximum_observed_spread": 0,
+    "measurements": [
+      {
+        "image": {"filename": "...", "sha256": "..."},
+        "prompt_sha256": "...",
+        "sample_count": 2,
+        "samples": [
+          {"request_nonce": "...", "taste": 0},
+          {"request_nonce": "...", "taste": 0}
+        ],
+        "observed_spread": 0
+      }
+    ],
+    "errors": []
+  },
   "control_gate": {
     "light": {
       "score": 0,
@@ -579,7 +630,9 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
             "coherence_and_finish": 0
           }
         }
-      }
+      },
+      "light_dark_delta": 0,
+      "light_dark_inconsistency": false
     }
   },
   "lens_scores": {"platform_idiom": 0, "information_design": 0},
@@ -611,16 +664,22 @@ identify visible evidence in that appearance invalidate the derivation. Identica
 vectors do not by themselves invalidate records that satisfy these independent-derivation checks.
 
 Point-weighted category scores and aggregate scores are integers; normalized control gaps may be
-decimals. The aggregator computes control gaps, state means, product means, and light/dark deltas from
-the retained records; it does not accept rater-supplied aggregates as evidence. For a void run,
+decimals. The aggregator computes control gaps, state means, product means, within-image spreads,
+and light/dark deltas from retained evidence; it does not accept rater-supplied aggregates or spread
+values. For a void run,
 `lens_scores`, every per-image `taste`, every light/dark delta, and `product_taste_score` are `null`;
-the calibration gaps and failure evidence remain populated. Findings name the file and the rubric
-category; generic praise or criticism without evidence is invalid.
+the calibration gaps and failure evidence remain populated. For a valid product run without valid
+same-rater variation evidence, only the light/dark delta and inconsistency fields are `null`; the
+variation block records why. Findings name the file and the rubric category; generic praise or
+criticism without evidence is invalid.
 
 `tools/design_rating.py assemble` is that aggregator. It revalidates every rater-copied nonce,
 context scope, filename, digest, input role, category range, and raw-response presence against the
-immutable plan before computing a score. A missing or malformed derivation writes a void report and
-exits nonzero; it cannot become a zero delta or a numeric aggregate. `combine` additionally refuses
+immutable plan before computing a score. It also validates repeated-measurement rater identity,
+protocol, validity dates, image and prompt digests, nonce uniqueness, and score ranges before deriving
+a spread. A missing or malformed appearance derivation writes a void report and exits nonzero; it
+cannot become a zero delta or a numeric aggregate. Missing or invalid variation evidence nulls only
+the delta decision. `combine` additionally refuses
 two otherwise-valid reports whose `model_family` values are equal or whose artifact-manifest digests
 differ. Gemini's OpenAI-compatible endpoint and OpenRouter's chat-completions endpoint are supported
 provider transports; the model family remains an explicit, separately checked property of each run.
@@ -658,8 +717,17 @@ digest, creates 14 unique nonces, and records the exact one- or two-image reques
 ```sh
 python3 tools/design_rating.py prepare \
   "$SHIPPING_REFERENCE_ROOT" "$RATING_ROOT/gemini" \
-  --provider gemini --model gemini-2.5-pro --model-family Gemini
+  --provider gemini --model gemini-2.5-pro --model-family Gemini \
+  --within-image-variation-evidence "$RATING_ROOT/gemini-variation.json"
 ```
+
+The variation-evidence JSON records `measurement_protocol`, `derivation_protocol`, the exact
+`provider`/`model_family`/`model`, `measured_on`, `valid_through`, and one or more `measurements`.
+Each measurement contains one image basename and SHA-256, one prompt SHA-256, and at least two
+`samples`, each with a distinct `request_nonce` and integer `taste` from 0 through 100. Preparation
+copies the validated evidence into the immutable plan; assembly revalidates it and derives the
+per-image and maximum spreads. Omitting the option is allowed for a product rating whose appearance
+deltas are deliberately unreported; it yields `null`, never a synthetic zero or a negative finding.
 
 Make each request as its own sequential broker child. `secret exec` resets the child working
 directory, so both the harness and run directory are passed as absolute paths. The credential value

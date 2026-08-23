@@ -26,6 +26,40 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def make_variation_evidence(root: Path, spread: int) -> Path:
+    evidence = root / "within-image-variation.json"
+    today = rating.date.today().isoformat()
+    evidence.write_text(
+        json.dumps(
+            {
+                "measurement_protocol": rating.WITHIN_IMAGE_VARIATION_PROTOCOL,
+                "derivation_protocol": rating.DERIVATION_PROTOCOL,
+                "rater": {
+                    "provider": "gemini",
+                    "model_family": "Gemini",
+                    "model": "gemini-test",
+                },
+                "measured_on": today,
+                "valid_through": today,
+                "measurements": [
+                    {
+                        "image": {
+                            "filename": "noise-floor-sentinel.jpg",
+                            "sha256": digest(b"identical-image-bytes"),
+                        },
+                        "prompt_sha256": digest(b"identical-prompt"),
+                        "samples": [
+                            {"request_nonce": "noise-draw-a", "taste": 50},
+                            {"request_nonce": "noise-draw-b", "taste": 50 + spread},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return evidence
+
+
 def make_artifact(root: Path) -> Path:
     artifact = root / "artifact"
     artifact.mkdir()
@@ -72,9 +106,14 @@ def make_artifact(root: Path) -> Path:
     return artifact
 
 
-def prepare(root: Path, family: str = "Gemini") -> Path:
+def prepare(root: Path, family: str = "Gemini", variation_spread: int | None = None) -> Path:
     artifact = make_artifact(root)
     run = root / "run"
+    variation_evidence = (
+        make_variation_evidence(root, variation_spread)
+        if variation_spread is not None
+        else None
+    )
     rating.prepare_run(
         argparse.Namespace(
             artifact=str(artifact),
@@ -82,6 +121,9 @@ def prepare(root: Path, family: str = "Gemini") -> Path:
             provider="gemini",
             model="gemini-test",
             model_family=family,
+            within_image_variation_evidence=(
+                str(variation_evidence) if variation_evidence is not None else None
+            ),
         )
     )
     return run
@@ -171,6 +213,34 @@ def populate(run: Path, *, failed_calibration: bool = False) -> dict:
     return plan
 
 
+def set_now_playing_delta(run: Path, delta: int) -> None:
+    plan = rating.read_json(run / "plan.json")
+    dark_request = next(
+        request
+        for request in plan["requests"]
+        if request["state"] == "now-playing" and request["appearance"] == "dark"
+    )
+    light_request = next(
+        request
+        for request in plan["requests"]
+        if request["state"] == "now-playing" and request["appearance"] == "light"
+    )
+    dark_record = rating.read_json(run / "records" / rating.record_filename(dark_request))
+    dark_score = rating.taste(dark_record["categories"])
+    if dark_score - delta != 70:
+        raise AssertionError("fixture categories expect the dark score to be 88")
+    light_record_path = run / "records" / rating.record_filename(light_request)
+    light_record = rating.read_json(light_record_path)
+    light_record["categories"] = {
+        "platform_idiom": 15,
+        "hierarchy_and_typography": 14,
+        "spacing_and_density": 14,
+        "state_clarity_and_primary_action": 15,
+        "coherence_and_finish": 12,
+    }
+    light_record_path.write_text(json.dumps(light_record))
+
+
 with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-") as directory:
     root = Path(directory)
     run = prepare(root)
@@ -210,10 +280,40 @@ with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-") as directory:
         raise AssertionError(f"valid isolated records were rejected: {errors}")
     if report["product_taste_score"] != 88:
         raise AssertionError(f"product score was not assembled mechanically: {report}")
-    if report["states"]["now-playing"]["light_dark_delta"] != 1:
-        raise AssertionError("light/dark delta was not assembled from the two records")
+    if report["states"]["now-playing"]["light_dark_delta"] is not None:
+        raise AssertionError("a run without within-image variation evidence emitted a delta")
+    if report["states"]["now-playing"]["light_dark_inconsistency"] is not None:
+        raise AssertionError("a run without within-image variation evidence named an inconsistency")
+    if report["within_image_variation"]["evidence_available"]:
+        raise AssertionError("missing within-image variation evidence was presented as measured")
     if report["lens_scores"] != {"platform_idiom": 22, "information_design": 66}:
         raise AssertionError(f"lens scores were not assembled mechanically: {report['lens_scores']}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-delta-inside-noise-") as directory:
+    root = Path(directory)
+    run = prepare(root, variation_spread=20)
+    populate(run)
+    set_now_playing_delta(run, 18)
+    report, errors = rating.assemble(run)
+    state = report["states"]["now-playing"]
+    if errors or state["light_dark_delta"] != 18:
+        raise AssertionError("evidenced light/dark delta was not assembled mechanically")
+    if report["within_image_variation"]["maximum_observed_spread"] != 20:
+        raise AssertionError("within-image spread was not derived from repeated scores")
+    if state["light_dark_inconsistency"] is not False:
+        raise AssertionError("a delta above 12 but inside measured variation was named")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-delta-above-noise-") as directory:
+    root = Path(directory)
+    run = prepare(root, variation_spread=10)
+    populate(run)
+    set_now_playing_delta(run, 18)
+    report, errors = rating.assemble(run)
+    state = report["states"]["now-playing"]
+    if errors or report["within_image_variation"]["maximum_observed_spread"] != 10:
+        raise AssertionError("valid repeated-image variation evidence was rejected")
+    if state["light_dark_delta"] != 18 or state["light_dark_inconsistency"] is not True:
+        raise AssertionError("a delta genuinely above measured variation was not named")
 
 with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-replace-") as directory:
     root = Path(directory)
