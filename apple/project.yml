@@ -74,6 +74,11 @@ targets:
         CFBundleDisplayName: Dulcet
         CFBundleIconFile: AppIcon
         CFBundleIconName: AppIcon
+        # Dulcet uses only standard TLS (system URLSession) to reach a user-named server,
+        # plus the system Keychain — both are exempt. Declaring it here stops every upload
+        # parking at internalBuildState=MISSING_EXPORT_COMPLIANCE, which silently blocks
+        # TestFlight distribution even after the build is VALID.
+        ITSAppUsesNonExemptEncryption: false
         # XcodeGen defaults these to a literal "1.0"/"1", which silently shipped a version
         # that disagreed with MARKETING_VERSION. Bind them to the build settings instead.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
