@@ -11,7 +11,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixturePassword = "dulcet-ci-canary-password"
 
     func accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction() async throws {
-        try await assertDefaultActionShortcutDelivery()
+        guard try await assertDefaultActionShortcutBisection() else {
+            return
+        }
 
         let request = DulcetAccountConnectRequest(
             serverURL: "https://music.example.invalid",
@@ -209,14 +211,38 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
     }
 
-    private func assertDefaultActionShortcutDelivery() async throws {
+    private func assertDefaultActionShortcutBisection() async throws -> Bool {
+        for variant in DefaultActionShortcutVariant.allCases {
+            let fired = try await defaultActionShortcutFires(variant)
+            print(
+                "ACCOUNT CONNECT DEFAULT ACTION BISECTION variant=\(variant.rawValue)"
+                    + " added=\(variant.addedAttribute)"
+                    + " result=\(fired ? "fired" : "did-not-fire")"
+            )
+            if case .baseline = variant, fired {
+                print("ACCOUNT CONNECT KEYBOARD POSITIVE CONTROL defaultAction=return:fired")
+            }
+            guard fired else {
+                XCTFail(
+                    "Default-action bisection first stopped at \(variant.rawValue)"
+                        + " after adding \(variant.addedAttribute)"
+                )
+                return false
+            }
+        }
+        return true
+    }
+
+    private func defaultActionShortcutFires(
+        _ variant: DefaultActionShortcutVariant
+    ) async throws -> Bool {
         let probe = DefaultActionShortcutProbe()
-        let hostingView = NSHostingView(rootView: Button(
-            "Default Action Shortcut Positive Control",
-            action: probe.fire
-        )
-        .keyboardShortcut(.defaultAction)
-        .onAppear(perform: probe.markAppeared))
+        let hostingView = NSHostingView(rootView: DefaultActionShortcutBisectionControl(
+            variant: variant,
+            fire: probe.fire,
+            markAppeared: probe.markAppeared,
+            markFocused: probe.markFocused
+        ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
         let window = NSWindow(
             contentRect: hostingView.frame,
@@ -232,19 +258,25 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(2),
-            failureMessage: "the default-action shortcut control did not become ready in the key window"
+            failureMessage: "the \(variant.rawValue) shortcut control did not become ready in the key window"
         ) {
-            probe.didAppear && window.isKeyWindow
+            probe.didAppear
+                && window.isKeyWindow
+                && (!variant.requiresFocus || probe.didFocus)
+        }
+        guard probe.didAppear,
+              window.isKeyWindow,
+              !variant.requiresFocus || probe.didFocus else {
+            return false
         }
         try sendKey(.returnKey, to: window)
-        try await waitUntil(
-            timeout: .seconds(2),
-            failureMessage: "NSApp event delivery did not fire the default-action shortcut control"
-        ) {
-            probe.fireCount == 1
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while probe.fireCount == 0 && clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
         }
-        XCTAssertEqual(probe.fireCount, 1)
-        print("ACCOUNT CONNECT KEYBOARD POSITIVE CONTROL defaultAction=return:fired")
+        return probe.fireCount == 1
     }
 
     private func waitUntil(
@@ -316,12 +348,94 @@ private enum KeyboardKey {
     }
 }
 
+private enum DefaultActionShortcutVariant: String, CaseIterable {
+    case baseline
+    case systemImage
+    case borderedProminent
+    case focusedConnect
+    case disabledFalse
+
+    var addedAttribute: String {
+        switch self {
+        case .baseline: "positive-control baseline"
+        case .systemImage: "systemImage: initializer"
+        case .borderedProminent: ".buttonStyle(.borderedProminent)"
+        case .focusedConnect: ".focused(..., equals: .connect)"
+        case .disabledFalse: ".disabled(false)"
+        }
+    }
+
+    var requiresFocus: Bool {
+        switch self {
+        case .focusedConnect, .disabledFalse: true
+        case .baseline, .systemImage, .borderedProminent: false
+        }
+    }
+}
+
+private enum DefaultActionBisectionFocus: Hashable {
+    case connect
+}
+
+private struct DefaultActionShortcutBisectionControl: View {
+    let variant: DefaultActionShortcutVariant
+    let fire: () -> Void
+    let markAppeared: () -> Void
+    let markFocused: () -> Void
+
+    @FocusState private var focusedControl: DefaultActionBisectionFocus?
+
+    var body: some View {
+        Group {
+            switch variant {
+            case .baseline:
+                Button("Default Action Bisection", action: fire)
+                    .keyboardShortcut(.defaultAction)
+            case .systemImage:
+                Button("Default Action Bisection", systemImage: "link", action: fire)
+                    .keyboardShortcut(.defaultAction)
+            case .borderedProminent:
+                Button("Default Action Bisection", systemImage: "link", action: fire)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            case .focusedConnect:
+                Button("Default Action Bisection", systemImage: "link", action: fire)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .focused($focusedControl, equals: .connect)
+            case .disabledFalse:
+                Button("Default Action Bisection", systemImage: "link", action: fire)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .focused($focusedControl, equals: .connect)
+                    .disabled(false)
+            }
+        }
+        .onAppear {
+            markAppeared()
+            if variant.requiresFocus {
+                focusedControl = .connect
+            }
+        }
+        .onChange(of: focusedControl) { _, current in
+            if current == .connect {
+                markFocused()
+            }
+        }
+    }
+}
+
 private final class DefaultActionShortcutProbe {
     private(set) var didAppear = false
+    private(set) var didFocus = false
     private(set) var fireCount = 0
 
     func markAppeared() {
         didAppear = true
+    }
+
+    func markFocused() {
+        didFocus = true
     }
 
     func fire() {
