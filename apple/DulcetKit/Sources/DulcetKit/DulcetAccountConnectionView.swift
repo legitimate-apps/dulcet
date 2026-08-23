@@ -224,6 +224,17 @@ struct DulcetAccountConnectionView: View {
         let returnTimestamp = currentReturnKeyTimestamp
 
         if isConnecting {
+            if let event = NSApp.currentEvent {
+                print(
+                    "ACCOUNT CONNECT CURRENT EVENT state=connecting"
+                        + " type=\(event.type.rawValue)"
+                        + " keyCode=\(event.keyCode)"
+                        + " timestamp=\(event.timestamp)"
+                )
+            } else {
+                print("ACCOUNT CONNECT CURRENT EVENT state=connecting event=nil")
+            }
+
             if let returnTimestamp,
                let submissionTimestamp = lastReturnSubmissionTimestamp {
                 let interval = returnTimestamp - submissionTimestamp
