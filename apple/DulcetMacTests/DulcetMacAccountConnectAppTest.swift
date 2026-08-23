@@ -107,14 +107,52 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
 
         try sendKey(.returnKey, to: window)
-        try await waitUntil(
+        let returnSettlements = ReturnConditionSettlementRecorder()
+        async let stateReached = waitForReturnCondition(
+            .accountConnectingState,
             timeout: .seconds(2),
-            failureMessage: "Return did not invoke Connect or focus the appearing Cancel control"
+            recorder: returnSettlements
         ) {
             store.snapshot.state == .accountConnecting
-                && connector.requests == [request]
-                && observedFocus == .cancel
         }
+        async let requestSubmitted = waitForReturnCondition(
+            .submittedRequest,
+            timeout: .seconds(2),
+            recorder: returnSettlements
+        ) {
+            connector.requests == [request]
+        }
+        async let cancelFocused = waitForReturnCondition(
+            .cancelFocus,
+            timeout: .seconds(2),
+            recorder: returnSettlements
+        ) {
+            observedFocus == .cancel
+        }
+        let (didReachState, didSubmitRequest, didFocusCancel) = try await (
+            stateReached,
+            requestSubmitted,
+            cancelFocused
+        )
+        print(
+            "ACCOUNT CONNECT RETURN SETTLEMENT ORDER "
+                + returnSettlements.order.map(\.rawValue).joined(separator: ">")
+        )
+        XCTAssertTrue(
+            didReachState,
+            "Return state mismatch; expected=\(DulcetPresentationState.accountConnecting.rawValue)"
+                + " actual=\(store.snapshot.state.rawValue)"
+        )
+        XCTAssertTrue(
+            didSubmitRequest,
+            "Return request mismatch; expected=\(requestDiagnostic([request]))"
+                + " actual=\(requestDiagnostic(connector.requests))"
+        )
+        XCTAssertTrue(
+            didFocusCancel,
+            "Return focus mismatch; expected=\(DulcetAccountConnectionFocus.cancel.rawValue)"
+                + " actual=\(observedFocus?.rawValue ?? "nil")"
+        )
 
         try sendKey(.escape, to: window)
         try await waitUntil(
@@ -279,6 +317,40 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         return probe.fireCount == 1
     }
 
+    private func waitForReturnCondition(
+        _ conditionName: ReturnCondition,
+        timeout: Duration,
+        recorder: ReturnConditionSettlementRecorder,
+        condition: @MainActor () -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition() {
+            if clock.now >= deadline {
+                return false
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        recorder.record(conditionName)
+        return true
+    }
+
+    private func requestDiagnostic(
+        _ requests: [DulcetAccountConnectRequest]
+    ) -> String {
+        let entries = requests.map { request in
+            // The password is deliberately reduced to a length. This repository has a control
+            // forbidding credential values in diagnostics, and CI logs are the widest surface here;
+            // server, username and the local-HTTP flag already identify which request was submitted.
+            "{serverURL=\(request.serverURL.debugDescription),"
+                + " username=\(request.username.debugDescription),"
+                + " password=<redacted length=\(request.password.count)>,"
+                + " allowLocalHTTP=\(request.allowLocalHTTP)}"
+        }
+        .joined(separator: ", ")
+        return "[" + entries + "]"
+    }
+
     private func waitUntil(
         timeout: Duration,
         failureMessage: String,
@@ -345,6 +417,28 @@ private enum KeyboardKey {
         case .returnKey: 36
         case .escape: 53
         }
+    }
+}
+
+private enum ReturnCondition: String, Sendable {
+    case accountConnectingState = "state:accountConnecting"
+    case submittedRequest = "request:expected"
+    case cancelFocus = "focus:cancel"
+}
+
+@MainActor
+private final class ReturnConditionSettlementRecorder {
+    private(set) var order: [ReturnCondition] = []
+
+    func record(_ condition: ReturnCondition) {
+        guard !order.contains(where: { $0.rawValue == condition.rawValue }) else {
+            return
+        }
+        order.append(condition)
+        print(
+            "ACCOUNT CONNECT RETURN CONDITION settled=\(condition.rawValue)"
+                + " sequence=\(order.count)"
+        )
     }
 }
 
