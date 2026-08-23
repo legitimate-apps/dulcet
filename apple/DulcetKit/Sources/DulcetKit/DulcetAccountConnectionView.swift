@@ -43,6 +43,11 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
+        .onExitCommand {
+            if isConnecting {
+                store.cancelAccountConnection()
+            }
+        }
         .onAppear {
             if focusedControl == nil {
                 focusedControl = preferredFocus(for: store.snapshot.accountConnection)
@@ -207,7 +212,7 @@ struct DulcetAccountConnectionView: View {
             )
         }
         .buttonStyle(.borderedProminent)
-        .keyboardShortcut(isConnecting ? .cancelAction : .defaultAction)
+        .keyboardShortcut(.defaultAction)
         .focused($focusedControl, equals: .primaryAction)
         .disabled(
             !isConnecting

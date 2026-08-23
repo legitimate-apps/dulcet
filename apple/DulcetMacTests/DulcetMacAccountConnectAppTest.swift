@@ -136,7 +136,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         try await waitUntil(
             timeout: .seconds(2),
             failureMessage:
-                "Escape did not invoke the focused Primary Action's connecting-state Cancel behavior"
+                "Escape did not invoke the container's connecting-state Cancel behavior"
         ) {
             store.snapshot.state == .accountConnectIdle
                 && connector.operation.cancelCount == 1
@@ -146,7 +146,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         // Exact equality rejects any transient repair to another control after Return. The single
         // primaryAction entry spans Connect and Cancel; the Escape assertion above proves that the
-        // focused control's connecting-state behavior is cancellation, not another submission.
+        // container command cancels without another submission while that focus identity persists.
         let expectedTrace: [DulcetAccountConnectionFocus] = [
             .serverAddress,
             .username,
