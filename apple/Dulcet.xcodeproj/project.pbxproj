@@ -7,15 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		2723D0C22BCD528997E3C104 /* Dulcet.icns in Resources */ = {isa = PBXBuildFile; fileRef = CA96BA2B1C181C07A05703A4 /* Dulcet.icns */; };
 		766392F104BA53385E1EDE0A /* DulcetiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */; };
 		8AA8E65222954385019CD5BB /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6DE0C20386451D8B4373D34B /* DulcetKit */; };
+		94B6E35A838EE7F75D5E3B8B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 116988D686EC0EBE59D64078 /* Assets.xcassets */; };
 		9A94A6EBD306C1893B42ED29 /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
 		A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
 		BAFBB629BB389F4FE6AEC78F /* DulcetMacAccountConnectAppTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708A2DD03E359D16B2324C1E /* DulcetMacAccountConnectAppTest.swift */; };
 		D1FDC52FA25891E2A0F20D31 /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0A25BB9EEB3AB1E17FEE1738 /* DulcetKit */; };
-		DA17D20EEAB24F9F44261BCF /* Dulcet.icns in Resources */ = {isa = PBXBuildFile; fileRef = CA96BA2B1C181C07A05703A4 /* Dulcet.icns */; };
 		DAEC526296EF1D0C4EE616AA /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = BCF207739462B00BB245C6C8 /* DulcetKit */; };
+		E82522968B7D9F724CE5310A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 116988D686EC0EBE59D64078 /* Assets.xcassets */; };
 		F102F29962BAFAAE1D0152DF /* DulcetTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */; };
 /* End PBXBuildFile section */
 
@@ -30,6 +30,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		116988D686EC0EBE59D64078 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		355F8AE988967610CF1A480F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		38AD664A62CF5D87788543B0 /* DulcetMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DulcetMac.entitlements; sourceTree = "<group>"; };
 		41D4E46A00FEC9EC06B9005F /* DulcetMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DulcetMacRelease.entitlements; sourceTree = "<group>"; };
@@ -41,7 +42,6 @@
 		B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetTVApp.swift; sourceTree = "<group>"; };
 		BEEA9FDD39E4CA2FF12180FC /* DulcetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DulcetKit; path = DulcetKit; sourceTree = SOURCE_ROOT; };
 		C94F682F0DA4A7A7D82934B3 /* DulcetiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		CA96BA2B1C181C07A05703A4 /* Dulcet.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Dulcet.icns; sourceTree = "<group>"; };
 		D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetiOSApp.swift; sourceTree = "<group>"; };
 		EBEE55499C6E454B3A373AE1 /* DulcetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DulcetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -101,7 +101,7 @@
 		52787862A6A396B435831CF7 /* DulcetMac */ = {
 			isa = PBXGroup;
 			children = (
-				CA96BA2B1C181C07A05703A4 /* Dulcet.icns */,
+				116988D686EC0EBE59D64078 /* Assets.xcassets */,
 				38AD664A62CF5D87788543B0 /* DulcetMac.entitlements */,
 				55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */,
 				41D4E46A00FEC9EC06B9005F /* DulcetMacRelease.entitlements */,
@@ -305,7 +305,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2723D0C22BCD528997E3C104 /* Dulcet.icns in Resources */,
+				94B6E35A838EE7F75D5E3B8B /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -313,7 +313,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DA17D20EEAB24F9F44261BCF /* Dulcet.icns in Resources */,
+				E82522968B7D9F724CE5310A /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -543,7 +543,7 @@
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -567,7 +567,7 @@
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

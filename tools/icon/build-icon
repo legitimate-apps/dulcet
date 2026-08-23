@@ -1,21 +1,28 @@
 #!/bin/bash
-# Regenerate apple/DulcetMac/Dulcet.icns from tools/icon/dulcet.svg.
-# The .icns is committed so the build never depends on cairosvg being installed.
+# Regenerate the AppIcon asset catalog from tools/icon/dulcet.svg.
+# The PNGs are committed so the build never depends on cairosvg being installed.
+# NOTE: the Mac App Store requires an ASSET CATALOG — a bare .icns is rejected with
+# ITMS-90546 "Missing asset catalog", which is exactly how build 1 failed.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+SET="$REPO/apple/DulcetMac/Assets.xcassets/AppIcon.appiconset"
 python3 -c "
-import cairosvg
+import cairosvg, json, os
 cairosvg.svg2png(url='$HERE/dulcet.svg', write_to='$WORK/icon_1024.png',
                  output_width=1024, output_height=1024)
 from PIL import Image
 src = Image.open('$WORK/icon_1024.png').convert('RGBA')
-import os; os.makedirs('$WORK/Dulcet.iconset', exist_ok=True)
-for px, name in [(16,'16x16'),(32,'16x16@2x'),(32,'32x32'),(64,'32x32@2x'),
-                 (128,'128x128'),(256,'128x128@2x'),(256,'256x256'),
-                 (512,'256x256@2x'),(512,'512x512'),(1024,'512x512@2x')]:
-    src.resize((px,px), Image.LANCZOS).save(f'$WORK/Dulcet.iconset/icon_{name}.png')
+pairs = [('16x16','1x',16),('16x16','2x',32),('32x32','1x',32),('32x32','2x',64),
+         ('128x128','1x',128),('128x128','2x',256),('256x256','1x',256),
+         ('256x256','2x',512),('512x512','1x',512),('512x512','2x',1024)]
+images = []
+for size, scale, px in pairs:
+    fn = 'icon_%s%s.png' % (size, '@2x' if scale == '2x' else '')
+    src.resize((px, px), Image.LANCZOS).save(os.path.join('$SET', fn))
+    images.append({'size': size, 'idiom': 'mac', 'filename': fn, 'scale': scale})
+json.dump({'images': images, 'info': {'version': 1, 'author': 'xcode'}},
+          open(os.path.join('$SET', 'Contents.json'), 'w'), indent=2)
 "
-iconutil -c icns "$WORK/Dulcet.iconset" -o "$REPO/apple/DulcetMac/Dulcet.icns"
-echo "wrote apple/DulcetMac/Dulcet.icns"
+echo "wrote $SET"

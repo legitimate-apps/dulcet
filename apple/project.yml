@@ -54,12 +54,16 @@ targets:
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMacRelease.entitlements
+        # The Mac App Store REQUIRES an asset catalog (ITMS-90546 rejects a bare .icns),
+        # so actool must run. Dulcet has no .colorset, which is the input that deadlocks
+        # actool when CoreSimulator is wedged — an .appiconset alone is safe.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
         PROVISIONING_PROFILE_SPECIFIER: "Dulcet Mac App Store"
         MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "2"
     info:
       # An explicit plist, NOT INFOPLIST_KEY_* settings: that mechanism only honours a fixed
       # allowlist, and CFBundleIconFile/CFBundleIconName are not on it — they were silently
@@ -68,8 +72,8 @@ targets:
       properties:
         CFBundleDevelopmentRegion: en
         CFBundleDisplayName: Dulcet
-        CFBundleIconFile: Dulcet
-        CFBundleIconName: Dulcet
+        CFBundleIconFile: AppIcon
+        CFBundleIconName: AppIcon
         # XcodeGen defaults these to a literal "1.0"/"1", which silently shipped a version
         # that disagreed with MARKETING_VERSION. Bind them to the build settings instead.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
