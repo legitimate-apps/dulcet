@@ -324,8 +324,19 @@ def build_report(run_a_root: Path, run_b_root: Path, output: Path) -> dict[str, 
 
 
 def summary_lines(report: dict[str, Any]) -> list[str]:
+    # Report the gate from the measurement rather than hardcoding FAIL. This tool is
+    # normally reached only after a failed recursive diff, which is why the verdict used
+    # to be a literal — but it is also run directly to confirm a fix, and a line reading
+    # "exact-byte-gate=FAIL differing-files=0 differing-images=0" contradicts itself.
+    # A verdict that cannot say PASS carries no information, and it costs a reader real
+    # time at exactly the moment they are debugging a capture mismatch under pressure.
+    gate = (
+        "FAIL"
+        if report["differingFileCount"] or report["measurementErrorCount"]
+        else "PASS"
+    )
     lines = [
-        "DESIGN CAPTURE FORENSICS exact-byte-gate=FAIL "
+        f"DESIGN CAPTURE FORENSICS exact-byte-gate={gate} "
         f'differing-files={report["differingFileCount"]} '
         f'differing-images={report["differingImageCount"]} '
         f'measurement-errors={report["measurementErrorCount"]}'
