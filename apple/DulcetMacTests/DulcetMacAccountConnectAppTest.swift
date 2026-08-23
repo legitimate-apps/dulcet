@@ -170,6 +170,107 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
     }
 
+    func accountConnectDoubleReturnKeepsSingleConnectionActive() async throws {
+        let request = DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid",
+            username: "listener",
+            password: "fixture-password",
+            allowLocalHTTP: true
+        )
+        let connector = KeyboardTraceAccountConnector()
+        let source = DulcetAccountDataSource(
+            connector: connector,
+            initialRequest: request
+        )
+        let store = DulcetPresentationStore(source: source)
+        var observedFocus: DulcetAccountConnectionFocus?
+        let hostingView = NSHostingView(rootView: DulcetAccountConnectionView(
+            store: store,
+            focusDidChange: { observedFocus = $0 }
+        ))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 650)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        hostingView.layoutSubtreeIfNeeded()
+        XCTAssertTrue(
+            NSApplication.shared.isFullKeyboardAccessEnabled,
+            "apple-ci must enable macOS Full Keyboard Access for all-control traversal"
+        )
+
+        try await waitUntil(
+            timeout: .seconds(5),
+            failureMessage: "the double-Return control did not initially focus Server Address"
+        ) {
+            observedFocus == .serverAddress
+        }
+
+        for expected in [
+            DulcetAccountConnectionFocus.username,
+            .password,
+            .allowLocalHTTP,
+            .primaryAction,
+        ] {
+            try sendKey(.tab, to: window)
+            try await waitUntil(
+                timeout: .seconds(2),
+                failureMessage: "Tab did not move double-Return focus to \(expected.rawValue)"
+            ) {
+                observedFocus == expected
+            }
+        }
+
+        // Keep the activations back-to-back: the control exercises the real event path without
+        // waiting for SwiftUI to settle the connecting presentation between the two key presses.
+        try sendKey(.returnKey, to: window)
+        try sendKey(.returnKey, to: window)
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(
+            store.snapshot.state,
+            .accountConnecting,
+            "a second Return must leave the submitted connection active"
+        )
+        XCTAssertEqual(
+            connector.requests,
+            [request],
+            "a second Return must not submit a replacement connection; actual=\(requestDiagnostic(connector.requests))"
+        )
+        XCTAssertEqual(
+            connector.operation.cancelCount,
+            0,
+            "a second Return must not cancel the connection it just started"
+        )
+        XCTAssertEqual(
+            observedFocus,
+            .primaryAction,
+            "the primary action must retain focus across both Return activations"
+        )
+
+        try sendKey(.escape, to: window)
+        try await waitUntil(
+            timeout: .seconds(2),
+            failureMessage: "Escape did not cancel the surviving double-Return connection exactly once"
+        ) {
+            store.snapshot.state == .accountConnectIdle
+                && connector.operation.cancelCount == 1
+                && connector.requests == [request]
+                && observedFocus == .primaryAction
+        }
+
+        print(
+            "ACCOUNT CONNECT DOUBLE RETURN actions=return:connect>return:ignored>escape:cancel"
+                + " requests=1 cancellations=1"
+        )
+    }
+
     func connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState() async throws {
         let baseURL = try XCTUnwrap(
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
