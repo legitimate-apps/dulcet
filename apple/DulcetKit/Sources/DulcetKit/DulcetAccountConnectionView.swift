@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 enum DulcetAccountConnectionFocus: String, Sendable {
@@ -13,6 +14,7 @@ enum DulcetAccountConnectionFocus: String, Sendable {
 struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
+    @State private var lastReturnSubmissionTimestamp: TimeInterval?
 
     private let focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)?
 
@@ -200,11 +202,7 @@ struct DulcetAccountConnectionView: View {
 
     private var accountPrimaryAction: some View {
         Button(role: isConnecting ? .cancel : nil) {
-            if isConnecting {
-                store.cancelAccountConnection()
-            } else {
-                store.submitAccountConnection()
-            }
+            performAccountPrimaryAction()
         } label: {
             Label(
                 isConnecting ? DulcetStrings.cancel : DulcetStrings.connect,
@@ -220,6 +218,38 @@ struct DulcetAccountConnectionView: View {
                     || store.accountUsername.isEmpty
                     || store.accountPassword.isEmpty)
         )
+    }
+
+    private func performAccountPrimaryAction() {
+        let returnTimestamp = currentReturnKeyTimestamp
+
+        if isConnecting {
+            if let returnTimestamp,
+               let submissionTimestamp = lastReturnSubmissionTimestamp {
+                let interval = returnTimestamp - submissionTimestamp
+                if interval >= 0, interval <= NSEvent.doubleClickInterval {
+                    // A rapid second Return belongs to the activation that submitted this
+                    // connection. Consume only that keyboard repeat; pointer activation and a
+                    // later deliberate Return still reach the real Cancel action.
+                    return
+                }
+            }
+
+            lastReturnSubmissionTimestamp = nil
+            store.cancelAccountConnection()
+        } else {
+            lastReturnSubmissionTimestamp = returnTimestamp
+            store.submitAccountConnection()
+        }
+    }
+
+    private var currentReturnKeyTimestamp: TimeInterval? {
+        guard let event = NSApp.currentEvent,
+              event.type == .keyDown,
+              event.keyCode == 36 || event.keyCode == 76 else {
+            return nil
+        }
+        return event.timestamp
     }
 
     private func failurePanel(_ failure: DulcetAccountFailurePresentation) -> some View {
