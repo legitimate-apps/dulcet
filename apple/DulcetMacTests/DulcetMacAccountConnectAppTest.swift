@@ -313,14 +313,14 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
     private func waitUntil(
         timeout: Duration,
-        failureMessage: String,
+        failureMessage: @autoclosure () -> String,
         condition: @MainActor () -> Bool
     ) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while !condition() {
             if clock.now >= deadline {
-                XCTFail(failureMessage)
+                XCTFail(failureMessage())
                 return
             }
             try await Task.sleep(for: .milliseconds(50))
