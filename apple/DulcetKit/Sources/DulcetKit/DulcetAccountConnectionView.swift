@@ -52,7 +52,8 @@ struct DulcetAccountConnectionView: View {
         .onChange(of: store.snapshot.accountConnection) { previous, current in
             switch (previous, current) {
             case (_, .connecting):
-                focusedControl = .cancel
+                // The replacement connecting branch owns its focus destination once it exists.
+                break
             case (.connecting, .idle):
                 focusedControl = .connect
             case (_, .failed):
@@ -168,6 +169,10 @@ struct DulcetAccountConnectionView: View {
             .padding(DulcetSpacing.md)
             .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
             .dulcetForeground(.primaryTextOnControl)
+            // Return removes the focused Connect button as this branch appears. Declare Cancel as
+            // the destination for that user-initiated relocation so focus cannot fall back into
+            // the preceding form controls while the connection is in flight.
+            .defaultFocus($focusedControl, .cancel, priority: .userInitiated)
         case let .connected(account):
             Label {
                 VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
