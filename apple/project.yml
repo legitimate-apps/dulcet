@@ -41,6 +41,34 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetMacRelease:
+    type: application
+    platform: macOS
+    sources:
+      - DulcetMac
+    dependencies:
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet
+        PRODUCT_MODULE_NAME: DulcetMac
+        PRODUCT_NAME: Dulcet
+        CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMacRelease.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_KEY_CFBundleDisplayName: Dulcet
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
   DulcetMacTests:
     type: bundle.unit-test
     platform: macOS
@@ -105,3 +133,9 @@ schemes:
         - variable: DULCET_CONFORMANCE_BASE_URL
           value: "$(DULCET_TEST_CONFORMANCE_BASE_URL)"
           isEnabled: true
+  DulcetMacRelease:
+    build:
+      targets:
+        DulcetMacRelease: all
+    archive:
+      config: Release

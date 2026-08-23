@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for TestFlight and Mac App Store distribution. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- Dulcet connects out to a music server the person names. It never listens, so
+         com.apple.security.network.server is deliberately NOT granted. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Credentials live in the data-protection Keychain under the production identity. -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.legitimateapps.dulcet</string>
+    </array>
+</dict>
+</plist>
