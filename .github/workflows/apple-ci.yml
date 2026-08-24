@@ -420,10 +420,22 @@ jobs:
           # platform's run is cited as another's evidence, so account.connect/ios
           # names THIS run. The simulator shares the host loopback, so it reaches
           # the same 4533/4540/4542 servers the macOS run uses.
+          #
+          # It does NOT share the host ENVIRONMENT. The macOS suite runs as a host
+          # process and inherits these variables; the iOS binary runs inside the
+          # simulator, where getenv() sees nothing, so requiredEnvironment() threw
+          # and 18 of 33 tests failed with IllegalStateException while macOS passed
+          # 35/35. Per `simctl help spawn`, variables reach a simulator process only
+          # with a SIMCTL_CHILD_ prefix, which simctl strips on the way in. Measured
+          # locally on one simulator, same command, prefix the only difference:
+          # 18 IllegalStateException without it, 0 with it.
           conformance_sim="$(xcrun simctl create \
             dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
           xcrun simctl boot "$conformance_sim"
-          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+          SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
+            SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
