@@ -143,6 +143,24 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.tests
+    preBuildScripts:
+      # This bundle links -framework DulcetCore (project-wide OTHER_LDFLAGS) and resolves it from
+      # BUILT_PRODUCTS_DIR, where it is placed only by a "Compile Kotlin Framework" phase. Without
+      # a phase of its own the bundle had no ordering guarantee against DulcetiOS's copy, and on a
+      # clean DerivedData it always lost: the Kotlin link takes ~80s while this target's Swift
+      # compile takes ~13s, so ld ran first and CI failed with "framework 'DulcetCore' not found"
+      # while a warm local tree passed. Its macOS twin is app-hosted (TEST_HOST + a dependency on
+      # DulcetMac), which serialises it for free; these iOS tests are deliberately NOT app-hosted
+      # — DulcetCore is a STATIC framework, so it is needed at link time only — hence its own phase
+      # rather than a host. Concurrent gradle invocations serialise on gradle's own build lock.
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
   DulcetTV:
     type: application
     platform: tvOS

@@ -200,6 +200,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = DAEE0BFE83D576244DC26A86 /* Build configuration list for PBXNativeTarget "DulcetKitIOSTests" */;
 			buildPhases = (
+				0B1768A6011E8E877E925CF7 /* Compile Kotlin Framework */,
 				929A278BA40D7641CCDF8B23 /* Sources */,
 				6BF846706E783F1CF872D204 /* Frameworks */,
 			);
@@ -398,6 +399,25 @@
 
 /* Begin PBXShellScriptBuildPhase section */
 		0279D14F4C29492E2B1BB3E7 /* Compile Kotlin Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Compile Kotlin Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+		};
+		0B1768A6011E8E877E925CF7 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
