@@ -153,6 +153,17 @@ def formula_shape(formula: dict, bottle_tag: str) -> dict:
     }
 
 
+def keg_version(entry: dict) -> str:
+    """Homebrew's on-disk keg name for a pinned entry.
+
+    Homebrew appends the formula revision to the keg directory and to the version it reports in
+    `brew info --json`, so a revision-1 build of 9.0.1 installs as "9.0.1_1" while the upstream
+    version stays "9.0.1". Everything that names a KEG must use this; anything comparing the
+    version the built binary reports about itself must not.
+    """
+    return entry["version"] if entry["revision"] == 0 else f"{entry['version']}_{entry['revision']}"
+
+
 def assert_locked_graph(closure: list[dict], root_formula: str) -> None:
     by_name = {entry["formula"]: entry for entry in closure}
     if len(by_name) != len(closure):
@@ -196,6 +207,12 @@ def main() -> None:
     names = [entry["formula"] for entry in closure]
     observed_keg_hashes: dict[str, str] = {}
     observed_live_closure: list[dict] = []
+    # Report EVERY drifted formula, not just the first. Exiting on the first mismatch reports one
+    # name while hiding the rest, and whoever refreshes the pin from that message refreshes only
+    # what it printed — then burns another full CI run to discover the next one. Measured
+    # 2026-08-24: the error named x265 alone, while ffmpeg had also been rebuilt (revision 0 -> 1)
+    # against it. The check is unchanged and still fails closed; only its reporting is complete.
+    live_drift: list[tuple[str, dict, dict]] = []
     for expected in closure:
         name = expected["formula"]
         quoted_name = urllib.parse.quote(name, safe="")
@@ -205,8 +222,14 @@ def main() -> None:
             live_formula = json.load(response)
         live = formula_shape(live_formula, expected["bottle_tag"])
         if live != expected:
-            raise SystemExit(f"Homebrew live formula drift for {name}: expected {expected}, observed {live}")
+            live_drift.append((name, expected, live))
         observed_live_closure.append(live)
+    if live_drift:
+        report = [f"Homebrew live formula drift in {len(live_drift)} of {len(closure)} pinned formulae:"]
+        for name, expected, live in live_drift:
+            fields = sorted(key for key in set(expected) | set(live) if expected.get(key) != live.get(key))
+            report.append(f"  {name}: " + ", ".join(f"{key} {expected.get(key)!r} -> {live.get(key)!r}" for key in fields))
+        raise SystemExit("\n".join(report))
 
     run(["brew", "update"])
     local_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
@@ -240,7 +263,7 @@ def main() -> None:
     keg_paths = {
         expected["formula"]: (
             Path(run(["brew", "--cellar", expected["formula"]], capture=True))
-            / expected["version"]
+            / keg_version(expected)
         )
         for expected in closure
     }
@@ -270,17 +293,19 @@ def main() -> None:
         installed = [
             record
             for record in installed_by_name[name]["installed"]
-            if record.get("version") == expected["version"]
+            if record.get("version") == keg_version(expected)
         ]
         if not installed:
-            raise SystemExit(f"locked Homebrew formula is not installed: {name} {expected['version']}")
+            raise SystemExit(
+                f"locked Homebrew formula is not installed: {name} {keg_version(expected)}"
+            )
         record = installed[-1]
         if record.get("built_as_bottle") is not True or record.get("poured_from_bottle") is not True:
             raise SystemExit(f"locked Homebrew formula was not installed from a bottle: {name}")
         active_prefix = Path(run(["brew", "--prefix", name], capture=True)).resolve()
-        if active_prefix.name != expected["version"]:
+        if active_prefix.name != keg_version(expected):
             raise SystemExit(
-                f"active Homebrew keg drift for {name}: expected {expected['version']}, "
+                f"active Homebrew keg drift for {name}: expected {keg_version(expected)}, "
                 f"observed {active_prefix.name}"
             )
         postinstall_keg = observe_keg(active_prefix)
@@ -342,10 +367,11 @@ def main() -> None:
         f"payload_hashes_match_second_in_run=true aggregate_sha256={installed_digest}"
     )
 
+    root_entry = next(entry for entry in closure if entry["formula"] == ffmpeg["formula"])
     root_record = next(
         record
         for record in installed_by_name[ffmpeg["formula"]]["installed"]
-        if record.get("version") == ffmpeg["version"]
+        if record.get("version") == keg_version(root_entry)
     )
     observed_runtime = {
         dependency["full_name"]: {
@@ -361,11 +387,7 @@ def main() -> None:
             "version": entry["version"],
             "revision": entry["revision"],
             "bottle_rebuild": entry["bottle_rebuild"],
-            "pkg_version": (
-                entry["version"]
-                if entry["revision"] == 0
-                else f"{entry['version']}_{entry['revision']}"
-            ),
+            "pkg_version": keg_version(entry),
         }
         for entry in closure
         if entry["formula"] != ffmpeg["formula"]
