@@ -2988,12 +2988,12 @@ developer-identity display requirements that must be checked against §24.1 befo
 ### 24.1 Identity — binding, no exceptions
 
 - Repo under the **`legitimate-apps`** org; push via the **`github-legit`** SSH alias.
-- **Commits authored as `new-usemame`, per-command, never global git config:**
+- **Commits authored as `legitimate-apps`, per-command, never global git config:**
   ```
-  git -c user.name='new-usemame' \
-      -c user.email='248195428+new-usemame@users.noreply.github.com' commit ...
+  git -c user.name='legitimate-apps' \
+      -c user.email='309192374+legitimate-apps@users.noreply.github.com' commit ...
   ```
-- Public-safe: the `new-usemame` handle, `Legitimate LLC`, the Apple team id, the
+- Public-safe: the `legitimate-apps` handle, `Legitimate LLC`, the Apple team id, the
   `com.legitimateapps.*` bundle namespace, and `${DOMAIN}` once purchased.
 - 🚨 **Namespace discipline.** Dulcet ships under `com.legitimateapps.dulcet` (Legitimate LLC), and
   that prefix is immutable once an App Store Connect record exists. **Never publish this app under any

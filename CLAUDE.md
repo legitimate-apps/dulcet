@@ -49,10 +49,10 @@ measured — several CONF tests exist precisely to do that promotion.
 ## Identity — binding, no exceptions
 
 - Repo: `legitimate-apps/dulcet`. Push via the **`github-legit`** SSH alias.
-- **Commit as `new-usemame`, per-command, never global git config:**
+- **Commit as `legitimate-apps`, per-command, never global git config:**
   ```
-  git -c user.name='new-usemame' \
-      -c user.email='248195428+new-usemame@users.noreply.github.com' commit -m "..."
+  git -c user.name='legitimate-apps' \
+      -c user.email='309192374+legitimate-apps@users.noreply.github.com' commit -m "..."
   ```
 - Apple signing: **Legitimate LLC, team 3LTL47SJ8C**. Bundle IDs under
   **`com.legitimateapps.dulcet`** — decided, and **deliberately independent of the marketing domain**,
@@ -66,7 +66,7 @@ measured — several CONF tests exist precisely to do that promotion.
   only support/privacy URLs and marketing, and **gates nothing** — not the signing dry run, not an App
   Store Connect record. `${DOMAIN}` and `${BUNDLE_PREFIX}` are defined in exactly one place, the spec's
   header block; never hard-code either value anywhere else.
-- Public-safe: `new-usemame`, `Legitimate LLC`, the team id, the `com.legitimateapps.*` namespace, and
+- Public-safe: `legitimate-apps`, `Legitimate LLC`, the team id, the `com.legitimateapps.*` namespace, and
   the product domain once purchased.
 - **Never anywhere public** — including code comments, plists, commit metadata, listing copy, DNS and
   cert metadata: the maintainer's legal name, home address, system username, and any prior online
@@ -285,10 +285,10 @@ other approves it.
 **Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
 commit to the *pull request's* author, not to the commit author. Opening from an account whose
 address is not a `noreply` one writes that address into a public commit on `main` — it happened once,
-commit `0e3566e`. **Open pull requests as `new-usemame`.**
+commit `0e3566e`. **Open pull requests as `legitimate-apps`.**
 
 Pull-request authorship and commit authorship are separate fields. Commits are authored
-`new-usemame` by the convention in *Identity* above; that is an instruction here, not something
+`legitimate-apps` by the convention in *Identity* above; that is an instruction here, not something
 GitHub enforces.
 
 `@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams —

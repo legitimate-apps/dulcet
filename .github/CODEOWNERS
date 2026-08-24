@@ -1,3 +1,3 @@
-* @new-usemame @legitimate-apps
-/FEATURES.yml @new-usemame @legitimate-apps
-/.github/CODEOWNERS @new-usemame @legitimate-apps
+* @legitimate-apps
+/FEATURES.yml @legitimate-apps
+/.github/CODEOWNERS @legitimate-apps

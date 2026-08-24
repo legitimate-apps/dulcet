@@ -87,7 +87,7 @@ Binding. A violation is a stop-work, not a style note.
     them and the scrobble accounting races.
 11. **Reads are pinned to a committed sync generation.** A partially completed scan is never visible.
 12. **Identity separation.** Repo under `legitimate-apps` (`github-legit`), commits authored as
-    `new-usemame` **per-command, never global config**, Apple team 3LTL47SJ8C (Legitimate LLC). The
+    `legitimate-apps` **per-command, never global config**, Apple team 3LTL47SJ8C (Legitimate LLC). The
     maintainer's legal name, home address and system username appear nowhere — not in code, commits,
     listings, plists, DNS or comments. **The literal values are not written down here**, because a
     prohibition that names its target publishes its target.
