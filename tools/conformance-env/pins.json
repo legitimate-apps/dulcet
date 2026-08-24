@@ -112,11 +112,11 @@
           "sha256": "b631667b5ad55c6c3ae383484f658c5b4ba14da8a2fbb1d537975695852529ca"
         },
         {
-          "formula": "x265", "version": "4.2", "revision": 0,
+          "formula": "x265", "version": "4.3", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
           "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/x265/blobs/sha256:ee3075f8af9807bdb30a890b22c1e948a5930f6001c7123eb57faa87c4d15c85",
-          "sha256": "ee3075f8af9807bdb30a890b22c1e948a5930f6001c7123eb57faa87c4d15c85"
+          "url": "https://ghcr.io/v2/homebrew/core/x265/blobs/sha256:844a99704d4b41e0b33331b795d3a0bba7756001f68c1925dc3dea88d5aa3a18",
+          "sha256": "844a99704d4b41e0b33331b795d3a0bba7756001f68c1925dc3dea88d5aa3a18"
         },
         {
           "formula": "xz", "version": "5.8.3", "revision": 0,
@@ -126,12 +126,12 @@
           "sha256": "55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5"
         },
         {
-          "formula": "ffmpeg", "version": "9.0.1", "revision": 0,
+          "formula": "ffmpeg", "version": "9.0.1", "revision": 1,
           "version_scheme": 0,
           "dependencies": ["dav1d", "lame", "libvmaf", "libvpx", "openssl@3", "opus", "sdl2-compat", "svt-av1", "x264", "x265", "xz"],
           "bottle_tag": "arm64_tahoe", "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080",
-          "sha256": "ef92660f6622395d2d5de0c4c5e23747e99cdc5cf82f257f6eb401d222e9f080"
+          "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:24f31aa47b7cb0aa5ce042023073ca08c342f9c2198edc0819adc1e28e0f5168",
+          "sha256": "24f31aa47b7cb0aa5ce042023073ca08c342f9c2198edc0819adc1e28e0f5168"
         }
       ]
     }
