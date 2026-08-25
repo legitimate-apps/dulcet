@@ -239,15 +239,22 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-swift-testing.log" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
             DulcetKitIOSTests
-      - name: Build tvOS shell
-        run: >-
-          xcodebuild build
-          -project apple/Dulcet.xcodeproj
-          -scheme DulcetTV
-          -configuration Debug
-          -destination 'generic/platform=tvOS Simulator'
-          -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData"
-          CODE_SIGNING_ALLOWED=NO
+      - name: Build DulcetTV and test DulcetKit on tvOS
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetTV \
+            -configuration Debug \
+            -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetKitTVOSTests 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-tvos-swift-testing.log"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing.log" \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit/TEST-DulcetKitTVOSTests.xml" \
+            DulcetKitTVOSTests
       - name: Assert Kotlin and Xcode OS floors
         run: >-
           python3 tools/verify_os_floors.py
@@ -347,7 +354,7 @@ jobs:
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
-          for attempt in {1..20}; do
+          for _ in {1..20}; do
             if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
               curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null && \
               curl --fail --silent http://127.0.0.1:4543/health >/dev/null; then break; fi
@@ -447,11 +454,30 @@ jobs:
             -Pdulcet.iosSimulatorUdid="$conformance_sim"
           xcrun simctl shutdown "$conformance_sim" || true
           xcrun simctl delete "$conformance_sim" || true
+          # Same shared conformance suite again, this time compiled and executed
+          # as a tvOS test binary. Keep its simulator identity and result directory
+          # separate so tvOS evidence cannot be substituted by an iOS run.
+          tvos_conformance_sim="$(xcrun simctl create \
+            dulcet-tvos-conformance \
+            com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p)"
+          xcrun simctl boot "$tvos_conformance_sim"
+          SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
+            SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
+            DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            ./gradlew --no-daemon :core-conformance:tvosSimulatorArm64Test \
+            -Pdulcet.tvosSimulatorUdid="$tvos_conformance_sim"
+          xcrun simctl shutdown "$tvos_conformance_sim" || true
+          xcrun simctl delete "$tvos_conformance_sim" || true
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test \
             core-conformance/build/test-results/iosSimulatorArm64Test \
+            core-conformance/build/test-results/tvosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit"
+            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit"
       - name: Upload macosArm64 core-conformance JUnit results
         if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -466,5 +492,13 @@ jobs:
         with:
           name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance/build/test-results/iosSimulatorArm64Test
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload tvosSimulatorArm64 core-conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/tvosSimulatorArm64Test
           if-no-files-found: error
           retention-days: 14

@@ -16,6 +16,11 @@ kotlin {
             testRuns["test"].deviceId = simulatorUdid
         }
     }
+    tvosSimulatorArm64 {
+        providers.gradleProperty("dulcet.tvosSimulatorUdid").orNull?.let { simulatorUdid ->
+            testRuns["test"].deviceId = simulatorUdid
+        }
+    }
 
     sourceSets {
         commonTest.dependencies {
