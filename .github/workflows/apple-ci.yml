@@ -42,9 +42,9 @@ jobs:
         run: python3 tools/test-string-catalog-policy-gate
       - name: Require SwiftUI user-facing literals to use the string catalog
         run: python3 tools/verify_string_catalog_policy.py
-      - name: Prove the DulcetCore build-order guard rejects a missing producer
+      - name: Prove the DulcetCore build-order guard accepts a valid project and rejects ten broken ones
         run: python3 tools/test-dulcet-core-build-order
-      - name: Require every DulcetCore linker to reach a framework producer
+      - name: Require every DulcetCore linker to reach an ordered framework producer
         run: python3 tools/verify_dulcet_core_build_order.py
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
