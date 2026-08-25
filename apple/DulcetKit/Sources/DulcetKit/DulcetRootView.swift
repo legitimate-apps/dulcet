@@ -1,4 +1,4 @@
-#if os(macOS) || os(iOS)
+#if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
 public enum DulcetRenderVariant: Sendable {
@@ -59,6 +59,21 @@ public struct DulcetRootView: View {
             }
         }
         .tint(.dulcetAccent)
+#elseif os(tvOS)
+        Group {
+            if variant == .deliberatelyBadControl {
+                DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
+            } else {
+                ZStack {
+                    Color.dulcetWindow.ignoresSafeArea()
+                    NavigationStack {
+                        DulcetStateSurface(store: store)
+                    }
+                    .dulcetForeground(.primaryTextOnWindow)
+                }
+            }
+        }
+        .tint(.dulcetAccent)
 #endif
     }
 }
@@ -114,6 +129,7 @@ public struct DulcetCaptureView: View {
 }
 #endif
 
+#if !os(tvOS)
 private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
 
@@ -230,6 +246,7 @@ private struct DulcetSidebar: View {
         }
     }
 }
+#endif
 
 private struct DulcetStateSurface: View {
     @Bindable var store: DulcetPresentationStore

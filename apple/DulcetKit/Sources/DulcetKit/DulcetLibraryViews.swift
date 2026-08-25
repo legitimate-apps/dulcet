@@ -1,4 +1,4 @@
-#if os(macOS) || os(iOS)
+#if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
 struct DulcetEmptyLibraryView: View {
@@ -35,7 +35,7 @@ struct DulcetEmptyLibraryView: View {
             VStack(spacing: DulcetSpacing.sm) {
                 Button(DulcetStrings.connectServer, systemImage: "plus", action: onConnect)
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .dulcetDefaultActionShortcut()
                     .accessibilityLabel(DulcetStrings.connectServer)
 
                 Button(DulcetStrings.browseHelp) {}
@@ -148,7 +148,7 @@ struct DulcetLibraryHeader: View {
             HStack(spacing: DulcetSpacing.xs) {
                 Button(DulcetStrings.playAll, systemImage: "play.fill") {}
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .dulcetDefaultActionShortcut()
                     .accessibilityLabel(DulcetStrings.playAll)
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
                     .buttonStyle(.bordered)
@@ -194,7 +194,7 @@ struct DulcetAlbumShelfItem: View {
             .frame(width: dynamicTypeSize.isAccessibilitySize ? 190 : 126, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .dulcetMediaButtonStyle()
         .accessibilityLabel(DulcetStrings.albumAccessibility(
             album.title,
             artists: DulcetStrings.artistNames(album.albumArtists),
@@ -292,7 +292,7 @@ struct DulcetTrackRow: View {
             .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .dulcetMediaButtonStyle()
         .dulcetForeground(surface.primaryPair)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
@@ -410,7 +410,7 @@ struct DulcetAlbumDetailView: View {
         HStack(spacing: DulcetSpacing.xs) {
             Button(DulcetStrings.play, systemImage: "play.fill") {}
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .dulcetDefaultActionShortcut()
                 .accessibilityLabel(DulcetStrings.play)
             Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
                 .buttonStyle(.bordered)
@@ -445,7 +445,7 @@ struct DulcetOfflineLibraryView: View {
                     Spacer()
                     Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
                         .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
+                        .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.tryAgain)
                 }
 

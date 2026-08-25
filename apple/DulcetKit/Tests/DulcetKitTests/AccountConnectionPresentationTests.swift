@@ -164,7 +164,7 @@ func accountDomainErrorsHaveATotalActionablePresentation() {
     let tls = presentations.first { $0.kind == .tlsUntrusted }
     #expect(tls?.recovery.localizedCaseInsensitiveContains("install") == true)
     #expect(tls?.recovery.localizedCaseInsensitiveContains("CA") == true)
-    #expect(tls?.recovery.localizedCaseInsensitiveContains("macOS") == true)
+    #expect(tls?.recovery.localizedCaseInsensitiveContains("operating-system") == true)
 
     let internationalizedHost = DulcetAccountErrorPresenter.presentation(
         for: DulcetAccountErrorContext(

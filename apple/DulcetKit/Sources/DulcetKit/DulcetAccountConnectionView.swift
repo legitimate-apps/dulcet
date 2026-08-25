@@ -1,4 +1,4 @@
-#if os(macOS) || os(iOS)
+#if os(macOS) || os(iOS) || os(tvOS)
 #if os(macOS)
 import AppKit
 #endif
@@ -17,6 +17,9 @@ struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
     @State private var lastSubmissionTimestamp: TimeInterval?
+#if os(tvOS)
+    @Namespace private var accountFocusScope
+#endif
 
     private let focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)?
 
@@ -41,8 +44,11 @@ struct DulcetAccountConnectionView: View {
                 statusPanel
             }
             .padding(DulcetSpacing.xl)
-            .frame(maxWidth: 720)
+            .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
+#if os(tvOS)
+            .focusScope(accountFocusScope)
+#endif
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
@@ -78,6 +84,14 @@ struct DulcetAccountConnectionView: View {
         }
     }
 
+    private var contentMaxWidth: CGFloat {
+#if os(tvOS)
+        1_100
+#else
+        720
+#endif
+    }
+
     private var heading: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Text(DulcetStrings.accountConnectTitle)
@@ -92,6 +106,9 @@ struct DulcetAccountConnectionView: View {
     }
 
     private var connectionForm: some View {
+#if os(tvOS)
+        tvConnectionForm
+#else
         GroupBox(DulcetStrings.accountDetails) {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: DulcetSpacing.md, verticalSpacing: DulcetSpacing.sm) {
                 GridRow {
@@ -135,7 +152,78 @@ struct DulcetAccountConnectionView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, DulcetSpacing.xxs)
         }
+#endif
     }
+
+#if os(tvOS)
+    private var tvConnectionForm: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+            Text(DulcetStrings.accountDetails)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                Text(DulcetStrings.serverAddress)
+                    .font(.headline)
+                TextField(
+                    DulcetStrings.serverAddressPlaceholder,
+                    text: $store.accountServerURL
+                )
+                .dulcetTVTextField(focused: focusedControl == .serverAddress)
+                .dulcetCredentialInput(.serverAddress)
+                .submitLabel(.next)
+                .onSubmit { focusedControl = .username }
+                .accessibilityLabel(DulcetStrings.serverAddress)
+                .focused($focusedControl, equals: .serverAddress)
+                .prefersDefaultFocus(in: accountFocusScope)
+            }
+
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                Text(DulcetStrings.username)
+                    .font(.headline)
+                TextField(DulcetStrings.username, text: $store.accountUsername)
+                    .dulcetTVTextField(focused: focusedControl == .username)
+                    .dulcetCredentialInput(.username)
+                    .submitLabel(.next)
+                    .onSubmit { focusedControl = .password }
+                    .accessibilityLabel(DulcetStrings.username)
+                    .focused($focusedControl, equals: .username)
+            }
+
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                Text(DulcetStrings.password)
+                    .font(.headline)
+                SecureField(DulcetStrings.password, text: $store.accountPassword)
+                    .dulcetTVTextField(focused: focusedControl == .password)
+                    .dulcetCredentialInput(.password)
+                    .submitLabel(.next)
+                    .onSubmit { focusedControl = .allowLocalHTTP }
+                    .accessibilityLabel(DulcetStrings.password)
+                    .focused($focusedControl, equals: .password)
+            }
+
+            Toggle(
+                DulcetStrings.allowLocalHTTP,
+                isOn: $store.accountAllowLocalHTTP
+            )
+            .font(.headline)
+            .padding(.horizontal, DulcetSpacing.md)
+            .padding(.vertical, DulcetSpacing.sm)
+            .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
+            .focused($focusedControl, equals: .allowLocalHTTP)
+
+            Text(DulcetStrings.tvTextEntryHint)
+                .font(.callout)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .lineLimit(nil)
+        }
+        .disabled(isConnecting)
+        .padding(DulcetSpacing.lg)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
+        .focusSection()
+    }
+#endif
 
     @ViewBuilder
     private var statusPanel: some View {
@@ -150,7 +238,7 @@ struct DulcetAccountConnectionView: View {
                     Text(account.normalizedServerURL)
                         .font(.callout.monospaced())
                         .dulcetForeground(.secondaryTextOnWindow)
-                        .textSelection(.enabled)
+                        .dulcetSelectableText()
                 }
             } icon: {
                 Image(systemName: "checkmark.circle.fill")
@@ -215,7 +303,7 @@ struct DulcetAccountConnectionView: View {
             )
         }
         .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
+        .dulcetDefaultActionShortcut()
         .focused($focusedControl, equals: .primaryAction)
         .disabled(
             !isConnecting
@@ -286,12 +374,16 @@ struct DulcetAccountConnectionView: View {
                     store.submitAccountConnection()
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .dulcetDefaultActionShortcut()
                 .focused($focusedControl, equals: .tryAgain)
 
                 if failure.kind == .tlsUntrusted {
+#if os(tvOS)
+                    EmptyView()
+#else
                     Link(DulcetStrings.openCertificateHelp, destination: DulcetLinks.certificateInstallationGuide)
                         .buttonStyle(.bordered)
+#endif
                 }
             }
         }
@@ -317,7 +409,7 @@ struct DulcetAccountConnectionView: View {
 
 }
 
-/// Which credential a field collects, so the touch platforms can pick the right
+/// Which credential a field collects, so onscreen text entry can use the right
 /// keyboard and content type.
 enum DulcetCredentialInputKind: Sendable {
     case serverAddress
@@ -326,13 +418,13 @@ enum DulcetCredentialInputKind: Sendable {
 }
 
 extension View {
-    /// Text-input traits that only matter on the touch platforms.
+    /// Text-input traits that only matter on platforms with system text entry.
     ///
     /// On macOS this is deliberately the identity transform: there is no
     /// autocapitalization and no software keyboard, so applying nothing keeps the
     /// deterministic macOS capture byte-identical.
     ///
-    /// On iOS the SwiftUI defaults are actively WRONG for credentials, and both
+    /// On iOS and tvOS the SwiftUI defaults are actively WRONG for credentials, and both
     /// failures break a real login rather than merely looking untidy. Sentence
     /// capitalization rewrites `https://…` as `HTTPS://…` and a lowercase username
     /// as `Username`; autocorrect can silently substitute a hostname. Measured on
@@ -340,7 +432,7 @@ extension View {
     /// build was green and the view rendered correctly, so only driving the UI
     /// surfaced it.
     func dulcetCredentialInput(_ kind: DulcetCredentialInputKind) -> some View {
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         return
             self
             .textInputAutocapitalization(.never)
@@ -353,7 +445,28 @@ extension View {
     }
 }
 
-#if os(iOS)
+#if os(tvOS)
+private extension View {
+    func dulcetTVTextField(focused: Bool) -> some View {
+        textFieldStyle(.plain)
+            .font(.title3)
+            .padding(.horizontal, DulcetSpacing.md)
+            .padding(.vertical, DulcetSpacing.sm)
+            .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        focused ? Color.dulcetAccent : Color.dulcetSeparator.opacity(0.7),
+                        lineWidth: focused ? 4 : 1
+                    )
+            }
+            .scaleEffect(focused ? 1.025 : 1)
+            .animation(.easeOut(duration: 0.16), value: focused)
+    }
+}
+#endif
+
+#if os(iOS) || os(tvOS)
 extension DulcetCredentialInputKind {
     var keyboardType: UIKeyboardType {
         switch self {

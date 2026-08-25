@@ -41,7 +41,7 @@ public enum DulcetAccountErrorPresenter {
             (
                 "The server could not be reached",
                 "Dulcet could not establish a connection to \(context.serverName).",
-                "Check that the server is running and reachable from this Mac, then try again."
+                "Check that the server is running and reachable from this device, then try again."
             )
         case .transportTimeout:
             (
@@ -59,7 +59,7 @@ public enum DulcetAccountErrorPresenter {
             (
                 "This server’s certificate isn’t trusted",
                 "Dulcet stopped before sending account credentials.",
-                "Fix or renew the certificate. For a private certificate authority, install the CA at the macOS operating-system level, then try again."
+                "Fix or renew the certificate. For a private certificate authority, install the CA at the operating-system level, then try again."
             )
         case .localNetworkPolicyRejected:
             (

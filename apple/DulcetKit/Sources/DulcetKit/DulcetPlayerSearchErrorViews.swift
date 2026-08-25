@@ -1,4 +1,4 @@
-#if os(macOS) || os(iOS)
+#if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
 struct DulcetNowPlayingView: View {
@@ -59,10 +59,7 @@ struct DulcetNowPlayingView: View {
             }
 
             VStack(spacing: DulcetSpacing.xs) {
-                Slider(
-                    value: .constant(Double(player.elapsedSeconds)),
-                    in: 0...Double(player.current.durationSeconds)
-                )
+                playbackProgressIndicator
                 .accessibilityLabel(DulcetStrings.nowPlaying)
                 .accessibilityValue(DulcetStrings.playbackProgress(
                     elapsed: player.elapsedSeconds.dulcetDuration,
@@ -82,30 +79,30 @@ struct DulcetNowPlayingView: View {
                 Button(action: {}) {
                     Image(systemName: "shuffle")
                 }
-                    .buttonStyle(.plain)
+                    .dulcetMediaButtonStyle()
                     .accessibilityLabel(DulcetStrings.shuffle)
                 Button(action: {}) {
                     Image(systemName: "backward.fill")
                 }
-                    .buttonStyle(.plain)
+                    .dulcetMediaButtonStyle()
                     .font(.title2)
                     .accessibilityLabel(DulcetStrings.previous)
                 Button(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: player.isPlaying ? "pause.fill" : "play.fill") {}
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .font(.title2)
-                    .keyboardShortcut(.space, modifiers: [])
+                    .dulcetPlaybackShortcut()
                     .accessibilityLabel(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play)
                 Button(action: {}) {
                     Image(systemName: "forward.fill")
                 }
-                    .buttonStyle(.plain)
+                    .dulcetMediaButtonStyle()
                     .font(.title2)
                     .accessibilityLabel(DulcetStrings.next)
                 Button(action: {}) {
                     Image(systemName: player.current.isFavorite ? "heart.fill" : "heart")
                 }
-                    .buttonStyle(.plain)
+                    .dulcetMediaButtonStyle()
                     .accessibilityLabel(player.current.isFavorite ? DulcetStrings.unfavorite : DulcetStrings.favorite)
             }
 
@@ -113,7 +110,7 @@ struct DulcetNowPlayingView: View {
                 Image(systemName: "speaker.wave.2")
                     .dulcetForeground(.secondaryTextOnWindow)
                     .accessibilityHidden(true)
-                Slider(value: .constant(player.volume), in: 0...1)
+                volumeIndicator
                     .frame(maxWidth: 180)
                     .accessibilityLabel(DulcetStrings.volume)
                     .accessibilityValue(DulcetStrings.volumeValue(player.volume))
@@ -134,6 +131,30 @@ struct DulcetNowPlayingView: View {
         }
     }
 
+    @ViewBuilder
+    private var playbackProgressIndicator: some View {
+#if os(tvOS)
+        ProgressView(
+            value: Double(player.elapsedSeconds),
+            total: Double(player.current.durationSeconds)
+        )
+#else
+        Slider(
+            value: .constant(Double(player.elapsedSeconds)),
+            in: 0...Double(player.current.durationSeconds)
+        )
+#endif
+    }
+
+    @ViewBuilder
+    private var volumeIndicator: some View {
+#if os(tvOS)
+        ProgressView(value: player.volume, total: 1)
+#else
+        Slider(value: .constant(player.volume), in: 0...1)
+#endif
+    }
+
     private var queuePanel: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
             HStack {
@@ -142,7 +163,7 @@ struct DulcetNowPlayingView: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button(DulcetStrings.more, systemImage: "ellipsis.circle") {}
-                    .buttonStyle(.plain)
+                    .dulcetMediaButtonStyle()
                     .accessibilityLabel(DulcetStrings.more)
             }
 
@@ -181,7 +202,7 @@ struct DulcetSearchView: View {
                     .font(.title.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
-                    .textFieldStyle(.roundedBorder)
+                    .dulcetSearchFieldStyle()
                     .controlSize(.small)
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                 Text(DulcetStrings.searchSummary)
@@ -199,6 +220,38 @@ struct DulcetSearchView: View {
                     .dulcetForeground(.secondaryTextOnWindow)
             }
 
+#if os(tvOS)
+            ScrollView {
+                LazyVStack(spacing: DulcetSpacing.sm) {
+                    ForEach(snapshot.searchResults) { result in
+                        Button {
+                            selectedResultID = result.id
+                        } label: {
+                            HStack(spacing: DulcetSpacing.md) {
+                                DulcetSearchResultIdentity(result: result)
+                                Spacer(minLength: DulcetSpacing.md)
+                                VStack(alignment: .trailing, spacing: DulcetSpacing.xxs) {
+                                    Text(result.kind.displayTitle)
+                                        .font(.callout.weight(.semibold))
+                                    Label(result.source.displayTitle, systemImage: result.source.symbolName)
+                                        .font(.caption)
+                                }
+                                .dulcetForeground(.secondaryTextOnWindow)
+                            }
+                            .padding(DulcetSpacing.sm)
+                            .contentShape(Rectangle())
+                        }
+                        .dulcetMediaButtonStyle()
+                        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
+                            title: result.title,
+                            subtitle: result.subtitle,
+                            kind: result.kind.displayTitle,
+                            source: result.source.displayTitle
+                        ))
+                    }
+                }
+            }
+#else
             Table(snapshot.searchResults, selection: $selectedResultID) {
                 TableColumn(DulcetStrings.resultColumn) { result in
                     DulcetSearchResultIdentity(result: result)
@@ -222,11 +275,26 @@ struct DulcetSearchView: View {
 #if os(macOS)
             .alternatingRowBackgrounds(.disabled)
 #endif
+#endif
         }
         .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.search)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func dulcetSearchFieldStyle() -> some View {
+#if os(tvOS)
+        textFieldStyle(.plain)
+            .padding(.horizontal, DulcetSpacing.md)
+            .padding(.vertical, DulcetSpacing.sm)
+            .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 14))
+#else
+        textFieldStyle(.roundedBorder)
+#endif
     }
 }
 
@@ -311,39 +379,20 @@ struct DulcetTLSUntrustedView: View {
                     }
                 }
 
-                GroupBox(DulcetStrings.tlsWhy) {
-                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                        Text(failure.reason)
-                            .font(.headline)
-                            .lineLimit(nil)
-                        Text(failure.technicalDetail)
-                            .font(.callout)
-                            .dulcetForeground(.secondaryTextOnWindow)
-                            .lineLimit(nil)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                GroupBox(DulcetStrings.tlsRemedyTitle) {
-                    Label {
-                        Text(DulcetStrings.tlsRemedyBody)
-                            .lineLimit(nil)
-                    } icon: {
-                        Image(systemName: "checkmark.shield")
-                            .dulcetForeground(.accentIconOnWindow)
-                    }
-                    .font(.callout)
-                }
+                whyPanel
+                remedyPanel
 
                 HStack(spacing: DulcetSpacing.sm) {
+#if !os(tvOS)
                     Link(destination: DulcetLinks.certificateInstallationGuide) {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
                     }
                         .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
+                        .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
+#endif
                     Button(DulcetStrings.connectionSettings, systemImage: "slider.horizontal.3") {}
-                        .buttonStyle(.bordered)
+                        .dulcetSecondaryActionStyle()
                         .accessibilityLabel(DulcetStrings.connectionSettings)
                 }
             }
@@ -384,7 +433,80 @@ struct DulcetTLSUntrustedView: View {
                 .lineLimit(nil)
         }
     }
+
+    @ViewBuilder
+    private var whyPanel: some View {
+#if os(tvOS)
+        DulcetTVInformationPanel(title: DulcetStrings.tlsWhy) {
+            whyPanelContent
+        }
+#else
+        GroupBox(DulcetStrings.tlsWhy) {
+            whyPanelContent
+        }
+#endif
+    }
+
+    private var whyPanelContent: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            Text(failure.reason)
+                .font(.headline)
+                .lineLimit(nil)
+            Text(failure.technicalDetail)
+                .font(.callout)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .lineLimit(nil)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var remedyPanel: some View {
+#if os(tvOS)
+        DulcetTVInformationPanel(title: DulcetStrings.tlsRemedyTitle) {
+            remedyPanelContent
+        }
+#else
+        GroupBox(DulcetStrings.tlsRemedyTitle) {
+            remedyPanelContent
+        }
+#endif
+    }
+
+    private var remedyPanelContent: some View {
+        Label {
+            Text(DulcetStrings.tlsRemedyBody)
+                .lineLimit(nil)
+        } icon: {
+            Image(systemName: "checkmark.shield")
+                .dulcetForeground(.accentIconOnWindow)
+        }
+        .font(.callout)
+    }
 }
+
+#if os(tvOS)
+private struct DulcetTVInformationPanel<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .padding(DulcetSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+#endif
 
 struct DulcetDeliberatelyBadControlView: View {
     let snapshot: DulcetSnapshot

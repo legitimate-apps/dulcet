@@ -2,7 +2,7 @@ import DulcetCore
 import DulcetKit
 import Foundation
 
-/// Shared production account composition for every touch-capable Apple shell.
+/// Shared production account composition for every native Apple shell.
 @MainActor
 enum DulcetAppleProduction {
     static func makePresentationStore() -> DulcetPresentationStore {
