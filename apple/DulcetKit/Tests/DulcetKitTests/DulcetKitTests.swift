@@ -106,7 +106,7 @@ func deterministicTLSFixtureCarriesPresentableSpecificFailure() {
     #expect(failure.technicalDetail.localizedCaseInsensitiveContains("OS-trusted"))
     #expect(!failure.technicalDetail.contains("http"))
     #expect(failure.serverName == "Listening Room")
-    #expect(DulcetStrings.tlsRemedyBody.contains("System keychain"))
+    #expect(DulcetStrings.tlsRemedyBody.localizedCaseInsensitiveContains("operating-system"))
     #expect(DulcetLinks.certificateInstallationGuide.host == "support.apple.com")
     #expect(DulcetLinks.certificateInstallationGuide.path.contains("add-certificates-to-a-keychain"))
 }
