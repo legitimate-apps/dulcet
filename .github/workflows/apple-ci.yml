@@ -42,6 +42,10 @@ jobs:
         run: python3 tools/test-string-catalog-policy-gate
       - name: Require SwiftUI user-facing literals to use the string catalog
         run: python3 tools/verify_string_catalog_policy.py
+      - name: Prove the DulcetCore build-order guard rejects a missing producer
+        run: python3 tools/test-dulcet-core-build-order
+      - name: Require every DulcetCore linker to reach a framework producer
+        run: python3 tools/verify_dulcet_core_build_order.py
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -314,6 +318,7 @@ jobs:
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
       - name: Assert Darwin conformance preconditions
+        id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
@@ -447,3 +452,19 @@ jobs:
             core-conformance/build/test-results/iosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit"
+      - name: Upload macosArm64 core-conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/macosArm64Test
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload iosSimulatorArm64 core-conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/iosSimulatorArm64Test
+          if-no-files-found: warn
+          retention-days: 14

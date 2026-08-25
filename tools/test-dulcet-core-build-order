@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Mutation control for the DulcetCore Xcode build-order guard."""
+
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+SOURCE_PROJECT = REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj"
+VERIFIER = REPOSITORY / "tools/verify_dulcet_core_build_order.py"
+
+source = SOURCE_PROJECT.read_text()
+target_match = re.search(
+    r"\t\t[0-9A-F]+ /\* DulcetKitIOSTests \*/ = \{\n.*?\n\t\t\};",
+    source,
+    flags=re.DOTALL,
+)
+if target_match is None:
+    raise AssertionError("DulcetKitIOSTests PBXNativeTarget was not found")
+
+phase_reference = r"^\s*[0-9A-F]+ /\* Compile Kotlin Framework \*/,\n"
+if len(re.findall(phase_reference, target_match.group(0), flags=re.MULTILINE)) != 1:
+    raise AssertionError("DulcetKitIOSTests did not contain exactly one removable Kotlin phase")
+
+mutated_target, mutation_count = re.subn(
+    phase_reference,
+    "",
+    target_match.group(0),
+    count=1,
+    flags=re.MULTILINE,
+)
+if mutation_count != 1:
+    raise AssertionError("DulcetKitIOSTests Kotlin phase mutation was not applied")
+
+mutant = source[: target_match.start()] + mutated_target + source[target_match.end() :]
+with tempfile.TemporaryDirectory(prefix="dulcet-build-order-mutation-") as directory:
+    mutant_path = Path(directory) / "project.pbxproj"
+    mutant_path.write_text(mutant)
+    result = subprocess.run(
+        [sys.executable, str(VERIFIER), str(mutant_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+output = result.stdout + result.stderr
+print(output, end="")
+if result.returncode != 1:
+    raise AssertionError(f"mutated project returned {result.returncode}, expected policy failure 1")
+if "DULCET CORE BUILD ORDER FAIL" not in output:
+    raise AssertionError("mutated project did not emit the failure marker")
+if "target=DulcetKitIOSTests" not in output or "has no reachable" not in output:
+    raise AssertionError("mutated project did not identify the unprotected target")
+
+print(
+    "DULCET CORE BUILD ORDER MUTATION PASS "
+    "target=DulcetKitIOSTests mutation=removed-phase verifier-rejected=true"
+)
