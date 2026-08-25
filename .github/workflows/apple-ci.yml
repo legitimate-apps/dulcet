@@ -458,7 +458,7 @@ jobs:
         with:
           name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance/build/test-results/macosArm64Test
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
       - name: Upload iosSimulatorArm64 core-conformance JUnit results
         if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
@@ -466,5 +466,5 @@ jobs:
         with:
           name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance/build/test-results/iosSimulatorArm64Test
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
