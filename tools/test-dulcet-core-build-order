@@ -1,61 +1,453 @@
 #!/usr/bin/env python3
-"""Mutation control for the DulcetCore Xcode build-order guard."""
+"""Valid-first mutation controls for the DulcetCore Xcode build-order guard."""
 
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Callable
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SOURCE_PROJECT = REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj"
 VERIFIER = REPOSITORY / "tools/verify_dulcet_core_build_order.py"
+KOTLIN_GRADLE_TASK = ":core:embedAndSignAppleFrameworkForXcode"
+OBJECT_ID = r"[0-9A-F]{24}"
 
-source = SOURCE_PROJECT.read_text()
-target_match = re.search(
-    r"\t\t[0-9A-F]+ /\* DulcetKitIOSTests \*/ = \{\n.*?\n\t\t\};",
-    source,
-    flags=re.DOTALL,
-)
-if target_match is None:
-    raise AssertionError("DulcetKitIOSTests PBXNativeTarget was not found")
 
-phase_reference = r"^\s*[0-9A-F]+ /\* Compile Kotlin Framework \*/,\n"
-if len(re.findall(phase_reference, target_match.group(0), flags=re.MULTILINE)) != 1:
-    raise AssertionError("DulcetKitIOSTests did not contain exactly one removable Kotlin phase")
+def object_block(source: str, object_id: str) -> re.Match[str]:
+    match = re.search(
+        rf"^\t\t{re.escape(object_id)} /\* .*? \*/ = \{{\n.*?^\t\t\}};$",
+        source,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"object {object_id} was not found")
+    return match
 
-mutated_target, mutation_count = re.subn(
-    phase_reference,
-    "",
-    target_match.group(0),
-    count=1,
-    flags=re.MULTILINE,
-)
-if mutation_count != 1:
-    raise AssertionError("DulcetKitIOSTests Kotlin phase mutation was not applied")
 
-mutant = source[: target_match.start()] + mutated_target + source[target_match.end() :]
-with tempfile.TemporaryDirectory(prefix="dulcet-build-order-mutation-") as directory:
-    mutant_path = Path(directory) / "project.pbxproj"
-    mutant_path.write_text(mutant)
-    result = subprocess.run(
-        [sys.executable, str(VERIFIER), str(mutant_path)],
+def named_object_block(source: str, name: str, isa: str) -> re.Match[str]:
+    match = re.search(
+        rf"^\t\t({OBJECT_ID}) /\* {re.escape(name)} \*/ = \{{\n"
+        rf"(?=\s*isa = {re.escape(isa)};).*?^\t\t\}};$",
+        source,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"{isa} {name!r} was not found")
+    return match
+
+
+def replace_match(source: str, match: re.Match[str], replacement: str) -> str:
+    return source[: match.start()] + replacement + source[match.end() :]
+
+
+def replace_object(source: str, object_id: str, replacement: str) -> str:
+    return replace_match(source, object_block(source, object_id), replacement)
+
+
+def configuration_ids_for_block(source: str, owner_block: str) -> list[str]:
+    list_match = re.search(rf"buildConfigurationList = ({OBJECT_ID}) /\*", owner_block)
+    if list_match is None:
+        raise AssertionError("owner has no build configuration list")
+    configuration_list = object_block(source, list_match.group(1)).group(0)
+    array_match = re.search(
+        r"buildConfigurations = \(\n(?P<items>.*?)\n\s*\);",
+        configuration_list,
+        flags=re.DOTALL,
+    )
+    if array_match is None:
+        raise AssertionError("configuration list has no buildConfigurations array")
+    configuration_ids = re.findall(rf"({OBJECT_ID}) /\*", array_match.group("items"))
+    if not configuration_ids:
+        raise AssertionError("configuration list contains no configurations")
+    return configuration_ids
+
+
+def mutate_configurations(
+    source: str,
+    configuration_ids: list[str],
+    mutation: Callable[[str], str],
+) -> str:
+    result = source
+    for configuration_id in configuration_ids:
+        match = object_block(result, configuration_id)
+        replacement = mutation(match.group(0))
+        if replacement == match.group(0):
+            raise AssertionError(f"configuration {configuration_id} mutation made no change")
+        result = replace_match(result, match, replacement)
+    return result
+
+
+def target_block(source: str, target_name: str) -> re.Match[str]:
+    return named_object_block(source, target_name, "PBXNativeTarget")
+
+
+def run_verifier(project_text: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="dulcet-build-order-mutation-") as directory:
+        mutant_path = Path(directory) / "Dulcet.xcodeproj/project.pbxproj"
+        mutant_path.parent.mkdir()
+        mutant_path.write_text(project_text)
+        return subprocess.run(
+            [sys.executable, str(VERIFIER), str(mutant_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+
+def result_output(result: subprocess.CompletedProcess[str]) -> str:
+    return result.stdout + result.stderr
+
+
+def require_result(
+    label: str,
+    project_text: str,
+    expected_exit: int,
+    expected_fragments: list[str],
+) -> str:
+    result = run_verifier(project_text)
+    output = result_output(result)
+    print(f"=== {label} ===")
+    print(output, end="")
+    if result.returncode != expected_exit:
+        raise AssertionError(
+            f"{label} returned {result.returncode}, expected {expected_exit}"
+        )
+    for fragment in expected_fragments:
+        if fragment not in output:
+            raise AssertionError(f"{label} did not emit expected fragment {fragment!r}")
+    print(
+        f"DULCET CORE BUILD ORDER CONTROL PASS case={label} "
+        f"expected_exit={expected_exit} observed_exit={result.returncode}"
+    )
+    return output
+
+
+def remove_phase_reference(source: str) -> str:
+    match = target_block(source, "DulcetKitIOSTests")
+    phase_reference = rf"^\s*{OBJECT_ID} /\* Compile Kotlin Framework \*/,\n"
+    if len(re.findall(phase_reference, match.group(0), flags=re.MULTILINE)) != 1:
+        raise AssertionError("DulcetKitIOSTests must contain exactly one Kotlin phase reference")
+    mutated, count = re.subn(
+        phase_reference,
+        "",
+        match.group(0),
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise AssertionError("Kotlin phase reference mutation was not applied")
+    return replace_match(source, match, mutated)
+
+
+def corrupt_gradle_task(source: str) -> str:
+    target = target_block(source, "DulcetKitIOSTests").group(0)
+    phase_match = re.search(
+        rf"({OBJECT_ID}) /\* Compile Kotlin Framework \*/,",
+        target,
+    )
+    if phase_match is None:
+        raise AssertionError("DulcetKitIOSTests Kotlin phase id was not found")
+    phase = object_block(source, phase_match.group(1))
+    mutated, count = re.subn(
+        re.escape(KOTLIN_GRADLE_TASK),
+        ":core:linkDebugFrameworkIosSimulatorArm64",
+        phase.group(0),
+        count=1,
+    )
+    if count != 1:
+        raise AssertionError("Kotlin shellScript task mutation was not applied")
+    return replace_match(source, phase, mutated)
+
+
+def move_phase_after_frameworks(source: str) -> str:
+    target = target_block(source, "DulcetKitIOSTests")
+    block = target.group(0)
+    phase_line = re.search(
+        rf"^\s*{OBJECT_ID} /\* Compile Kotlin Framework \*/,\n",
+        block,
+        flags=re.MULTILINE,
+    )
+    frameworks_line = re.search(
+        rf"^\s*{OBJECT_ID} /\* Frameworks \*/,\n",
+        block,
+        flags=re.MULTILINE,
+    )
+    if phase_line is None or frameworks_line is None:
+        raise AssertionError("DulcetKitIOSTests ordering anchors were not found")
+    if phase_line.start() >= frameworks_line.start():
+        raise AssertionError("valid project does not place Kotlin before Frameworks")
+
+    phase_text = phase_line.group(0)
+    without_phase = block[: phase_line.start()] + block[phase_line.end() :]
+    frameworks_after_removal = re.search(
+        rf"^\s*{OBJECT_ID} /\* Frameworks \*/,\n",
+        without_phase,
+        flags=re.MULTILINE,
+    )
+    if frameworks_after_removal is None:
+        raise AssertionError("Frameworks phase disappeared during ordering mutation")
+    mutated = (
+        without_phase[: frameworks_after_removal.end()]
+        + phase_text
+        + without_phase[frameworks_after_removal.end() :]
+    )
+    return replace_match(source, target, mutated)
+
+
+def project_configuration_ids(source: str) -> list[str]:
+    project = named_object_block(source, "Project object", "PBXProject")
+    return configuration_ids_for_block(source, project.group(0))
+
+
+def target_configuration_ids(source: str, target_name: str) -> list[str]:
+    return configuration_ids_for_block(source, target_block(source, target_name).group(0))
+
+
+def hoist_linker_flags(source: str) -> str:
+    original = 'OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";'
+
+    def mutate(block: str) -> str:
+        replacement = (
+            'DULCET_CORE_LDFLAGS = "$(inherited) -framework DulcetCore";\n'
+            '\t\t\t\tOTHER_LDFLAGS = "$(DULCET_CORE_LDFLAGS)";'
+        )
+        if block.count(original) != 1:
+            raise AssertionError("project configuration lacks the literal linker contract")
+        return block.replace(original, replacement, 1)
+
+    return mutate_configurations(source, project_configuration_ids(source), mutate)
+
+
+def weaken_linker_flags(source: str) -> str:
+    original = 'OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";'
+    replacement = 'OTHER_LDFLAGS = "$(inherited) -weak_framework DulcetCore";'
+
+    def mutate(block: str) -> str:
+        if block.count(original) != 1:
+            raise AssertionError("project configuration lacks the literal linker contract")
+        return block.replace(original, replacement, 1)
+
+    return mutate_configurations(source, project_configuration_ids(source), mutate)
+
+
+def insert_build_setting(block: str, assignment: str) -> str:
+    marker = "\t\t\tbuildSettings = {\n"
+    if block.count(marker) != 1:
+        raise AssertionError("configuration has no unique buildSettings block")
+    return block.replace(marker, marker + f"\t\t\t\t{assignment}\n", 1)
+
+
+def drop_one_target_from_link_scope(source: str) -> str:
+    return mutate_configurations(
+        source,
+        target_configuration_ids(source, "DulcetTV"),
+        lambda block: insert_build_setting(block, 'OTHER_LDFLAGS = "-ObjC";'),
+    )
+
+
+def enable_global_kotlin_override(source: str) -> str:
+    return mutate_configurations(
+        source,
+        project_configuration_ids(source),
+        lambda block: insert_build_setting(
+            block,
+            "OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED = YES;",
+        ),
+    )
+
+
+def dangle_dependency_target(source: str) -> str:
+    mac_tests = target_block(source, "DulcetMacTests").group(0)
+    dependency_match = re.search(rf"({OBJECT_ID}) /\* PBXTargetDependency \*/,", mac_tests)
+    if dependency_match is None:
+        raise AssertionError("DulcetMacTests dependency object was not found")
+    dependency = object_block(source, dependency_match.group(1))
+    mutated, count = re.subn(
+        rf"target = {OBJECT_ID} /\* DulcetMac \*/;",
+        "target = FFFFFFFFFFFFFFFFFFFFFFFF /* MissingTarget */;",
+        dependency.group(0),
+        count=1,
+    )
+    if count != 1:
+        raise AssertionError("dependency target mutation was not applied")
+    return replace_match(source, dependency, mutated)
+
+
+def add_target_xcconfig(source: str) -> str:
+    configuration_id = target_configuration_ids(source, "DulcetTV")[0]
+    configuration = object_block(source, configuration_id)
+    marker = "\t\t\tisa = XCBuildConfiguration;\n"
+    if configuration.group(0).count(marker) != 1:
+        raise AssertionError("target configuration has no unique isa marker")
+    mutated = configuration.group(0).replace(
+        marker,
+        marker
+        + "\t\t\tbaseConfigurationReference = FFFFFFFFFFFFFFFFFFFFFFFF "
+        "/* Missing.xcconfig */;\n",
+        1,
+    )
+    return replace_match(source, configuration, mutated)
+
+
+def run_exact_xcodegen_post_build_control() -> None:
+    version = subprocess.run(
+        ["xcodegen", "--version"],
         check=False,
         capture_output=True,
         text=True,
     )
+    if version.returncode != 0 or "2.46.0" not in version.stdout:
+        raise AssertionError(f"xcodegen 2.46.0 is required, observed {version.stdout!r}")
 
-output = result.stdout + result.stderr
-print(output, end="")
-if result.returncode != 1:
-    raise AssertionError(f"mutated project returned {result.returncode}, expected policy failure 1")
-if "DULCET CORE BUILD ORDER FAIL" not in output:
-    raise AssertionError("mutated project did not emit the failure marker")
-if "target=DulcetKitIOSTests" not in output or "has no reachable" not in output:
-    raise AssertionError("mutated project did not identify the unprotected target")
+    with tempfile.TemporaryDirectory(prefix="dulcet-xcodegen-post-build-") as directory:
+        apple_copy = Path(directory) / "apple"
+        shutil.copytree(REPOSITORY / "apple", apple_copy)
+        spec_path = apple_copy / "project.yml"
+        spec = spec_path.read_text()
+        target_match = re.search(
+            r"^  DulcetKitIOSTests:\n.*?(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            spec,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        if target_match is None:
+            raise AssertionError("DulcetKitIOSTests project.yml target was not found")
+        mutated_target, count = re.subn(
+            r"^    preBuildScripts:$",
+            "    postBuildScripts:",
+            target_match.group(0),
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if count != 1:
+            raise AssertionError("project.yml postBuildScripts mutation was not applied")
+        spec_path.write_text(replace_match(spec, target_match, mutated_target))
 
-print(
-    "DULCET CORE BUILD ORDER MUTATION PASS "
-    "target=DulcetKitIOSTests mutation=removed-phase verifier-rejected=true"
-)
+        generation = subprocess.run(
+            [
+                "xcodegen",
+                "generate",
+                "--spec",
+                str(spec_path),
+                "--project",
+                str(apple_copy),
+                "--no-env",
+                "--quiet",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if generation.returncode != 0:
+            raise AssertionError(
+                "xcodegen postBuildScripts mutation failed to generate: "
+                + generation.stdout
+                + generation.stderr
+            )
+        generated = (apple_copy / "Dulcet.xcodeproj/project.pbxproj").read_text()
+        require_result(
+            "xcodegen-post-build-scripts",
+            generated,
+            1,
+            ["target=DulcetKitIOSTests", "must precede PBXFrameworksBuildPhase"],
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--xcodegen-post-build",
+        action="store_true",
+        help="also regenerate the exact project.yml postBuildScripts mutation with XcodeGen 2.46.0",
+    )
+    arguments = parser.parse_args()
+    source = SOURCE_PROJECT.read_text()
+
+    # House convention: prove the verifier accepts its valid control before any mutant.
+    valid_output = require_result(
+        "valid-project",
+        source,
+        0,
+        ["DULCET CORE BUILD ORDER PASS", "checked_targets=", "expected_native_targets="],
+    )
+    scope_match = re.search(
+        r"PASS checked_targets=(\d+) expected_native_targets=(\d+)",
+        valid_output,
+    )
+    if scope_match is None:
+        raise AssertionError("valid project did not report checked and expected target scope")
+    checked_targets, expected_targets = map(int, scope_match.groups())
+    if checked_targets == 0 or checked_targets != expected_targets:
+        raise AssertionError(
+            f"valid project checked {checked_targets} of {expected_targets} native targets"
+        )
+    require_result(
+        "removed-phase-reference",
+        remove_phase_reference(source),
+        1,
+        ["target=DulcetKitIOSTests", "has no reachable ordered"],
+    )
+    require_result(
+        "corrupted-gradle-task",
+        corrupt_gradle_task(source),
+        1,
+        ["target=DulcetKitIOSTests", KOTLIN_GRADLE_TASK],
+    )
+    require_result(
+        "post-build-phase-order",
+        move_phase_after_frameworks(source),
+        1,
+        ["target=DulcetKitIOSTests", "must precede PBXFrameworksBuildPhase"],
+    )
+    require_result(
+        "variable-hoisted-linker-flags",
+        hoist_linker_flags(source),
+        1,
+        ["target=DulcetKitIOSTests", "literal strong '-framework DulcetCore'"],
+    )
+    require_result(
+        "weak-framework-linkage",
+        weaken_linker_flags(source),
+        1,
+        ["target=DulcetKitIOSTests", "literal strong '-framework DulcetCore'"],
+    )
+    require_result(
+        "partial-target-scope-drop",
+        drop_one_target_from_link_scope(source),
+        1,
+        ["target=DulcetTV", "configurations=Debug,Release", "literal strong"],
+    )
+    require_result(
+        "global-kotlin-override",
+        enable_global_kotlin_override(source),
+        1,
+        ["owner=project Dulcet configuration=Debug", "defines forbidden OVERRIDE_KOTLIN"],
+    )
+    require_result(
+        "dangling-dependency-target",
+        dangle_dependency_target(source),
+        2,
+        ["DULCET CORE BUILD ORDER ERROR", "refers to dangling target"],
+    )
+    require_result(
+        "target-xcconfig-owner",
+        add_target_xcconfig(source),
+        2,
+        ["target DulcetTV configuration 'Debug' uses an xcconfig"],
+    )
+
+    if arguments.xcodegen_post_build:
+        run_exact_xcodegen_post_build_control()
+
+    print("DULCET CORE BUILD ORDER MUTATION SUITE PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
