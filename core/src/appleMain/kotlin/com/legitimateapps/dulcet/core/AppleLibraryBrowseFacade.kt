@@ -53,6 +53,7 @@ public class AppleLibraryTrackDto internal constructor(
     public val trackNumber: Int?,
     public val durationMilliseconds: Long,
     public val mediaSourceId: String?,
+    public val artworkKey: String?,
 )
 
 public class AppleLibraryAlbumDto internal constructor(
@@ -63,6 +64,7 @@ public class AppleLibraryAlbumDto internal constructor(
     public val year: Int?,
     public val durationMilliseconds: Long,
     public val mediaSourceId: String?,
+    public val artworkKey: String?,
     public val tracks: List<AppleLibraryTrackDto>,
 )
 
@@ -189,6 +191,7 @@ private fun LibraryAlbum.toAppleDto(): AppleLibraryAlbumDto = AppleLibraryAlbumD
     year = year,
     durationMilliseconds = duration.inWholeMilliseconds,
     mediaSourceId = mediaSourceId,
+    artworkKey = artworkKey,
     tracks = tracks.map { track ->
         AppleLibraryTrackDto(
             providerInstanceId = track.id.providerInstanceId,
@@ -200,6 +203,7 @@ private fun LibraryAlbum.toAppleDto(): AppleLibraryAlbumDto = AppleLibraryAlbumD
             trackNumber = track.trackNumber,
             durationMilliseconds = track.duration.inWholeMilliseconds,
             mediaSourceId = track.mediaSourceId,
+            artworkKey = track.artworkKey,
         )
     },
 )

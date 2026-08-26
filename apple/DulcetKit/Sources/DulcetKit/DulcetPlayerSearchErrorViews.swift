@@ -369,14 +369,10 @@ struct DulcetTLSUntrustedView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                // Deliberately NOT `ViewThatFits`. That resolves by measuring candidate
-                // layouts, and the measurement is not stable across renders in a shared
-                // process: the deterministic capture gate observed this view flipping
-                // between the side-by-side and stacked arrangements between two runs of
-                // the same binary, while rendering the state alone was always identical.
-                // Dynamic Type is the real reason this header needs to stack, and it is an
-                // explicit input rather than a measured one, so branching on it is both
-                // deterministic and closer to the design intent.
+                // Dynamic Type is the semantic reason this header needs to stack. Keep that
+                // decision explicit so ordinary window-width changes do not alter a layout
+                // that already fits, while accessibility sizes receive the intended reading
+                // order.
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         shield

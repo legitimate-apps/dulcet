@@ -218,10 +218,42 @@ public enum DulcetArtworkPalette: String, Sendable, Hashable, CaseIterable {
 public struct DulcetArtwork: Sendable, Hashable {
     public let seed: String
     public let palette: DulcetArtworkPalette
+    public let remoteReference: DulcetArtworkReference?
 
-    public init(seed: String, palette: DulcetArtworkPalette) {
+    public init(
+        seed: String,
+        palette: DulcetArtworkPalette,
+        remoteReference: DulcetArtworkReference? = nil
+    ) {
         self.seed = seed
         self.palette = palette
+        self.remoteReference = remoteReference
+    }
+}
+
+public struct DulcetArtworkReference: Sendable, Hashable {
+    public let serverID: String
+    public let artworkKey: String
+
+    public init(serverID: String, artworkKey: String) {
+        self.serverID = serverID
+        self.artworkKey = artworkKey
+    }
+}
+
+public enum DulcetArtworkSizeBucket: Int, Sendable, Hashable, CaseIterable {
+    case pixels96 = 96
+    case pixels256 = 256
+    case pixels512 = 512
+    case pixels1024 = 1024
+
+    public static func containing(pixelSize: CGFloat) -> Self {
+        switch pixelSize {
+        case ...96: .pixels96
+        case ...256: .pixels256
+        case ...512: .pixels512
+        default: .pixels1024
+        }
     }
 }
 

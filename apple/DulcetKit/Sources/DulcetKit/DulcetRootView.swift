@@ -39,6 +39,7 @@ public struct DulcetRootView: View {
                 }
             }
         }
+        .environment(store)
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
 #elseif os(iOS)
@@ -58,6 +59,7 @@ public struct DulcetRootView: View {
                 }
             }
         }
+        .environment(store)
         .tint(.dulcetAccent)
 #elseif os(tvOS)
         Group {
@@ -97,34 +99,37 @@ public struct DulcetCaptureView: View {
     }
 
     public var body: some View {
-        if variant == .deliberatelyBadControl {
-            DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
-        } else {
-            GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    DulcetSidebar(store: store)
-                        .frame(width: 232)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .zIndex(1)
-                    Divider()
-                    DulcetStateSurface(store: store)
-                        .id(store.snapshot.state.rawValue)
-                        .frame(
-                            width: max(0, geometry.size.width - 233),
-                            height: geometry.size.height
-                        )
-                        .clipped()
-                        .zIndex(0)
+        Group {
+            if variant == .deliberatelyBadControl {
+                DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
+            } else {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        DulcetSidebar(store: store)
+                            .frame(width: 232)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .zIndex(1)
+                        Divider()
+                        DulcetStateSurface(store: store)
+                            .id(store.snapshot.state.rawValue)
+                            .frame(
+                                width: max(0, geometry.size.width - 233),
+                                height: geometry.size.height
+                            )
+                            .clipped()
+                            .zIndex(0)
+                    }
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.height,
+                        alignment: .leading
+                    )
                 }
-                .frame(
-                    width: geometry.size.width,
-                    height: geometry.size.height,
-                    alignment: .leading
-                )
+                .background(Color.dulcetWindow)
+                .dulcetForeground(.primaryTextOnWindow)
             }
-            .background(Color.dulcetWindow)
-            .dulcetForeground(.primaryTextOnWindow)
         }
+        .environment(store)
     }
 }
 #endif

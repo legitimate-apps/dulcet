@@ -256,6 +256,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let connector: any DulcetAccountConnecting
     private let credentialStore: (any DulcetCredentialStoring)?
     private let libraryBrowser: (any DulcetLibraryBrowsing)?
+    private let artworkFetcher: (any DulcetArtworkFetching)?
     private let providerInstanceIDFactory: @MainActor () -> String
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
     private var activeOperation: (any DulcetAccountConnectOperation)?
@@ -270,12 +271,14 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         connector: any DulcetAccountConnecting,
         credentialStore: (any DulcetCredentialStoring)? = nil,
         libraryBrowser: (any DulcetLibraryBrowsing)? = nil,
+        artworkFetcher: (any DulcetArtworkFetching)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty,
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
     ) {
         self.connector = connector
         self.credentialStore = credentialStore
         self.libraryBrowser = libraryBrowser
+        self.artworkFetcher = artworkFetcher
         self.providerInstanceIDFactory = providerInstanceIDFactory
         do {
             let restoredRequest = try credentialStore?.load() ?? initialRequest
@@ -568,6 +571,30 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let operation = activeLibraryOperation
         activeLibraryOperation = nil
         operation?.cancel()
+    }
+}
+
+extension DulcetAccountDataSource: DulcetArtworkLoading {
+    public func loadArtwork(
+        _ reference: DulcetArtworkReference,
+        sizeBucket: DulcetArtworkSizeBucket,
+        completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
+    ) -> (any DulcetArtworkFetchOperation)? {
+        guard let artworkFetcher,
+              reference.serverID == providerInstanceID,
+              case let .connected(account) = currentSnapshot.accountConnection else {
+            completion(.unavailable)
+            return nil
+        }
+        let form = currentSnapshot.accountForm
+        return artworkFetcher.fetch(DulcetArtworkFetchRequest(
+            reference: reference,
+            sizeBucket: sizeBucket,
+            normalizedServerURL: account.normalizedServerURL,
+            username: form.username,
+            password: form.password,
+            allowLocalHTTP: form.allowLocalHTTP
+        ), completion: completion)
     }
 }
 

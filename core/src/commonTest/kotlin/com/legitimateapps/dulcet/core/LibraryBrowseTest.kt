@@ -34,6 +34,7 @@ class LibraryBrowseTest {
         val first = loaded.albums.first()
         assertEquals(121.seconds, first.duration)
         assertNull(first.mediaSourceId)
+        assertEquals("artwork:album:opaque-A", first.artworkKey)
         assertEquals(
             Credit(CreditRole.AlbumArtist, "Opaque Artist", ProviderItemId(PROVIDER_INSTANCE_ID, "artist:opaque-A")),
             first.credits.single(),
@@ -46,6 +47,7 @@ class LibraryBrowseTest {
             track.credits.single(),
         )
         assertNull(track.mediaSourceId)
+        assertEquals("artwork:track:000000000000000000000000000001", track.artworkKey)
     }
 
     @Test
@@ -165,7 +167,9 @@ class LibraryBrowseTest {
         ).snapshot
 
         assertEquals("7", loaded.albums.single().id.rawId)
+        assertEquals("11", loaded.albums.single().artworkKey)
         assertEquals("9", loaded.albums.single().tracks.single().id.rawId)
+        assertEquals("12", loaded.albums.single().tracks.single().artworkKey)
     }
 
     @Test
@@ -288,10 +292,12 @@ class LibraryBrowseTest {
         fun albumBody(id: String) = envelope(
             "\"album\":{" +
                 "\"id\":\"$id\",\"name\":\"Album $id\",\"artist\":\"Opaque Artist\"," +
-                "\"artistId\":\"artist:opaque-A\",\"duration\":121,\"song\":[{" +
+                "\"artistId\":\"artist:opaque-A\",\"coverArt\":\"artwork:$id\"," +
+                "\"duration\":121,\"song\":[{" +
                 "\"id\":\"track:000000000000000000000000000001\"," +
                 "\"title\":\"Opaque Track\",\"artist\":\"Opaque Artist\"," +
                 "\"artistId\":\"artist:opaque-A\",\"album\":\"Album $id\"," +
+                "\"coverArt\":\"artwork:track:000000000000000000000000000001\"," +
                 "\"duration\":61,\"discNumber\":1,\"track\":1}]}"
         )
 
@@ -304,9 +310,10 @@ class LibraryBrowseTest {
         fun numericAlbumBody() = envelope(
             "\"album\":{" +
                 "\"id\":7,\"name\":\"Numeric Album\",\"artist\":\"Opaque Artist\"," +
-                "\"artistId\":\"artist:opaque-A\",\"duration\":121,\"song\":[{" +
+                "\"artistId\":\"artist:opaque-A\",\"coverArt\":11,\"duration\":121,\"song\":[{" +
                 "\"id\":9,\"title\":\"Numeric Track\",\"artist\":\"Opaque Artist\"," +
                 "\"artistId\":\"artist:opaque-A\",\"album\":\"Numeric Album\"," +
+                "\"coverArt\":12," +
                 "\"duration\":61,\"discNumber\":1,\"track\":1}]}"
         )
 

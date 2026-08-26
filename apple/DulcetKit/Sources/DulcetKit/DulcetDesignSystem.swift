@@ -302,6 +302,11 @@ struct DulcetArtworkView: View {
     let artwork: DulcetArtwork
     let size: CGFloat
     var muted = false
+    @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.displayScale) private var displayScale
+    @State private var loadedData: Data?
+    @State private var operation: (any DulcetArtworkFetchOperation)?
+    @State private var loadGeneration = 0
 
     var body: some View {
         ZStack {
@@ -330,6 +335,14 @@ struct DulcetArtworkView: View {
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.white.opacity(0.94)) // dulcet-contrast-waiver: decorative-artwork
                 .accessibilityHidden(true)
+
+            if let loadedImage {
+                loadedImage
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+            }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
@@ -339,7 +352,57 @@ struct DulcetArtworkView: View {
         }
         .saturation(muted ? 0.28 : 1)
         .accessibilityHidden(true)
+        .onAppear(perform: startLoading)
+        .onChange(of: loadIdentity) { _, _ in startLoading() }
+        .onDisappear(perform: cancelLoading)
     }
+
+    private var sizeBucket: DulcetArtworkSizeBucket {
+        .containing(pixelSize: size * displayScale)
+    }
+
+    private var loadIdentity: DulcetArtworkLoadIdentity? {
+        artwork.remoteReference.map {
+            DulcetArtworkLoadIdentity(reference: $0, sizeBucket: sizeBucket)
+        }
+    }
+
+    private var loadedImage: Image? {
+        guard let loadedData else { return nil }
+#if os(macOS)
+        guard let image = NSImage(data: loadedData) else { return nil }
+        return Image(nsImage: image)
+#else
+        guard let image = UIImage(data: loadedData) else { return nil }
+        return Image(uiImage: image)
+#endif
+    }
+
+    private func startLoading() {
+        cancelLoading()
+        loadedData = nil
+        guard let reference = artwork.remoteReference else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
+        operation = store.loadArtwork(reference, sizeBucket: sizeBucket) { outcome in
+            guard generation == loadGeneration else { return }
+            operation = nil
+            if case let .loaded(data) = outcome {
+                loadedData = data
+            }
+        }
+    }
+
+    private func cancelLoading() {
+        loadGeneration += 1
+        operation?.cancel()
+        operation = nil
+    }
+}
+
+private struct DulcetArtworkLoadIdentity: Hashable {
+    let reference: DulcetArtworkReference
+    let sizeBucket: DulcetArtworkSizeBucket
 }
 
 struct DulcetStatusDot: View {

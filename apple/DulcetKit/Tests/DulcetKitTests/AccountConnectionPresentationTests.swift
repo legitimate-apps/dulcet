@@ -164,6 +164,64 @@ func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
 }
 
 @Test @MainActor
+func connectedAccountLoadsOnlyServerSuppliedArtworkKeysWithCurrentCredentials() {
+    let connector = ControlledAccountConnector()
+    let artworkFetcher = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    let reference = DulcetArtworkReference(
+        serverID: "provider-instance-fixture",
+        artworkKey: "cover:opaque/song"
+    )
+    var outcome: DulcetArtworkFetchOutcome?
+
+    let operation = store.loadArtwork(reference, sizeBucket: .pixels256) {
+        outcome = $0
+    }
+
+    #expect(operation != nil)
+    #expect(artworkFetcher.requests.count == 1)
+    #expect(artworkFetcher.requests[0].reference == reference)
+    #expect(artworkFetcher.requests[0].sizeBucket == .pixels256)
+    #expect(artworkFetcher.requests[0].normalizedServerURL == "https://music.example.invalid")
+    #expect(artworkFetcher.requests[0].username == "listener")
+    #expect(artworkFetcher.requests[0].password == "fixture-password")
+    artworkFetcher.complete(.loaded(Data([1, 2, 3])))
+    guard case let .loaded(data)? = outcome else {
+        Issue.record("Artwork completion did not preserve the loaded bytes")
+        return
+    }
+    #expect(data == Data([1, 2, 3]))
+
+    var wrongServerOutcome: DulcetArtworkFetchOutcome?
+    let wrongServerOperation = store.loadArtwork(DulcetArtworkReference(
+        serverID: "another-provider-instance",
+        artworkKey: reference.artworkKey
+    ), sizeBucket: .pixels256) {
+        wrongServerOutcome = $0
+    }
+    #expect(wrongServerOperation == nil)
+    if case .unavailable = wrongServerOutcome {
+        // Expected: a provider-scoped reference cannot cross into another account.
+    } else {
+        Issue.record("Cross-account artwork reference was not rejected")
+    }
+    #expect(artworkFetcher.requests.count == 1)
+}
+
+@Test @MainActor
 func lateCancelSuppressesQueuedSuccessAndCredentialPersistence() {
     let connector = ControlledAccountConnector()
     let credentials = MemoryCredentialStore(persisted: nil)
@@ -407,6 +465,36 @@ private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
 
 @MainActor
 private final class ControlledLibraryOperation: DulcetLibraryBrowseOperation {
+    private(set) var cancelCount = 0
+
+    func cancel() {
+        cancelCount += 1
+    }
+}
+
+@MainActor
+private final class ControlledArtworkFetcher: DulcetArtworkFetching {
+    private(set) var requests: [DulcetArtworkFetchRequest] = []
+    private let operation = ControlledArtworkOperation()
+    private var completion: (@MainActor (DulcetArtworkFetchOutcome) -> Void)?
+
+    func fetch(
+        _ request: DulcetArtworkFetchRequest,
+        completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
+    ) -> any DulcetArtworkFetchOperation {
+        requests.append(request)
+        self.completion = completion
+        return operation
+    }
+
+    func complete(_ outcome: DulcetArtworkFetchOutcome) {
+        completion?(outcome)
+        completion = nil
+    }
+}
+
+@MainActor
+private final class ControlledArtworkOperation: DulcetArtworkFetchOperation {
     private(set) var cancelCount = 0
 
     func cancel() {

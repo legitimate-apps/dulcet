@@ -78,6 +78,19 @@ public final class DulcetPresentationStore {
         source.send(.selectAlbum(id))
     }
 
+    @discardableResult
+    public func loadArtwork(
+        _ reference: DulcetArtworkReference,
+        sizeBucket: DulcetArtworkSizeBucket,
+        completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
+    ) -> (any DulcetArtworkFetchOperation)? {
+        guard let loader = source as? any DulcetArtworkLoading else {
+            completion(.unavailable)
+            return nil
+        }
+        return loader.loadArtwork(reference, sizeBucket: sizeBucket, completion: completion)
+    }
+
     private func receive(_ snapshot: DulcetSnapshot) {
         isApplyingSourceSnapshot = true
         self.snapshot = snapshot
