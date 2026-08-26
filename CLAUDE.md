@@ -274,13 +274,39 @@ isolated asks produce locally-sensible answers that do not fit together.
 
 ### Merging
 
-`main` requires a code-owner review and its required status checks, admin bypass is off, and an
-approval must post-date the last push by a different actor.
+**What `main` actually enforces — OBSERVED 2026-08-26, read from
+`GET /repos/{owner}/{repo}/branches/main/protection` with an admin token:**
 
-**GitHub will not accept an approving review from a pull request's own author** — OBSERVED
-2026-08-20, `422 Unprocessable Entity — "Review Can not approve your own pull request"`. `CODEOWNERS`
-therefore names **both maintainer accounts**: the account doing the work opens the pull request, the
-other approves it.
+| setting | live value |
+|---|---|
+| required status checks | `core-ci`, `parity-gate`, `apple-ci` |
+| `strict` (branch must be up to date with `main`) | **true** |
+| `required_pull_request_reviews` | **null — no review is required** |
+| `enforce_admins` | **true** — admin bypass is off |
+| force pushes to `main` | disabled |
+
+🚨 **Correction, 2026-08-26.** This section previously stated that `main` "requires a code-owner
+review" and that "an approval must post-date the last push by a different actor." **Neither is
+enforced.** `required_pull_request_reviews` is null, so `CODEOWNERS` advertises ownership and
+requests reviewers — it gates nothing. A pull request showing an empty `reviewDecision` and
+`mergeStateStatus: BLOCKED` is blocked on **status checks alone**; reading that as a review deadlock
+sends you looking for a second approving account that the branch never asked for. Re-measure before
+re-asserting either claim.
+
+**`strict: true` is the setting that shapes day-to-day work.** Every pull request must be rebased or
+updated onto the current `main` before it can merge, and `apple-ci` is the slow leg. With more than
+one pull request in flight this **serialises**: merging one invalidates the others' up-to-date
+status and each must re-run. Land them deliberately in dependency order, and tell the other branches
+when `main` moves so they rebase once instead of twice.
+
+**History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20
+an approving review from a pull request's own author was refused with
+`422 Unprocessable Entity — "Review Can not approve your own pull request"`, and the workaround was
+to have one maintainer account open the pull request and the other approve it. That cost real time
+and is worth remembering — but it was a workaround for a **required review that is no longer
+configured**, so the dance is obsolete, not merely optional. If you meet the 422 again you have gone
+looking for an approval nothing asked you for. **Do not "fix" a blocked pull request by enabling
+required reviews.**
 
 **Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
 commit to the *pull request's* author, not to the commit author. Opening from an account whose
@@ -294,9 +320,10 @@ GitHub enforces.
 `@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams —
 `CODEOWNERS` entries must resolve to individual collaborators while ownership stays as it is.
 
-⚠️ **This is not independent review.** One person holds both accounts, so the required approval
-records an account switch. The adversarial review demanded above is a separate obligation and is not
-discharged by approving from the second account.
+⚠️ **Nothing in this repository's configuration provides independent review.** Branch protection
+requires no approval at all, and ownership sits with a single maintainer. The adversarial review
+demanded above is therefore an obligation the maintainer owes the code, not something the merge
+button verifies — a green pull request means the checks passed and nothing more.
 
 ## Definition of done
 
