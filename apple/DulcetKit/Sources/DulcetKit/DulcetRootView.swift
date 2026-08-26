@@ -265,15 +265,12 @@ private struct DulcetStateSurface: View {
         case .library:
             librarySurface
         case .search:
-            if snapshot.state == .searchMixedSources {
-                DulcetSearchView(snapshot: snapshot, searchQuery: $store.searchQuery)
-            } else {
-                DulcetUnavailableDestinationView(
-                    symbol: "magnifyingglass",
-                    title: DulcetStrings.searchUnavailableTitle,
-                    message: DulcetStrings.searchUnavailableBody
-                )
-            }
+            DulcetSearchView(
+                snapshot: snapshot,
+                searchQuery: $store.searchQuery,
+                onLoadMore: store.loadMoreSearchResults,
+                onRetry: store.retrySearch
+            )
         case .nowPlaying:
             if snapshot.state == .nowPlaying, let player = snapshot.nowPlaying {
                 DulcetNowPlayingView(player: player)

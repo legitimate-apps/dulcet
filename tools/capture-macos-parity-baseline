@@ -15,7 +15,7 @@
 # is sensitive to the build environment and not only to the source. Measured
 # 2026-08-23: a capture of ref X taken IN-PLACE in the working tree differs from a
 # capture of the SAME ref taken in a fresh worktree — in macos-library-browse and
-# macos-search-mixed-sources, the two most content-dense views, which shift first
+# macos-search-results, the two most content-dense views, which shift first
 # under any environmental difference. Comparing across methods produced four
 # differing images and read exactly like a code regression. The same two refs
 # compared worktree-to-worktree were byte-identical.

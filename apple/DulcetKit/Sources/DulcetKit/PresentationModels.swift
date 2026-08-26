@@ -20,8 +20,11 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case albumDetailMultiDisc = "album-detail-multi-disc"
     case nowPlaying = "now-playing"
     case nowPlayingUnavailable = "now-playing-unavailable"
-    case searchMixedSources = "search-mixed-sources"
-    case searchUnavailable = "search-unavailable"
+    case searchIdle = "search-idle"
+    case searchLoading = "search-loading"
+    case searchResults = "search-results"
+    case searchEmpty = "search-empty"
+    case searchError = "search-error"
     case tlsUntrusted = "error-tls-untrusted"
     case offlineMetadataOnly = "offline-metadata-only"
 
@@ -446,37 +449,64 @@ public enum DulcetSearchResultKind: String, Sendable, Hashable {
     case artist
 }
 
-public enum DulcetSearchSource: String, Sendable, Hashable, CaseIterable {
-    case local
-    case server
-    case localAndServer
-}
-
 public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
-    public let id: String
+    public let id: DulcetProviderItemID
     public let title: String
-    public let subtitle: String
     public let kind: DulcetSearchResultKind
-    public let source: DulcetSearchSource
+    public let credits: [DulcetCredit]
+    public let albumTitle: String?
+    public let year: Int?
+    public let duration: Duration?
+    public let mediaSourceID: String?
     public let artwork: DulcetArtwork
-    public let refreshedFromServer: Bool
 
     public init(
-        id: String,
+        id: DulcetProviderItemID,
         title: String,
-        subtitle: String,
         kind: DulcetSearchResultKind,
-        source: DulcetSearchSource,
-        artwork: DulcetArtwork,
-        refreshedFromServer: Bool = false
+        credits: [DulcetCredit],
+        albumTitle: String?,
+        year: Int?,
+        duration: Duration?,
+        mediaSourceID: String?,
+        artwork: DulcetArtwork
     ) {
         self.id = id
         self.title = title
-        self.subtitle = subtitle
         self.kind = kind
-        self.source = source
+        self.credits = credits
+        self.albumTitle = albumTitle
+        self.year = year
+        self.duration = duration
+        self.mediaSourceID = mediaSourceID
         self.artwork = artwork
-        self.refreshedFromServer = refreshedFromServer
+    }
+
+    public var subtitle: String {
+        let creditNames = credits.map(\.name).joined(separator: ", ")
+        return [creditNames, albumTitle]
+            .compactMap { value in value?.isEmpty == false ? value : nil }
+            .joined(separator: " · ")
+    }
+}
+
+public enum DulcetSearchFailureKind: String, Sendable, Hashable {
+    case timeout
+    case unreachable
+    case tlsUntrusted
+    case security
+    case authentication
+    case `protocol`
+    case server
+    case input
+    case capability
+}
+
+public struct DulcetSearchFailure: Sendable, Hashable {
+    public let kind: DulcetSearchFailureKind
+
+    public init(kind: DulcetSearchFailureKind) {
+        self.kind = kind
     }
 }
 
@@ -566,6 +596,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let nowPlaying: DulcetNowPlaying?
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
+    public let searchHasMoreKinds: Set<DulcetSearchResultKind>
+    public let searchLoadingMoreKind: DulcetSearchResultKind?
+    public let searchFailure: DulcetSearchFailure?
     public let captureDate: Date
     public let accountForm: DulcetAccountConnectRequest
     public let accountConnection: DulcetAccountConnectionStatus
@@ -585,6 +618,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
+        searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
+        searchLoadingMoreKind: DulcetSearchResultKind? = nil,
+        searchFailure: DulcetSearchFailure? = nil,
         captureDate: Date,
         accountForm: DulcetAccountConnectRequest = .empty,
         accountConnection: DulcetAccountConnectionStatus = .idle,
@@ -603,6 +639,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.nowPlaying = nowPlaying
         self.searchQuery = searchQuery
         self.searchResults = searchResults
+        self.searchHasMoreKinds = searchHasMoreKinds
+        self.searchLoadingMoreKind = searchLoadingMoreKind
+        self.searchFailure = searchFailure
         self.captureDate = captureDate
         self.accountForm = accountForm
         self.accountConnection = accountConnection

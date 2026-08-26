@@ -102,7 +102,7 @@ func fixtureRendersEveryDeclaredDistinctState() {
 
     #expect(snapshots.count == DulcetPresentationState.allCases.count)
     #expect(Set(snapshots.map(\.state)) == Set(DulcetPresentationState.allCases))
-    #expect(snapshots.filter(\.accountConnected).count == 12)
+    #expect(snapshots.filter(\.accountConnected).count == 15)
 }
 
 @Test @MainActor
@@ -131,20 +131,20 @@ func offlineFixtureKeepsMetadataAndDisablesPlayback() {
 }
 
 @Test @MainActor
-func searchFixtureMakesMergedSourcesExplicitWithoutDuplicates() {
-    let snapshot = DulcetDeterministicFixture().snapshot(for: .searchMixedSources)
+func searchFixtureIsServerOnlyStructuredAndProviderScoped() {
+    let snapshot = DulcetDeterministicFixture().snapshot(for: .searchResults)
 
-    #expect(Set(snapshot.searchResults.map(\.source)) == Set(DulcetSearchSource.allCases))
     #expect(Set(snapshot.searchResults.map(\.id)).count == snapshot.searchResults.count)
-    #expect(snapshot.searchResults.contains { $0.refreshedFromServer })
-    #expect(snapshot.searchResults.count == 10)
-    #expect(DulcetSearchSource.local.displayTitle == DulcetStrings.local)
-    #expect(DulcetSearchSource.server.displayTitle == DulcetStrings.server)
-    #expect(DulcetSearchSource.localAndServer.displayTitle == DulcetStrings.localAndServer)
-    #expect(Set(DulcetSearchSource.allCases.map(\.symbolName)).count == 3)
+    #expect(snapshot.searchResults.count == 6)
+    #expect(snapshot.searchResults.allSatisfy { $0.id.providerInstanceID == "deterministic-fixture" })
+    #expect(snapshot.searchResults.contains { !$0.credits.isEmpty })
+    #expect(snapshot.searchResults.contains { $0.duration == .seconds(188) })
+    #expect(snapshot.searchHasMoreKinds == [.track, .album])
+    #expect(DulcetStrings.searchResultCount(1) == "1 result")
+    #expect(DulcetStrings.searchResultCount(snapshot.searchResults.count) == "6 results")
     #expect(
         DulcetStrings.searchSummary
-            == "Local results appear immediately. Server matches refresh the same row instead of creating a duplicate."
+            == "Results come from the connected server. Search begins after two characters."
     )
 }
 
@@ -171,7 +171,7 @@ func storeRoutesSemanticActionsWithoutExposingFixtureSelection() {
     let store = DulcetPresentationStore(source: source)
 
     store.selectDestination(.search)
-    #expect(store.snapshot.state == .searchMixedSources)
+    #expect(store.snapshot.state == .searchResults)
 
     store.searchQuery = "東京"
     #expect(store.snapshot.searchQuery == "東京")

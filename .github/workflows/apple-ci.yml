@@ -165,7 +165,7 @@ jobs:
             echo
             echo 'Two complete render runs were byte-identical.'
             echo
-            echo 'Artifact contains 46 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
+            echo 'Artifact contains 52 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload deterministic macOS capture mismatch forensics
         if: ${{ always() && steps.deterministic_design_capture.outputs.forensics_available == 'true' }}

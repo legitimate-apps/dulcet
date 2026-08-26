@@ -3,6 +3,8 @@ import Observation
 public enum DulcetPresentationAction: Sendable, Hashable {
     case selectDestination(DulcetSidebarDestination)
     case updateSearchQuery(String)
+    case loadMoreSearchResults(DulcetSearchResultKind)
+    case retrySearch
     case selectAlbum(DulcetProviderItemID)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
@@ -76,6 +78,14 @@ public final class DulcetPresentationStore {
 
     public func selectAlbum(_ id: DulcetProviderItemID) {
         source.send(.selectAlbum(id))
+    }
+
+    public func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {
+        source.send(.loadMoreSearchResults(kind))
+    }
+
+    public func retrySearch() {
+        source.send(.retrySearch)
     }
 
     @discardableResult

@@ -38,8 +38,11 @@ STATES = (
     "album-detail-multi-disc",
     "now-playing",
     "now-playing-unavailable",
-    "search-mixed-sources",
-    "search-unavailable",
+    "search-idle",
+    "search-loading",
+    "search-results",
+    "search-empty",
+    "search-error",
     "error-tls-untrusted",
     "offline-metadata-only",
 )

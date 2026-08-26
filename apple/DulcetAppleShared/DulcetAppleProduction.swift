@@ -12,7 +12,8 @@ enum DulcetAppleProduction {
                 connector: DulcetCoreAccountConnector(),
                 credentialStore: DulcetKeychainCredentialStore(),
                 libraryBrowser: DulcetCoreLibraryBrowser(),
-                artworkFetcher: DulcetCoreArtworkFetcher()
+                artworkFetcher: DulcetCoreArtworkFetcher(),
+                serverSearch: DulcetCoreServerSearch()
             )
         )
     }
@@ -140,6 +141,129 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing {
                 DulcetArtworkReference(serverID: providerInstanceID, artworkKey: $0)
             }
         )
+    }
+}
+
+@MainActor
+final class DulcetCoreServerSearch: DulcetServerSearching {
+    private let client = AppleSearchClient()
+
+    func search(
+        _ request: DulcetSearchPageRequest,
+        completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void
+    ) -> any DulcetSearchOperation {
+        let coreRequest = AppleSearchPageRequest(
+            providerInstanceId: request.providerInstanceID,
+            normalizedBaseUrl: request.normalizedServerURL,
+            username: request.username,
+            password: request.password,
+            allowLocalHttp: request.allowLocalHTTP,
+            query: request.query,
+            artistCount: Int32(request.artistCount),
+            artistOffset: Int32(request.artistOffset),
+            albumCount: Int32(request.albumCount),
+            albumOffset: Int32(request.albumOffset),
+            trackCount: Int32(request.trackCount),
+            trackOffset: Int32(request.trackOffset)
+        )
+        let operation = client.startSearch(request: coreRequest) { outcome in
+            if let page = outcome.page {
+                completion(.loaded(DulcetSearchPage(
+                    results: page.results.map(Self.copyResult),
+                    artistResultCount: Int(page.artistResultCount),
+                    albumResultCount: Int(page.albumResultCount),
+                    trackResultCount: Int(page.trackResultCount),
+                    artistHasMore: page.artistHasMore,
+                    albumHasMore: page.albumHasMore,
+                    trackHasMore: page.trackHasMore
+                )))
+                return
+            }
+            guard let error = outcome.error else {
+                preconditionFailure("A search outcome must carry a page or a closed error")
+            }
+            if error.kind == "cancelled" {
+                completion(.cancelled)
+                return
+            }
+            guard let kind = DulcetSearchFailureKind(rawValue: error.kind) else {
+                preconditionFailure("The core exported an unmapped search error kind")
+            }
+            completion(.failed(DulcetSearchFailure(kind: kind)))
+        }
+        return DulcetCoreSearchOperation(operation: operation)
+    }
+
+    private static func copyResult(_ result: AppleSearchResultItemDto) -> DulcetSearchResult {
+        let kind: DulcetSearchResultKind = switch result.type {
+        case "Track": .track
+        case "Album": .album
+        case "Artist": .artist
+        default: preconditionFailure("The core exported an unmapped search result type")
+        }
+        let duration = result.durationMilliseconds.map { value in
+            Duration.milliseconds(value.int64Value)
+        }
+        return DulcetSearchResult(
+            id: DulcetProviderItemID(
+                providerInstanceID: result.providerInstanceId,
+                rawID: result.rawId
+            ),
+            title: result.title,
+            kind: kind,
+            credits: result.credits.map(copyCredit),
+            albumTitle: result.albumTitle,
+            year: result.year?.intValue,
+            duration: duration,
+            mediaSourceID: result.mediaSourceId,
+            artwork: artwork(
+                fallbackSeed: result.rawId,
+                providerInstanceID: result.providerInstanceId,
+                artworkKey: result.artworkKey
+            )
+        )
+    }
+
+    private static func copyCredit(_ credit: AppleSearchCreditDto) -> DulcetCredit {
+        let role: DulcetCreditRole = credit.role == "AlbumArtist" ? .albumArtist : .artist
+        let id: DulcetProviderItemID? = if let providerInstanceID = credit.providerInstanceId,
+                    let rawID = credit.rawId {
+            DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: rawID)
+        } else {
+            nil
+        }
+        return DulcetCredit(role: role, name: credit.name, id: id)
+    }
+
+    private static func artwork(
+        fallbackSeed: String,
+        providerInstanceID: String,
+        artworkKey: String?
+    ) -> DulcetArtwork {
+        let palettes = DulcetArtworkPalette.allCases
+        let index = fallbackSeed.unicodeScalars.reduce(0) {
+            ($0 + Int($1.value)) % palettes.count
+        }
+        return DulcetArtwork(
+            seed: fallbackSeed,
+            palette: palettes[index],
+            remoteReference: artworkKey.map {
+                DulcetArtworkReference(serverID: providerInstanceID, artworkKey: $0)
+            }
+        )
+    }
+}
+
+@MainActor
+private final class DulcetCoreSearchOperation: DulcetSearchOperation {
+    private let operation: any AppleSearchOperation
+
+    init(operation: any AppleSearchOperation) {
+        self.operation = operation
+    }
+
+    func cancel() {
+        operation.cancel()
     }
 }
 

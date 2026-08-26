@@ -33,7 +33,7 @@ STATES = (
     "library-browse",
     "album-detail-multi-disc",
     "now-playing",
-    "search-mixed-sources",
+    "search-results",
     "error-tls-untrusted",
     "offline-metadata-only",
 )
@@ -451,7 +451,7 @@ def build_messages(request: dict[str, Any], artifact: Path) -> list[dict[str, An
         "library-browse": "Does density survive large, Unicode, missing, multi-artist, and long-title data without looking like demo data?",
         "album-detail-multi-disc": "Are disc boundaries and track-number restarts immediately legible?",
         "now-playing": "Do transport, progress, identity, output, and queue read in the right order?",
-        "search-mixed-sources": "Can local, server, and refreshed results be distinguished without badges overwhelming relevance?",
+        "search-results": "Are server-ranked artists, albums, and tracks easy to distinguish without type labels overwhelming relevance?",
         "error-tls-untrusted": "Is the limitation safe, specific, actionable, and free of a bypass action?",
         "offline-metadata-only": "Is it clear that browsing works while playback does not?",
     }

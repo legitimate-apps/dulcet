@@ -95,7 +95,7 @@ func productionDataSourceKeepsDestinationAndRenderedStateInAgreement() {
 
     let expectations: [(DulcetSidebarDestination, DulcetPresentationState)] = [
         (.library, .libraryLoading),
-        (.search, .searchUnavailable),
+        (.search, .searchIdle),
         (.nowPlaying, .nowPlayingUnavailable),
     ]
     for (destination, expectedState) in expectations {
@@ -159,8 +159,112 @@ func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
     store.selectDestination(.search)
     #expect(libraryBrowser.operations.last?.cancelCount == 1)
     libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
-    #expect(store.snapshot.state == .searchUnavailable)
+    #expect(store.snapshot.state == .searchIdle)
     #expect(store.snapshot.selectedDestination == .search)
+}
+
+@Test @MainActor
+func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
+    #expect(DulcetAccountDataSource.defaultSearchDebounce == .milliseconds(250))
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+
+    store.searchQuery = "a"
+    await settleSearchTask()
+    #expect(search.requests.isEmpty)
+    #expect(store.snapshot.state == .searchIdle)
+
+    store.searchQuery = "at"
+    await settleSearchTask()
+    #expect(search.requests.count == 1)
+    #expect(search.requests[0].query == "at")
+    #expect(search.requests[0].artistCount == 20)
+    #expect(search.requests[0].albumCount == 20)
+    #expect(search.requests[0].trackCount == 20)
+
+    store.searchQuery = "atlas"
+    await settleSearchTask()
+    #expect(search.operations[0].cancelCount == 1)
+    #expect(search.requests.count == 2)
+    #expect(search.requests[1].query == "atlas")
+    #expect(search.requests[1].providerInstanceID == "provider-instance-fixture")
+    #expect(search.requests[1].username == "listener")
+    #expect(search.requests[1].password == "fixture-password")
+
+    search.complete(at: 0, .loaded(searchPage(
+        results: [searchResult(id: "stale", title: "Stale")]
+    )))
+    #expect(store.snapshot.state == .searchLoading)
+    #expect(store.snapshot.searchResults.isEmpty)
+
+    search.complete(at: 1, .loaded(searchPage(
+        results: [searchResult(id: "track:one", title: "Atlas")],
+        trackHasMore: true
+    )))
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchResults.map(\.id.rawID) == ["track:one"])
+    #expect(store.snapshot.searchHasMoreKinds == [.track])
+
+    store.loadMoreSearchResults(.track)
+    #expect(search.requests.count == 3)
+    #expect(search.requests[2].trackCount == 20)
+    #expect(search.requests[2].trackOffset == 1)
+    #expect(search.requests[2].artistCount == 0)
+    #expect(search.requests[2].albumCount == 0)
+    search.complete(at: 2, .loaded(searchPage(results: [
+        searchResult(id: "track:one", title: "Atlas Updated"),
+        searchResult(id: "track:two", title: "Atlas North"),
+    ])))
+    #expect(store.snapshot.searchResults.map(\.title) == ["Atlas Updated", "Atlas North"])
+    #expect(store.snapshot.searchHasMoreKinds.isEmpty)
+
+    store.searchQuery = "another"
+    await settleSearchTask()
+    #expect(search.requests.count == 4)
+    store.selectDestination(.nowPlaying)
+    #expect(search.operations[3].cancelCount == 1)
+    #expect(store.snapshot.state == .nowPlayingUnavailable)
+}
+
+@Test
+func credentialBearingSearchRequestCannotPrintCredentials() {
+    let request = DulcetSearchPageRequest(
+        providerInstanceID: "provider-fixture",
+        normalizedServerURL: "https://music.example.invalid",
+        username: "search-user-canary",
+        password: "search-password-canary",
+        allowLocalHTTP: false,
+        query: "atlas",
+        artistCount: 20,
+        artistOffset: 0,
+        albumCount: 20,
+        albumOffset: 0,
+        trackCount: 20,
+        trackOffset: 0
+    )
+    var renderedDump = ""
+    dump(request, to: &renderedDump)
+    let rendered = [String(describing: request), String(reflecting: request), renderedDump]
+
+    #expect(rendered.allSatisfy { !$0.contains("search-user-canary") })
+    #expect(rendered.allSatisfy { !$0.contains("search-password-canary") })
+    #expect(rendered.allSatisfy { $0.contains("<redacted>") })
 }
 
 @Test @MainActor
@@ -473,6 +577,37 @@ private final class ControlledLibraryOperation: DulcetLibraryBrowseOperation {
 }
 
 @MainActor
+private final class ControlledServerSearch: DulcetServerSearching {
+    private(set) var requests: [DulcetSearchPageRequest] = []
+    private(set) var operations: [ControlledSearchOperation] = []
+    private var completions: [(@MainActor (DulcetSearchPageOutcome) -> Void)] = []
+
+    func search(
+        _ request: DulcetSearchPageRequest,
+        completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void
+    ) -> any DulcetSearchOperation {
+        let operation = ControlledSearchOperation()
+        requests.append(request)
+        operations.append(operation)
+        completions.append(completion)
+        return operation
+    }
+
+    func complete(at index: Int, _ outcome: DulcetSearchPageOutcome) {
+        completions[index](outcome)
+    }
+}
+
+@MainActor
+private final class ControlledSearchOperation: DulcetSearchOperation {
+    private(set) var cancelCount = 0
+
+    func cancel() {
+        cancelCount += 1
+    }
+}
+
+@MainActor
 private final class ControlledArtworkFetcher: DulcetArtworkFetching {
     private(set) var requests: [DulcetArtworkFetchRequest] = []
     private let operation = ControlledArtworkOperation()
@@ -527,6 +662,45 @@ private func fixtureLibraryAlbum() -> DulcetAlbum {
         mediaSourceID: nil,
         artwork: DulcetArtwork(seed: "album:opaque", palette: .indigoCoral),
         tracks: [track]
+    )
+}
+
+@MainActor
+private func settleSearchTask() async {
+    try? await Task.sleep(for: .milliseconds(20))
+}
+
+@MainActor
+private func searchResult(id: String, title: String) -> DulcetSearchResult {
+    DulcetSearchResult(
+        id: DulcetProviderItemID(
+            providerInstanceID: "provider-instance-fixture",
+            rawID: id
+        ),
+        title: title,
+        kind: .track,
+        credits: [DulcetCredit(role: .artist, name: "Fixture Artist", id: nil)],
+        albumTitle: "Fixture Album",
+        year: 2026,
+        duration: .seconds(61),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: id, palette: .indigoCoral)
+    )
+}
+
+@MainActor
+private func searchPage(
+    results: [DulcetSearchResult],
+    trackHasMore: Bool = false
+) -> DulcetSearchPage {
+    DulcetSearchPage(
+        results: results,
+        artistResultCount: 0,
+        albumResultCount: 0,
+        trackResultCount: results.count,
+        artistHasMore: false,
+        albumHasMore: false,
+        trackHasMore: trackHasMore
     )
 }
 

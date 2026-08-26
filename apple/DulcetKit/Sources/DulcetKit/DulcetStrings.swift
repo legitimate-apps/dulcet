@@ -48,21 +48,26 @@ enum DulcetStrings {
     static let libraryErrorSecurity = text("library.error.security", "A security or certificate check stopped the library request.")
     static let libraryErrorProtocol = text("library.error.protocol", "The server returned a library response Dulcet could not read.")
     static let libraryErrorGeneric = text("library.error.generic", "Check the server and network, then try again.")
-    static let searchUnavailableTitle = text("search.unavailable.title", "Server search is not available yet")
-    static let searchUnavailableBody = text("search.unavailable.body", "Search is a separate feature and has not been implemented in this build.")
     static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing can play yet")
     static let nowPlayingUnavailableBody = text("player.unavailable.body", "Playback is a separate feature and has not been implemented in this build.")
     static let searchTitle = text("search.title", "Search")
     static let searchPrompt = text("search.prompt", "Artists, albums, and tracks")
-    static let searchSummary = text("search.summary", "Local results appear immediately. Server matches refresh the same row instead of creating a duplicate.")
+    static let searchSummary = text("search.summary", "Results come from the connected server. Search begins after two characters.")
+    static let searchIdleTitle = text("search.idle.title", "Search your server")
+    static let searchIdleBody = text("search.idle.body", "Enter at least two characters to find artists, albums, and tracks.")
+    static let searchLoading = text("search.loading", "Searching the server…")
+    static let searchEmptyTitle = text("search.empty.title", "No server matches")
+    static let searchEmptyBody = text("search.empty.body", "Try a different artist, album, or track name.")
+    static let searchErrorTitle = text("search.error.title", "Search could not be completed")
+    static let searchErrorBody = text("search.error.body", "Check the server and network, then try again.")
+    static let searchRetry = text("search.retry", "Try Again")
+    static let loadMoreTracks = text("search.more.tracks", "More tracks")
+    static let loadMoreAlbums = text("search.more.albums", "More albums")
+    static let loadMoreArtists = text("search.more.artists", "More artists")
+    static let loadingMore = text("search.more.loading", "Loading more…")
     static let bestMatches = text("search.bestMatches", "Best Matches")
     static let resultColumn = text("search.column.result", "Result")
     static let typeColumn = text("search.column.type", "Type")
-    static let sourceColumn = text("search.column.source", "Source")
-    static let local = text("search.source.local", "On this device")
-    static let server = text("search.source.server", "Server")
-    static let localAndServer = text("search.source.both", "Device + Server")
-    static let refreshed = text("search.refreshed", "Refreshed from server")
     static let album = text("search.kind.album", "Album")
     static let artist = text("search.kind.artist", "Artist")
     static let track = text("search.kind.track", "Track")
@@ -101,6 +106,10 @@ enum DulcetStrings {
 
     static func trackCount(_ count: Int) -> String {
         pluralized("library.trackCount", fallback: "%d tracks", count: count)
+    }
+
+    static func searchResultCount(_ count: Int) -> String {
+        pluralized("search.resultCount", fallback: "%d results", count: count)
     }
 
     static func discTitle(_ number: Int) -> String {
@@ -195,16 +204,14 @@ enum DulcetStrings {
     static func searchResultAccessibility(
         title: String,
         subtitle: String,
-        kind: String,
-        source: String
+        kind: String
     ) -> String {
         formatted(
             "search.result.accessibility",
-            "%1$@, %2$@, %3$@, %4$@",
+            "%1$@, %2$@, %3$@",
             title,
             subtitle,
-            kind,
-            source
+            kind
         )
     }
 
