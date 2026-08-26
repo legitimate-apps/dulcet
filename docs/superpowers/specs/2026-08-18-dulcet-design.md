@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 76 — tvOS now hosts the production account root through a remote-focused, full-screen
+**Revision:** 77 — artwork responses now use unconditional XML/JSON-envelope-first validation and a
+positive image-signature table before bytes can cross into a platform cache; revision 76 made tvOS
+host the production account root through a remote-focused, full-screen
 navigation surface and carries tvOS-specific presentation and core-conformance evidence while the
 signed live-app boundary remains explicit; revision 75 made partial-feature promotion conditions resolve named workflow, job, and test
 targets against the repository or declare an explicit block; the signed-Keychain condition is
@@ -2022,6 +2024,27 @@ and rumours are how this app category accumulates "mysteriously does not work wi
 every layout's exact pixel size. Artwork keys are opaque and may be album- or song-scoped — never
 derived from an item id.
 
+**Binary validation is unconditional and occurs before cache admission.** The body is inspected in
+this order regardless of HTTP status or advertised content type:
+
+1. skip leading JSON/XML whitespace and an optional UTF-8 BOM, then detect and parse a Subsonic error
+   envelope in either JSON or XML;
+2. map Subsonic error code 70 (requested data not found) to artwork unavailable, so the generated
+   fallback remains the presentation rather than a hard error;
+3. for a successful HTTP status with no envelope, accept bytes only when they match the positive
+   artwork signature table: JPEG, PNG, GIF87a/GIF89a, WebP, little- or big-endian TIFF, BMP, ICO, or
+   an AVIF/HEIF image brand;
+4. reject every other body as `Protocol.MalformedEnvelope`. Rejected and unavailable bodies never
+   cross the Kotlin facade as image data and therefore cannot be written to the disk cache. Platform
+   image decoding remains a second cache-admission check, not the primary protocol validator.
+
+**OBSERVED 2026-08-26 against the pinned local Navidrome 0.63.2 target:** a valid 256-pixel artwork
+request returned HTTP 200 with a 3,294-byte JPEG beginning `ff d8 ff db`; a missing artwork request
+returned HTTP 200 with error code 70 and the exact body was observed in both a 232-byte XML envelope
+and a 185-byte JSON envelope. Requesting JSON is therefore not a sufficient response-shape contract
+for this binary endpoint. The recorded fixture pins the JPEG's first 64 bytes, the full XML and JSON
+envelopes, and all three byte counts (§20.6).
+
 ### 18.3 Favourites, ratings, and the mutation outbox
 
 `star`/`unstar` and `setRating` are user-authored data, so they get an ordered outbox rather than a
@@ -2502,7 +2525,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-31 | `getIndexes?ifModifiedSince` behavior and granularity (§16.1) |
 | CONF-32 | paging past the end returns an empty list, not an error |
 | CONF-33 | library mutated mid-import: the committed generation is internally consistent and the stability witness detects the change |
-| CONF-41 | `getCoverArt` size behavior and content types |
+| CONF-41 | `getCoverArt` size behavior, content types, HTTP-200 JSON/XML error envelopes, code-70 unavailable mapping, and positive image signatures |
 | CONF-42 | `songLyrics` v2 structured response shape |
 | CONF-51 | permission errors for the restricted user map to `Auth.Forbidden`, not a generic failure |
 | CONF-52 | unknown fields in a response are preserved and ignored |
@@ -2520,6 +2543,12 @@ and tokens are stripped and replaced with fixed placeholders; timestamps, ports 
 id that varies per run are normalized; fixture files are named deterministically from the request shape.
 A fixture is therefore stable across runs and contains no credential material even though the harness
 password is synthetic (§13 applies regardless).
+
+For binary success bodies where only format classification is under test, the fixture stores the exact
+recorded leading bytes needed by the signature table and separately pins the complete observed byte
+count rather than committing an otherwise-unused media blob. Error envelopes retain their complete,
+exact canonicalized bytes. Tests must exercise those recorded bytes; a hand-authored binary placeholder
+is not evidence for a signature validator.
 
 Fixture updates enter the branch **as an explicit commit by a maintainer**, prompted by a CI job that
 uploads the diff as an artifact and fails with a message naming the command to regenerate. There is no
@@ -3177,6 +3206,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 77 (2026-08-26)** — `getCoverArt` adopted the binary-or-envelope contract already required
+for streaming, after the pinned reference server returned an artwork error as successful HTTP.
+
+1. The pinned Navidrome 0.63.2 target returned a 3,294-byte JPEG for a valid 256-pixel key and returned
+   missing artwork as Subsonic code 70 at HTTP 200. Both its exact 232-byte XML representation and its
+   exact 185-byte JSON representation are recorded; neither HTTP status nor the requested format is
+   accepted as proof of image bytes.
+2. Artwork validation now detects either envelope before applying a positive image-signature table.
+   Code 70 becomes unavailable and preserves generated fallback artwork; every other unrecognized
+   payload is closed as malformed, and no rejected body crosses the Apple facade as cacheable data.
+3. The former test used arbitrary `01 23 45` bytes as successful artwork. It was replaced by the
+   recorded JPEG prefix and complete recorded error envelopes, with byte counts pinned so fixture drift
+   is visible.
 
 **Revision 76 (2026-08-25)** — tvOS account connection gained a production host, a TV-native
 interaction model, and platform-specific evidence without inheriting another Apple platform's claim.

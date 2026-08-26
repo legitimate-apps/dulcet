@@ -194,6 +194,8 @@ struct DulcetSearchView: View {
     @State private var selectedResultID: DulcetSearchResult.ID?
     let snapshot: DulcetSnapshot
     @Binding var searchQuery: String
+    let onLoadMore: (DulcetSearchResultKind) -> Void
+    let onRetry: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -211,11 +213,58 @@ struct DulcetSearchView: View {
                     .lineLimit(nil)
             }
 
+            searchContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(DulcetSpacing.lg)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+        .navigationTitle(DulcetStrings.search)
+    }
+
+    @ViewBuilder
+    private var searchContent: some View {
+        switch snapshot.state {
+        case .searchLoading:
+            VStack(spacing: DulcetSpacing.sm) {
+                ProgressView()
+                Text(DulcetStrings.searchLoading)
+                    .dulcetForeground(.secondaryTextOnWindow)
+            }
+        case .searchResults:
+            resultsTable
+        case .searchEmpty:
+            searchMessage(
+                symbol: "magnifyingglass",
+                title: DulcetStrings.searchEmptyTitle,
+                body: DulcetStrings.searchEmptyBody
+            )
+        case .searchError:
+            VStack(spacing: DulcetSpacing.md) {
+                searchMessage(
+                    symbol: "exclamationmark.magnifyingglass",
+                    title: DulcetStrings.searchErrorTitle,
+                    body: DulcetStrings.searchErrorBody
+                )
+                Button(DulcetStrings.searchRetry, action: onRetry)
+                    .buttonStyle(.borderedProminent)
+            }
+        default:
+            searchMessage(
+                symbol: "magnifyingglass",
+                title: DulcetStrings.searchIdleTitle,
+                body: DulcetStrings.searchIdleBody
+            )
+        }
+    }
+
+    private var resultsTable: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.bestMatches)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text(DulcetStrings.trackCount(snapshot.searchResults.count))
+                Text(DulcetStrings.searchResultCount(snapshot.searchResults.count))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
@@ -230,13 +279,9 @@ struct DulcetSearchView: View {
                             HStack(spacing: DulcetSpacing.md) {
                                 DulcetSearchResultIdentity(result: result)
                                 Spacer(minLength: DulcetSpacing.md)
-                                VStack(alignment: .trailing, spacing: DulcetSpacing.xxs) {
-                                    Text(result.kind.displayTitle)
-                                        .font(.callout.weight(.semibold))
-                                    Label(result.source.displayTitle, systemImage: result.source.symbolName)
-                                        .font(.caption)
-                                }
-                                .dulcetForeground(.secondaryTextOnWindow)
+                                Text(result.kind.displayTitle)
+                                    .font(.callout.weight(.semibold))
+                                    .dulcetForeground(.secondaryTextOnWindow)
                             }
                             .padding(DulcetSpacing.sm)
                             .contentShape(Rectangle())
@@ -245,8 +290,7 @@ struct DulcetSearchView: View {
                         .accessibilityLabel(DulcetStrings.searchResultAccessibility(
                             title: result.title,
                             subtitle: result.subtitle,
-                            kind: result.kind.displayTitle,
-                            source: result.source.displayTitle
+                            kind: result.kind.displayTitle
                         ))
                     }
                 }
@@ -256,31 +300,64 @@ struct DulcetSearchView: View {
                 TableColumn(DulcetStrings.resultColumn) { result in
                     DulcetSearchResultIdentity(result: result)
                 }
-                .width(min: 320, ideal: 500)
+                .width(min: 320, ideal: 620)
 
                 TableColumn(DulcetStrings.typeColumn) { result in
                     Text(result.kind.displayTitle)
                         .dulcetForeground(.secondaryTextOnWindow)
                 }
-                .width(min: 72, ideal: 90, max: 110)
-
-                TableColumn(DulcetStrings.sourceColumn) { result in
-                    Label(result.source.displayTitle, systemImage: result.source.symbolName)
-                        .labelStyle(.titleAndIcon)
-                        .dulcetForeground(.primaryTextOnWindow)
-                        .accessibilityLabel(result.source.displayTitle)
-                }
-                .width(min: 132, ideal: 180, max: .infinity)
+                .width(min: 72, ideal: 90, max: 120)
             }
 #if os(macOS)
             .alternatingRowBackgrounds(.disabled)
 #endif
 #endif
+
+            HStack(spacing: DulcetSpacing.xs) {
+                ForEach(pagedKinds, id: \.rawValue) { kind in
+                    Button(loadMoreTitle(for: kind)) {
+                        onLoadMore(kind)
+                    }
+                    .disabled(snapshot.searchLoadingMoreKind != nil)
+                }
+                if snapshot.searchLoadingMoreKind != nil {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(DulcetStrings.loadingMore)
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                }
+            }
         }
-        .padding(DulcetSpacing.lg)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.search)
+    }
+
+    private var pagedKinds: [DulcetSearchResultKind] {
+        [.track, .album, .artist].filter(snapshot.searchHasMoreKinds.contains)
+    }
+
+    private func loadMoreTitle(for kind: DulcetSearchResultKind) -> String {
+        switch kind {
+        case .track: DulcetStrings.loadMoreTracks
+        case .album: DulcetStrings.loadMoreAlbums
+        case .artist: DulcetStrings.loadMoreArtists
+        }
+    }
+
+    private func searchMessage(symbol: String, title: String, body: String) -> some View {
+        VStack(spacing: DulcetSpacing.sm) {
+            Image(systemName: symbol)
+                .font(.system(size: 36, weight: .medium))
+                .dulcetForeground(.secondaryTextOnWindow)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            Text(body)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+        }
+        .frame(maxWidth: 440)
     }
 }
 
@@ -307,29 +384,22 @@ private struct DulcetSearchResultIdentity: View {
             DulcetArtworkView(artwork: result.artwork, size: DulcetMetrics.denseRowArtworkSize)
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: DulcetSpacing.xxs) {
-                    Text(result.title)
-                        .font(.callout.weight(.medium))
-                        .dulcetForeground(.primaryTextOnWindow)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    if result.refreshedFromServer {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.caption)
-                            .dulcetForeground(.secondaryTextOnWindow)
-                            .accessibilityLabel(DulcetStrings.refreshed)
-                    }
-                }
-                Text(result.subtitle)
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
+                Text(result.title)
+                    .font(.callout.weight(.medium))
+                    .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                if !result.subtitle.isEmpty {
+                    Text(result.subtitle)
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                }
             }
         }
         .accessibilityLabel(DulcetStrings.searchResultAccessibility(
             title: result.title,
             subtitle: result.subtitle,
-            kind: result.kind.displayTitle,
-            source: result.source.displayTitle
+            kind: result.kind.displayTitle
         ))
     }
 }
@@ -344,24 +414,6 @@ extension DulcetSearchResultKind {
     }
 }
 
-extension DulcetSearchSource {
-    var displayTitle: String {
-        switch self {
-        case .local: DulcetStrings.local
-        case .server: DulcetStrings.server
-        case .localAndServer: DulcetStrings.localAndServer
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .local: "laptopcomputer"
-        case .server: "server.rack"
-        case .localAndServer: "arrow.triangle.2.circlepath"
-        }
-    }
-}
-
 struct DulcetTLSUntrustedView: View {
     let failure: DulcetTLSFailure
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -369,14 +421,10 @@ struct DulcetTLSUntrustedView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                // Deliberately NOT `ViewThatFits`. That resolves by measuring candidate
-                // layouts, and the measurement is not stable across renders in a shared
-                // process: the deterministic capture gate observed this view flipping
-                // between the side-by-side and stacked arrangements between two runs of
-                // the same binary, while rendering the state alone was always identical.
-                // Dynamic Type is the real reason this header needs to stack, and it is an
-                // explicit input rather than a measured one, so branching on it is both
-                // deterministic and closer to the design intent.
+                // Dynamic Type is the semantic reason this header needs to stack. Keep that
+                // decision explicit so ordinary window-width changes do not alter a layout
+                // that already fits, while accessibility sizes receive the intended reading
+                // order.
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         shield

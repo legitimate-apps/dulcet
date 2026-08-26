@@ -323,7 +323,10 @@
       "gates": ["account:authenticated"],
       "conformance": ["CONF-41"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "macos": {
+          "status": "planned",
+          "reason": "The server half is implemented as a read-through search3 query with per-type counts and offsets, a 250 ms presentation debounce, in-flight cancellation, explicit ranking, independently paged result types, and Objective-C class DTOs copied into Swift value types. The required apple-ci/apple-ci job runs SearchTest/ranksExactPrefixWordStartSubstringThenTypeWithCompatibilityNormalization and the DulcetKit test serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently, but the registered CONF-41 local/server merge control does not exist, and this build deliberately has no local database, normalized index column, instant local results, or local/server merge. The broader feature therefore remains planned rather than using narrower server-only controls as promotion evidence. The detailed design spec is internally inconsistent: §18.1 and its conformance table name CONF-43 for search3 matching divergence, while docs/CONFORMANCE.md (the parity gate registry) assigns search merge to CONF-41 and the later design table assigns CONF-41 to getCoverArt. FEATURES.yml retains the registry-defined ID until those sources are reconciled."
+        }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }

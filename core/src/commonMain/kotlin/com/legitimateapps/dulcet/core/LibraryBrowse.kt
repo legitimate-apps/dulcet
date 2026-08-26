@@ -1,12 +1,5 @@
 package com.legitimateapps.dulcet.core
 
-import io.ktor.client.HttpClient
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.parameter
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -58,6 +51,7 @@ internal data class LibraryTrack(
     val trackNumber: Int?,
     val duration: Duration,
     val mediaSourceId: String?,
+    val artworkKey: String?,
 )
 
 internal data class LibraryAlbum(
@@ -67,6 +61,7 @@ internal data class LibraryAlbum(
     val year: Int?,
     val duration: Duration,
     val mediaSourceId: String?,
+    val artworkKey: String?,
     val tracks: List<LibraryTrack>,
 )
 
@@ -191,6 +186,8 @@ internal class LibraryBrowser private constructor(
             LibraryBrowseResult.Failed(DomainError.Transport.Cancelled)
         } catch (failure: LibraryRequestFailure) {
             LibraryBrowseResult.Failed(failure.error)
+        } catch (failure: AuthenticatedEndpointFailure) {
+            LibraryBrowseResult.Failed(failure.error)
         } catch (failure: Throwable) {
             LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure))
         } finally {
@@ -209,102 +206,42 @@ private interface AutoCloseableLibraryTransport {
 }
 
 private class KtorLibraryEndpointTransport(
-    private val request: LibraryBrowseRequest,
+    request: LibraryBrowseRequest,
     saltSource: SaltSource?,
     logSink: LogSink?,
     hostResolver: HostResolver,
 ) : LibraryEndpointTransport, AutoCloseableLibraryTransport {
-    private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
-    private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
-    private val traceRecorder = RequestTraceRecorder(logSink, "library.browse")
-    private val client: HttpClient = createAccountHttpClient(AccountClientTransport.Default) {
-        expectSuccess = false
-        followRedirects = false
-        install(RequestTracePlugin) { observe = traceRecorder::observe }
-        install(HttpTimeout) {
-            connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-            requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-            socketTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-        }
-    }
+    private val client = AuthenticatedEndpointClient(
+        credentials = request.endpointCredentials(),
+        operationName = "library.browse",
+        saltSource = saltSource,
+        logSink = logSink,
+        hostResolver = hostResolver,
+    )
 
     override suspend fun request(
         endpoint: String,
         parameters: Map<String, String>,
     ): LibraryEndpointResponse {
-        val salt = saltSource.nextSalt()
-        require(SALT_PATTERN.matches(salt)) {
-            "SaltSource must return exactly 16 bytes as lowercase hex"
-        }
-        val authentication = linkedMapOf(
-            "u" to request.username,
-            "t" to AccountConnectionContract.saltedToken(request.password, salt),
-            "s" to salt,
+        val response = client.request(endpoint, parameters)
+        return LibraryEndpointResponse(
+            response.statusCode,
+            response.body.decodeToString(),
+            response.redactedUrl,
         )
-        val common = linkedMapOf(
-            "v" to AccountConnectionContract.protocolVersion,
-            "c" to CLIENT_NAME,
-            "f" to "json",
-        ).apply {
-            putAll(parameters)
-            putAll(authentication)
-        }
-        var currentUrl = "${request.normalizedBaseUrl}/rest/$endpoint.view"
-        var redirects = 0
-        while (true) {
-            val target = localHttpPolicy.targetFor(currentUrl, request.allowLocalHttp)
-            val response = client.get(target.url) {
-                target.hostHeader?.let { header(HttpHeaders.Host, it) }
-                common.forEach { (key, value) -> parameter(key, value) }
-            }
-            val body = response.bodyAsText()
-            val redactedUrl = traceRecorder.latestRedactedUrl()
-            if (response.status.value !in REDIRECT_STATUS_CODES) {
-                return LibraryEndpointResponse(response.status.value, body, redactedUrl)
-            }
-            val location = response.headers[HttpHeaders.Location]
-                ?: return LibraryEndpointResponse(response.status.value, body, redactedUrl)
-            val nextUrl = resolveRedirectUrl(currentUrl, location)
-                ?: throw LibraryRequestFailure(
-                    DomainError.Security.RedirectRejected(RedirectRejectionReason.InvalidLocation),
-                )
-            if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
-                throw LibraryRequestFailure(
-                    DomainError.Auth.CrossOriginRedirectRejected(nextUrl.redirectTargetHost()),
-                )
-            }
-            when (
-                val decision = AccountConnectionContract.redirectDecision(
-                    currentUrl,
-                    nextUrl,
-                    redirects,
-                )
-            ) {
-                RedirectPolicyDecision.PreserveCredentials -> Unit
-                is RedirectPolicyDecision.Reject -> throw LibraryRequestFailure(
-                    if (decision.reason == RedirectRejectionReason.CrossOrigin) {
-                        DomainError.Auth.CrossOriginRedirectRejected(nextUrl.redirectTargetHost())
-                    } else {
-                        DomainError.Security.RedirectRejected(decision.reason)
-                    },
-                )
-            }
-            currentUrl = nextUrl.withoutQuery()
-            redirects += 1
-        }
     }
 
     override fun close() {
         client.close()
     }
-
-    private companion object {
-        const val CLIENT_NAME = "Dulcet"
-        const val REQUEST_TIMEOUT_MILLIS = 30_000L
-        val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
-        val SALT_PATTERN = Regex("[0-9a-f]{32}")
-    }
 }
+
+private fun LibraryBrowseRequest.endpointCredentials() = AuthenticatedEndpointCredentials(
+    normalizedBaseUrl = normalizedBaseUrl,
+    username = username,
+    password = password,
+    allowLocalHttp = allowLocalHttp,
+)
 
 private class LibraryRequestFailure(val error: DomainError) : Exception()
 
@@ -376,6 +313,7 @@ private data class AlbumSummary(
     val year: Int?,
     val duration: Duration,
     val mediaSourceId: String?,
+    val artworkKey: String?,
 )
 
 private fun parseAlbumList(providerInstanceId: String, body: String): List<AlbumSummary> {
@@ -390,6 +328,7 @@ private fun parseAlbumList(providerInstanceId: String, body: String): List<Album
             year = album.int("year"),
             duration = album.duration(),
             mediaSourceId = null,
+            artworkKey = album.optionalOpaqueId("coverArt"),
         )
     }
 }
@@ -414,6 +353,7 @@ private fun parseAlbum(
             trackNumber = track.int("track"),
             duration = track.duration(),
             mediaSourceId = null,
+            artworkKey = track.optionalOpaqueId("coverArt"),
         )
     }
     return LibraryAlbum(
@@ -426,6 +366,7 @@ private fun parseAlbum(
             total + track.duration
         },
         mediaSourceId = null,
+        artworkKey = album.optionalOpaqueId("coverArt") ?: summary.artworkKey,
         tracks = tracks,
     )
 }

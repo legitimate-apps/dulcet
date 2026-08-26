@@ -21,6 +21,7 @@ public struct DulcetDeterministicFixture {
 
         switch state {
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
@@ -35,10 +36,23 @@ public struct DulcetDeterministicFixture {
             return base.snapshot(nowPlaying: Self.nowPlaying)
         case .nowPlayingUnavailable:
             return base.snapshot()
-        case .searchMixedSources:
-            return base.snapshot(searchQuery: "atlas", searchResults: Self.searchResults)
-        case .searchUnavailable:
+        case .searchIdle:
             return base.snapshot()
+        case .searchLoading:
+            return base.snapshot(searchQuery: "atlas")
+        case .searchResults:
+            return base.snapshot(
+                searchQuery: "atlas",
+                searchResults: Self.searchResults,
+                searchHasMoreKinds: [.track, .album]
+            )
+        case .searchEmpty:
+            return base.snapshot(searchQuery: "zzzz")
+        case .searchError:
+            return base.snapshot(
+                searchQuery: "atlas",
+                searchFailure: DulcetSearchFailure(kind: .unreachable)
+            )
         case .tlsUntrusted:
             return base.snapshot()
         case .offlineMetadataOnly:
@@ -76,9 +90,10 @@ public struct DulcetDeterministicFixture {
             .library
         case .nowPlaying, .nowPlayingUnavailable:
             .nowPlaying
-        case .searchMixedSources, .searchUnavailable:
+        case .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError:
             .search
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted:
@@ -88,7 +103,7 @@ public struct DulcetDeterministicFixture {
 
     private func connectivity(for state: DulcetPresentationState) -> DulcetConnectivity {
         switch state {
-        case .accountConnected:
+        case .accountConnected, .accountRemoving, .accountRemovalError:
             .online(serverName: "Listening Room")
         case .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
@@ -119,7 +134,7 @@ public struct DulcetDeterministicFixture {
             .idle
         case .accountConnecting:
             .connecting
-        case .accountConnected:
+        case .accountConnected, .accountRemoving, .accountRemovalError:
             .connected(DulcetConnectedAccountSummary(
                 serverName: "Listening Room",
                 normalizedServerURL: "https://music.example.invalid"
@@ -130,20 +145,29 @@ public struct DulcetDeterministicFixture {
             .failed(Self.accountFailure(for: state))
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
-             .searchMixedSources, .searchUnavailable, .tlsUntrusted, .offlineMetadataOnly:
+             .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
+             .tlsUntrusted, .offlineMetadataOnly:
             .idle
+        }
+        let removal: DulcetAccountRemovalStatus = switch state {
+        case .accountRemoving: .removing
+        case .accountRemovalError: .failed
+        default: .idle
         }
         return DulcetSnapshot(
             state: state,
             selectedDestination: .settings,
-            accountConnected: state == .accountConnected,
+            accountConnected: state == .accountConnected
+                || state == .accountRemoving
+                || state == .accountRemovalError,
             connectivity: connectivity(for: state),
             albums: [],
             looseTracks: [],
             recentlyAddedTracks: [],
             captureDate: Self.captureDate,
             accountForm: form,
-            accountConnection: status
+            accountConnection: status,
+            accountRemoval: removal
         )
     }
 }
@@ -175,13 +199,15 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
         case let .selectDestination(destination):
             let state: DulcetPresentationState = switch destination {
             case .library: .libraryBrowse
-            case .search: .searchMixedSources
+            case .search: .searchResults
             case .nowPlaying: .nowPlaying
             case .settings: .accountConnectIdle
             }
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
+        case .loadMoreSearchResults, .retrySearch:
+            break
         case let .selectAlbum(id):
             if let album = currentSnapshot.albums.first(where: { $0.id == id }) {
                 currentSnapshot = fixture.snapshot(for: .albumDetailMultiDisc)
@@ -192,6 +218,10 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
                 .replacingAccountForm(request)
         case .cancelAccountConnection:
             currentSnapshot = fixture.snapshot(for: .accountConnectIdle)
+        case .removeAccount:
+            currentSnapshot = fixture.snapshot(for: .accountRemoving)
+        case .dismissAccountRemovalFailure:
+            currentSnapshot = fixture.snapshot(for: .accountConnected)
         }
         snapshotHandler?(currentSnapshot)
     }
@@ -212,7 +242,8 @@ private extension DulcetSnapshot {
             selectedAlbum: album,
             captureDate: captureDate,
             accountForm: accountForm,
-            accountConnection: accountConnection
+            accountConnection: accountConnection,
+            accountRemoval: accountRemoval
         )
     }
 
@@ -229,9 +260,13 @@ private extension DulcetSnapshot {
             nowPlaying: nowPlaying,
             searchQuery: query,
             searchResults: searchResults,
+            searchHasMoreKinds: searchHasMoreKinds,
+            searchLoadingMoreKind: searchLoadingMoreKind,
+            searchFailure: searchFailure,
             captureDate: captureDate,
             accountForm: accountForm,
-            accountConnection: accountConnection
+            accountConnection: accountConnection,
+            accountRemoval: accountRemoval
         )
     }
 
@@ -248,9 +283,13 @@ private extension DulcetSnapshot {
             nowPlaying: nowPlaying,
             searchQuery: searchQuery,
             searchResults: searchResults,
+            searchHasMoreKinds: searchHasMoreKinds,
+            searchLoadingMoreKind: searchLoadingMoreKind,
+            searchFailure: searchFailure,
             captureDate: captureDate,
             accountForm: form,
-            accountConnection: accountConnection
+            accountConnection: accountConnection,
+            accountRemoval: accountRemoval
         )
     }
 }
@@ -270,7 +309,9 @@ private extension DulcetDeterministicFixture {
             selectedAlbum: DulcetAlbum? = nil,
             nowPlaying: DulcetNowPlaying? = nil,
             searchQuery: String = "",
-            searchResults: [DulcetSearchResult] = []
+            searchResults: [DulcetSearchResult] = [],
+            searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
+            searchFailure: DulcetSearchFailure? = nil
         ) -> DulcetSnapshot {
             DulcetSnapshot(
                 state: state,
@@ -284,6 +325,8 @@ private extension DulcetDeterministicFixture {
                 nowPlaying: nowPlaying,
                 searchQuery: searchQuery,
                 searchResults: searchResults,
+                searchHasMoreKinds: searchHasMoreKinds,
+                searchFailure: searchFailure,
                 captureDate: DulcetDeterministicFixture.captureDate
             )
         }
@@ -469,87 +512,35 @@ private extension DulcetDeterministicFixture {
     }
 
     static let searchResults: [DulcetSearchResult] = [
-        DulcetSearchResult(
-            id: "paging-001",
-            title: "Paging Track 001",
-            subtitle: "Dulcet Fixtures · Paging Atlas",
-            kind: .track,
-            source: .localAndServer,
-            artwork: pagingArtwork,
-            refreshedFromServer: true
-        ),
-        DulcetSearchResult(
-            id: "album-paging-atlas",
-            title: "Paging Atlas",
-            subtitle: "Dulcet Fixtures · 300 tracks",
-            kind: .album,
-            source: .local,
+        searchResult(
+            id: "paging-001", title: "Paging Track 001", kind: .track,
+            artist: "Dulcet Fixtures", album: "Paging Atlas", duration: .seconds(188),
             artwork: pagingArtwork
         ),
-        DulcetSearchResult(
-            id: "artist-atlas-rooms",
-            title: "Atlas Rooms",
-            subtitle: "Artist · 4 albums",
-            kind: .artist,
-            source: .server,
+        searchResult(
+            id: "album-paging-atlas", title: "Paging Atlas", kind: .album,
+            artist: "Dulcet Fixtures", album: nil, duration: .seconds(3_600),
+            artwork: pagingArtwork
+        ),
+        searchResult(
+            id: "artist-atlas-rooms", title: "Atlas Rooms", kind: .artist,
+            artist: nil, album: nil, duration: nil,
             artwork: DulcetArtwork(seed: "atlas-rooms", palette: .tealSun)
         ),
-        DulcetSearchResult(
-            id: "track-atlas-after-dark",
-            title: "Atlas After Dark",
-            subtitle: "Rhea Vale · Night Glass",
-            kind: .track,
-            source: .server,
+        searchResult(
+            id: "track-atlas-after-dark", title: "Atlas After Dark", kind: .track,
+            artist: "Rhea Vale", album: "Night Glass", duration: .seconds(204),
             artwork: DulcetArtwork(seed: "atlas-after-dark", palette: .duskLavender)
         ),
-        DulcetSearchResult(
-            id: "track-atlas-in-blue",
-            title: "Atlas in Blue",
-            subtitle: "Mara Venn · Cartography",
-            kind: .track,
-            source: .local,
-            artwork: DulcetArtwork(seed: "atlas-in-blue", palette: .oceanMint)
-        ),
-        DulcetSearchResult(
-            id: "album-atlas-archive",
-            title: "The Atlas Archive",
-            subtitle: "North Window · 18 tracks",
-            kind: .album,
-            source: .server,
+        searchResult(
+            id: "album-atlas-archive", title: "The Atlas Archive", kind: .album,
+            artist: "North Window", album: nil, duration: .seconds(2_940),
             artwork: DulcetArtwork(seed: "atlas-archive", palette: .slateApricot)
         ),
-        DulcetSearchResult(
-            id: "artist-atlas-quartet",
-            title: "Atlas Quartet",
-            subtitle: "Artist · 7 albums",
-            kind: .artist,
-            source: .localAndServer,
-            artwork: DulcetArtwork(seed: "atlas-quartet", palette: .indigoCoral),
-            refreshedFromServer: true
-        ),
-        DulcetSearchResult(
-            id: "track-atlas-north",
-            title: "Atlas North",
-            subtitle: "Signal Coast · Bearings",
-            kind: .track,
-            source: .server,
+        searchResult(
+            id: "track-atlas-north", title: "Atlas North", kind: .track,
+            artist: "Signal Coast", album: "Bearings", duration: .seconds(231),
             artwork: DulcetArtwork(seed: "atlas-north", palette: .mossGold)
-        ),
-        DulcetSearchResult(
-            id: "track-atlas-signal",
-            title: "Atlas Signal",
-            subtitle: "Rhea Vale · Night Glass",
-            kind: .track,
-            source: .local,
-            artwork: DulcetArtwork(seed: "atlas-signal", palette: .plumIce)
-        ),
-        DulcetSearchResult(
-            id: "album-atlas-field",
-            title: "Atlas Field Recordings",
-            subtitle: "Dulcet Fixtures · 24 tracks",
-            kind: .album,
-            source: .localAndServer,
-            artwork: DulcetArtwork(seed: "atlas-field", palette: .emberRose)
         ),
     ]
 
@@ -628,9 +619,11 @@ private extension DulcetDeterministicFixture {
                 nil
             )
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
-             .searchMixedSources, .searchUnavailable, .tlsUntrusted, .offlineMetadataOnly:
+             .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
+             .tlsUntrusted, .offlineMetadataOnly:
             (
                 .transportUnreachable,
                 "Can’t reach the server",
@@ -677,6 +670,37 @@ private extension DulcetDeterministicFixture {
             year: year,
             artwork: artwork,
             tracks: tracks
+        )
+    }
+
+    static func searchResult(
+        id: String,
+        title: String,
+        kind: DulcetSearchResultKind,
+        artist: String?,
+        album: String?,
+        duration: Duration?,
+        artwork: DulcetArtwork
+    ) -> DulcetSearchResult {
+        DulcetSearchResult(
+            id: DulcetProviderItemID(
+                providerInstanceID: "deterministic-fixture",
+                rawID: id
+            ),
+            title: title,
+            kind: kind,
+            credits: artist.map {
+                [DulcetCredit(
+                    role: kind == .album ? .albumArtist : .artist,
+                    name: $0,
+                    id: nil
+                )]
+            } ?? [],
+            albumTitle: album,
+            year: nil,
+            duration: duration,
+            mediaSourceID: nil,
+            artwork: artwork
         )
     }
 }

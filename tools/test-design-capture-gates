@@ -111,13 +111,13 @@ def main() -> None:
         different_encoding_root = Path(temporary) / "identical-pixels-different-encoding"
         shutil.copytree(args.root, different_encoding_root)
         source = different_encoding_root / "standard" / "macos-library-browse-light.jpg"
-        target = different_encoding_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        target = different_encoding_root / "standard" / "macos-search-results-light.jpg"
         _, source_payload = verifier.jpeg_payload_binding(source.read_bytes())
         if not source_payload.endswith(b"\xff\xd9"):
             raise SystemExit("pixel-distinct negative control source is missing a final JPEG EOI")
         different_payload = source_payload + b"decoder-ignored-after-eoi"
         target.write_bytes(
-            bind_payload(different_payload, "search-mixed-sources", "light", "reference")
+            bind_payload(different_payload, "search-results", "light", "reference")
         )
         refresh_manifest_file_evidence(different_encoding_root)
         if hashlib.sha256(source_payload).digest() == hashlib.sha256(different_payload).digest():
@@ -132,7 +132,7 @@ def main() -> None:
         swapped_labels_root = Path(temporary) / "swapped-labels"
         shutil.copytree(args.root, swapped_labels_root)
         library = swapped_labels_root / "standard" / "macos-library-browse-light.jpg"
-        search = swapped_labels_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        search = swapped_labels_root / "standard" / "macos-search-results-light.jpg"
         library_bytes = library.read_bytes()
         library.write_bytes(search.read_bytes())
         search.write_bytes(library_bytes)
@@ -142,14 +142,14 @@ def main() -> None:
         self_consistent_swap_root = Path(temporary) / "self-consistent-payload-swap"
         shutil.copytree(args.root, self_consistent_swap_root)
         library = self_consistent_swap_root / "standard" / "macos-library-browse-light.jpg"
-        search = self_consistent_swap_root / "standard" / "macos-search-mixed-sources-light.jpg"
+        search = self_consistent_swap_root / "standard" / "macos-search-results-light.jpg"
         _, library_payload = verifier.jpeg_payload_binding(library.read_bytes())
         _, search_payload = verifier.jpeg_payload_binding(search.read_bytes())
         library.write_bytes(
             bind_payload(search_payload, "library-browse", "light", "reference")
         )
         search.write_bytes(
-            bind_payload(library_payload, "search-mixed-sources", "light", "reference")
+            bind_payload(library_payload, "search-results", "light", "reference")
         )
         refresh_manifest_file_evidence(self_consistent_swap_root)
         verifier.verify_capture_root(self_consistent_swap_root)

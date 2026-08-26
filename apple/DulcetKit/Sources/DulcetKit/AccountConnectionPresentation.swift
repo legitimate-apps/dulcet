@@ -250,19 +250,132 @@ public protocol DulcetLibraryBrowsing: AnyObject {
     ) -> any DulcetLibraryBrowseOperation
 }
 
+public struct DulcetSearchPageRequest: Sendable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public let providerInstanceID: String
+    public let normalizedServerURL: String
+    public let username: String
+    public let password: String
+    public let allowLocalHTTP: Bool
+    public let query: String
+    public let artistCount: Int
+    public let artistOffset: Int
+    public let albumCount: Int
+    public let albumOffset: Int
+    public let trackCount: Int
+    public let trackOffset: Int
+
+    public init(
+        providerInstanceID: String,
+        normalizedServerURL: String,
+        username: String,
+        password: String,
+        allowLocalHTTP: Bool,
+        query: String,
+        artistCount: Int,
+        artistOffset: Int,
+        albumCount: Int,
+        albumOffset: Int,
+        trackCount: Int,
+        trackOffset: Int
+    ) {
+        self.providerInstanceID = providerInstanceID
+        self.normalizedServerURL = normalizedServerURL
+        self.username = username
+        self.password = password
+        self.allowLocalHTTP = allowLocalHTTP
+        self.query = query
+        self.artistCount = artistCount
+        self.artistOffset = artistOffset
+        self.albumCount = albumCount
+        self.albumOffset = albumOffset
+        self.trackCount = trackCount
+        self.trackOffset = trackOffset
+    }
+
+    public var description: String { "DulcetSearchPageRequest(<redacted>)" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror {
+        Mirror(self, children: [("searchPageRequest", "<redacted>" as Any)], displayStyle: .struct)
+    }
+}
+
+public struct DulcetSearchPage: Sendable, Hashable {
+    public let results: [DulcetSearchResult]
+    public let artistResultCount: Int
+    public let albumResultCount: Int
+    public let trackResultCount: Int
+    public let artistHasMore: Bool
+    public let albumHasMore: Bool
+    public let trackHasMore: Bool
+
+    public init(
+        results: [DulcetSearchResult],
+        artistResultCount: Int,
+        albumResultCount: Int,
+        trackResultCount: Int,
+        artistHasMore: Bool,
+        albumHasMore: Bool,
+        trackHasMore: Bool
+    ) {
+        self.results = results
+        self.artistResultCount = artistResultCount
+        self.albumResultCount = albumResultCount
+        self.trackResultCount = trackResultCount
+        self.artistHasMore = artistHasMore
+        self.albumHasMore = albumHasMore
+        self.trackHasMore = trackHasMore
+    }
+}
+
+public enum DulcetSearchPageOutcome: Sendable {
+    case loaded(DulcetSearchPage)
+    case failed(DulcetSearchFailure)
+    case cancelled
+}
+
+@MainActor
+public protocol DulcetSearchOperation: AnyObject {
+    func cancel()
+}
+
+@MainActor
+public protocol DulcetServerSearching: AnyObject {
+    func search(
+        _ request: DulcetSearchPageRequest,
+        completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void
+    ) -> any DulcetSearchOperation
+}
+
 /// Live presentation source for account setup. Network and persistence adapters stay replaceable.
 @MainActor
 public final class DulcetAccountDataSource: DulcetDataSource {
     private let connector: any DulcetAccountConnecting
     private let credentialStore: (any DulcetCredentialStoring)?
     private let libraryBrowser: (any DulcetLibraryBrowsing)?
+    private let artworkFetcher: (any DulcetArtworkFetching)?
+    private let serverSearch: (any DulcetServerSearching)?
+    private let searchDebounce: Duration
     private let providerInstanceIDFactory: @MainActor () -> String
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
     private var activeOperation: (any DulcetAccountConnectOperation)?
     private var activeLibraryOperation: (any DulcetLibraryBrowseOperation)?
+    private var activeSearchOperation: (any DulcetSearchOperation)?
+    private var searchDebounceTask: Task<Void, Never>?
+    private var accountRemovalTask: Task<Void, Never>?
     private var generation = 0
     private var libraryGeneration = 0
+    private var searchGeneration = 0
     private var providerInstanceID: String?
+    private var accountRemovalStatus: DulcetAccountRemovalStatus = .idle
+    private var searchQuery = ""
+    private var searchResults: [DulcetSearchResult] = []
+    private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
+    private var searchLoadingMoreKind: DulcetSearchResultKind?
+    private var searchFailure: DulcetSearchFailure?
+
+    static let defaultSearchDebounce: Duration = .milliseconds(250)
+    private static let searchPageSize = 20
 
     public private(set) var currentSnapshot: DulcetSnapshot
 
@@ -270,12 +383,18 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         connector: any DulcetAccountConnecting,
         credentialStore: (any DulcetCredentialStoring)? = nil,
         libraryBrowser: (any DulcetLibraryBrowsing)? = nil,
+        artworkFetcher: (any DulcetArtworkFetching)? = nil,
+        serverSearch: (any DulcetServerSearching)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty,
+        searchDebounce: Duration = .milliseconds(250),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
     ) {
         self.connector = connector
         self.credentialStore = credentialStore
         self.libraryBrowser = libraryBrowser
+        self.artworkFetcher = artworkFetcher
+        self.serverSearch = serverSearch
+        self.searchDebounce = searchDebounce
         self.providerInstanceIDFactory = providerInstanceIDFactory
         do {
             let restoredRequest = try credentialStore?.load() ?? initialRequest
@@ -304,11 +423,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     public func send(_ action: DulcetPresentationAction) {
+        if accountRemovalStatus == .removing {
+            snapshotHandler?(currentSnapshot)
+            return
+        }
         switch action {
         case let .selectDestination(destination):
             switch destination {
             case .settings:
                 cancelLibraryBrowse()
+                cancelSearchRequest()
                 publish(
                     state: currentSnapshot.state.accountStateOrIdle,
                     destination: .settings,
@@ -316,17 +440,14 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: currentSnapshot.accountConnection
                 )
             case .library:
+                cancelSearchRequest()
                 openLibrary()
             case .search:
                 cancelLibraryBrowse()
-                publish(
-                    state: .searchUnavailable,
-                    destination: .search,
-                    form: currentSnapshot.accountForm,
-                    status: currentSnapshot.accountConnection
-                )
+                openSearch()
             case .nowPlaying:
                 cancelLibraryBrowse()
+                cancelSearchRequest()
                 publish(
                     state: .nowPlayingUnavailable,
                     destination: .nowPlaying,
@@ -334,8 +455,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: currentSnapshot.accountConnection
                 )
             }
-        case .updateSearchQuery:
-            break
+        case let .updateSearchQuery(query):
+            updateSearchQuery(query)
+        case let .loadMoreSearchResults(kind):
+            loadMoreSearchResults(kind)
+        case .retrySearch:
+            startInitialSearch(debounce: false)
         case let .selectAlbum(id):
             guard currentSnapshot.selectedDestination == .library,
                   let album = currentSnapshot.albums.first(where: { $0.id == id }) else { return }
@@ -350,6 +475,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             submit(request)
         case .cancelAccountConnection:
             cancelActiveSubmission()
+        case .removeAccount:
+            removeAccount()
+        case .dismissAccountRemovalFailure:
+            dismissAccountRemovalFailure()
         }
     }
 
@@ -445,7 +574,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             artists: artists,
             albums: albums,
             selectedAlbum: selectedAlbum,
-            libraryFailure: libraryFailure
+            libraryFailure: libraryFailure,
+            searchQuery: searchQuery,
+            searchResults: searchResults,
+            searchHasMoreKinds: searchHasMoreKinds,
+            searchLoadingMoreKind: searchLoadingMoreKind,
+            searchFailure: searchFailure,
+            accountRemoval: accountRemovalStatus
         )
         snapshotHandler?(currentSnapshot)
     }
@@ -459,7 +594,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         artists: [DulcetArtist] = [],
         albums: [DulcetAlbum] = [],
         selectedAlbum: DulcetAlbum? = nil,
-        libraryFailure: DulcetLibraryFailure? = nil
+        libraryFailure: DulcetLibraryFailure? = nil,
+        searchQuery: String = "",
+        searchResults: [DulcetSearchResult] = [],
+        searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
+        searchLoadingMoreKind: DulcetSearchResultKind? = nil,
+        searchFailure: DulcetSearchFailure? = nil,
+        accountRemoval: DulcetAccountRemovalStatus = .idle
     ) -> DulcetSnapshot {
         let connectivity: DulcetConnectivity = switch status {
         case .idle, .connecting:
@@ -483,9 +624,15 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             looseTracks: [],
             recentlyAddedTracks: [],
             selectedAlbum: selectedAlbum,
+            searchQuery: searchQuery,
+            searchResults: searchResults,
+            searchHasMoreKinds: searchHasMoreKinds,
+            searchLoadingMoreKind: searchLoadingMoreKind,
+            searchFailure: searchFailure,
             captureDate: Date(timeIntervalSince1970: 0),
             accountForm: form,
             accountConnection: status,
+            accountRemoval: accountRemoval,
             libraryFailure: libraryFailure
         )
     }
@@ -569,20 +716,343 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         activeLibraryOperation = nil
         operation?.cancel()
     }
+
+    private func openSearch() {
+        guard case .connected = currentSnapshot.accountConnection else {
+            publish(
+                state: .searchIdle,
+                destination: .search,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection
+            )
+            return
+        }
+        if searchQuery.trimmedForSearch.count >= 2,
+           searchResults.isEmpty,
+           searchFailure == nil {
+            startInitialSearch(debounce: false)
+            return
+        }
+        let state: DulcetPresentationState = if searchQuery.trimmedForSearch.count < 2 {
+            .searchIdle
+        } else if searchResults.isEmpty {
+            searchFailure == nil ? .searchEmpty : .searchError
+        } else {
+            .searchResults
+        }
+        publish(
+            state: state,
+            destination: .search,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection
+        )
+    }
+
+    private func updateSearchQuery(_ query: String) {
+        searchQuery = query
+        searchResults = []
+        searchHasMoreKinds = []
+        searchLoadingMoreKind = nil
+        searchFailure = nil
+        cancelSearchRequest()
+        guard currentSnapshot.selectedDestination == .search else { return }
+        guard query.trimmedForSearch.count >= 2 else {
+            publish(
+                state: .searchIdle,
+                destination: .search,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection
+            )
+            return
+        }
+        startInitialSearch(debounce: true)
+    }
+
+    private func startInitialSearch(debounce: Bool) {
+        cancelSearchRequest()
+        guard currentSnapshot.selectedDestination == .search,
+              case .connected = currentSnapshot.accountConnection,
+              searchQuery.trimmedForSearch.count >= 2 else { return }
+        searchResults = []
+        searchHasMoreKinds = []
+        searchLoadingMoreKind = nil
+        searchFailure = nil
+        publish(
+            state: .searchLoading,
+            destination: .search,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection
+        )
+        let requestGeneration = searchGeneration
+        searchDebounceTask = Task { [weak self] in
+            guard let self else { return }
+            if debounce {
+                try? await Task.sleep(for: searchDebounce)
+            }
+            guard !Task.isCancelled, searchGeneration == requestGeneration else { return }
+            beginSearchPage(kind: nil, requestGeneration: requestGeneration)
+        }
+    }
+
+    private func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {
+        guard currentSnapshot.selectedDestination == .search,
+              searchHasMoreKinds.contains(kind),
+              activeSearchOperation == nil,
+              searchDebounceTask == nil else { return }
+        searchLoadingMoreKind = kind
+        searchFailure = nil
+        publish(
+            state: .searchResults,
+            destination: .search,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection
+        )
+        beginSearchPage(kind: kind, requestGeneration: searchGeneration)
+    }
+
+    private func beginSearchPage(
+        kind: DulcetSearchResultKind?,
+        requestGeneration: Int
+    ) {
+        searchDebounceTask = nil
+        guard let serverSearch,
+              case let .connected(account) = currentSnapshot.accountConnection else {
+            searchFailure = DulcetSearchFailure(kind: .capability)
+            publish(
+                state: searchResults.isEmpty ? .searchError : .searchResults,
+                destination: .search,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection
+            )
+            return
+        }
+        let instanceID = providerInstanceID ?? providerInstanceIDFactory()
+        providerInstanceID = instanceID
+        let form = currentSnapshot.accountForm
+        let request = DulcetSearchPageRequest(
+            providerInstanceID: instanceID,
+            normalizedServerURL: account.normalizedServerURL,
+            username: form.username,
+            password: form.password,
+            allowLocalHTTP: form.allowLocalHTTP,
+            query: searchQuery.trimmedForSearch,
+            artistCount: kind == nil || kind == .artist ? Self.searchPageSize : 0,
+            artistOffset: kind == .artist ? resultCount(for: .artist) : 0,
+            albumCount: kind == nil || kind == .album ? Self.searchPageSize : 0,
+            albumOffset: kind == .album ? resultCount(for: .album) : 0,
+            trackCount: kind == nil || kind == .track ? Self.searchPageSize : 0,
+            trackOffset: kind == .track ? resultCount(for: .track) : 0
+        )
+        let operation = serverSearch.search(request) { [weak self] outcome in
+            guard let self,
+                  searchGeneration == requestGeneration,
+                  currentSnapshot.selectedDestination == .search else { return }
+            activeSearchOperation = nil
+            searchLoadingMoreKind = nil
+            switch outcome {
+            case let .loaded(page):
+                searchFailure = nil
+                if let kind {
+                    appendOrReplace(page.results)
+                    setHasMore(page.hasMore(for: kind), for: kind)
+                } else {
+                    searchResults = page.results
+                    searchHasMoreKinds = Set(DulcetSearchResultKind.allCases.filter(page.hasMore))
+                }
+                publish(
+                    state: searchResults.isEmpty ? .searchEmpty : .searchResults,
+                    destination: .search,
+                    form: form,
+                    status: currentSnapshot.accountConnection
+                )
+            case let .failed(failure):
+                searchFailure = failure
+                publish(
+                    state: searchResults.isEmpty ? .searchError : .searchResults,
+                    destination: .search,
+                    form: form,
+                    status: currentSnapshot.accountConnection
+                )
+            case .cancelled:
+                break
+            }
+        }
+        if searchGeneration == requestGeneration,
+           currentSnapshot.selectedDestination == .search {
+            activeSearchOperation = operation
+        }
+    }
+
+    private func cancelSearchRequest() {
+        searchGeneration += 1
+        searchDebounceTask?.cancel()
+        searchDebounceTask = nil
+        activeSearchOperation?.cancel()
+        activeSearchOperation = nil
+        searchLoadingMoreKind = nil
+    }
+
+    private func resultCount(for kind: DulcetSearchResultKind) -> Int {
+        searchResults.lazy.filter { $0.kind == kind }.count
+    }
+
+    private func appendOrReplace(_ incoming: [DulcetSearchResult]) {
+        for result in incoming {
+            if let index = searchResults.firstIndex(where: { $0.id == result.id }) {
+                searchResults[index] = result
+            } else {
+                searchResults.append(result)
+            }
+        }
+    }
+
+    private func setHasMore(_ hasMore: Bool, for kind: DulcetSearchResultKind) {
+        if hasMore {
+            searchHasMoreKinds.insert(kind)
+        } else {
+            searchHasMoreKinds.remove(kind)
+        }
+    }
+
+    private func removeAccount() {
+        guard case .connected = currentSnapshot.accountConnection else { return }
+        let connectedStatus = currentSnapshot.accountConnection
+        accountRemovalStatus = .removing
+        publishAccountRemovalState(
+            state: .accountRemoving,
+            status: connectedStatus
+        )
+
+        do {
+            try credentialStore?.delete()
+        } catch {
+            accountRemovalStatus = .failed
+            publishAccountRemovalState(
+                state: .accountRemovalError,
+                status: connectedStatus
+            )
+            return
+        }
+
+        generation += 1
+        activeOperation?.cancel()
+        activeOperation = nil
+        cancelLibraryBrowse()
+        cancelSearchRequest()
+        let removedServerID = providerInstanceID
+        let cacheRemover = artworkFetcher as? any DulcetArtworkCacheRemoving
+        accountRemovalTask = Task { [weak self] in
+            if let removedServerID, let cacheRemover {
+                await cacheRemover.removeCachedArtwork(serverID: removedServerID)
+            }
+            guard let self, !Task.isCancelled else { return }
+            finishAccountRemoval()
+        }
+    }
+
+    private func finishAccountRemoval() {
+        accountRemovalTask = nil
+        providerInstanceID = nil
+        searchQuery = ""
+        searchResults = []
+        searchHasMoreKinds = []
+        searchLoadingMoreKind = nil
+        searchFailure = nil
+        accountRemovalStatus = .idle
+        publish(
+            state: .accountConnectIdle,
+            destination: .settings,
+            form: .empty,
+            status: .idle
+        )
+    }
+
+    private func dismissAccountRemovalFailure() {
+        guard accountRemovalStatus == .failed,
+              case .connected = currentSnapshot.accountConnection else { return }
+        accountRemovalStatus = .idle
+        publishAccountRemovalState(
+            state: .accountConnected,
+            status: currentSnapshot.accountConnection
+        )
+    }
+
+    private func publishAccountRemovalState(
+        state: DulcetPresentationState,
+        status: DulcetAccountConnectionStatus
+    ) {
+        publish(
+            state: state,
+            destination: .settings,
+            form: currentSnapshot.accountForm,
+            status: status,
+            musicFolders: currentSnapshot.musicFolders,
+            artists: currentSnapshot.artists,
+            albums: currentSnapshot.albums,
+            selectedAlbum: currentSnapshot.selectedAlbum,
+            libraryFailure: currentSnapshot.libraryFailure
+        )
+    }
+}
+
+extension DulcetAccountDataSource: DulcetArtworkLoading {
+    public func loadArtwork(
+        _ reference: DulcetArtworkReference,
+        sizeBucket: DulcetArtworkSizeBucket,
+        completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
+    ) -> (any DulcetArtworkFetchOperation)? {
+        guard let artworkFetcher,
+              reference.serverID == providerInstanceID,
+              case let .connected(account) = currentSnapshot.accountConnection else {
+            completion(.unavailable)
+            return nil
+        }
+        let form = currentSnapshot.accountForm
+        return artworkFetcher.fetch(DulcetArtworkFetchRequest(
+            reference: reference,
+            sizeBucket: sizeBucket,
+            normalizedServerURL: account.normalizedServerURL,
+            username: form.username,
+            password: form.password,
+            allowLocalHTTP: form.allowLocalHTTP
+        ), completion: completion)
+    }
 }
 
 private extension DulcetPresentationState {
     var accountStateOrIdle: DulcetPresentationState {
         switch self {
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
             self
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
-             .searchMixedSources, .searchUnavailable, .tlsUntrusted, .offlineMetadataOnly:
+             .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
+             .tlsUntrusted, .offlineMetadataOnly:
             .accountConnectIdle
+        }
+    }
+}
+
+private extension String {
+    var trimmedForSearch: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private extension DulcetSearchResultKind {
+    static let allCases: [Self] = [.track, .album, .artist]
+}
+
+private extension DulcetSearchPage {
+    func hasMore(for kind: DulcetSearchResultKind) -> Bool {
+        switch kind {
+        case .track: trackHasMore
+        case .album: albumHasMore
+        case .artist: artistHasMore
         }
     }
 }

@@ -55,11 +55,12 @@ Binding. A violation is a stop-work, not a style note.
 
 1. **`/rest` only.** Never the server's private API, never its web UI, never an undocumented behavior
    that is not registered as a named quirk with a conformance test pinning it.
-2. **HTTP 200 is not proof of audio.** `/rest/stream` returns binary on success and an XML or JSON
-   error envelope on failure, and real servers and proxies mislabel content types. Validation is
-   **unconditional and ordered**: envelope detection first (after skipping whitespace and a BOM), then
-   the normative signature table with per-container offsets and masks. There is no "only sniff when the
-   content type looks wrong" path.
+2. **HTTP 200 is not proof of binary success.** `/rest/stream` and `/rest/getCoverArt` return binary
+   on success and may return an XML or JSON error envelope on failure, and real servers and proxies
+   mislabel content types. Validation is **unconditional and ordered**: envelope detection first
+   (after skipping whitespace and a BOM), then the endpoint's normative signature table with
+   per-format offsets and masks. "Not an envelope" is not success, and there is no "only sniff when
+   the content type looks wrong" path.
 3. **Validate the bytes the engine actually plays, not a probe.** A preflight is advisory only; a
    previous request's success says nothing about the request the player makes next. Apple uses an
    `AVAssetResourceLoaderDelegate`, Android a custom `DataSource.Factory`.

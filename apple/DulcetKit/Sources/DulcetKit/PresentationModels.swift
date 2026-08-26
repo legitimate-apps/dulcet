@@ -4,6 +4,8 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case accountConnectIdle = "account-connect-idle"
     case accountConnecting = "account-connecting"
     case accountConnected = "account-connected"
+    case accountRemoving = "account-removing"
+    case accountRemovalError = "account-removal-error"
     case accountErrorInput = "account-error-input"
     case accountErrorTransport = "account-error-transport"
     case accountErrorSecurity = "account-error-security"
@@ -20,8 +22,11 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case albumDetailMultiDisc = "album-detail-multi-disc"
     case nowPlaying = "now-playing"
     case nowPlayingUnavailable = "now-playing-unavailable"
-    case searchMixedSources = "search-mixed-sources"
-    case searchUnavailable = "search-unavailable"
+    case searchIdle = "search-idle"
+    case searchLoading = "search-loading"
+    case searchResults = "search-results"
+    case searchEmpty = "search-empty"
+    case searchError = "search-error"
     case tlsUntrusted = "error-tls-untrusted"
     case offlineMetadataOnly = "offline-metadata-only"
 
@@ -199,6 +204,12 @@ public enum DulcetAccountConnectionStatus: Sendable, Hashable {
     case failed(DulcetAccountFailurePresentation)
 }
 
+public enum DulcetAccountRemovalStatus: Sendable, Hashable {
+    case idle
+    case removing
+    case failed
+}
+
 public enum DulcetMediaAvailability: String, Sendable, Hashable {
     case playable
     case metadataOnly
@@ -218,10 +229,42 @@ public enum DulcetArtworkPalette: String, Sendable, Hashable, CaseIterable {
 public struct DulcetArtwork: Sendable, Hashable {
     public let seed: String
     public let palette: DulcetArtworkPalette
+    public let remoteReference: DulcetArtworkReference?
 
-    public init(seed: String, palette: DulcetArtworkPalette) {
+    public init(
+        seed: String,
+        palette: DulcetArtworkPalette,
+        remoteReference: DulcetArtworkReference? = nil
+    ) {
         self.seed = seed
         self.palette = palette
+        self.remoteReference = remoteReference
+    }
+}
+
+public struct DulcetArtworkReference: Sendable, Hashable {
+    public let serverID: String
+    public let artworkKey: String
+
+    public init(serverID: String, artworkKey: String) {
+        self.serverID = serverID
+        self.artworkKey = artworkKey
+    }
+}
+
+public enum DulcetArtworkSizeBucket: Int, Sendable, Hashable, CaseIterable {
+    case pixels96 = 96
+    case pixels256 = 256
+    case pixels512 = 512
+    case pixels1024 = 1024
+
+    public static func containing(pixelSize: CGFloat) -> Self {
+        switch pixelSize {
+        case ...96: .pixels96
+        case ...256: .pixels256
+        case ...512: .pixels512
+        default: .pixels1024
+        }
     }
 }
 
@@ -414,37 +457,64 @@ public enum DulcetSearchResultKind: String, Sendable, Hashable {
     case artist
 }
 
-public enum DulcetSearchSource: String, Sendable, Hashable, CaseIterable {
-    case local
-    case server
-    case localAndServer
-}
-
 public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
-    public let id: String
+    public let id: DulcetProviderItemID
     public let title: String
-    public let subtitle: String
     public let kind: DulcetSearchResultKind
-    public let source: DulcetSearchSource
+    public let credits: [DulcetCredit]
+    public let albumTitle: String?
+    public let year: Int?
+    public let duration: Duration?
+    public let mediaSourceID: String?
     public let artwork: DulcetArtwork
-    public let refreshedFromServer: Bool
 
     public init(
-        id: String,
+        id: DulcetProviderItemID,
         title: String,
-        subtitle: String,
         kind: DulcetSearchResultKind,
-        source: DulcetSearchSource,
-        artwork: DulcetArtwork,
-        refreshedFromServer: Bool = false
+        credits: [DulcetCredit],
+        albumTitle: String?,
+        year: Int?,
+        duration: Duration?,
+        mediaSourceID: String?,
+        artwork: DulcetArtwork
     ) {
         self.id = id
         self.title = title
-        self.subtitle = subtitle
         self.kind = kind
-        self.source = source
+        self.credits = credits
+        self.albumTitle = albumTitle
+        self.year = year
+        self.duration = duration
+        self.mediaSourceID = mediaSourceID
         self.artwork = artwork
-        self.refreshedFromServer = refreshedFromServer
+    }
+
+    public var subtitle: String {
+        let creditNames = credits.map(\.name).joined(separator: ", ")
+        return [creditNames, albumTitle]
+            .compactMap { value in value?.isEmpty == false ? value : nil }
+            .joined(separator: " · ")
+    }
+}
+
+public enum DulcetSearchFailureKind: String, Sendable, Hashable {
+    case timeout
+    case unreachable
+    case tlsUntrusted
+    case security
+    case authentication
+    case `protocol`
+    case server
+    case input
+    case capability
+}
+
+public struct DulcetSearchFailure: Sendable, Hashable {
+    public let kind: DulcetSearchFailureKind
+
+    public init(kind: DulcetSearchFailureKind) {
+        self.kind = kind
     }
 }
 
@@ -534,9 +604,13 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let nowPlaying: DulcetNowPlaying?
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
+    public let searchHasMoreKinds: Set<DulcetSearchResultKind>
+    public let searchLoadingMoreKind: DulcetSearchResultKind?
+    public let searchFailure: DulcetSearchFailure?
     public let captureDate: Date
     public let accountForm: DulcetAccountConnectRequest
     public let accountConnection: DulcetAccountConnectionStatus
+    public let accountRemoval: DulcetAccountRemovalStatus
     public let libraryFailure: DulcetLibraryFailure?
 
     public init(
@@ -553,9 +627,13 @@ public struct DulcetSnapshot: Sendable, Hashable,
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
+        searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
+        searchLoadingMoreKind: DulcetSearchResultKind? = nil,
+        searchFailure: DulcetSearchFailure? = nil,
         captureDate: Date,
         accountForm: DulcetAccountConnectRequest = .empty,
         accountConnection: DulcetAccountConnectionStatus = .idle,
+        accountRemoval: DulcetAccountRemovalStatus = .idle,
         libraryFailure: DulcetLibraryFailure? = nil
     ) {
         self.state = state
@@ -571,9 +649,13 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.nowPlaying = nowPlaying
         self.searchQuery = searchQuery
         self.searchResults = searchResults
+        self.searchHasMoreKinds = searchHasMoreKinds
+        self.searchLoadingMoreKind = searchLoadingMoreKind
+        self.searchFailure = searchFailure
         self.captureDate = captureDate
         self.accountForm = accountForm
         self.accountConnection = accountConnection
+        self.accountRemoval = accountRemoval
         self.libraryFailure = libraryFailure
     }
 

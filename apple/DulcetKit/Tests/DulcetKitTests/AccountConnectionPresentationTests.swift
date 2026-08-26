@@ -95,7 +95,7 @@ func productionDataSourceKeepsDestinationAndRenderedStateInAgreement() {
 
     let expectations: [(DulcetSidebarDestination, DulcetPresentationState)] = [
         (.library, .libraryLoading),
-        (.search, .searchUnavailable),
+        (.search, .searchIdle),
         (.nowPlaying, .nowPlayingUnavailable),
     ]
     for (destination, expectedState) in expectations {
@@ -159,8 +159,288 @@ func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
     store.selectDestination(.search)
     #expect(libraryBrowser.operations.last?.cancelCount == 1)
     libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
-    #expect(store.snapshot.state == .searchUnavailable)
+    #expect(store.snapshot.state == .searchIdle)
     #expect(store.snapshot.selectedDestination == .search)
+}
+
+@Test @MainActor
+func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
+    #expect(DulcetAccountDataSource.defaultSearchDebounce == .milliseconds(250))
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+
+    store.searchQuery = "a"
+    await settleSearchTask()
+    #expect(search.requests.isEmpty)
+    #expect(store.snapshot.state == .searchIdle)
+
+    store.searchQuery = "at"
+    await settleSearchTask()
+    #expect(search.requests.count == 1)
+    #expect(search.requests[0].query == "at")
+    #expect(search.requests[0].artistCount == 20)
+    #expect(search.requests[0].albumCount == 20)
+    #expect(search.requests[0].trackCount == 20)
+
+    store.searchQuery = "atlas"
+    await settleSearchTask()
+    #expect(search.operations[0].cancelCount == 1)
+    #expect(search.requests.count == 2)
+    #expect(search.requests[1].query == "atlas")
+    #expect(search.requests[1].providerInstanceID == "provider-instance-fixture")
+    #expect(search.requests[1].username == "listener")
+    #expect(search.requests[1].password == "fixture-password")
+
+    search.complete(at: 0, .loaded(searchPage(
+        results: [searchResult(id: "stale", title: "Stale")]
+    )))
+    #expect(store.snapshot.state == .searchLoading)
+    #expect(store.snapshot.searchResults.isEmpty)
+
+    search.complete(at: 1, .loaded(searchPage(
+        results: [searchResult(id: "track:one", title: "Atlas")],
+        trackHasMore: true
+    )))
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchResults.map(\.id.rawID) == ["track:one"])
+    #expect(store.snapshot.searchHasMoreKinds == [.track])
+
+    store.loadMoreSearchResults(.track)
+    #expect(search.requests.count == 3)
+    #expect(search.requests[2].trackCount == 20)
+    #expect(search.requests[2].trackOffset == 1)
+    #expect(search.requests[2].artistCount == 0)
+    #expect(search.requests[2].albumCount == 0)
+    search.complete(at: 2, .loaded(searchPage(results: [
+        searchResult(id: "track:one", title: "Atlas Updated"),
+        searchResult(id: "track:two", title: "Atlas North"),
+    ])))
+    #expect(store.snapshot.searchResults.map(\.title) == ["Atlas Updated", "Atlas North"])
+    #expect(store.snapshot.searchHasMoreKinds.isEmpty)
+
+    store.searchQuery = "another"
+    await settleSearchTask()
+    #expect(search.requests.count == 4)
+    store.selectDestination(.nowPlaying)
+    #expect(search.operations[3].cancelCount == 1)
+    #expect(store.snapshot.state == .nowPlayingUnavailable)
+}
+
+@Test
+func credentialBearingSearchRequestCannotPrintCredentials() {
+    let request = DulcetSearchPageRequest(
+        providerInstanceID: "provider-fixture",
+        normalizedServerURL: "https://music.example.invalid",
+        username: "search-user-canary",
+        password: "search-password-canary",
+        allowLocalHTTP: false,
+        query: "atlas",
+        artistCount: 20,
+        artistOffset: 0,
+        albumCount: 20,
+        albumOffset: 0,
+        trackCount: 20,
+        trackOffset: 0
+    )
+    var renderedDump = ""
+    dump(request, to: &renderedDump)
+    let rendered = [String(describing: request), String(reflecting: request), renderedDump]
+
+    #expect(rendered.allSatisfy { !$0.contains("search-user-canary") })
+    #expect(rendered.allSatisfy { !$0.contains("search-password-canary") })
+    #expect(rendered.allSatisfy { $0.contains("<redacted>") })
+}
+
+@Test @MainActor
+func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState() async {
+    var events: [String] = []
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser(onCancel: { events.append("library-cancel") })
+    let artworkFetcher = ControlledArtworkFetcher(onRemove: { _ in events.append("artwork-remove") })
+    let credentials = MemoryCredentialStore(
+        persisted: nil,
+        deleteAction: { events.append("credential-delete") }
+    )
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials,
+        libraryBrowser: libraryBrowser,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    #expect(libraryBrowser.operations.single?.cancelCount == 0)
+
+    store.removeAccount()
+
+    #expect(events == ["credential-delete", "library-cancel"])
+    #expect(credentials.deleteCount == 1)
+    #expect(store.snapshot.state == .accountRemoving)
+    #expect(store.snapshot.accountRemoval == .removing)
+    #expect(store.snapshot.accountConnected)
+    store.selectDestination(.library)
+    #expect(store.selectedDestination == .settings)
+    #expect(libraryBrowser.requests.count == 1)
+
+    await settleSearchTask()
+
+    #expect(events == ["credential-delete", "library-cancel", "artwork-remove"])
+    #expect(artworkFetcher.removedServerIDs == ["provider-instance-fixture"])
+    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(store.snapshot.accountRemoval == .idle)
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.albums.isEmpty)
+    #expect(store.snapshot.searchResults.isEmpty)
+    #expect(store.searchQuery.isEmpty)
+    #expect(store.accountServerURL.isEmpty)
+    #expect(store.accountUsername.isEmpty)
+    #expect(store.accountPassword.isEmpty)
+}
+
+@Test @MainActor
+func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async {
+    enum DeleteFailure: Error { case denied }
+    let deleteDecision = ControlledDeleteDecision()
+    var events: [String] = []
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser(onCancel: { events.append("library-cancel") })
+    let artworkFetcher = ControlledArtworkFetcher(onRemove: { _ in events.append("artwork-remove") })
+    let credentials = MemoryCredentialStore(
+        persisted: nil,
+        deleteAction: {
+            events.append("credential-delete")
+            if deleteDecision.shouldFail { throw DeleteFailure.denied }
+        }
+    )
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials,
+        libraryBrowser: libraryBrowser,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+
+    store.removeAccount()
+
+    #expect(events == ["credential-delete"])
+    #expect(credentials.deleteCount == 1)
+    #expect(store.snapshot.state == .accountRemovalError)
+    #expect(store.snapshot.accountRemoval == .failed)
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.albums == [album])
+    #expect(store.accountPassword == "fixture-password")
+    #expect(artworkFetcher.removedServerIDs.isEmpty)
+    #expect(libraryBrowser.operations.single?.cancelCount == 0)
+
+    store.dismissAccountRemovalFailure()
+    #expect(store.snapshot.state == .accountConnected)
+    #expect(store.snapshot.accountRemoval == .idle)
+    #expect(store.snapshot.albums == [album])
+
+    deleteDecision.shouldFail = false
+    store.removeAccount()
+    await settleSearchTask()
+
+    #expect(credentials.deleteCount == 2)
+    #expect(events == ["credential-delete", "credential-delete", "artwork-remove"])
+    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.albums.isEmpty)
+}
+
+@Test @MainActor
+func connectedAccountLoadsOnlyServerSuppliedArtworkKeysWithCurrentCredentials() {
+    let connector = ControlledAccountConnector()
+    let artworkFetcher = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    let reference = DulcetArtworkReference(
+        serverID: "provider-instance-fixture",
+        artworkKey: "cover:opaque/song"
+    )
+    var outcome: DulcetArtworkFetchOutcome?
+
+    let operation = store.loadArtwork(reference, sizeBucket: .pixels256) {
+        outcome = $0
+    }
+
+    #expect(operation != nil)
+    #expect(artworkFetcher.requests.count == 1)
+    #expect(artworkFetcher.requests[0].reference == reference)
+    #expect(artworkFetcher.requests[0].sizeBucket == .pixels256)
+    #expect(artworkFetcher.requests[0].normalizedServerURL == "https://music.example.invalid")
+    #expect(artworkFetcher.requests[0].username == "listener")
+    #expect(artworkFetcher.requests[0].password == "fixture-password")
+    artworkFetcher.complete(.loaded(Data([1, 2, 3])))
+    guard case let .loaded(data)? = outcome else {
+        Issue.record("Artwork completion did not preserve the loaded bytes")
+        return
+    }
+    #expect(data == Data([1, 2, 3]))
+
+    var wrongServerOutcome: DulcetArtworkFetchOutcome?
+    let wrongServerOperation = store.loadArtwork(DulcetArtworkReference(
+        serverID: "another-provider-instance",
+        artworkKey: reference.artworkKey
+    ), sizeBucket: .pixels256) {
+        wrongServerOutcome = $0
+    }
+    #expect(wrongServerOperation == nil)
+    if case .unavailable = wrongServerOutcome {
+        // Expected: a provider-scoped reference cannot cross into another account.
+    } else {
+        Issue.record("Cross-account artwork reference was not rejected")
+    }
+    #expect(artworkFetcher.requests.count == 1)
 }
 
 @Test @MainActor
@@ -384,15 +664,20 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
 
 @MainActor
 private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
+    private let onCancel: @MainActor () -> Void
     private(set) var requests: [DulcetLibraryBrowseRequest] = []
     private(set) var operations: [ControlledLibraryOperation] = []
     private var completions: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+
+    init(onCancel: @escaping @MainActor () -> Void = {}) {
+        self.onCancel = onCancel
+    }
 
     func browse(
         _ request: DulcetLibraryBrowseRequest,
         completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation {
-        let operation = ControlledLibraryOperation()
+        let operation = ControlledLibraryOperation(onCancel: onCancel)
         requests.append(request)
         operations.append(operation)
         completions.append(completion)
@@ -407,6 +692,84 @@ private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
 
 @MainActor
 private final class ControlledLibraryOperation: DulcetLibraryBrowseOperation {
+    private let onCancel: @MainActor () -> Void
+    private(set) var cancelCount = 0
+
+    init(onCancel: @escaping @MainActor () -> Void = {}) {
+        self.onCancel = onCancel
+    }
+
+    func cancel() {
+        cancelCount += 1
+        onCancel()
+    }
+}
+
+@MainActor
+private final class ControlledServerSearch: DulcetServerSearching {
+    private(set) var requests: [DulcetSearchPageRequest] = []
+    private(set) var operations: [ControlledSearchOperation] = []
+    private var completions: [(@MainActor (DulcetSearchPageOutcome) -> Void)] = []
+
+    func search(
+        _ request: DulcetSearchPageRequest,
+        completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void
+    ) -> any DulcetSearchOperation {
+        let operation = ControlledSearchOperation()
+        requests.append(request)
+        operations.append(operation)
+        completions.append(completion)
+        return operation
+    }
+
+    func complete(at index: Int, _ outcome: DulcetSearchPageOutcome) {
+        completions[index](outcome)
+    }
+}
+
+@MainActor
+private final class ControlledSearchOperation: DulcetSearchOperation {
+    private(set) var cancelCount = 0
+
+    func cancel() {
+        cancelCount += 1
+    }
+}
+
+@MainActor
+private final class ControlledArtworkFetcher: DulcetArtworkFetching, DulcetArtworkCacheRemoving {
+    private let onRemove: @MainActor (String) -> Void
+    private(set) var requests: [DulcetArtworkFetchRequest] = []
+    private(set) var removedServerIDs: [String] = []
+    private let operation = ControlledArtworkOperation()
+    private var completion: (@MainActor (DulcetArtworkFetchOutcome) -> Void)?
+
+    init(onRemove: @escaping @MainActor (String) -> Void = { _ in }) {
+        self.onRemove = onRemove
+    }
+
+    func fetch(
+        _ request: DulcetArtworkFetchRequest,
+        completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
+    ) -> any DulcetArtworkFetchOperation {
+        requests.append(request)
+        self.completion = completion
+        return operation
+    }
+
+    func complete(_ outcome: DulcetArtworkFetchOutcome) {
+        completion?(outcome)
+        completion = nil
+    }
+
+    func removeCachedArtwork(serverID: String) async {
+        removedServerIDs.append(serverID)
+        onRemove(serverID)
+    }
+}
+
+@MainActor
+private final class ControlledArtworkOperation: DulcetArtworkFetchOperation {
     private(set) var cancelCount = 0
 
     func cancel() {
@@ -442,6 +805,45 @@ private func fixtureLibraryAlbum() -> DulcetAlbum {
     )
 }
 
+@MainActor
+private func settleSearchTask() async {
+    try? await Task.sleep(for: .milliseconds(20))
+}
+
+@MainActor
+private func searchResult(id: String, title: String) -> DulcetSearchResult {
+    DulcetSearchResult(
+        id: DulcetProviderItemID(
+            providerInstanceID: "provider-instance-fixture",
+            rawID: id
+        ),
+        title: title,
+        kind: .track,
+        credits: [DulcetCredit(role: .artist, name: "Fixture Artist", id: nil)],
+        albumTitle: "Fixture Album",
+        year: 2026,
+        duration: .seconds(61),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: id, palette: .indigoCoral)
+    )
+}
+
+@MainActor
+private func searchPage(
+    results: [DulcetSearchResult],
+    trackHasMore: Bool = false
+) -> DulcetSearchPage {
+    DulcetSearchPage(
+        results: results,
+        artistResultCount: 0,
+        albumResultCount: 0,
+        trackResultCount: results.count,
+        artistHasMore: false,
+        albumHasMore: false,
+        trackHasMore: trackHasMore
+    )
+}
+
 private extension Array {
     var single: Element? { count == 1 ? first : nil }
 }
@@ -473,9 +875,15 @@ private final class SequencedAccountConnector: DulcetAccountConnecting {
 private final class MemoryCredentialStore: DulcetCredentialStoring {
     private let persisted: DulcetAccountConnectRequest?
     private(set) var saved: [DulcetAccountConnectRequest] = []
+    private(set) var deleteCount = 0
+    private let deleteAction: @MainActor () throws -> Void
 
-    init(persisted: DulcetAccountConnectRequest?) {
+    init(
+        persisted: DulcetAccountConnectRequest?,
+        deleteAction: @escaping @MainActor () throws -> Void = {}
+    ) {
         self.persisted = persisted
+        self.deleteAction = deleteAction
     }
 
     func load() throws -> DulcetAccountConnectRequest? {
@@ -486,5 +894,13 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
         saved.append(request)
     }
 
-    func delete() throws {}
+    func delete() throws {
+        deleteCount += 1
+        try deleteAction()
+    }
+}
+
+@MainActor
+private final class ControlledDeleteDecision {
+    var shouldFail = true
 }
