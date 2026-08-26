@@ -13,10 +13,15 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case accountErrorCapability = "account-error-capability"
     case accountErrorPersistence = "account-error-persistence"
     case emptyLibraryNoAccount = "empty-library-no-account"
+    case emptyLibraryConnected = "empty-library-connected"
+    case libraryLoading = "library-loading"
+    case libraryError = "library-error"
     case libraryBrowse = "library-browse"
     case albumDetailMultiDisc = "album-detail-multi-disc"
     case nowPlaying = "now-playing"
+    case nowPlayingUnavailable = "now-playing-unavailable"
     case searchMixedSources = "search-mixed-sources"
+    case searchUnavailable = "search-unavailable"
     case tlsUntrusted = "error-tls-untrusted"
     case offlineMetadataOnly = "offline-metadata-only"
 
@@ -220,62 +225,169 @@ public struct DulcetArtwork: Sendable, Hashable {
     }
 }
 
-public struct DulcetArtist: Identifiable, Sendable, Hashable {
-    public let id: String
+public struct DulcetProviderItemID: Sendable, Hashable {
+    public let providerInstanceID: String
+    public let rawID: String
+
+    public init(providerInstanceID: String, rawID: String) {
+        self.providerInstanceID = providerInstanceID
+        self.rawID = rawID
+    }
+}
+
+public enum DulcetCreditRole: String, Sendable, Hashable {
+    case artist
+    case albumArtist
+}
+
+public struct DulcetCredit: Sendable, Hashable {
+    public let role: DulcetCreditRole
+    public let name: String
+    public let id: DulcetProviderItemID?
+
+    public init(role: DulcetCreditRole, name: String, id: DulcetProviderItemID?) {
+        self.role = role
+        self.name = name
+        self.id = id
+    }
+}
+
+public struct DulcetMusicFolder: Identifiable, Sendable, Hashable {
+    public let id: DulcetProviderItemID
     public let name: String
 
-    public init(id: String, name: String) {
+    public init(id: DulcetProviderItemID, name: String) {
         self.id = id
         self.name = name
     }
 }
 
+public struct DulcetArtist: Identifiable, Sendable, Hashable {
+    public let id: DulcetProviderItemID
+    public let name: String
+    public let mediaSourceID: String?
+
+    public init(id: DulcetProviderItemID, name: String, mediaSourceID: String?) {
+        self.id = id
+        self.name = name
+        self.mediaSourceID = mediaSourceID
+    }
+}
+
 public struct DulcetTrack: Identifiable, Sendable, Hashable {
-    public let id: String
+    public let id: DulcetProviderItemID
     public let title: String
-    public let artistNames: [String]
+    public let credits: [DulcetCredit]
     public let albumTitle: String?
     public let discNumber: Int?
     public let trackNumber: Int?
-    public let durationSeconds: Int
+    public let duration: Duration
+    public let mediaSourceID: String?
     public let artwork: DulcetArtwork
     public let availability: DulcetMediaAvailability
     public let isFavorite: Bool
 
     public init(
-        id: String,
+        id: DulcetProviderItemID,
         title: String,
-        artistNames: [String],
+        credits: [DulcetCredit],
         albumTitle: String?,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
-        durationSeconds: Int,
+        duration: Duration,
+        mediaSourceID: String?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
         isFavorite: Bool = false
     ) {
         self.id = id
         self.title = title
-        self.artistNames = artistNames
+        self.credits = credits
         self.albumTitle = albumTitle
         self.discNumber = discNumber
         self.trackNumber = trackNumber
-        self.durationSeconds = durationSeconds
+        self.duration = duration
+        self.mediaSourceID = mediaSourceID
         self.artwork = artwork
         self.availability = availability
         self.isFavorite = isFavorite
     }
+
+    public var artistNames: [String] {
+        credits.filter { $0.role == .artist }.map(\.name)
+    }
+
+    init(
+        id: String,
+        title: String,
+        artistNames: [String],
+        albumTitle: String?,
+        discNumber: Int? = nil,
+        trackNumber: Int? = nil,
+        duration: Duration,
+        artwork: DulcetArtwork,
+        availability: DulcetMediaAvailability = .playable,
+        isFavorite: Bool = false
+    ) {
+        self.init(
+            id: DulcetProviderItemID(providerInstanceID: "deterministic-fixture", rawID: id),
+            title: title,
+            credits: artistNames.map { DulcetCredit(role: .artist, name: $0, id: nil) },
+            albumTitle: albumTitle,
+            discNumber: discNumber,
+            trackNumber: trackNumber,
+            duration: duration,
+            mediaSourceID: nil,
+            artwork: artwork,
+            availability: availability,
+            isFavorite: isFavorite
+        )
+    }
 }
 
 public struct DulcetAlbum: Identifiable, Sendable, Hashable {
-    public let id: String
+    public let id: DulcetProviderItemID
     public let title: String
-    public let albumArtists: [String]
+    public let credits: [DulcetCredit]
     public let year: Int
+    public let duration: Duration
+    public let mediaSourceID: String?
     public let artwork: DulcetArtwork
     public let tracks: [DulcetTrack]
 
     public init(
+        id: DulcetProviderItemID,
+        title: String,
+        credits: [DulcetCredit],
+        year: Int,
+        duration: Duration,
+        mediaSourceID: String?,
+        artwork: DulcetArtwork,
+        tracks: [DulcetTrack]
+    ) {
+        self.id = id
+        self.title = title
+        self.credits = credits
+        self.year = year
+        self.duration = duration
+        self.mediaSourceID = mediaSourceID
+        self.artwork = artwork
+        self.tracks = tracks
+    }
+
+    public var albumArtists: [String] {
+        credits.filter { $0.role == .albumArtist }.map(\.name)
+    }
+
+    public var totalDuration: Duration {
+        tracks.reduce(.zero) { $0 + $1.duration }
+    }
+
+    public var discNumbers: [Int] {
+        Array(Set(tracks.map { $0.discNumber ?? 1 })).sorted()
+    }
+
+    init(
         id: String,
         title: String,
         albumArtists: [String],
@@ -283,20 +395,16 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
         artwork: DulcetArtwork,
         tracks: [DulcetTrack]
     ) {
-        self.id = id
-        self.title = title
-        self.albumArtists = albumArtists
-        self.year = year
-        self.artwork = artwork
-        self.tracks = tracks
-    }
-
-    public var totalDurationSeconds: Int {
-        tracks.reduce(0) { $0 + $1.durationSeconds }
-    }
-
-    public var discNumbers: [Int] {
-        Array(Set(tracks.compactMap(\.discNumber))).sorted()
+        self.init(
+            id: DulcetProviderItemID(providerInstanceID: "deterministic-fixture", rawID: id),
+            title: title,
+            credits: albumArtists.map { DulcetCredit(role: .albumArtist, name: $0, id: nil) },
+            year: year,
+            duration: tracks.reduce(.zero) { $0 + $1.duration },
+            mediaSourceID: nil,
+            artwork: artwork,
+            tracks: tracks
+        )
     }
 }
 
@@ -343,7 +451,7 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
 public struct DulcetNowPlaying: Sendable, Hashable {
     public let current: DulcetTrack
     public let queue: [DulcetTrack]
-    public let elapsedSeconds: Int
+    public let elapsed: Duration
     public let isPlaying: Bool
     public let outputName: String
     public let volume: Double
@@ -352,7 +460,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public init(
         current: DulcetTrack,
         queue: [DulcetTrack],
-        elapsedSeconds: Int,
+        elapsed: Duration,
         isPlaying: Bool,
         outputName: String,
         volume: Double,
@@ -360,11 +468,32 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     ) {
         self.current = current
         self.queue = queue
-        self.elapsedSeconds = elapsedSeconds
+        self.elapsed = elapsed
         self.isPlaying = isPlaying
         self.outputName = outputName
         self.volume = volume
         self.audioFormat = audioFormat
+    }
+
+}
+
+public enum DulcetLibraryFailureKind: String, Sendable, Hashable {
+    case timeout
+    case unreachable
+    case tlsUntrusted
+    case security
+    case authentication
+    case `protocol`
+    case server
+    case input
+    case capability
+}
+
+public struct DulcetLibraryFailure: Sendable, Hashable {
+    public let kind: DulcetLibraryFailureKind
+
+    public init(kind: DulcetLibraryFailureKind) {
+        self.kind = kind
     }
 }
 
@@ -397,6 +526,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let accountConnected: Bool
     public let connectivity: DulcetConnectivity
     public let albums: [DulcetAlbum]
+    public let musicFolders: [DulcetMusicFolder]
+    public let artists: [DulcetArtist]
     public let looseTracks: [DulcetTrack]
     public let recentlyAddedTracks: [DulcetTrack]
     public let selectedAlbum: DulcetAlbum?
@@ -406,6 +537,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let captureDate: Date
     public let accountForm: DulcetAccountConnectRequest
     public let accountConnection: DulcetAccountConnectionStatus
+    public let libraryFailure: DulcetLibraryFailure?
 
     public init(
         state: DulcetPresentationState,
@@ -413,6 +545,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         accountConnected: Bool,
         connectivity: DulcetConnectivity,
         albums: [DulcetAlbum],
+        musicFolders: [DulcetMusicFolder] = [],
+        artists: [DulcetArtist] = [],
         looseTracks: [DulcetTrack],
         recentlyAddedTracks: [DulcetTrack],
         selectedAlbum: DulcetAlbum? = nil,
@@ -421,13 +555,16 @@ public struct DulcetSnapshot: Sendable, Hashable,
         searchResults: [DulcetSearchResult] = [],
         captureDate: Date,
         accountForm: DulcetAccountConnectRequest = .empty,
-        accountConnection: DulcetAccountConnectionStatus = .idle
+        accountConnection: DulcetAccountConnectionStatus = .idle,
+        libraryFailure: DulcetLibraryFailure? = nil
     ) {
         self.state = state
         self.selectedDestination = selectedDestination
         self.accountConnected = accountConnected
         self.connectivity = connectivity
         self.albums = albums
+        self.musicFolders = musicFolders
+        self.artists = artists
         self.looseTracks = looseTracks
         self.recentlyAddedTracks = recentlyAddedTracks
         self.selectedAlbum = selectedAlbum
@@ -437,6 +574,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.captureDate = captureDate
         self.accountForm = accountForm
         self.accountConnection = accountConnection
+        self.libraryFailure = libraryFailure
     }
 
     public var description: String {

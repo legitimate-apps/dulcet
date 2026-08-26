@@ -46,9 +46,9 @@ func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()
     let snapshots = DulcetPresentationState.allCases.map(source.snapshot)
 
-    #expect(snapshots.count == 18)
-    #expect(Set(snapshots.map(\.state)).count == 18)
-    #expect(snapshots.filter(\.accountConnected).count == 7)
+    #expect(snapshots.count == DulcetPresentationState.allCases.count)
+    #expect(Set(snapshots.map(\.state)) == Set(DulcetPresentationState.allCases))
+    #expect(snapshots.filter(\.accountConnected).count == 12)
 }
 
 @Test @MainActor
@@ -62,8 +62,8 @@ func fixtureCarriesEveryAwkwardSeedCorpusCase() {
     #expect(tracks.contains { $0.albumTitle == nil })
     #expect(tracks.contains { $0.title.count > 300 })
     #expect(snapshot.albums.first { $0.title == "Paging Atlas" }?.tracks.count == 300)
-    #expect(tracks.contains { $0.durationSeconds == 29 })
-    #expect(tracks.contains { $0.durationSeconds == 31 })
+    #expect(tracks.contains { $0.duration == .seconds(29) })
+    #expect(tracks.contains { $0.duration == .seconds(31) })
 }
 
 @Test @MainActor

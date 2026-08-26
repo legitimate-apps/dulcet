@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct DulcetEmptyLibraryView: View {
+    var connected = false
     var onConnect: () -> Void = {}
 
     var body: some View {
@@ -20,11 +21,11 @@ struct DulcetEmptyLibraryView: View {
             }
 
             VStack(spacing: DulcetSpacing.sm) {
-                Text(DulcetStrings.firstRunTitle)
+                Text(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.firstRunTitle)
                     .font(.largeTitle.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
-                Text(DulcetStrings.firstRunBody)
+                Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.firstRunBody)
                     .font(.title3)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .multilineTextAlignment(.center)
@@ -32,18 +33,20 @@ struct DulcetEmptyLibraryView: View {
                     .frame(maxWidth: 560)
             }
 
-            VStack(spacing: DulcetSpacing.sm) {
-                Button(DulcetStrings.connectServer, systemImage: "plus", action: onConnect)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityLabel(DulcetStrings.connectServer)
+            if !connected {
+                VStack(spacing: DulcetSpacing.sm) {
+                    Button(DulcetStrings.connectServer, systemImage: "plus", action: onConnect)
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityLabel(DulcetStrings.connectServer)
 
-                Button(DulcetStrings.browseHelp) {}
-                    .dulcetLinkButtonStyle()
-                    .accessibilityLabel(DulcetStrings.browseHelp)
+                    Button(DulcetStrings.browseHelp) {}
+                        .dulcetLinkButtonStyle()
+                        .accessibilityLabel(DulcetStrings.browseHelp)
+                }
             }
 
-            Text(DulcetStrings.firstRunFootnote)
+            Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
                 .font(.footnote)
                 .dulcetForeground(.secondaryTextOnWindow)
                 .multilineTextAlignment(.center)
@@ -59,8 +62,91 @@ struct DulcetEmptyLibraryView: View {
     }
 }
 
+struct DulcetLibraryLoadingView: View {
+    var body: some View {
+        VStack(spacing: DulcetSpacing.lg) {
+            ProgressView()
+                .controlSize(.large)
+                .accessibilityLabel(DulcetStrings.libraryLoadingTitle)
+            Text(DulcetStrings.libraryLoadingTitle)
+                .font(.title2.weight(.semibold))
+            Text(DulcetStrings.libraryLoadingBody)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
+        }
+        .padding(DulcetSpacing.xxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+    }
+}
+
+struct DulcetLibraryErrorView: View {
+    let failure: DulcetLibraryFailure?
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: DulcetSpacing.lg) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 38, weight: .medium))
+                .dulcetForeground(.dangerIconOnTint)
+                .accessibilityHidden(true)
+            Text(DulcetStrings.libraryErrorTitle)
+                .font(.title2.weight(.semibold))
+            Text(message)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
+            Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise", action: onRetry)
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel(DulcetStrings.tryAgain)
+        }
+        .padding(DulcetSpacing.xxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+    }
+
+    private var message: String {
+        switch failure?.kind {
+        case .timeout: DulcetStrings.libraryErrorTimeout
+        case .authentication: DulcetStrings.libraryErrorAuthentication
+        case .tlsUntrusted, .security: DulcetStrings.libraryErrorSecurity
+        case .protocol, .server: DulcetStrings.libraryErrorProtocol
+        case .unreachable, .input, .capability, nil: DulcetStrings.libraryErrorGeneric
+        }
+    }
+}
+
+struct DulcetUnavailableDestinationView: View {
+    let symbol: String
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: DulcetSpacing.lg) {
+            Image(systemName: symbol)
+                .font(.system(size: 38, weight: .medium))
+                .dulcetForeground(.accentIconOnTint)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.title2.weight(.semibold))
+            Text(message)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
+        }
+        .padding(DulcetSpacing.xxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+    }
+}
+
 struct DulcetLibraryBrowseView: View {
     let snapshot: DulcetSnapshot
+    var onSelectAlbum: (DulcetAlbum) -> Void = { _ in }
 
     private var totalTracks: Int {
         snapshot.albums.reduce(0) { $0 + $1.tracks.count } + snapshot.looseTracks.count
@@ -77,48 +163,44 @@ struct DulcetLibraryBrowseView: View {
                     )
                 )
 
+                if !snapshot.musicFolders.isEmpty {
+                    Text(DulcetStrings.musicFolderSummary(snapshot.musicFolders.map(\.name)))
+                        .font(.subheadline)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                }
+
+                if !snapshot.artists.isEmpty {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                        Text(DulcetStrings.artists)
+                            .font(.title2.weight(.semibold))
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)],
+                            alignment: .leading,
+                            spacing: DulcetSpacing.sm
+                        ) {
+                            ForEach(snapshot.artists) { artist in
+                                Text(artist.name)
+                                    .font(.headline)
+                                    .lineLimit(nil)
+                            }
+                        }
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                     Text(DulcetStrings.albums)
                         .font(.title2.weight(.semibold))
 
-                    ScrollView(.horizontal) {
-                        HStack(alignment: .top, spacing: DulcetSpacing.md) {
-                            ForEach(snapshot.albums.prefix(7)) { album in
-                                DulcetAlbumShelfItem(album: album)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 150), alignment: .top)],
+                        alignment: .leading,
+                        spacing: DulcetSpacing.md
+                    ) {
+                        ForEach(snapshot.albums) { album in
+                            DulcetAlbumShelfItem(album: album) {
+                                onSelectAlbum(album)
                             }
                         }
-                        .padding(.bottom, DulcetSpacing.xs)
-                    }
-                    .scrollIndicators(.hidden)
-                }
-
-                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                    HStack {
-                        Text(DulcetStrings.recentlyAdded)
-                            .font(.title2.weight(.semibold))
-                        Spacer()
-                        Text(DulcetStrings.duration)
-                            .font(.caption.weight(.medium))
-                            .dulcetForeground(.secondaryTextOnWindow)
-                    }
-
-                    VStack(spacing: 0) {
-                        ForEach(Array(snapshot.recentlyAddedTracks.enumerated()), id: \.element.id) { index, track in
-                            DulcetTrackRow(
-                                track: track,
-                                showAlbum: true,
-                                index: index + 1,
-                                surface: .control
-                            )
-                            if track.id != snapshot.recentlyAddedTracks.last?.id {
-                                Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
-                            }
-                        }
-                    }
-                    .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
                     }
                 }
             }
@@ -162,9 +244,10 @@ struct DulcetAlbumShelfItem: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let album: DulcetAlbum
     var offline = false
+    var onSelect: () -> Void = {}
 
     var body: some View {
-        Button(action: {}) {
+        Button(action: onSelect) {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 ZStack(alignment: .bottomTrailing) {
                     DulcetArtworkView(artwork: album.artwork, size: 126, muted: offline)
@@ -279,7 +362,7 @@ struct DulcetTrackRow: View {
                         .dulcetForeground(surface.offlinePair)
                         .lineLimit(nil)
                 } else {
-                    Text(track.durationSeconds.dulcetDuration)
+                    Text(track.duration.dulcetDuration)
                         .font(.caption.monospacedDigit())
                         .dulcetForeground(surface.secondaryPair)
                 }
@@ -314,13 +397,13 @@ struct DulcetTrackRow: View {
             return DulcetStrings.unavailableTrackAccessibility(
                 title: track.title,
                 subtitle: trackSubtitle,
-                duration: track.durationSeconds.dulcetDuration
+                duration: track.duration.dulcetDuration
             )
         }
         return DulcetStrings.trackAccessibility(
             title: track.title,
             subtitle: trackSubtitle,
-            duration: track.durationSeconds.dulcetDuration
+            duration: track.duration.dulcetDuration
         )
     }
 }
@@ -341,7 +424,7 @@ struct DulcetAlbumDetailView: View {
                             .accessibilityAddTraits(.isHeader)
 
                         VStack(spacing: 0) {
-                            let tracks = album.tracks.filter { $0.discNumber == disc }
+                            let tracks = album.tracks.filter { ($0.discNumber ?? 1) == disc }
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                                 DulcetTrackRow(
                                     track: track,
@@ -398,7 +481,7 @@ struct DulcetAlbumDetailView: View {
             Text(DulcetStrings.albumMetadata(
                 year: album.year,
                 tracks: DulcetStrings.trackCount(album.tracks.count),
-                duration: album.totalDurationSeconds.dulcetDuration
+                duration: album.totalDuration.dulcetDuration
             ))
                 .font(.subheadline)
                 .dulcetForeground(.secondaryTextOnWindow)

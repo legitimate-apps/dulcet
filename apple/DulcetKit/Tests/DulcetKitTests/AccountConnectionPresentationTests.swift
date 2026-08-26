@@ -74,6 +74,96 @@ func accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation() {
 }
 
 @Test @MainActor
+func productionDataSourceKeepsDestinationAndRenderedStateInAgreement() {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+
+    let expectations: [(DulcetSidebarDestination, DulcetPresentationState)] = [
+        (.library, .libraryLoading),
+        (.search, .searchUnavailable),
+        (.nowPlaying, .nowPlayingUnavailable),
+    ]
+    for (destination, expectedState) in expectations {
+        store.selectDestination(destination)
+
+        #expect(store.snapshot.selectedDestination == destination)
+        #expect(store.snapshot.state == expectedState)
+    }
+}
+
+@Test @MainActor
+func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+
+    store.selectDestination(.library)
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.single?.providerInstanceID == "provider-instance-fixture")
+    #expect(libraryBrowser.requests.single?.normalizedServerURL == "https://music.example.invalid")
+
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(
+        musicFolders: [DulcetMusicFolder(
+            id: DulcetProviderItemID(
+                providerInstanceID: "provider-instance-fixture",
+                rawID: "folder:opaque"
+            ),
+            name: "Primary"
+        )],
+        artists: [DulcetArtist(
+            id: DulcetProviderItemID(
+                providerInstanceID: "provider-instance-fixture",
+                rawID: "artist:opaque"
+            ),
+            name: "Opaque Artist",
+            mediaSourceID: nil
+        )],
+        albums: [album]
+    ))
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [album])
+    #expect(store.snapshot.artists.map(\.name) == ["Opaque Artist"])
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+    store.selectDestination(.search)
+    #expect(libraryBrowser.operations.last?.cancelCount == 1)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .searchUnavailable)
+    #expect(store.snapshot.selectedDestination == .search)
+}
+
+@Test @MainActor
 func lateCancelSuppressesQueuedSuccessAndCredentialPersistence() {
     let connector = ControlledAccountConnector()
     let credentials = MemoryCredentialStore(persisted: nil)
@@ -290,6 +380,70 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
     func cancel() {
         cancelCount += 1
     }
+}
+
+@MainActor
+private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
+    private(set) var requests: [DulcetLibraryBrowseRequest] = []
+    private(set) var operations: [ControlledLibraryOperation] = []
+    private var completions: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+
+    func browse(
+        _ request: DulcetLibraryBrowseRequest,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        let operation = ControlledLibraryOperation()
+        requests.append(request)
+        operations.append(operation)
+        completions.append(completion)
+        return operation
+    }
+
+    func complete(_ outcome: DulcetLibraryBrowseOutcome) {
+        guard !completions.isEmpty else { return }
+        completions.removeFirst()(outcome)
+    }
+}
+
+@MainActor
+private final class ControlledLibraryOperation: DulcetLibraryBrowseOperation {
+    private(set) var cancelCount = 0
+
+    func cancel() {
+        cancelCount += 1
+    }
+}
+
+@MainActor
+private func fixtureLibraryAlbum() -> DulcetAlbum {
+    let providerID = "provider-instance-fixture"
+    let artistID = DulcetProviderItemID(providerInstanceID: providerID, rawID: "artist:opaque")
+    let credit = DulcetCredit(role: .albumArtist, name: "Opaque Artist", id: artistID)
+    let track = DulcetTrack(
+        id: DulcetProviderItemID(providerInstanceID: providerID, rawID: "track:opaque"),
+        title: "Opaque Track",
+        credits: [DulcetCredit(role: .artist, name: "Opaque Artist", id: artistID)],
+        albumTitle: "Opaque Album",
+        discNumber: 1,
+        trackNumber: 1,
+        duration: .seconds(61),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: "track:opaque", palette: .indigoCoral)
+    )
+    return DulcetAlbum(
+        id: DulcetProviderItemID(providerInstanceID: providerID, rawID: "album:opaque"),
+        title: "Opaque Album",
+        credits: [credit],
+        year: 2026,
+        duration: .seconds(61),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: "album:opaque", palette: .indigoCoral),
+        tracks: [track]
+    )
+}
+
+private extension Array {
+    var single: Element? { count == 1 ? first : nil }
 }
 
 @MainActor

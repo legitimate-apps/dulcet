@@ -13,6 +13,7 @@ enum DulcetStrings {
     static let connectionFailed = text("status.connectionFailed", "Connection failed")
     static let offline = text("status.offline", "Offline")
     static let albums = text("library.albums", "Albums")
+    static let artists = text("library.artists", "Artists")
     static let recentlyAdded = text("library.recentlyAdded", "Recently Added")
     static let songs = text("library.songs", "songs")
     static let tracks = text("library.tracks", "tracks")
@@ -36,6 +37,21 @@ enum DulcetStrings {
     static let firstRunTitle = text("empty.title", "Your music, on this Mac")
     static let firstRunBody = text("empty.body", "Connect an OpenSubsonic server to browse your library and listen with native Mac controls.")
     static let firstRunFootnote = text("empty.footnote", "Dulcet keeps account credentials in the system Keychain and sends no analytics.")
+    static let connectedEmptyTitle = text("library.empty.connected.title", "This library is empty")
+    static let connectedEmptyBody = text("library.empty.connected.body", "The connected server returned no artists or albums.")
+    static let connectedEmptyFootnote = text("library.empty.connected.footnote", "Dulcet reads the server again whenever you open Library.")
+    static let libraryLoadingTitle = text("library.loading.title", "Reading your library…")
+    static let libraryLoadingBody = text("library.loading.body", "Dulcet is fetching artists, albums, and track lists from the connected server. Large or remote libraries can take time.")
+    static let libraryErrorTitle = text("library.error.title", "The library could not be loaded")
+    static let libraryErrorTimeout = text("library.error.timeout", "The server took too long to return the library.")
+    static let libraryErrorAuthentication = text("library.error.authentication", "The server no longer accepts this account. Review the connection settings and connect again.")
+    static let libraryErrorSecurity = text("library.error.security", "A security or certificate check stopped the library request.")
+    static let libraryErrorProtocol = text("library.error.protocol", "The server returned a library response Dulcet could not read.")
+    static let libraryErrorGeneric = text("library.error.generic", "Check the server and network, then try again.")
+    static let searchUnavailableTitle = text("search.unavailable.title", "Server search is not available yet")
+    static let searchUnavailableBody = text("search.unavailable.body", "Search is a separate feature and has not been implemented in this build.")
+    static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing can play yet")
+    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Playback is a separate feature and has not been implemented in this build.")
     static let searchTitle = text("search.title", "Search")
     static let searchPrompt = text("search.prompt", "Artists, albums, and tracks")
     static let searchSummary = text("search.summary", "Local results appear immediately. Server matches refresh the same row instead of creating a duplicate.")
@@ -108,6 +124,14 @@ enum DulcetStrings {
             "%1$@ · %2$@",
             self.albumCount(albumCount),
             self.trackCount(trackCount)
+        )
+    }
+
+    static func musicFolderSummary(_ names: [String]) -> String {
+        formatted(
+            "library.musicFolders",
+            "Music folders: %@",
+            ListFormatter.localizedString(byJoining: names)
         )
     }
 

@@ -237,34 +237,61 @@ private struct DulcetStateSurface: View {
     private var snapshot: DulcetSnapshot { store.snapshot }
 
     var body: some View {
-        switch snapshot.state {
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
-             .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
-             .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
-             .accountErrorCapability, .accountErrorPersistence:
+        switch snapshot.selectedDestination {
+        case .settings:
             DulcetAccountConnectionView(store: store)
+        case .library:
+            librarySurface
+        case .search:
+            if snapshot.state == .searchMixedSources {
+                DulcetSearchView(snapshot: snapshot, searchQuery: $store.searchQuery)
+            } else {
+                DulcetUnavailableDestinationView(
+                    symbol: "magnifyingglass",
+                    title: DulcetStrings.searchUnavailableTitle,
+                    message: DulcetStrings.searchUnavailableBody
+                )
+            }
+        case .nowPlaying:
+            if snapshot.state == .nowPlaying, let player = snapshot.nowPlaying {
+                DulcetNowPlayingView(player: player)
+            } else {
+                DulcetUnavailableDestinationView(
+                    symbol: "waveform",
+                    title: DulcetStrings.nowPlayingUnavailableTitle,
+                    message: DulcetStrings.nowPlayingUnavailableBody
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var librarySurface: some View {
+        switch snapshot.state {
         case .emptyLibraryNoAccount:
-            DulcetEmptyLibraryView {
-                store.selectDestination(.settings)
+            DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+        case .emptyLibraryConnected:
+            DulcetEmptyLibraryView(connected: true)
+        case .libraryLoading:
+            DulcetLibraryLoadingView()
+        case .libraryError:
+            DulcetLibraryErrorView(failure: snapshot.libraryFailure) {
+                store.selectDestination(.library)
             }
         case .libraryBrowse:
-            DulcetLibraryBrowseView(snapshot: snapshot)
+            DulcetLibraryBrowseView(snapshot: snapshot) { album in
+                store.selectAlbum(album.id)
+            }
         case .albumDetailMultiDisc:
             if let album = snapshot.selectedAlbum {
                 DulcetAlbumDetailView(album: album)
-            }
-        case .nowPlaying:
-            if let player = snapshot.nowPlaying {
-                DulcetNowPlayingView(player: player)
-            }
-        case .searchMixedSources:
-            DulcetSearchView(snapshot: snapshot, searchQuery: $store.searchQuery)
-        case .tlsUntrusted:
-            if case let .connectionFailed(.tlsUntrusted(failure)) = snapshot.connectivity {
-                DulcetTLSUntrustedView(failure: failure)
+            } else {
+                DulcetEmptyLibraryView(connected: true)
             }
         case .offlineMetadataOnly:
             DulcetOfflineLibraryView(snapshot: snapshot)
+        default:
+            DulcetEmptyLibraryView(connected: snapshot.accountConnected)
         }
     }
 }

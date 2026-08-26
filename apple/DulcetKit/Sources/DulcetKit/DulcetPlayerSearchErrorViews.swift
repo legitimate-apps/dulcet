@@ -60,19 +60,19 @@ struct DulcetNowPlayingView: View {
 
             VStack(spacing: DulcetSpacing.xs) {
                 Slider(
-                    value: .constant(Double(player.elapsedSeconds)),
-                    in: 0...Double(player.current.durationSeconds)
+                    value: .constant(player.elapsed.dulcetSeconds),
+                    in: 0...player.current.duration.dulcetSeconds
                 )
                 .accessibilityLabel(DulcetStrings.nowPlaying)
                 .accessibilityValue(DulcetStrings.playbackProgress(
-                    elapsed: player.elapsedSeconds.dulcetDuration,
-                    duration: player.current.durationSeconds.dulcetDuration
+                    elapsed: player.elapsed.dulcetDuration,
+                    duration: player.current.duration.dulcetDuration
                 ))
 
                 HStack {
-                    Text(player.elapsedSeconds.dulcetDuration)
+                    Text(player.elapsed.dulcetDuration)
                     Spacer()
-                    Text(player.current.durationSeconds.dulcetDuration)
+                    Text(player.current.duration.dulcetDuration)
                 }
                 .font(.caption.monospacedDigit())
                 .dulcetForeground(.secondaryTextOnWindow)

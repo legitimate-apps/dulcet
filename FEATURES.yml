@@ -214,7 +214,10 @@
       "gates": ["account:authenticated"],
       "conformance": ["CONF-31", "CONF-32", "CONF-33"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "macos": {
+          "status": "planned",
+          "reason": "The macOS app now reads music folders, artists, paged album summaries, and bounded-concurrency album track listings directly from the connected OpenSubsonic server, with explicit loading, empty, error, and cancellation behavior. It has no SQLDelight cache, generations, checkpoints, stability witness, scheduled refresh, or offline metadata, and every return to Library fetches the complete browse again. The LibraryBrowseTest and DulcetKit production-data-source tests cover this narrower read-through behavior, but they are intentionally not listed as CONF-31/32/33 evidence because those controls specify the deferred durable library engine."
+        }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }
