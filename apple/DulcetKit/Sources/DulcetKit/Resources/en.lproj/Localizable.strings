@@ -10,6 +10,7 @@
 "status.connectionFailed" = "Connection failed";
 "status.offline" = "Offline";
 "library.albums" = "Albums";
+"library.artists" = "Artists";
 "library.recentlyAdded" = "Recently Added";
 "library.songs" = "songs";
 "library.tracks" = "tracks";
@@ -36,6 +37,21 @@
 "empty.title" = "Your music, wherever you listen";
 "empty.body" = "Connect an OpenSubsonic server to browse your library and listen with native controls.";
 "empty.footnote" = "Dulcet keeps account credentials in the system Keychain and sends no analytics.";
+"library.empty.connected.title" = "This library is empty";
+"library.empty.connected.body" = "The connected server returned no artists or albums.";
+"library.empty.connected.footnote" = "Dulcet reads the server again whenever you open Library.";
+"library.loading.title" = "Reading your library…";
+"library.loading.body" = "Dulcet is fetching artists, albums, and track lists from the connected server. Large or remote libraries can take time.";
+"library.error.title" = "The library could not be loaded";
+"library.error.timeout" = "The server took too long to return the library.";
+"library.error.authentication" = "The server no longer accepts this account. Review the connection settings and connect again.";
+"library.error.security" = "A security or certificate check stopped the library request.";
+"library.error.protocol" = "The server returned a library response Dulcet could not read.";
+"library.error.generic" = "Check the server and network, then try again.";
+"search.unavailable.title" = "Server search is not available yet";
+"search.unavailable.body" = "Search is a separate feature and has not been implemented in this build.";
+"player.unavailable.title" = "Nothing can play yet";
+"player.unavailable.body" = "Playback is a separate feature and has not been implemented in this build.";
 "search.title" = "Search";
 "search.prompt" = "Artists, albums, and tracks";
 "search.summary" = "Local results appear immediately. Server matches refresh the same row instead of creating a duplicate.";
@@ -145,6 +161,7 @@
 "status.server" = "%@ · Online";
 "status.serverConnectionFailed" = "%@ · Connection failed";
 "library.summary" = "%1$@ · %2$@";
+"library.musicFolders" = "Music folders: %@";
 "album.accessibility" = "%1$@, %2$@, %3$@";
 "album.metadata" = "%1$@ · %2$@ · %3$@";
 "track.subtitle" = "%1$@ · %2$@";

@@ -768,7 +768,7 @@ internal fun mapAccountConnectionFailure(failure: Throwable): DomainError = when
     } ?: DomainError.Transport.Unreachable
 }
 
-private class RequestTracePluginConfig {
+internal class RequestTracePluginConfig {
     lateinit var observe: (HttpRequestBuilder, OutgoingContent) -> Unit
 }
 
@@ -787,12 +787,15 @@ internal sealed interface AccountClientTransport {
     data class ForwardProxy(val proxy: AccountForwardProxy) : AccountClientTransport
 }
 
-private val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
+internal val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
     val observe = pluginConfig.observe
     on(SendingRequest) { request, content -> observe(request, content) }
 }
 
-private class RequestTraceRecorder(private val logSink: LogSink?) {
+internal class RequestTraceRecorder(
+    private val logSink: LogSink?,
+    private val operationName: String = "account.connect",
+) {
     private val traces = mutableListOf<RequestTrace>()
 
     fun clear() {
@@ -844,7 +847,7 @@ private class RequestTraceRecorder(private val logSink: LogSink?) {
         )
         traces += trace
         logSink?.write(
-            "account.connect endpoint=${trace.endpoint} method=${trace.method} url=${trace.redactedUrl}",
+            "$operationName endpoint=${trace.endpoint} method=${trace.method} url=${trace.redactedUrl}",
         )
     }
 
@@ -868,7 +871,7 @@ private fun authenticationParameters(
 
 private class RedirectPolicyFailure(val error: DomainError) : Exception()
 
-private fun resolveRedirectUrl(currentUrl: String, location: String): String? = try {
+internal fun resolveRedirectUrl(currentUrl: String, location: String): String? = try {
     URLBuilder().apply {
         takeFrom(currentUrl)
         parameters.clear()
@@ -881,13 +884,13 @@ private fun resolveRedirectUrl(currentUrl: String, location: String): String? = 
     null
 }
 
-private fun String.withoutQuery(): String = URLBuilder().apply {
+internal fun String.withoutQuery(): String = URLBuilder().apply {
     takeFrom(this@withoutQuery)
     parameters.clear()
     fragment = ""
 }.buildString()
 
-private fun String.redirectTargetHost(): RedirectTargetHost {
+internal fun String.redirectTargetHost(): RedirectTargetHost {
     val canonical = Url(this).host.canonicalRedirectHost()
     check(canonical is CanonicalRedirectHost.Canonical) {
         "Cross-origin decisions require a canonical target host"
