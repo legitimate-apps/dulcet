@@ -106,7 +106,13 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
     }
 }
 
-private struct CredentialRecord: Codable {
+// Every other type in this module that holds a password carries the same redaction trio, so that
+// interpolating one cannot disclose it. CredentialRecord is `private` and is currently only encoded
+// to and decoded from the Keychain, never logged — this is defence in depth, not a fix for a live
+// leak. Without it, default synthesized reflection on a Codable struct prints every stored property,
+// so the first `"\(record)"` anyone writes would disclose the password with no warning.
+private struct CredentialRecord: Codable, CustomStringConvertible, CustomDebugStringConvertible,
+                                 CustomReflectable {
     let serverURL: String
     let username: String
     let password: String
@@ -125,6 +131,18 @@ private struct CredentialRecord: Codable {
             username: username,
             password: password,
             allowLocalHTTP: allowLocalHTTP
+        )
+    }
+
+    var description: String { "CredentialRecord(<redacted>)" }
+
+    var debugDescription: String { description }
+
+    var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [("credentialRecord", "<redacted>" as Any)],
+            displayStyle: .struct
         )
     }
 }
