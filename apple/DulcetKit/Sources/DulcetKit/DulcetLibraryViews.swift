@@ -144,6 +144,39 @@ struct DulcetUnavailableDestinationView: View {
     }
 }
 
+enum DulcetResponsiveGridLayout {
+    static func columns(
+        containerWidth: CGFloat,
+        horizontalInsets: CGFloat,
+        minimumItemWidth: CGFloat,
+        spacing: CGFloat,
+        alignment: Alignment
+    ) -> [GridItem] {
+        let availableWidth = max(0, containerWidth - horizontalInsets)
+        let count = columnCount(
+            availableWidth: availableWidth,
+            minimumItemWidth: minimumItemWidth,
+            spacing: spacing
+        )
+        return Array(
+            repeating: GridItem(
+                .flexible(minimum: min(minimumItemWidth, availableWidth)),
+                spacing: spacing,
+                alignment: alignment
+            ),
+            count: count
+        )
+    }
+
+    static func columnCount(
+        availableWidth: CGFloat,
+        minimumItemWidth: CGFloat,
+        spacing: CGFloat
+    ) -> Int {
+        max(1, Int((max(0, availableWidth) + spacing) / (minimumItemWidth + spacing)))
+    }
+}
+
 struct DulcetLibraryBrowseView: View {
     let snapshot: DulcetSnapshot
     var onSelectAlbum: (DulcetAlbum) -> Void = { _ in }
@@ -153,58 +186,75 @@ struct DulcetLibraryBrowseView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                DulcetLibraryHeader(
-                    title: DulcetStrings.library,
-                    subtitle: DulcetStrings.librarySummary(
-                        albumCount: snapshot.albums.count,
-                        trackCount: totalTracks
+        // Consume the screen's proposed width outside the ScrollView. Window resizing
+        // remains responsive without feeding a measured child size back into view
+        // selection or relying on GridItem.adaptive candidate resolution.
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+                    DulcetLibraryHeader(
+                        title: DulcetStrings.library,
+                        subtitle: DulcetStrings.librarySummary(
+                            albumCount: snapshot.albums.count,
+                            trackCount: totalTracks
+                        )
                     )
-                )
 
-                if !snapshot.musicFolders.isEmpty {
-                    Text(DulcetStrings.musicFolderSummary(snapshot.musicFolders.map(\.name)))
-                        .font(.subheadline)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                }
+                    if !snapshot.musicFolders.isEmpty {
+                        Text(DulcetStrings.musicFolderSummary(snapshot.musicFolders.map(\.name)))
+                            .font(.subheadline)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                    }
 
-                if !snapshot.artists.isEmpty {
+                    if !snapshot.artists.isEmpty {
+                        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                            Text(DulcetStrings.artists)
+                                .font(.title2.weight(.semibold))
+                            LazyVGrid(
+                                columns: DulcetResponsiveGridLayout.columns(
+                                    containerWidth: geometry.size.width,
+                                    horizontalInsets: DulcetSpacing.lg * 2,
+                                    minimumItemWidth: 180,
+                                    spacing: DulcetSpacing.xs,
+                                    alignment: .leading
+                                ),
+                                alignment: .leading,
+                                spacing: DulcetSpacing.sm
+                            ) {
+                                ForEach(snapshot.artists) { artist in
+                                    Text(artist.name)
+                                        .font(.headline)
+                                        .lineLimit(nil)
+                                }
+                            }
+                        }
+                    }
+
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                        Text(DulcetStrings.artists)
+                        Text(DulcetStrings.albums)
                             .font(.title2.weight(.semibold))
+
                         LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)],
+                            columns: DulcetResponsiveGridLayout.columns(
+                                containerWidth: geometry.size.width,
+                                horizontalInsets: DulcetSpacing.lg * 2,
+                                minimumItemWidth: 150,
+                                spacing: DulcetSpacing.xs,
+                                alignment: .top
+                            ),
                             alignment: .leading,
-                            spacing: DulcetSpacing.sm
+                            spacing: DulcetSpacing.md
                         ) {
-                            ForEach(snapshot.artists) { artist in
-                                Text(artist.name)
-                                    .font(.headline)
-                                    .lineLimit(nil)
+                            ForEach(snapshot.albums) { album in
+                                DulcetAlbumShelfItem(album: album) {
+                                    onSelectAlbum(album)
+                                }
                             }
                         }
                     }
                 }
-
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    Text(DulcetStrings.albums)
-                        .font(.title2.weight(.semibold))
-
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 150), alignment: .top)],
-                        alignment: .leading,
-                        spacing: DulcetSpacing.md
-                    ) {
-                        ForEach(snapshot.albums) { album in
-                            DulcetAlbumShelfItem(album: album) {
-                                onSelectAlbum(album)
-                            }
-                        }
-                    }
-                }
+                .padding(DulcetSpacing.lg)
             }
-            .padding(DulcetSpacing.lg)
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
@@ -510,68 +560,81 @@ struct DulcetOfflineLibraryView: View {
     let snapshot: DulcetSnapshot
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                offlineBanner
+        // This reader consumes the outer proposal before the vertical ScrollView,
+        // so only the stable container width participates in the column decision.
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+                    offlineBanner
 
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                        Text(DulcetStrings.library)
-                            .font(.largeTitle.weight(.bold))
-                        if case let .offline(lastSynced) = snapshot.connectivity {
-                            Text(DulcetStrings.lastSynced(lastSynced))
-                                .font(.subheadline)
-                                .dulcetForeground(.secondaryTextOnWindow)
-                                .lineLimit(nil)
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                            Text(DulcetStrings.library)
+                                .font(.largeTitle.weight(.bold))
+                            if case let .offline(lastSynced) = snapshot.connectivity {
+                                Text(DulcetStrings.lastSynced(lastSynced))
+                                    .font(.subheadline)
+                                    .dulcetForeground(.secondaryTextOnWindow)
+                                    .lineLimit(nil)
+                            }
                         }
+                        Spacer()
+                        Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .accessibilityLabel(DulcetStrings.tryAgain)
                     }
-                    Spacer()
-                    Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityLabel(DulcetStrings.tryAgain)
-                }
 
-                if dynamicTypeSize.isAccessibilitySize {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 190), spacing: DulcetSpacing.md, alignment: .top)],
-                        alignment: .leading,
-                        spacing: DulcetSpacing.md
-                    ) {
-                        ForEach(snapshot.albums.prefix(6)) { album in
-                            DulcetAlbumShelfItem(album: album, offline: true)
-                        }
-                    }
-                } else {
-                    ScrollView(.horizontal) {
-                        HStack(alignment: .top, spacing: DulcetSpacing.md) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        LazyVGrid(
+                            columns: DulcetResponsiveGridLayout.columns(
+                                containerWidth: geometry.size.width,
+                                horizontalInsets: DulcetSpacing.lg * 2,
+                                minimumItemWidth: 190,
+                                spacing: DulcetSpacing.md,
+                                alignment: .top
+                            ),
+                            alignment: .leading,
+                            spacing: DulcetSpacing.md
+                        ) {
                             ForEach(snapshot.albums.prefix(6)) { album in
                                 DulcetAlbumShelfItem(album: album, offline: true)
                             }
                         }
-                        .padding(.bottom, DulcetSpacing.xs)
+                    } else {
+                        ScrollView(.horizontal) {
+                            HStack(alignment: .top, spacing: DulcetSpacing.md) {
+                                ForEach(snapshot.albums.prefix(6)) { album in
+                                    DulcetAlbumShelfItem(album: album, offline: true)
+                                }
+                            }
+                            .padding(.bottom, DulcetSpacing.xs)
+                        }
+                        .scrollIndicators(.hidden)
                     }
-                    .scrollIndicators(.hidden)
-                }
 
-                VStack(spacing: 0) {
-                    let tracks = Array(snapshot.albums.prefix(3).flatMap(\.tracks).prefix(5))
-                    ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                        DulcetTrackRow(
-                            track: track,
-                            showAlbum: true,
-                            index: index + 1,
-                            offline: true,
-                            surface: .control
-                        )
-                        if track.id != tracks.last?.id {
-                            Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
+                    VStack(spacing: 0) {
+                        let tracks = Array(snapshot.albums.prefix(3).flatMap(\.tracks).prefix(5))
+                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                            DulcetTrackRow(
+                                track: track,
+                                showAlbum: true,
+                                index: index + 1,
+                                offline: true,
+                                surface: .control
+                            )
+                            if track.id != tracks.last?.id {
+                                Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
+                            }
                         }
                     }
+                    .background(
+                        Color.dulcetControl.opacity(0.52),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
                 }
-                .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(DulcetSpacing.lg)
             }
-            .padding(DulcetSpacing.lg)
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)

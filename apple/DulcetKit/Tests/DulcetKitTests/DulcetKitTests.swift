@@ -41,6 +41,50 @@ func localizedIdentifierNumbersNeverUseQuantityGrouping() {
     #expect(DulcetStrings.discTitle(2026) == "Disc 2026")
 }
 
+@Test
+func responsiveLibraryGridColumnsFollowExplicitContainerWidth() {
+    let captureDetailWidth = DulcetMetrics.captureWidth - 233
+    let contentInsets = DulcetSpacing.lg * 2
+
+    #expect(DulcetResponsiveGridLayout.columns(
+        containerWidth: captureDetailWidth,
+        horizontalInsets: contentInsets,
+        minimumItemWidth: 180,
+        spacing: DulcetSpacing.xs,
+        alignment: .leading
+    ).count == 4)
+    #expect(DulcetResponsiveGridLayout.columns(
+        containerWidth: captureDetailWidth,
+        horizontalInsets: contentInsets,
+        minimumItemWidth: 150,
+        spacing: DulcetSpacing.xs,
+        alignment: .top
+    ).count == 5)
+
+    let narrowerDetailWidth: CGFloat = 700
+    #expect(DulcetResponsiveGridLayout.columns(
+        containerWidth: narrowerDetailWidth,
+        horizontalInsets: contentInsets,
+        minimumItemWidth: 180,
+        spacing: DulcetSpacing.xs,
+        alignment: .leading
+    ).count == 3)
+    #expect(DulcetResponsiveGridLayout.columns(
+        containerWidth: narrowerDetailWidth,
+        horizontalInsets: contentInsets,
+        minimumItemWidth: 150,
+        spacing: DulcetSpacing.xs,
+        alignment: .top
+    ).count == 4)
+    #expect(DulcetResponsiveGridLayout.columns(
+        containerWidth: 280,
+        horizontalInsets: contentInsets,
+        minimumItemWidth: 190,
+        spacing: DulcetSpacing.md,
+        alignment: .top
+    ).count == 1)
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()
