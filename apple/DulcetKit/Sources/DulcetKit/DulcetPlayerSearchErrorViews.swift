@@ -60,19 +60,19 @@ struct DulcetNowPlayingView: View {
 
             VStack(spacing: DulcetSpacing.xs) {
                 Slider(
-                    value: .constant(Double(player.elapsedSeconds)),
-                    in: 0...Double(player.current.durationSeconds)
+                    value: .constant(player.elapsed.dulcetSeconds),
+                    in: 0...player.current.duration.dulcetSeconds
                 )
                 .accessibilityLabel(DulcetStrings.nowPlaying)
                 .accessibilityValue(DulcetStrings.playbackProgress(
-                    elapsed: player.elapsedSeconds.dulcetDuration,
-                    duration: player.current.durationSeconds.dulcetDuration
+                    elapsed: player.elapsed.dulcetDuration,
+                    duration: player.current.duration.dulcetDuration
                 ))
 
                 HStack {
-                    Text(player.elapsedSeconds.dulcetDuration)
+                    Text(player.elapsed.dulcetDuration)
                     Spacer()
-                    Text(player.current.durationSeconds.dulcetDuration)
+                    Text(player.current.duration.dulcetDuration)
                 }
                 .font(.caption.monospacedDigit())
                 .dulcetForeground(.secondaryTextOnWindow)
@@ -296,16 +296,26 @@ extension DulcetSearchSource {
 
 struct DulcetTLSUntrustedView: View {
     let failure: DulcetTLSFailure
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                // Deliberately NOT `ViewThatFits`. That resolves by measuring candidate
+                // layouts, and the measurement is not stable across renders in a shared
+                // process: the deterministic capture gate observed this view flipping
+                // between the side-by-side and stacked arrangements between two runs of
+                // the same binary, while rendering the state alone was always identical.
+                // Dynamic Type is the real reason this header needs to stack, and it is an
+                // explicit input rather than a measured one, so branching on it is both
+                // deterministic and closer to the design intent.
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         shield
                         heading
                     }
-                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                } else {
+                    HStack(alignment: .top, spacing: DulcetSpacing.sm) {
                         shield
                         heading
                     }

@@ -12,6 +12,12 @@ import subprocess
 import tempfile
 
 
+# The source of truth is the Swift enum DulcetPresentationState in
+# apple/DulcetKit/Sources/DulcetKit/PresentationModels.swift, and this tuple mirrors it in the same
+# order so a drift is visible in a side-by-side read. Adding a case there without adding it here
+# fails this gate with an "unexpected" file set rather than a missing one, which reads like a
+# capture defect and is not — it is this list being stale. That is what happened when the library
+# states below were introduced.
 STATES = (
     "account-connect-idle",
     "account-connecting",
@@ -25,10 +31,15 @@ STATES = (
     "account-error-capability",
     "account-error-persistence",
     "empty-library-no-account",
+    "empty-library-connected",
+    "library-loading",
+    "library-error",
     "library-browse",
     "album-detail-multi-disc",
     "now-playing",
+    "now-playing-unavailable",
     "search-mixed-sources",
+    "search-unavailable",
     "error-tls-untrusted",
     "offline-metadata-only",
 )
@@ -391,8 +402,12 @@ def main() -> None:
         verify_capture_root(args.root)
     except CaptureVerificationError as error:
         raise SystemExit(f"DESIGN CAPTURE FAIL {error}") from error
+    # Counted, never spelled out. This line was a hardcoded "standard=38 jpeg=38" while the tool
+    # verified a different number of files, so the evidence line asserted something the run had not
+    # measured — the failure mode a stale comment causes, applied to the artifact's own summary.
+    verified_files = len(expected_standard_files())
     print(
-        "DESIGN CAPTURE PASS standard=38 jpeg=38 size=1180x760 "
+        f"DESIGN CAPTURE PASS standard={verified_files} jpeg={verified_files} size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
         "decoded-pixels-pairwise-distinct=true "
         "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "

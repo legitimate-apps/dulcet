@@ -1,0 +1,479 @@
+package com.legitimateapps.dulcet.core
+
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.parameter
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+/** Opaque server identity scoped to the locally-created provider instance. */
+internal data class ProviderItemId(
+    val providerInstanceId: String,
+    val rawId: String,
+)
+
+internal enum class CreditRole {
+    Artist,
+    AlbumArtist,
+}
+
+internal data class Credit(
+    val role: CreditRole,
+    val name: String,
+    val id: ProviderItemId?,
+)
+
+internal data class LibraryMusicFolder(
+    val id: ProviderItemId,
+    val name: String,
+)
+
+internal data class LibraryArtist(
+    val id: ProviderItemId,
+    val name: String,
+    val mediaSourceId: String?,
+)
+
+internal data class LibraryTrack(
+    val id: ProviderItemId,
+    val title: String,
+    val credits: List<Credit>,
+    val albumTitle: String?,
+    val discNumber: Int?,
+    val trackNumber: Int?,
+    val duration: Duration,
+    val mediaSourceId: String?,
+)
+
+internal data class LibraryAlbum(
+    val id: ProviderItemId,
+    val title: String,
+    val credits: List<Credit>,
+    val year: Int?,
+    val duration: Duration,
+    val mediaSourceId: String?,
+    val tracks: List<LibraryTrack>,
+)
+
+internal data class LibraryBrowseSnapshot(
+    val musicFolders: List<LibraryMusicFolder>,
+    val artists: List<LibraryArtist>,
+    val albums: List<LibraryAlbum>,
+)
+
+internal data class LibraryBrowseRequest(
+    val providerInstanceId: String,
+    val normalizedBaseUrl: String,
+    val username: String,
+    val password: String,
+    val allowLocalHttp: Boolean,
+) {
+    override fun toString(): String = "LibraryBrowseRequest(<redacted>)"
+}
+
+internal sealed interface LibraryBrowseResult {
+    data class Loaded(val snapshot: LibraryBrowseSnapshot) : LibraryBrowseResult
+    data class Failed(val error: DomainError) : LibraryBrowseResult
+}
+
+internal data class LibraryEndpointResponse(
+    val statusCode: Int,
+    val body: String,
+    val redactedUrl: String,
+)
+
+internal fun interface LibraryEndpointTransport {
+    suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse
+}
+
+/**
+ * One uncached, read-through library walk. Album details are fetched in fixed-size windows so a
+ * large library never creates an unbounded request fan-out.
+ */
+internal class LibraryBrowser private constructor(
+    private val transportFactory: (LibraryBrowseRequest) -> LibraryEndpointTransport,
+    private val albumPageSize: Int,
+    private val albumConcurrency: Int,
+) {
+    constructor(
+        saltSource: SaltSource? = null,
+        logSink: LogSink? = null,
+        hostResolver: HostResolver = systemHostResolver(),
+    ) : this(
+        transportFactory = { request ->
+            KtorLibraryEndpointTransport(request, saltSource, logSink, hostResolver)
+        },
+        albumPageSize = DEFAULT_ALBUM_PAGE_SIZE,
+        albumConcurrency = DEFAULT_ALBUM_CONCURRENCY,
+    )
+
+    internal constructor(
+        transport: LibraryEndpointTransport,
+        albumPageSize: Int = DEFAULT_ALBUM_PAGE_SIZE,
+        albumConcurrency: Int = DEFAULT_ALBUM_CONCURRENCY,
+    ) : this({ transport }, albumPageSize, albumConcurrency)
+
+    init {
+        require(albumPageSize > 0)
+        require(albumConcurrency > 0)
+    }
+
+    suspend fun browse(request: LibraryBrowseRequest): LibraryBrowseResult {
+        val transport = transportFactory(request)
+        return try {
+            val folders = parseMusicFolders(
+                request.providerInstanceId,
+                transport.checkedRequest("getMusicFolders"),
+            )
+            val artists = parseArtists(
+                request.providerInstanceId,
+                transport.checkedRequest("getArtists"),
+            )
+            val albumSummaries = mutableListOf<AlbumSummary>()
+            val seenAlbumIds = mutableSetOf<String>()
+            var offset = 0
+            while (true) {
+                val page = parseAlbumList(
+                    request.providerInstanceId,
+                    transport.checkedRequest(
+                        "getAlbumList2",
+                        mapOf(
+                            "type" to "alphabeticalByName",
+                            "size" to albumPageSize.toString(),
+                            "offset" to offset.toString(),
+                        ),
+                    ),
+                )
+                page.forEach { album ->
+                    if (seenAlbumIds.add(album.id.rawId)) albumSummaries += album
+                }
+                if (page.size < albumPageSize) break
+                offset += albumPageSize
+            }
+
+            val albums = buildList {
+                albumSummaries.chunked(albumConcurrency).forEach { window ->
+                    addAll(
+                        coroutineScope {
+                            window.map { summary ->
+                                async {
+                                    parseAlbum(
+                                        request.providerInstanceId,
+                                        summary,
+                                        transport.checkedRequest(
+                                            "getAlbum",
+                                            mapOf("id" to summary.id.rawId),
+                                        ),
+                                    )
+                                }
+                            }.awaitAll()
+                        },
+                    )
+                }
+            }
+            LibraryBrowseResult.Loaded(LibraryBrowseSnapshot(folders, artists, albums))
+        } catch (_: CancellationException) {
+            LibraryBrowseResult.Failed(DomainError.Transport.Cancelled)
+        } catch (failure: LibraryRequestFailure) {
+            LibraryBrowseResult.Failed(failure.error)
+        } catch (failure: Throwable) {
+            LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure))
+        } finally {
+            (transport as? AutoCloseableLibraryTransport)?.close()
+        }
+    }
+
+    private companion object {
+        const val DEFAULT_ALBUM_PAGE_SIZE = 500
+        const val DEFAULT_ALBUM_CONCURRENCY = 4
+    }
+}
+
+private interface AutoCloseableLibraryTransport {
+    fun close()
+}
+
+private class KtorLibraryEndpointTransport(
+    private val request: LibraryBrowseRequest,
+    saltSource: SaltSource?,
+    logSink: LogSink?,
+    hostResolver: HostResolver,
+) : LibraryEndpointTransport, AutoCloseableLibraryTransport {
+    private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
+    private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
+    private val traceRecorder = RequestTraceRecorder(logSink, "library.browse")
+    private val client: HttpClient = createAccountHttpClient(AccountClientTransport.Default) {
+        expectSuccess = false
+        followRedirects = false
+        install(RequestTracePlugin) { observe = traceRecorder::observe }
+        install(HttpTimeout) {
+            connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+            requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+            socketTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+        }
+    }
+
+    override suspend fun request(
+        endpoint: String,
+        parameters: Map<String, String>,
+    ): LibraryEndpointResponse {
+        val salt = saltSource.nextSalt()
+        require(SALT_PATTERN.matches(salt)) {
+            "SaltSource must return exactly 16 bytes as lowercase hex"
+        }
+        val authentication = linkedMapOf(
+            "u" to request.username,
+            "t" to AccountConnectionContract.saltedToken(request.password, salt),
+            "s" to salt,
+        )
+        val common = linkedMapOf(
+            "v" to AccountConnectionContract.protocolVersion,
+            "c" to CLIENT_NAME,
+            "f" to "json",
+        ).apply {
+            putAll(parameters)
+            putAll(authentication)
+        }
+        var currentUrl = "${request.normalizedBaseUrl}/rest/$endpoint.view"
+        var redirects = 0
+        while (true) {
+            val target = localHttpPolicy.targetFor(currentUrl, request.allowLocalHttp)
+            val response = client.get(target.url) {
+                target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                common.forEach { (key, value) -> parameter(key, value) }
+            }
+            val body = response.bodyAsText()
+            val redactedUrl = traceRecorder.latestRedactedUrl()
+            if (response.status.value !in REDIRECT_STATUS_CODES) {
+                return LibraryEndpointResponse(response.status.value, body, redactedUrl)
+            }
+            val location = response.headers[HttpHeaders.Location]
+                ?: return LibraryEndpointResponse(response.status.value, body, redactedUrl)
+            val nextUrl = resolveRedirectUrl(currentUrl, location)
+                ?: throw LibraryRequestFailure(
+                    DomainError.Security.RedirectRejected(RedirectRejectionReason.InvalidLocation),
+                )
+            if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
+                throw LibraryRequestFailure(
+                    DomainError.Auth.CrossOriginRedirectRejected(nextUrl.redirectTargetHost()),
+                )
+            }
+            when (
+                val decision = AccountConnectionContract.redirectDecision(
+                    currentUrl,
+                    nextUrl,
+                    redirects,
+                )
+            ) {
+                RedirectPolicyDecision.PreserveCredentials -> Unit
+                is RedirectPolicyDecision.Reject -> throw LibraryRequestFailure(
+                    if (decision.reason == RedirectRejectionReason.CrossOrigin) {
+                        DomainError.Auth.CrossOriginRedirectRejected(nextUrl.redirectTargetHost())
+                    } else {
+                        DomainError.Security.RedirectRejected(decision.reason)
+                    },
+                )
+            }
+            currentUrl = nextUrl.withoutQuery()
+            redirects += 1
+        }
+    }
+
+    override fun close() {
+        client.close()
+    }
+
+    private companion object {
+        const val CLIENT_NAME = "Dulcet"
+        const val REQUEST_TIMEOUT_MILLIS = 30_000L
+        val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
+        val SALT_PATTERN = Regex("[0-9a-f]{32}")
+    }
+}
+
+private class LibraryRequestFailure(val error: DomainError) : Exception()
+
+private suspend fun LibraryEndpointTransport.checkedRequest(
+    endpoint: String,
+    parameters: Map<String, String> = emptyMap(),
+): String {
+    val response = request(endpoint, parameters)
+    val envelope = parseLibraryEnvelope(response.body)
+        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+    if (envelope.status != "ok") {
+        val error = envelope.payload["error"] as? JsonObject
+        val code = error.int("code") ?: -1
+        val message = error?.string("message").orEmpty()
+        throw LibraryRequestFailure(
+            AccountConnectionContract.mapSubsonicError(code, message, response.redactedUrl),
+        )
+    }
+    return response.body
+}
+
+private data class LibraryEnvelope(val status: String, val payload: JsonObject)
+
+private val LIBRARY_JSON = Json { ignoreUnknownKeys = true }
+
+private fun parseLibraryEnvelope(body: String): LibraryEnvelope? = try {
+    val root = LIBRARY_JSON.parseToJsonElement(body) as? JsonObject ?: return null
+    val payload = root["subsonic-response"] as? JsonObject ?: return null
+    LibraryEnvelope(payload.string("status") ?: return null, payload)
+} catch (_: IllegalArgumentException) {
+    null
+}
+
+private fun parseMusicFolders(providerInstanceId: String, body: String): List<LibraryMusicFolder> {
+    val payload = parseLibraryEnvelope(body)?.payload
+        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+    val container = payload["musicFolders"] as? JsonObject
+        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+    return container.arrayOrEmpty("musicFolder").map { element ->
+        val folder = element as? JsonObject ?: malformed()
+        LibraryMusicFolder(
+            id = ProviderItemId(providerInstanceId, folder.requiredOpaqueId("id")),
+            name = folder.requiredString("name"),
+        )
+    }
+}
+
+private fun parseArtists(providerInstanceId: String, body: String): List<LibraryArtist> {
+    val payload = parseLibraryEnvelope(body)?.payload
+        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+    val container = payload["artists"] as? JsonObject ?: malformed()
+    return container.arrayOrEmpty("index").flatMap { indexElement ->
+        val index = indexElement as? JsonObject ?: malformed()
+        index.arrayOrEmpty("artist").map { artistElement ->
+            val artist = artistElement as? JsonObject ?: malformed()
+            LibraryArtist(
+                id = ProviderItemId(providerInstanceId, artist.requiredOpaqueId("id")),
+                name = artist.requiredString("name"),
+                mediaSourceId = null,
+            )
+        }
+    }.distinctBy { it.id.rawId }
+}
+
+private data class AlbumSummary(
+    val id: ProviderItemId,
+    val title: String,
+    val credits: List<Credit>,
+    val year: Int?,
+    val duration: Duration,
+    val mediaSourceId: String?,
+)
+
+private fun parseAlbumList(providerInstanceId: String, body: String): List<AlbumSummary> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val list = payload["albumList2"] as? JsonObject ?: malformed()
+    return list.arrayOrEmpty("album").map { element ->
+        val album = element as? JsonObject ?: malformed()
+        AlbumSummary(
+            id = ProviderItemId(providerInstanceId, album.requiredOpaqueId("id")),
+            title = album.requiredString("name"),
+            credits = album.credit(providerInstanceId, CreditRole.AlbumArtist),
+            year = album.int("year"),
+            duration = album.duration(),
+            mediaSourceId = null,
+        )
+    }
+}
+
+private fun parseAlbum(
+    providerInstanceId: String,
+    summary: AlbumSummary,
+    body: String,
+): LibraryAlbum {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val album = payload["album"] as? JsonObject ?: malformed()
+    val rawId = album.requiredOpaqueId("id")
+    if (rawId != summary.id.rawId) malformed()
+    val tracks = album.arrayOrEmpty("song").map { element ->
+        val track = element as? JsonObject ?: malformed()
+        LibraryTrack(
+            id = ProviderItemId(providerInstanceId, track.requiredOpaqueId("id")),
+            title = track.requiredString("title"),
+            credits = track.credit(providerInstanceId, CreditRole.Artist),
+            albumTitle = track.string("album"),
+            discNumber = track.int("discNumber"),
+            trackNumber = track.int("track"),
+            duration = track.duration(),
+            mediaSourceId = null,
+        )
+    }
+    return LibraryAlbum(
+        id = summary.id,
+        title = album.string("name") ?: summary.title,
+        credits = album.credit(providerInstanceId, CreditRole.AlbumArtist)
+            .ifEmpty { summary.credits },
+        year = album.int("year") ?: summary.year,
+        duration = album.optionalDuration() ?: tracks.fold(Duration.ZERO) { total, track ->
+            total + track.duration
+        },
+        mediaSourceId = null,
+        tracks = tracks,
+    )
+}
+
+private fun JsonObject.credit(providerInstanceId: String, role: CreditRole): List<Credit> {
+    val name = string("artist")?.takeIf(String::isNotBlank) ?: return emptyList()
+    return listOf(
+        Credit(
+            role = role,
+            name = name,
+            id = optionalOpaqueId("artistId")?.let {
+                ProviderItemId(providerInstanceId, it)
+            },
+        ),
+    )
+}
+
+private fun JsonObject.duration(): Duration = optionalDuration() ?: Duration.ZERO
+
+private fun JsonObject.optionalDuration(): Duration? = when (val seconds = int("duration")) {
+    null -> null
+    in 0..Int.MAX_VALUE -> seconds.seconds
+    else -> malformed()
+}
+
+private fun JsonObject.arrayOrEmpty(name: String): JsonArray = when (val value = get(name)) {
+    null -> JsonArray(emptyList())
+    is JsonArray -> value
+    else -> malformed()
+}
+
+private fun JsonObject.requiredString(name: String): String =
+    string(name)?.takeIf(String::isNotBlank) ?: malformed()
+
+private fun JsonObject.string(name: String): String? =
+    (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+
+private fun JsonObject.requiredOpaqueId(name: String): String =
+    optionalOpaqueId(name) ?: malformed()
+
+private fun JsonObject.optionalOpaqueId(name: String): String? {
+    val value = get(name) ?: return null
+    val primitive = value as? JsonPrimitive ?: malformed()
+    return primitive.contentOrNull?.takeIf(String::isNotBlank) ?: malformed()
+}
+
+private fun JsonObject?.int(name: String): Int? =
+    (this?.get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
+
+private fun malformed(): Nothing =
+    throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
