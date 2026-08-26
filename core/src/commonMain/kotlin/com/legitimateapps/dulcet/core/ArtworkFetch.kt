@@ -76,16 +76,33 @@ internal class ArtworkFetcher private constructor(
                     "size" to request.sizeBucket.pixels.toString(),
                 ),
             )
-            when {
-                response.statusCode == 404 -> ArtworkFetchResult.Unavailable
-                response.statusCode !in 200..299 -> ArtworkFetchResult.Failed(
-                    response.closedErrorOrNull()
-                        ?: DomainError.Server.Unknown(response.statusCode),
-                )
-                response.body.isEmpty() -> ArtworkFetchResult.Failed(
+            when (val envelope = response.body.inspectArtworkEnvelope()) {
+                is ArtworkEnvelopeInspection.Error -> {
+                    if (envelope.code == ARTWORK_NOT_FOUND_ERROR_CODE) {
+                        ArtworkFetchResult.Unavailable
+                    } else {
+                        ArtworkFetchResult.Failed(
+                            AccountConnectionContract.mapSubsonicError(
+                                envelope.code,
+                                message = "",
+                                requestUrl = response.redactedUrl,
+                            ),
+                        )
+                    }
+                }
+                ArtworkEnvelopeInspection.Malformed -> ArtworkFetchResult.Failed(
                     DomainError.Protocol.MalformedEnvelope,
                 )
-                else -> ArtworkFetchResult.Loaded(response.body)
+                ArtworkEnvelopeInspection.NotEnvelope -> when {
+                    response.statusCode == 404 -> ArtworkFetchResult.Unavailable
+                    response.statusCode !in 200..299 -> ArtworkFetchResult.Failed(
+                        DomainError.Server.Unknown(response.statusCode),
+                    )
+                    response.body.hasRecognizedArtworkSignature() -> {
+                        ArtworkFetchResult.Loaded(response.body)
+                    }
+                    else -> ArtworkFetchResult.Failed(DomainError.Protocol.MalformedEnvelope)
+                }
             }
         } catch (_: CancellationException) {
             ArtworkFetchResult.Failed(DomainError.Transport.Cancelled)
@@ -136,19 +153,103 @@ private class KtorArtworkEndpointTransport(
     }
 }
 
+private const val ARTWORK_NOT_FOUND_ERROR_CODE = 70
 private val ARTWORK_ERROR_JSON = Json { ignoreUnknownKeys = true }
+private val XML_SUBSONIC_ROOT = Regex(
+    """<(?:(?:[A-Za-z_][A-Za-z0-9_.-]*):)?subsonic-response\b""",
+)
+private val XML_ERROR_CODE = Regex(
+    """<(?:(?:[A-Za-z_][A-Za-z0-9_.-]*):)?error\b[^>]*\bcode\s*=\s*["'](-?\d+)["']""",
+)
+private val HEIF_ARTWORK_BRANDS = setOf(
+    "avif",
+    "avis",
+    "heic",
+    "heix",
+    "hevc",
+    "hevx",
+    "mif1",
+    "msf1",
+)
 
-private fun ArtworkEndpointResponse.closedErrorOrNull(): DomainError? = try {
-    val root = ARTWORK_ERROR_JSON.parseToJsonElement(body.decodeToString()) as? JsonObject
-        ?: return null
-    val payload = root["subsonic-response"] as? JsonObject ?: return null
-    val error = payload["error"] as? JsonObject ?: return null
-    val code = (error["code"] as? JsonPrimitive)?.intOrNull ?: return null
-    val message = (error["message"] as? JsonPrimitive)
-        ?.takeIf { it.isString }
-        ?.content
-        .orEmpty()
-    AccountConnectionContract.mapSubsonicError(code, message, redactedUrl)
-} catch (_: IllegalArgumentException) {
-    null
+private sealed interface ArtworkEnvelopeInspection {
+    data object NotEnvelope : ArtworkEnvelopeInspection
+    data object Malformed : ArtworkEnvelopeInspection
+    data class Error(val code: Int) : ArtworkEnvelopeInspection
 }
+
+private fun ByteArray.inspectArtworkEnvelope(): ArtworkEnvelopeInspection {
+    val start = contentStartIndex()
+    if (start >= size) return ArtworkEnvelopeInspection.NotEnvelope
+    return when (this[start].toInt().toChar()) {
+        '{' -> inspectJsonArtworkEnvelope(start)
+        '<' -> inspectXmlArtworkEnvelope(start)
+        else -> ArtworkEnvelopeInspection.NotEnvelope
+    }
+}
+
+private fun ByteArray.inspectJsonArtworkEnvelope(start: Int): ArtworkEnvelopeInspection = try {
+    val root = ARTWORK_ERROR_JSON.parseToJsonElement(
+        copyOfRange(start, size).decodeToString(),
+    ) as? JsonObject ?: return ArtworkEnvelopeInspection.Malformed
+    val payload = root["subsonic-response"] as? JsonObject
+        ?: return ArtworkEnvelopeInspection.Malformed
+    val error = payload["error"] as? JsonObject
+        ?: return ArtworkEnvelopeInspection.Malformed
+    val code = (error["code"] as? JsonPrimitive)?.intOrNull
+        ?: return ArtworkEnvelopeInspection.Malformed
+    ArtworkEnvelopeInspection.Error(code)
+} catch (_: IllegalArgumentException) {
+    ArtworkEnvelopeInspection.Malformed
+}
+
+private fun ByteArray.inspectXmlArtworkEnvelope(start: Int): ArtworkEnvelopeInspection {
+    val xml = copyOfRange(start, size).decodeToString()
+    if (!XML_SUBSONIC_ROOT.containsMatchIn(xml)) return ArtworkEnvelopeInspection.Malformed
+    val code = XML_ERROR_CODE.find(xml)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        ?: return ArtworkEnvelopeInspection.Malformed
+    return ArtworkEnvelopeInspection.Error(code)
+}
+
+private fun ByteArray.contentStartIndex(): Int {
+    var index = 0
+    while (index < size && this[index].isEnvelopeWhitespace()) index += 1
+    if (matchesBytes(index, 0xEF, 0xBB, 0xBF)) index += 3
+    while (index < size && this[index].isEnvelopeWhitespace()) index += 1
+    return index
+}
+
+private fun Byte.isEnvelopeWhitespace(): Boolean = when (toInt() and 0xFF) {
+    0x09, 0x0A, 0x0D, 0x20 -> true
+    else -> false
+}
+
+private fun ByteArray.hasRecognizedArtworkSignature(): Boolean =
+    size >= 3 && matchesBytes(0, 0xFF, 0xD8, 0xFF) ||
+        matchesBytes(0, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) ||
+        matchesAscii(0, "GIF87a") ||
+        matchesAscii(0, "GIF89a") ||
+        (matchesAscii(0, "RIFF") && matchesAscii(8, "WEBP")) ||
+        (size >= 8 && matchesBytes(0, 0x49, 0x49, 0x2A, 0x00)) ||
+        (size >= 8 && matchesBytes(0, 0x4D, 0x4D, 0x00, 0x2A)) ||
+        (size >= 14 && matchesAscii(0, "BM")) ||
+        (size >= 6 && matchesBytes(0, 0x00, 0x00, 0x01, 0x00)) ||
+        hasRecognizedHeifBrand()
+
+private fun ByteArray.hasRecognizedHeifBrand(): Boolean {
+    if (!matchesAscii(4, "ftyp") || size < 12) return false
+    val brand = buildString(4) {
+        for (index in 8 until 12) append(this@hasRecognizedHeifBrand[index].toInt().toChar())
+    }
+    return brand in HEIF_ARTWORK_BRANDS
+}
+
+private fun ByteArray.matchesAscii(offset: Int, value: String): Boolean =
+    value.indices.all { index ->
+        offset + index < size && this[offset + index].toInt() and 0xFF == value[index].code
+    }
+
+private fun ByteArray.matchesBytes(offset: Int, vararg expected: Int): Boolean =
+    expected.indices.all { index ->
+        offset + index < size && this[offset + index].toInt() and 0xFF == expected[index]
+    }

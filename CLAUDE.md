@@ -175,10 +175,12 @@ They are deliberately not reproduced in this repository.**
 2. **Apple Silicon only.** `macosX64`/`tvosX64` are deprecated; do not add them "just in case."
 3. **The static framework goes in Link Binary With Libraries and NOT in Embed Frameworks.** Embedding a
    static framework as a runtime payload ships dead bytes and can fail submission validation.
-4. **`/rest/stream` returns binary on success and an error envelope on failure.** Validate
-   unconditionally and in order: envelope detection first (skip whitespace and BOM), then the signature
-   table. Get the offsets right — `ftyp` is at **offset 4**, WAV needs `RIFF` at 0 **and** `WAVE` at 8,
-   MP3 sync is a **mask** not a string, and an ID3 tag can precede FLAC. Downloads use the same table.
+4. **Binary `/rest` endpoints return an error envelope on failure.** `/rest/stream` and
+   `/rest/getCoverArt` both require unconditional, ordered validation: detect XML or JSON envelopes
+   first (skip whitespace and BOM), then require a positive endpoint-specific signature. "Not an
+   envelope" is never sufficient. For audio, get the offsets right — `ftyp` is at **offset 4**, WAV
+   needs `RIFF` at 0 **and** `WAVE` at 8, MP3 sync is a **mask** not a string, and an ID3 tag can precede
+   FLAC. Downloads use the audio table; artwork uses its image-signature table.
 5. **Do not validate with a preflight and call it proof.** The engine makes a *second* request. Inline
    validation via `AVAssetResourceLoaderDelegate` / a custom `DataSource.Factory` is the mechanism
    (spec §12.4). This is real Phase-1 Apple work — see OQ-10.

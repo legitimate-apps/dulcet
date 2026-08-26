@@ -15,11 +15,12 @@ class ArtworkFetchTest {
     @Test
     fun sendsOpaqueArtworkKeyUnchangedAndUsesOnlyFixedSizeBuckets() = runTest {
         val requests = mutableListOf<Map<String, String>>()
+        val recordedJpegPrefix = RecordedArtworkResponses.VALID_JPEG_PREFIX_HEX.recordedHexBytes()
         val transport = ArtworkEndpointTransport { parameters ->
             requests += parameters
             ArtworkEndpointResponse(
                 statusCode = 200,
-                body = byteArrayOf(0x01, 0x23, 0x45),
+                body = recordedJpegPrefix,
                 redactedUrl = REDACTED_URL,
             )
         }
@@ -29,7 +30,7 @@ class ArtworkFetchTest {
             val loaded = assertIs<ArtworkFetchResult.Loaded>(
                 ArtworkFetcher(transport).fetch(request(key, bucket)),
             )
-            assertContentEquals(byteArrayOf(0x01, 0x23, 0x45), loaded.bytes)
+            assertContentEquals(recordedJpegPrefix, loaded.bytes)
         }
 
         assertEquals(
@@ -37,10 +38,38 @@ class ArtworkFetchTest {
             requests.map { it.getValue("size") },
         )
         assertTrue(requests.all { it.getValue("id") == key })
+        assertEquals(64, recordedJpegPrefix.size)
+        assertEquals(3_294, RecordedArtworkResponses.VALID_JPEG_BODY_BYTE_COUNT)
     }
 
     @Test
-    fun mapsAbsentAndMalformedArtworkToClosedFallbackOutcomes() = runTest {
+    fun mapsRecordedJsonAndXmlCode70EnvelopesToUnavailableAtHttp200() = runTest {
+        val recordedBodies = listOf(
+            RecordedArtworkResponses.MISSING_JSON.encodeToByteArray(),
+            RecordedArtworkResponses.MISSING_XML.encodeToByteArray(),
+        )
+
+        assertEquals(185, recordedBodies[0].size)
+        assertEquals(232, recordedBodies[1].size)
+        listOf(200, 500).forEach { statusCode ->
+            recordedBodies.forEach { body ->
+                val outcome = ArtworkFetcher(ArtworkEndpointTransport {
+                    ArtworkEndpointResponse(statusCode, body, REDACTED_URL)
+                }).fetch(request("missing:opaque", ArtworkSizeBucket.Px96))
+                assertEquals(ArtworkFetchResult.Unavailable, outcome)
+            }
+        }
+
+        val bomAndWhitespace = byteArrayOf(0x20, 0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte(), 0x0A) +
+            recordedBodies[1]
+        val adornedOutcome = ArtworkFetcher(ArtworkEndpointTransport {
+            ArtworkEndpointResponse(200, bomAndWhitespace, REDACTED_URL)
+        }).fetch(request("missing:opaque", ArtworkSizeBucket.Px96))
+        assertEquals(ArtworkFetchResult.Unavailable, adornedOutcome)
+    }
+
+    @Test
+    fun rejectsEverythingThatIsNeitherAnErrorEnvelopeNorARecognizedImage() = runTest {
         val unavailable = ArtworkFetcher(ArtworkEndpointTransport {
             ArtworkEndpointResponse(404, byteArrayOf(), REDACTED_URL)
         }).fetch(request("missing", ArtworkSizeBucket.Px96))
@@ -52,6 +81,58 @@ class ArtworkFetchTest {
             }).fetch(request("empty", ArtworkSizeBucket.Px256)),
         )
         assertEquals(DomainError.Protocol.MalformedEnvelope, malformed.error)
+
+        listOf(
+            "not an image".encodeToByteArray(),
+            "<html>proxy error</html>".encodeToByteArray(),
+            byteArrayOf(0x01, 0x23, 0x45),
+        ).forEach { body ->
+            val rejected = assertIs<ArtworkFetchResult.Failed>(
+                ArtworkFetcher(ArtworkEndpointTransport {
+                    ArtworkEndpointResponse(200, body, REDACTED_URL)
+                }).fetch(request("invalid:opaque", ArtworkSizeBucket.Px256)),
+            )
+            assertEquals(DomainError.Protocol.MalformedEnvelope, rejected.error)
+        }
+    }
+
+    @Test
+    fun positiveArtworkSignatureTableRejectsSimilarNonImages() = runTest {
+        val recognized = listOf(
+            "ffd8ff".recordedHexBytes(),
+            "89504e470d0a1a0a".recordedHexBytes(),
+            "474946383761".recordedHexBytes(),
+            "474946383961".recordedHexBytes(),
+            "524946460000000057454250".recordedHexBytes(),
+            "49492a0008000000".recordedHexBytes(),
+            "4d4d002a00000008".recordedHexBytes(),
+            "424d000000000000000000000000".recordedHexBytes(),
+            "000001000100".recordedHexBytes(),
+            "000000186674797061766966".recordedHexBytes(),
+        )
+        recognized.forEachIndexed { index, body ->
+            val loaded = assertIs<ArtworkFetchResult.Loaded>(
+                ArtworkFetcher(ArtworkEndpointTransport {
+                    ArtworkEndpointResponse(200, body, REDACTED_URL)
+                }).fetch(request("signature:$index", ArtworkSizeBucket.Px256)),
+            )
+            assertContentEquals(body, loaded.bytes)
+        }
+
+        listOf(
+            "524946460000000057415645".recordedHexBytes(),
+            "00000018667479706d703432".recordedHexBytes(),
+            "49492a00".recordedHexBytes(),
+            "424d".recordedHexBytes(),
+            "00000100".recordedHexBytes(),
+        ).forEachIndexed { index, body ->
+            val rejected = assertIs<ArtworkFetchResult.Failed>(
+                ArtworkFetcher(ArtworkEndpointTransport {
+                    ArtworkEndpointResponse(200, body, REDACTED_URL)
+                }).fetch(request("not-image:$index", ArtworkSizeBucket.Px256)),
+            )
+            assertEquals(DomainError.Protocol.MalformedEnvelope, rejected.error)
+        }
     }
 
     @Test
@@ -92,7 +173,7 @@ class ArtworkFetchTest {
             ArtworkEndpointTransport {
                 ArtworkEndpointResponse(
                     500,
-                    errorBody(70, canaries[3]).encodeToByteArray(),
+                    errorBody(0, canaries[3]).encodeToByteArray(),
                     REDACTED_URL,
                 )
             },
