@@ -166,10 +166,32 @@ targets:
     platform: tvOS
     sources:
       - DulcetTV
+      - DulcetAppleShared
+    dependencies:
+      - package: DulcetKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
         PRODUCT_NAME: Dulcet DEV
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetKitTVOSTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - DulcetKit/Tests/DulcetKitTests
+    dependencies:
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev.tests
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -207,3 +229,12 @@ schemes:
         DulcetMacRelease: all
     archive:
       config: Release
+  DulcetTV:
+    build:
+      targets:
+        DulcetTV: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - DulcetKitTVOSTests

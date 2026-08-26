@@ -171,11 +171,19 @@ for marker in (
         errors.append(f"Keychain/relaunch implementation boundary is missing {marker!r}")
 
 for marker in (
-    "**macOS implementation boundary:**",
-    "`DulcetMacApp` constructs the live `AppleAccountConnectionClient`",
+    "**Apple implementation boundary:**",
+    "`DulcetMacApp`, `DulcetiOSApp`, and `DulcetTVApp` construct the live "
+    "`AppleAccountConnectionClient`",
     "publishes an explicit in-progress state",
-    "visible Cancel control invokes the synchronously returned operation handle",
-    "other platform shells remain future work",
+    "exposes Cancel through the synchronously returned operation handle",
+    # tvOS ships a real account-connect shell, so "other platform shells remain future work" is
+    # no longer true and pinning it would pin a false sentence. What must not drift is the pair
+    # that keeps the paragraph honest: the named remainder, and the explicit refusal to claim
+    # shipped anywhere. The tvOS marker pins the idiom claim so a later edit cannot quietly
+    # restate the TV surface as a reused desktop layout.
+    "iPadOS-specific layout evidence, Android, and Android TV remain future work",
+    "This paragraph makes no `shipped` account-setup claim for any platform",
+    "The tvOS root deliberately uses a full-screen `NavigationStack`",
 ):
     if marker not in normalized_account_setup:
         errors.append(f"account-setup implementation boundary is missing {marker!r}")
@@ -204,8 +212,8 @@ for marker in (
     if marker not in normalized_account_setup:
         errors.append(f"account-setup live-app evidence boundary is missing {marker!r}")
 
-if "required macOS presentation (other platform callers remain future work)" not in normalized_failure_modes:
-    errors.append("account-setup implementation boundary is missing the macOS-presentation table label")
+if "required Apple presentation" not in normalized_failure_modes:
+    errors.append("account-setup implementation boundary is missing the Apple-presentation table label")
 
 auth_source = section(
     account_connection_source,

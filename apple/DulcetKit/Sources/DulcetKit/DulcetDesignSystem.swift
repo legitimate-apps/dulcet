@@ -1,12 +1,21 @@
-#if os(macOS) || os(iOS)
+#if os(macOS) || os(iOS) || os(tvOS)
 #if os(macOS)
 import AppKit
-#elseif os(iOS)
+#elseif os(iOS) || os(tvOS)
 import UIKit
 #endif
 import SwiftUI
 
 enum DulcetSpacing {
+#if os(tvOS)
+    static let xxs: CGFloat = 8
+    static let xs: CGFloat = 12
+    static let sm: CGFloat = 18
+    static let md: CGFloat = 24
+    static let lg: CGFloat = 36
+    static let xl: CGFloat = 52
+    static let xxl: CGFloat = 72
+#else
     static let xxs: CGFloat = 4
     static let xs: CGFloat = 8
     static let sm: CGFloat = 12
@@ -14,6 +23,7 @@ enum DulcetSpacing {
     static let lg: CGFloat = 24
     static let xl: CGFloat = 32
     static let xxl: CGFloat = 44
+#endif
 }
 
 enum DulcetMetrics {
@@ -43,6 +53,26 @@ extension Color {
     static let dulcetWindow = Color(uiColor: .systemBackground)
     static let dulcetControl = Color(uiColor: .secondarySystemBackground)
     static let dulcetSeparator = Color(uiColor: .separator)
+#elseif os(tvOS)
+    static let dulcetAccent = Color(uiColor: DulcetContrastColor.accent)
+    static let dulcetSecondaryText = Color(uiColor: DulcetContrastColor.secondaryText)
+    static let dulcetOffline = Color(uiColor: DulcetContrastColor.offline)
+    static let dulcetDanger = Color(uiColor: DulcetContrastColor.danger)
+    static let dulcetWindow = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .light
+            ? UIColor(red: 0.93, green: 0.94, blue: 0.96, alpha: 1)
+            : UIColor(red: 0.035, green: 0.043, blue: 0.065, alpha: 1)
+    })
+    static let dulcetControl = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .light
+            ? UIColor(red: 0.84, green: 0.86, blue: 0.90, alpha: 1)
+            : UIColor(red: 0.11, green: 0.13, blue: 0.18, alpha: 1)
+    })
+    static let dulcetSeparator = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .light
+            ? UIColor.black.withAlphaComponent(0.22)
+            : UIColor.white.withAlphaComponent(0.24)
+    })
 #endif
 }
 
@@ -74,7 +104,7 @@ enum DulcetContrastColor {
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
         }
     }
-#elseif os(iOS)
+#elseif os(iOS) || os(tvOS)
     static let accent = adaptive(
         light: UIColor(red: 0.20, green: 0.34, blue: 0.78, alpha: 1),
         dark: UIColor(red: 0.47, green: 0.64, blue: 1.00, alpha: 1)
@@ -197,7 +227,7 @@ extension View {
 
     @ViewBuilder
     func dulcetOnExitCommand(perform action: @escaping () -> Void) -> some View {
-#if os(macOS)
+#if os(macOS) || os(tvOS)
         onExitCommand(perform: action)
 #else
         self
@@ -219,6 +249,51 @@ extension View {
         alternatingRowBackgrounds(.disabled)
 #else
         self
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetMediaButtonStyle() -> some View {
+#if os(tvOS)
+        buttonStyle(.borderless)
+#else
+        buttonStyle(.plain)
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetSelectableText() -> some View {
+#if os(macOS) || os(iOS)
+        textSelection(.enabled)
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetDefaultActionShortcut() -> some View {
+#if os(tvOS)
+        self
+#else
+        keyboardShortcut(.defaultAction)
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetPlaybackShortcut() -> some View {
+#if os(tvOS)
+        self
+#else
+        keyboardShortcut(.space, modifiers: [])
+#endif
+    }
+
+    @ViewBuilder
+    func dulcetSecondaryActionStyle() -> some View {
+#if os(tvOS)
+        buttonStyle(.borderedProminent)
+#else
+        buttonStyle(.bordered)
 #endif
     }
 }

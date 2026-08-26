@@ -43,21 +43,31 @@ func localizedIdentifierNumbersNeverUseQuantityGrouping() {
 
 @Test
 func responsiveLibraryGridColumnsFollowExplicitContainerWidth() {
+    // Geometry is spelled out rather than taken from DulcetSpacing, because those tokens are
+    // deliberately larger on tvOS (xs 12 vs 8, lg 36 vs 24). Feeding them in made the expected
+    // column counts platform-dependent: at a 700-point detail width with a 150-point minimum item,
+    // the same call yields 4 columns on macOS and 3 on tvOS, so this test failed the moment the
+    // package was compiled for tvOS. Getting fewer columns on a TV is correct behaviour, not a
+    // defect — what this test exists to pin is the arithmetic in columnCount, which must not depend
+    // on the platform. The values below are the non-tvOS ones the expectations were authored
+    // against.
     let captureDetailWidth = DulcetMetrics.captureWidth - 233
-    let contentInsets = DulcetSpacing.lg * 2
+    let contentInsets: CGFloat = 48
+    let itemSpacing: CGFloat = 8
+    let wideItemSpacing: CGFloat = 16
 
     #expect(DulcetResponsiveGridLayout.columns(
         containerWidth: captureDetailWidth,
         horizontalInsets: contentInsets,
         minimumItemWidth: 180,
-        spacing: DulcetSpacing.xs,
+        spacing: itemSpacing,
         alignment: .leading
     ).count == 4)
     #expect(DulcetResponsiveGridLayout.columns(
         containerWidth: captureDetailWidth,
         horizontalInsets: contentInsets,
         minimumItemWidth: 150,
-        spacing: DulcetSpacing.xs,
+        spacing: itemSpacing,
         alignment: .top
     ).count == 5)
 
@@ -66,21 +76,21 @@ func responsiveLibraryGridColumnsFollowExplicitContainerWidth() {
         containerWidth: narrowerDetailWidth,
         horizontalInsets: contentInsets,
         minimumItemWidth: 180,
-        spacing: DulcetSpacing.xs,
+        spacing: itemSpacing,
         alignment: .leading
     ).count == 3)
     #expect(DulcetResponsiveGridLayout.columns(
         containerWidth: narrowerDetailWidth,
         horizontalInsets: contentInsets,
         minimumItemWidth: 150,
-        spacing: DulcetSpacing.xs,
+        spacing: itemSpacing,
         alignment: .top
     ).count == 4)
     #expect(DulcetResponsiveGridLayout.columns(
         containerWidth: 280,
         horizontalInsets: contentInsets,
         minimumItemWidth: 190,
-        spacing: DulcetSpacing.md,
+        spacing: wideItemSpacing,
         alignment: .top
     ).count == 1)
 }
@@ -150,7 +160,7 @@ func deterministicTLSFixtureCarriesPresentableSpecificFailure() {
     #expect(failure.technicalDetail.localizedCaseInsensitiveContains("OS-trusted"))
     #expect(!failure.technicalDetail.contains("http"))
     #expect(failure.serverName == "Listening Room")
-    #expect(DulcetStrings.tlsRemedyBody.contains("System keychain"))
+    #expect(DulcetStrings.tlsRemedyBody.localizedCaseInsensitiveContains("operating-system"))
     #expect(DulcetLinks.certificateInstallationGuide.host == "support.apple.com")
     #expect(DulcetLinks.certificateInstallationGuide.path.contains("add-certificates-to-a-keychain"))
 }

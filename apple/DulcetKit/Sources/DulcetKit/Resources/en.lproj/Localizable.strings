@@ -34,8 +34,8 @@
 "player.playingOnOutput" = "Playing on %@";
 "player.progress" = "%1$@ of %2$@";
 "player.audioFormat" = "%1$@ · %2$@ kHz";
-"empty.title" = "Your music, on this Mac";
-"empty.body" = "Connect an OpenSubsonic server to browse your library and listen with native Mac controls.";
+"empty.title" = "Your music, wherever you listen";
+"empty.body" = "Connect an OpenSubsonic server to browse your library and listen with native controls.";
 "empty.footnote" = "Dulcet keeps account credentials in the system Keychain and sends no analytics.";
 "library.empty.connected.title" = "This library is empty";
 "library.empty.connected.body" = "The connected server returned no artists or albums.";
@@ -59,9 +59,9 @@
 "search.column.result" = "Result";
 "search.column.type" = "Type";
 "search.column.source" = "Source";
-"search.source.local" = "On this Mac";
+"search.source.local" = "On this device";
 "search.source.server" = "Server";
-"search.source.both" = "Mac + Server";
+"search.source.both" = "Device + Server";
 "search.refreshed" = "Refreshed from server";
 "search.kind.album" = "Album";
 "search.kind.artist" = "Artist";
@@ -69,9 +69,9 @@
 "search.result.accessibility" = "%1$@, %2$@, %3$@, %4$@";
 "tls.title" = "This server’s certificate isn’t trusted";
 "tls.body" = "Dulcet stopped before sending account credentials. There is no “continue anyway” option.";
-"tls.why" = "Why macOS stopped the connection";
+"tls.why" = "Why Dulcet stopped the connection";
 "tls.remedyTitle" = "How to reconnect safely";
-"tls.remedyBody" = "Fix or renew the server certificate. If your server uses a private certificate authority, install that CA in the System keychain using Keychain Access, then try again.";
+"tls.remedyBody" = "Fix or renew the server certificate. If your server uses a private certificate authority, install that CA at the operating-system level, then try again.";
 "offline.title" = "Browsing saved library metadata";
 "offline.body" = "Album and track details are available. Music remains on your server, so playback returns when the connection does.";
 "offline.unavailable" = "Unavailable offline";
@@ -94,6 +94,7 @@
 "account.connect.progress" = "Connecting to the server…";
 "account.connect.progress.body" = "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.";
 "account.connect.keychain" = "After a successful connection, Dulcet stores these credentials in the system Keychain.";
+"account.connect.tv.textEntryHint" = "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.";
 "account.connect.connected" = "Connected to %@";
 "account.error.invalidServerURL.title" = "Check the server address";
 "account.error.invalidServerURL.message" = "That address is not a valid OpenSubsonic server URL.";
@@ -103,7 +104,7 @@
 "account.error.unsupportedInternationalizedHost.recovery" = "Enter the punycode spelling instead. For example, müsik.example.invalid is xn--msik-0ra.example.invalid.";
 "account.error.transportUnreachable.title" = "The server could not be reached";
 "account.error.transportUnreachable.message" = "Dulcet could not establish a connection to this server.";
-"account.error.transportUnreachable.recovery" = "Check that the server is running and reachable from this Mac, then try again.";
+"account.error.transportUnreachable.recovery" = "Check that the server is running and reachable from this device, then try again.";
 "account.error.transportTimeout.title" = "The server took too long to respond";
 "account.error.transportTimeout.message" = "Account setup reached its 30-second request limit.";
 "account.error.transportTimeout.recovery" = "Check the server and network, then try again. You can cancel while Dulcet is waiting.";
@@ -112,7 +113,7 @@
 "account.error.transportCancelled.recovery" = "Choose Connect whenever you are ready to try again.";
 "account.error.tlsUntrusted.title" = "This server’s certificate isn’t trusted";
 "account.error.tlsUntrusted.message" = "Dulcet stopped before sending account credentials.";
-"account.error.tlsUntrusted.recovery" = "Fix or renew the certificate. For a private certificate authority, install the CA at the macOS operating-system level, then try again.";
+"account.error.tlsUntrusted.recovery" = "Fix or renew the certificate. For a private certificate authority, install the CA at the operating-system level, then try again.";
 "account.error.localNetworkPolicyRejected.title" = "Local HTTP is not allowed";
 "account.error.localNetworkPolicyRejected.message" = "Dulcet will not send credentials over this plaintext connection.";
 "account.error.localNetworkPolicyRejected.recovery" = "Use HTTPS, or enable local HTTP only for a server you control on a private local network.";

@@ -136,7 +136,7 @@ expect_rejection(
 )
 
 passing_report = """\
-<testsuite tests="8" failures="0" errors="0" skipped="0">
+<testsuite tests="24" failures="0" errors="0" skipped="0">
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
@@ -172,6 +172,16 @@ passing_report = """\
   <testcase classname="DulcetKitIOSTests"
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
+            name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+  <testcase classname="DulcetKitTVOSTests"
+            name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
+  <testcase classname="DulcetKitTVOSTests"
+            name="accountConnectRootLoadsForTVOS" time="0.1" />
+  <testcase classname="DulcetKitTVOSTests"
+            name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />
+  <testcase classname="DulcetKitTVOSTests"
+            name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
+  <testcase classname="DulcetKitTVOSTests"
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"
             name="proxyChallengeFailsClosedWithoutAmbientCredentials[macosArm64]" time="0.1" />

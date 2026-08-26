@@ -203,7 +203,101 @@
           "status": "planned",
           "reason": "The universal target compiles for device family 2, but no iPad simulator launch, iPad navigation/layout assertion, or iPad interaction test exists. The iPhone simulator evidence is not promoted into an iPadOS runtime claim."
         },
-        "tvos": {"status": "planned"},
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "signed-tvos-live-account-validation-workflow",
+            "reason": "The simulator controls do not execute a successful connection through the DulcetTV production Kotlin adapter inside the signed app and do not prove a saved tvOS data-protection-Keychain item's accessibility and non-sync attributes. No workflow, job, or test in this repository exercises that signed live path, so no named promotion target can honestly resolve yet."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-01",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"
+            },
+            {
+              "conformance": "CONF-02",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf02ReferenceServerExtensionSet"
+            },
+            {
+              "conformance": "CONF-03",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf03BaselinePingAuthentication"
+            },
+            {
+              "conformance": "CONF-04",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf04VersionCompatibility"
+            },
+            {
+              "conformance": "CONF-05",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf05OpenSubsonicEnvelopeFields"
+            },
+            {
+              "conformance": "CONF-06",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf06DistinguishesAuthenticationAndTransportFailures"
+            },
+            {
+              "conformance": "CONF-07",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf07RedactsCredentialsFromDiagnostics"
+            },
+            {
+              "conformance": "CONF-08",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"
+            },
+            {
+              "conformance": "CONF-09a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation"
+            },
+            {
+              "conformance": "CONF-09b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/accountConnectRootLoadsForTVOS"
+            },
+            {
+              "conformance": "CONF-09c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/accountDomainErrorsHaveATotalActionablePresentation"
+            },
+            {
+              "conformance": "CONF-10a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/unentitledKeychainWriteFailsClosedWithoutLegacyFallback"
+            },
+            {
+              "conformance": "CONF-10b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect"
+            },
+            {
+              "conformance": "CONF-10c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
+            }
+          ],
+          "reason": "The tvOS target now hosts the production Dulcet root with a dedicated full-screen navigation and focus model, native tvOS credential fields, and its own application and test-bundle identities. apple-ci builds the app and executes shared presentation and credential-store controls in DulcetKitTVOSTests on an Apple TV simulator; accountConnectRootLoadsForTVOS constrains the 1920-by-1080 root, while accountConnectTVOSUsesSystemCredentialTextEntryAndInitialFocus separately constrains three system credential fields and the initial remote focus. The tvOS JUnit report and tvosSimulatorArm64 core-conformance result are separate from the macOS and iOS runs. CONF-01 through CONF-08 and CONF-10c remain bounded core/Darwin controls; they do not claim a live connection from the DulcetTV app process. A successful production connection, signed Keychain persistence, and the connected UI in the real tvOS app process remain unproved, so shipped would be unearned."
+        },
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }
     },

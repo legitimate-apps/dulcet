@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 75 — partial-feature promotion conditions now resolve named workflow, job, and test
+**Revision:** 76 — tvOS now hosts the production account root through a remote-focused, full-screen
+navigation surface and carries tvOS-specific presentation and core-conformance evidence while the
+signed live-app boundary remains explicit; revision 75 made partial-feature promotion conditions resolve named workflow, job, and test
 targets against the repository or declare an explicit block; the signed-Keychain condition is
 blocked on the operator's signing-identity decision because its three earlier target names do not
 exist; revision 74 made the unentitled hosted app observe the live Kotlin/Swift seam through the
@@ -888,15 +890,19 @@ per-request limits, not one deadline for the entire extension/ping/user sequence
 hops. Thirty seconds is deliberately longer than the former incidental ten seconds so a self-hosted
 server can wake disks or a cold reverse proxy without being mislabeled as down; the operation remains
 cancellable by its caller at the core boundary, and an elapsed limit maps to the distinct content-free
-`Transport.Timeout` error. **macOS implementation boundary:** `DulcetMacApp` constructs the live
-`AppleAccountConnectionClient` through a Swift presentation adapter. The Connection surface accepts
-server URL, username and password, publishes an explicit in-progress state, and its visible Cancel
-control invokes the synchronously returned operation handle, which cancels the child coroutine and
-in-flight Ktor request. Cancel also advances the presentation generation before invoking that handle
-and immediately returns the form to idle. A success already queued for main-actor delivery is stale,
-cannot publish a connected account, and cannot write credentials after the person's last instruction
-was Cancel. The other platform shells remain future work: iOS, iPadOS, tvOS, Android and
-Android TV. This paragraph makes no shipped account-setup UI claim for them.
+`Transport.Timeout` error. **Apple implementation boundary:** `DulcetMacApp`, `DulcetiOSApp`, and
+`DulcetTVApp` construct the live `AppleAccountConnectionClient` through the shared Swift production
+adapter. Each account surface accepts server URL, username and password, publishes an explicit
+in-progress state, and exposes Cancel through the synchronously returned operation handle, which
+cancels the child coroutine and in-flight Ktor request. Cancel also advances the presentation
+generation before invoking that handle and immediately returns the form to idle. A success already
+queued for main-actor delivery is stale, cannot publish a connected account, and cannot write
+credentials after the person's last instruction was Cancel. The tvOS root deliberately uses a
+full-screen `NavigationStack`, remote-focus sections, large focus-visible controls, and native tvOS
+text fields whose software text-entry session advances URL → username → password → local-HTTP
+choice. It does not reuse the desktop split-view or pointer/keyboard affordances. iPadOS-specific
+layout evidence, Android, and Android TV remain future work. This paragraph makes no `shipped`
+account-setup claim for any platform.
 
 The account data source enforces one active submission independently of view state. A replacement
 submission advances the generation, detaches and cancels the prior handle, then starts the new
@@ -934,9 +940,18 @@ The macOS cell remains `partial`: a production Keychain save, its signed-item at
 connected UI in the real app process remain ASSUMED. Promotion to `shipped` still requires a signed,
 entitled host to drive the production connection and observe both the connected UI and the production persistence effect in that app process.
 
+The tvOS cell is likewise `partial`, but has its own evidence identity rather than borrowing the
+macOS or iOS runs. `DulcetKitTVOSTests` compiles the shared presentation and credential-store controls
+as a tvOS test bundle and adds TV-only controls for the 1920×1080 root, native credential text fields,
+and initial remote focus. `apple-ci` is required to execute that bundle on an Apple TV simulator and
+to execute the common account conformance suite again as `tvosSimulatorArm64`. A successful
+production connection, signed Keychain persistence, and connected rendering inside the real
+`DulcetTVApp` process remain unproved; the promotion condition is blocked until an executable signed,
+entitled live-app validation workflow exists.
+
 ### 10.3 The failure modes must be distinguishable
 
-| observation | classification | required macOS presentation (other platform callers remain future work) |
+| observation | classification | required Apple presentation |
 |---|---|---|
 | DNS/TCP failure or no HTTP response for a reason other than an elapsed timeout | `Transport.Unreachable` | "Can't reach the server" + the normalized URL + retry |
 | connect, whole-request, or socket-inactivity limit reaches 30 seconds | `Transport.Timeout` | "The server took too long to respond" + cancel/retry; do not call it malformed or reject the credentials |
@@ -3162,6 +3177,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 76 (2026-08-25)** — tvOS account connection gained a production host, a TV-native
+interaction model, and platform-specific evidence without inheriting another Apple platform's claim.
+
+1. `DulcetTVApp` now constructs the shared production presentation store and hosts `DulcetRootView`.
+   Its DEV identifier is `${BUNDLE_PREFIX}.tvos.dev`, removing the collision with the macOS DEV
+   target while preserving the decided bundle namespace and release-channel suffix.
+2. DulcetKit now compiles its shared views on tvOS. The TV root uses a full-screen navigation stack;
+   account entry uses focus sections, focus-visible controls, and native TV text-entry sessions rather
+   than desktop split navigation, pointer hover, or rounded-border field assumptions.
+3. `DulcetKitTVOSTests` and `tvosSimulatorArm64Test` provide distinct presentation and core/Darwin
+   execution identities in `apple-ci`. The tvOS matrix cell is `partial`: the unsigned simulator
+   controls do not prove a successful live production-app connection, signed Keychain persistence,
+   or connected rendering in that process, and its blocked promotion condition says so.
 
 **Revision 75 (2026-08-22)** — promotion conditions became repository-resolved declarations rather
 than authoritative-looking prose.
