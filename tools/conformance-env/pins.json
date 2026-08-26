@@ -56,25 +56,25 @@
           "sha256": "bb9f00a9f9ef91d725d1fcd23205642cedf8557e132f1e38bb9d16a22086beaa"
         },
         {
-          "formula": "libvpx", "version": "1.16.0", "revision": 0,
+          "formula": "libvpx", "version": "1.17.0", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
           "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/libvpx/blobs/sha256:38d28c66d270e2d9b1826f16ec4721b6532a1c59c9ace22811cca3aac43b06ab",
-          "sha256": "38d28c66d270e2d9b1826f16ec4721b6532a1c59c9ace22811cca3aac43b06ab"
+          "url": "https://ghcr.io/v2/homebrew/core/libvpx/blobs/sha256:0b25798cd931cf522c100b7dafbdb75a4bf9f3758e3036e91bef071375d3ec09",
+          "sha256": "0b25798cd931cf522c100b7dafbdb75a4bf9f3758e3036e91bef071375d3ec09"
         },
         {
           "formula": "ca-certificates", "version": "2026-08-13", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "all",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:797af9bcf375fb49a98db40c3d5674276db1eb1b5e605ec98359619ed50948ba",
-          "sha256": "797af9bcf375fb49a98db40c3d5674276db1eb1b5e605ec98359619ed50948ba"
+          "bottle_rebuild": 1,
+          "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:37f5c1413f65c05d86e1279d76699f5d27ad77f8126f5776db13f3d64ee3d010",
+          "sha256": "37f5c1413f65c05d86e1279d76699f5d27ad77f8126f5776db13f3d64ee3d010"
         },
         {
           "formula": "openssl@3", "version": "3.6.3", "revision": 0,
           "version_scheme": 0, "dependencies": ["ca-certificates"], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 1,
-          "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:2d995a1bbbd8e6ee6a9042990dde87e7321d1ddd5716ffee53b140d23cb9f92f",
-          "sha256": "2d995a1bbbd8e6ee6a9042990dde87e7321d1ddd5716ffee53b140d23cb9f92f"
+          "bottle_rebuild": 2,
+          "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:2e0d0064219ff12cef90d794ac87da8d5dbc091060a1100291e692c9377a9328",
+          "sha256": "2e0d0064219ff12cef90d794ac87da8d5dbc091060a1100291e692c9377a9328"
         },
         {
           "formula": "opus", "version": "1.6.1", "revision": 0,
