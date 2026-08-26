@@ -22,6 +22,8 @@ STATES = (
     "account-connect-idle",
     "account-connecting",
     "account-connected",
+    "account-removing",
+    "account-removal-error",
     "account-error-input",
     "account-error-transport",
     "account-error-security",

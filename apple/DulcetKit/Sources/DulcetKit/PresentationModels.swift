@@ -4,6 +4,8 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case accountConnectIdle = "account-connect-idle"
     case accountConnecting = "account-connecting"
     case accountConnected = "account-connected"
+    case accountRemoving = "account-removing"
+    case accountRemovalError = "account-removal-error"
     case accountErrorInput = "account-error-input"
     case accountErrorTransport = "account-error-transport"
     case accountErrorSecurity = "account-error-security"
@@ -200,6 +202,12 @@ public enum DulcetAccountConnectionStatus: Sendable, Hashable {
     case connecting
     case connected(DulcetConnectedAccountSummary)
     case failed(DulcetAccountFailurePresentation)
+}
+
+public enum DulcetAccountRemovalStatus: Sendable, Hashable {
+    case idle
+    case removing
+    case failed
 }
 
 public enum DulcetMediaAvailability: String, Sendable, Hashable {
@@ -602,6 +610,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let captureDate: Date
     public let accountForm: DulcetAccountConnectRequest
     public let accountConnection: DulcetAccountConnectionStatus
+    public let accountRemoval: DulcetAccountRemovalStatus
     public let libraryFailure: DulcetLibraryFailure?
 
     public init(
@@ -624,6 +633,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         captureDate: Date,
         accountForm: DulcetAccountConnectRequest = .empty,
         accountConnection: DulcetAccountConnectionStatus = .idle,
+        accountRemoval: DulcetAccountRemovalStatus = .idle,
         libraryFailure: DulcetLibraryFailure? = nil
     ) {
         self.state = state
@@ -645,6 +655,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.captureDate = captureDate
         self.accountForm = accountForm
         self.accountConnection = accountConnection
+        self.accountRemoval = accountRemoval
         self.libraryFailure = libraryFailure
     }
 

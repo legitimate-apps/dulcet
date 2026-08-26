@@ -20,6 +20,7 @@ struct DulcetAccountConnectionView: View {
 #if os(tvOS)
     @Namespace private var accountFocusScope
 #endif
+    @State private var showingSignOutConfirmation = false
 
     private let focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)?
 
@@ -39,9 +40,13 @@ struct DulcetAccountConnectionView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                heading
-                connectionForm
-                statusPanel
+                if store.snapshot.accountRemoval == .removing {
+                    accountRemovalProgress
+                } else {
+                    heading
+                    connectionForm
+                    statusPanel
+                }
             }
             .padding(DulcetSpacing.xl)
             .frame(maxWidth: contentMaxWidth)
@@ -87,6 +92,18 @@ struct DulcetAccountConnectionView: View {
         }
         .onChange(of: focusedControl) { _, current in
             focusDidChange?(current)
+        }
+        .confirmationDialog(
+            DulcetStrings.signOutConfirmationTitle,
+            isPresented: $showingSignOutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(DulcetStrings.signOut, role: .destructive) {
+                store.removeAccount()
+            }
+            Button(DulcetStrings.cancel, role: .cancel) {}
+        } message: {
+            Text(DulcetStrings.signOutConfirmationBody)
         }
     }
 
@@ -233,28 +250,99 @@ struct DulcetAccountConnectionView: View {
 
     @ViewBuilder
     private var statusPanel: some View {
+        switch store.snapshot.accountRemoval {
+        case .removing:
+            accountRemovalProgress
+        case .failed:
+            accountRemovalFailure
+        case .idle:
+            connectionStatusPanel
+        }
+    }
+
+    @ViewBuilder
+    private var connectionStatusPanel: some View {
         switch store.snapshot.accountConnection {
         case .idle, .connecting:
             accountPrimaryActionPanel
         case let .connected(account):
-            Label {
-                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                    Text(DulcetStrings.connectedTo(account.serverName))
-                        .font(.headline)
-                    Text(account.normalizedServerURL)
-                        .font(.callout.monospaced())
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .dulcetSelectableText()
+            VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                Label {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                        Text(DulcetStrings.connectedTo(account.serverName))
+                            .font(.headline)
+                        Text(account.normalizedServerURL)
+                            .font(.callout.monospaced())
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .dulcetSelectableText()
+                    }
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .dulcetForeground(.accentIconOnWindow)
                 }
-            } icon: {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .dulcetForeground(.accentIconOnWindow)
+                .accessibilityElement(children: .combine)
+
+                Button(DulcetStrings.signOut, role: .destructive) {
+                    showingSignOutConfirmation = true
+                }
+                .buttonStyle(.bordered)
             }
-            .accessibilityElement(children: .combine)
         case let .failed(failure):
             failurePanel(failure)
         }
+    }
+
+    private var accountRemovalProgress: some View {
+        HStack(alignment: .top, spacing: DulcetSpacing.md) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel(DulcetStrings.signingOut)
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                Text(DulcetStrings.signingOut)
+                    .font(.headline)
+                Text(DulcetStrings.signingOutBody)
+                    .font(.callout)
+                    .dulcetForeground(.secondaryTextOnControl)
+                    .lineLimit(nil)
+            }
+        }
+        .padding(DulcetSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
+        .dulcetForeground(.primaryTextOnControl)
+    }
+
+    private var accountRemovalFailure: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+            Label {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                    Text(DulcetStrings.signOutErrorTitle)
+                        .font(.headline)
+                    Text(DulcetStrings.signOutErrorBody)
+                        .font(.callout)
+                        .lineLimit(nil)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .dulcetForeground(.dangerIconOnTint)
+                    .accessibilityHidden(true)
+            }
+
+            HStack(spacing: DulcetSpacing.sm) {
+                Button(DulcetStrings.tryAgain) {
+                    store.removeAccount()
+                }
+                .buttonStyle(.borderedProminent)
+                Button(DulcetStrings.keepAccount) {
+                    store.dismissAccountRemovalFailure()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(DulcetSpacing.md)
+        .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
+        .dulcetForeground(.primaryTextOnControl)
     }
 
     private var accountPrimaryActionPanel: some View {

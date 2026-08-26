@@ -268,6 +268,124 @@ func credentialBearingSearchRequestCannotPrintCredentials() {
 }
 
 @Test @MainActor
+func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState() async {
+    var events: [String] = []
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser(onCancel: { events.append("library-cancel") })
+    let artworkFetcher = ControlledArtworkFetcher(onRemove: { _ in events.append("artwork-remove") })
+    let credentials = MemoryCredentialStore(
+        persisted: nil,
+        deleteAction: { events.append("credential-delete") }
+    )
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials,
+        libraryBrowser: libraryBrowser,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    #expect(libraryBrowser.operations.single?.cancelCount == 0)
+
+    store.removeAccount()
+
+    #expect(events == ["credential-delete", "library-cancel"])
+    #expect(credentials.deleteCount == 1)
+    #expect(store.snapshot.state == .accountRemoving)
+    #expect(store.snapshot.accountRemoval == .removing)
+    #expect(store.snapshot.accountConnected)
+    store.selectDestination(.library)
+    #expect(store.selectedDestination == .settings)
+    #expect(libraryBrowser.requests.count == 1)
+
+    await settleSearchTask()
+
+    #expect(events == ["credential-delete", "library-cancel", "artwork-remove"])
+    #expect(artworkFetcher.removedServerIDs == ["provider-instance-fixture"])
+    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(store.snapshot.accountRemoval == .idle)
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.albums.isEmpty)
+    #expect(store.snapshot.searchResults.isEmpty)
+    #expect(store.searchQuery.isEmpty)
+    #expect(store.accountServerURL.isEmpty)
+    #expect(store.accountUsername.isEmpty)
+    #expect(store.accountPassword.isEmpty)
+}
+
+@Test @MainActor
+func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async {
+    enum DeleteFailure: Error { case denied }
+    let deleteDecision = ControlledDeleteDecision()
+    var events: [String] = []
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser(onCancel: { events.append("library-cancel") })
+    let artworkFetcher = ControlledArtworkFetcher(onRemove: { _ in events.append("artwork-remove") })
+    let credentials = MemoryCredentialStore(
+        persisted: nil,
+        deleteAction: {
+            events.append("credential-delete")
+            if deleteDecision.shouldFail { throw DeleteFailure.denied }
+        }
+    )
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials,
+        libraryBrowser: libraryBrowser,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+
+    store.removeAccount()
+
+    #expect(events == ["credential-delete"])
+    #expect(credentials.deleteCount == 1)
+    #expect(store.snapshot.state == .accountRemovalError)
+    #expect(store.snapshot.accountRemoval == .failed)
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.albums == [album])
+    #expect(store.accountPassword == "fixture-password")
+    #expect(artworkFetcher.removedServerIDs.isEmpty)
+    #expect(libraryBrowser.operations.single?.cancelCount == 0)
+
+    store.dismissAccountRemovalFailure()
+    #expect(store.snapshot.state == .accountConnected)
+    #expect(store.snapshot.accountRemoval == .idle)
+    #expect(store.snapshot.albums == [album])
+
+    deleteDecision.shouldFail = false
+    store.removeAccount()
+    await settleSearchTask()
+
+    #expect(credentials.deleteCount == 2)
+    #expect(events == ["credential-delete", "credential-delete", "artwork-remove"])
+    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.albums.isEmpty)
+}
+
+@Test @MainActor
 func connectedAccountLoadsOnlyServerSuppliedArtworkKeysWithCurrentCredentials() {
     let connector = ControlledAccountConnector()
     let artworkFetcher = ControlledArtworkFetcher()
@@ -546,15 +664,20 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
 
 @MainActor
 private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
+    private let onCancel: @MainActor () -> Void
     private(set) var requests: [DulcetLibraryBrowseRequest] = []
     private(set) var operations: [ControlledLibraryOperation] = []
     private var completions: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+
+    init(onCancel: @escaping @MainActor () -> Void = {}) {
+        self.onCancel = onCancel
+    }
 
     func browse(
         _ request: DulcetLibraryBrowseRequest,
         completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation {
-        let operation = ControlledLibraryOperation()
+        let operation = ControlledLibraryOperation(onCancel: onCancel)
         requests.append(request)
         operations.append(operation)
         completions.append(completion)
@@ -569,10 +692,16 @@ private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
 
 @MainActor
 private final class ControlledLibraryOperation: DulcetLibraryBrowseOperation {
+    private let onCancel: @MainActor () -> Void
     private(set) var cancelCount = 0
+
+    init(onCancel: @escaping @MainActor () -> Void = {}) {
+        self.onCancel = onCancel
+    }
 
     func cancel() {
         cancelCount += 1
+        onCancel()
     }
 }
 
@@ -608,10 +737,16 @@ private final class ControlledSearchOperation: DulcetSearchOperation {
 }
 
 @MainActor
-private final class ControlledArtworkFetcher: DulcetArtworkFetching {
+private final class ControlledArtworkFetcher: DulcetArtworkFetching, DulcetArtworkCacheRemoving {
+    private let onRemove: @MainActor (String) -> Void
     private(set) var requests: [DulcetArtworkFetchRequest] = []
+    private(set) var removedServerIDs: [String] = []
     private let operation = ControlledArtworkOperation()
     private var completion: (@MainActor (DulcetArtworkFetchOutcome) -> Void)?
+
+    init(onRemove: @escaping @MainActor (String) -> Void = { _ in }) {
+        self.onRemove = onRemove
+    }
 
     func fetch(
         _ request: DulcetArtworkFetchRequest,
@@ -625,6 +760,11 @@ private final class ControlledArtworkFetcher: DulcetArtworkFetching {
     func complete(_ outcome: DulcetArtworkFetchOutcome) {
         completion?(outcome)
         completion = nil
+    }
+
+    func removeCachedArtwork(serverID: String) async {
+        removedServerIDs.append(serverID)
+        onRemove(serverID)
     }
 }
 
@@ -735,9 +875,15 @@ private final class SequencedAccountConnector: DulcetAccountConnecting {
 private final class MemoryCredentialStore: DulcetCredentialStoring {
     private let persisted: DulcetAccountConnectRequest?
     private(set) var saved: [DulcetAccountConnectRequest] = []
+    private(set) var deleteCount = 0
+    private let deleteAction: @MainActor () throws -> Void
 
-    init(persisted: DulcetAccountConnectRequest?) {
+    init(
+        persisted: DulcetAccountConnectRequest?,
+        deleteAction: @escaping @MainActor () throws -> Void = {}
+    ) {
         self.persisted = persisted
+        self.deleteAction = deleteAction
     }
 
     func load() throws -> DulcetAccountConnectRequest? {
@@ -748,5 +894,13 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
         saved.append(request)
     }
 
-    func delete() throws {}
+    func delete() throws {
+        deleteCount += 1
+        try deleteAction()
+    }
+}
+
+@MainActor
+private final class ControlledDeleteDecision {
+    var shouldFail = true
 }

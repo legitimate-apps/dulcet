@@ -21,6 +21,7 @@ public struct DulcetDeterministicFixture {
 
         switch state {
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
@@ -92,6 +93,7 @@ public struct DulcetDeterministicFixture {
         case .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError:
             .search
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted:
@@ -101,7 +103,7 @@ public struct DulcetDeterministicFixture {
 
     private func connectivity(for state: DulcetPresentationState) -> DulcetConnectivity {
         switch state {
-        case .accountConnected:
+        case .accountConnected, .accountRemoving, .accountRemovalError:
             .online(serverName: "Listening Room")
         case .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
@@ -132,7 +134,7 @@ public struct DulcetDeterministicFixture {
             .idle
         case .accountConnecting:
             .connecting
-        case .accountConnected:
+        case .accountConnected, .accountRemoving, .accountRemovalError:
             .connected(DulcetConnectedAccountSummary(
                 serverName: "Listening Room",
                 normalizedServerURL: "https://music.example.invalid"
@@ -147,17 +149,25 @@ public struct DulcetDeterministicFixture {
              .tlsUntrusted, .offlineMetadataOnly:
             .idle
         }
+        let removal: DulcetAccountRemovalStatus = switch state {
+        case .accountRemoving: .removing
+        case .accountRemovalError: .failed
+        default: .idle
+        }
         return DulcetSnapshot(
             state: state,
             selectedDestination: .settings,
-            accountConnected: state == .accountConnected,
+            accountConnected: state == .accountConnected
+                || state == .accountRemoving
+                || state == .accountRemovalError,
             connectivity: connectivity(for: state),
             albums: [],
             looseTracks: [],
             recentlyAddedTracks: [],
             captureDate: Self.captureDate,
             accountForm: form,
-            accountConnection: status
+            accountConnection: status,
+            accountRemoval: removal
         )
     }
 }
@@ -208,6 +218,10 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
                 .replacingAccountForm(request)
         case .cancelAccountConnection:
             currentSnapshot = fixture.snapshot(for: .accountConnectIdle)
+        case .removeAccount:
+            currentSnapshot = fixture.snapshot(for: .accountRemoving)
+        case .dismissAccountRemovalFailure:
+            currentSnapshot = fixture.snapshot(for: .accountConnected)
         }
         snapshotHandler?(currentSnapshot)
     }
@@ -228,7 +242,8 @@ private extension DulcetSnapshot {
             selectedAlbum: album,
             captureDate: captureDate,
             accountForm: accountForm,
-            accountConnection: accountConnection
+            accountConnection: accountConnection,
+            accountRemoval: accountRemoval
         )
     }
 
@@ -250,7 +265,8 @@ private extension DulcetSnapshot {
             searchFailure: searchFailure,
             captureDate: captureDate,
             accountForm: accountForm,
-            accountConnection: accountConnection
+            accountConnection: accountConnection,
+            accountRemoval: accountRemoval
         )
     }
 
@@ -272,7 +288,8 @@ private extension DulcetSnapshot {
             searchFailure: searchFailure,
             captureDate: captureDate,
             accountForm: form,
-            accountConnection: accountConnection
+            accountConnection: accountConnection,
+            accountRemoval: accountRemoval
         )
     }
 }
@@ -602,6 +619,7 @@ private extension DulcetDeterministicFixture {
                 nil
             )
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,

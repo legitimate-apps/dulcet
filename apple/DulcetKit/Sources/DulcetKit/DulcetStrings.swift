@@ -99,6 +99,14 @@ enum DulcetStrings {
     static let cancel = text("action.cancel", "Cancel")
     static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
     static let tvTextEntryHint = text("account.connect.tv.textEntryHint", "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.")
+    static let signOut = text("account.remove.action", "Sign Out")
+    static let signOutConfirmationTitle = text("account.remove.confirm.title", "Sign out of this server?")
+    static let signOutConfirmationBody = text("account.remove.confirm.body", "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.")
+    static let signingOut = text("account.remove.progress.title", "Signing out…")
+    static let signingOutBody = text("account.remove.progress.body", "Dulcet is deleting the saved credential before clearing account data.")
+    static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t delete the saved credential")
+    static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
+    static let keepAccount = text("account.remove.keep", "Keep Account")
 
     static func albumCount(_ count: Int) -> String {
         pluralized("library.albumCount", fallback: "%d albums", count: count)

@@ -61,3 +61,8 @@ public protocol DulcetArtworkLoading: AnyObject {
         completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
     ) -> (any DulcetArtworkFetchOperation)?
 }
+
+@MainActor
+public protocol DulcetArtworkCacheRemoving: AnyObject {
+    func removeCachedArtwork(serverID: String) async
+}

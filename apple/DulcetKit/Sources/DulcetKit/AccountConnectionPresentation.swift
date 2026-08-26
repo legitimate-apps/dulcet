@@ -362,10 +362,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var activeLibraryOperation: (any DulcetLibraryBrowseOperation)?
     private var activeSearchOperation: (any DulcetSearchOperation)?
     private var searchDebounceTask: Task<Void, Never>?
+    private var accountRemovalTask: Task<Void, Never>?
     private var generation = 0
     private var libraryGeneration = 0
     private var searchGeneration = 0
     private var providerInstanceID: String?
+    private var accountRemovalStatus: DulcetAccountRemovalStatus = .idle
     private var searchQuery = ""
     private var searchResults: [DulcetSearchResult] = []
     private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
@@ -421,6 +423,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     public func send(_ action: DulcetPresentationAction) {
+        if accountRemovalStatus == .removing {
+            snapshotHandler?(currentSnapshot)
+            return
+        }
         switch action {
         case let .selectDestination(destination):
             switch destination {
@@ -469,6 +475,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             submit(request)
         case .cancelAccountConnection:
             cancelActiveSubmission()
+        case .removeAccount:
+            removeAccount()
+        case .dismissAccountRemovalFailure:
+            dismissAccountRemovalFailure()
         }
     }
 
@@ -569,7 +579,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,
             searchLoadingMoreKind: searchLoadingMoreKind,
-            searchFailure: searchFailure
+            searchFailure: searchFailure,
+            accountRemoval: accountRemovalStatus
         )
         snapshotHandler?(currentSnapshot)
     }
@@ -588,7 +599,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
         searchLoadingMoreKind: DulcetSearchResultKind? = nil,
-        searchFailure: DulcetSearchFailure? = nil
+        searchFailure: DulcetSearchFailure? = nil,
+        accountRemoval: DulcetAccountRemovalStatus = .idle
     ) -> DulcetSnapshot {
         let connectivity: DulcetConnectivity = switch status {
         case .idle, .connecting:
@@ -620,6 +632,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             captureDate: Date(timeIntervalSince1970: 0),
             accountForm: form,
             accountConnection: status,
+            accountRemoval: accountRemoval,
             libraryFailure: libraryFailure
         )
     }
@@ -900,6 +913,86 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchHasMoreKinds.remove(kind)
         }
     }
+
+    private func removeAccount() {
+        guard case .connected = currentSnapshot.accountConnection else { return }
+        let connectedStatus = currentSnapshot.accountConnection
+        accountRemovalStatus = .removing
+        publishAccountRemovalState(
+            state: .accountRemoving,
+            status: connectedStatus
+        )
+
+        do {
+            try credentialStore?.delete()
+        } catch {
+            accountRemovalStatus = .failed
+            publishAccountRemovalState(
+                state: .accountRemovalError,
+                status: connectedStatus
+            )
+            return
+        }
+
+        generation += 1
+        activeOperation?.cancel()
+        activeOperation = nil
+        cancelLibraryBrowse()
+        cancelSearchRequest()
+        let removedServerID = providerInstanceID
+        let cacheRemover = artworkFetcher as? any DulcetArtworkCacheRemoving
+        accountRemovalTask = Task { [weak self] in
+            if let removedServerID, let cacheRemover {
+                await cacheRemover.removeCachedArtwork(serverID: removedServerID)
+            }
+            guard let self, !Task.isCancelled else { return }
+            finishAccountRemoval()
+        }
+    }
+
+    private func finishAccountRemoval() {
+        accountRemovalTask = nil
+        providerInstanceID = nil
+        searchQuery = ""
+        searchResults = []
+        searchHasMoreKinds = []
+        searchLoadingMoreKind = nil
+        searchFailure = nil
+        accountRemovalStatus = .idle
+        publish(
+            state: .accountConnectIdle,
+            destination: .settings,
+            form: .empty,
+            status: .idle
+        )
+    }
+
+    private func dismissAccountRemovalFailure() {
+        guard accountRemovalStatus == .failed,
+              case .connected = currentSnapshot.accountConnection else { return }
+        accountRemovalStatus = .idle
+        publishAccountRemovalState(
+            state: .accountConnected,
+            status: currentSnapshot.accountConnection
+        )
+    }
+
+    private func publishAccountRemovalState(
+        state: DulcetPresentationState,
+        status: DulcetAccountConnectionStatus
+    ) {
+        publish(
+            state: state,
+            destination: .settings,
+            form: currentSnapshot.accountForm,
+            status: status,
+            musicFolders: currentSnapshot.musicFolders,
+            artists: currentSnapshot.artists,
+            albums: currentSnapshot.albums,
+            selectedAlbum: currentSnapshot.selectedAlbum,
+            libraryFailure: currentSnapshot.libraryFailure
+        )
+    }
 }
 
 extension DulcetAccountDataSource: DulcetArtworkLoading {
@@ -930,6 +1023,7 @@ private extension DulcetPresentationState {
     var accountStateOrIdle: DulcetPresentationState {
         switch self {
         case .accountConnectIdle, .accountConnecting, .accountConnected,
+             .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:

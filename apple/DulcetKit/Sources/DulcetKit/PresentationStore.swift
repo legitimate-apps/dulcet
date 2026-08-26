@@ -8,6 +8,8 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case selectAlbum(DulcetProviderItemID)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
+    case removeAccount
+    case dismissAccountRemovalFailure
 }
 
 /// The presentation boundary implemented by the deterministic fixture today and live data later.
@@ -74,6 +76,14 @@ public final class DulcetPresentationStore {
 
     public func cancelAccountConnection() {
         source.send(.cancelAccountConnection)
+    }
+
+    public func removeAccount() {
+        source.send(.removeAccount)
+    }
+
+    public func dismissAccountRemovalFailure() {
+        source.send(.dismissAccountRemovalFailure)
     }
 
     public func selectAlbum(_ id: DulcetProviderItemID) {

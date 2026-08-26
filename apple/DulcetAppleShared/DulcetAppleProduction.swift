@@ -295,6 +295,12 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
     }
 }
 
+extension DulcetCoreArtworkFetcher: DulcetArtworkCacheRemoving {
+    func removeCachedArtwork(serverID: String) async {
+        await cache.remove(serverID: serverID)
+    }
+}
+
 @MainActor
 private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation {
     private let client: AppleArtworkFetchClient

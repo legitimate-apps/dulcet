@@ -100,6 +100,14 @@
 "account.connect.progress.body" = "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.";
 "account.connect.keychain" = "After a successful connection, Dulcet stores these credentials in the system Keychain.";
 "account.connect.tv.textEntryHint" = "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.";
+"account.remove.action" = "Sign Out";
+"account.remove.confirm.title" = "Sign out of this server?";
+"account.remove.confirm.body" = "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.";
+"account.remove.progress.title" = "Signing out…";
+"account.remove.progress.body" = "Dulcet is deleting the saved credential before clearing account data.";
+"account.remove.error.title" = "Dulcet couldn’t delete the saved credential";
+"account.remove.error.body" = "The account is still connected and its loaded library has not been cleared.";
+"account.remove.keep" = "Keep Account";
 "account.connect.connected" = "Connected to %@";
 "account.error.invalidServerURL.title" = "Check the server address";
 "account.error.invalidServerURL.message" = "That address is not a valid OpenSubsonic server URL.";

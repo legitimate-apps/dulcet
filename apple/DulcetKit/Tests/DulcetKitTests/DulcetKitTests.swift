@@ -102,7 +102,7 @@ func fixtureRendersEveryDeclaredDistinctState() {
 
     #expect(snapshots.count == DulcetPresentationState.allCases.count)
     #expect(Set(snapshots.map(\.state)) == Set(DulcetPresentationState.allCases))
-    #expect(snapshots.filter(\.accountConnected).count == 15)
+    #expect(snapshots.filter(\.accountConnected).count == 17)
 }
 
 @Test @MainActor
