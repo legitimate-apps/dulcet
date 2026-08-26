@@ -60,7 +60,13 @@ struct DulcetAccountConnectionView: View {
         }
         .onAppear {
             if focusedControl == nil {
-                focusedControl = preferredFocus(for: store.snapshot.accountConnection)
+                let initialFocus = preferredFocus(for: store.snapshot.accountConnection)
+                focusedControl = initialFocus
+                // `onChange` observes later focus-engine movement but does not replay the
+                // value assigned during this first appearance. Report that initial value
+                // at its source so focus instrumentation sees the same state as the field
+                // styling and FocusState binding.
+                focusDidChange?(initialFocus)
             }
         }
         .onChange(of: store.snapshot.accountConnection) { previous, current in
