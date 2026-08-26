@@ -299,6 +299,15 @@ one pull request in flight this **serialises**: merging one invalidates the othe
 status and each must re-run. Land them deliberately in dependency order, and tell the other branches
 when `main` moves so they rebase once instead of twice.
 
+**History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20
+an approving review from a pull request's own author was refused with
+`422 Unprocessable Entity — "Review Can not approve your own pull request"`, and the workaround was
+to have one maintainer account open the pull request and the other approve it. That cost real time
+and is worth remembering — but it was a workaround for a **required review that is no longer
+configured**, so the dance is obsolete, not merely optional. If you meet the 422 again you have gone
+looking for an approval nothing asked you for. **Do not "fix" a blocked pull request by enabling
+required reviews.**
+
 **Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
 commit to the *pull request's* author, not to the commit author. Opening from an account whose
 address is not a `noreply` one writes that address into a public commit on `main` — it happened once,
