@@ -10,6 +10,7 @@ enum DulcetStrings {
     static let accountSection = text("sidebar.accountSection", "Account")
     static let noServer = text("sidebar.noServer", "No server connected")
     static let online = text("status.online", "Online")
+    static let disconnected = text("status.disconnected", "Disconnected")
     static let connectionFailed = text("status.connectionFailed", "Connection failed")
     static let offline = text("status.offline", "Offline")
     static let albums = text("library.albums", "Albums")
@@ -20,6 +21,7 @@ enum DulcetStrings {
     static let playAll = text("action.playAll", "Play All")
     static let shuffle = text("action.shuffle", "Shuffle")
     static let connectServer = text("action.connectServer", "Connect a Server")
+    static let reconnect = text("action.reconnect", "Reconnect")
     static let browseHelp = text("action.browseHelp", "Learn About Servers")
     static let tryAgain = text("action.tryAgain", "Try Again")
     static let connectionSettings = text("action.connectionSettings", "Review Connection Settings")
@@ -40,6 +42,8 @@ enum DulcetStrings {
     static let connectedEmptyTitle = text("library.empty.connected.title", "This library is empty")
     static let connectedEmptyBody = text("library.empty.connected.body", "The connected server returned no artists or albums.")
     static let connectedEmptyFootnote = text("library.empty.connected.footnote", "Dulcet reads the server again whenever you open Library.")
+    static let savedAccountDisconnectedBody = text("library.savedAccount.disconnected.body", "This server account is saved, but Dulcet has not connected during this launch.")
+    static let savedAccountDisconnectedFootnote = text("library.savedAccount.disconnected.footnote", "Dulcet will contact the server only after you choose Reconnect.")
     static let libraryLoadingTitle = text("library.loading.title", "Reading your library…")
     static let libraryLoadingBody = text("library.loading.body", "Dulcet is fetching artists, albums, and track lists from the connected server. Large or remote libraries can take time.")
     static let libraryErrorTitle = text("library.error.title", "The library could not be loaded")
@@ -98,6 +102,7 @@ enum DulcetStrings {
     static let connectingBody = text("account.connect.progress.body", "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.")
     static let cancel = text("action.cancel", "Cancel")
     static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
+    static let savedAccountReconnectBody = text("account.connect.saved.body", "This account is saved. Dulcet remains disconnected until you choose Reconnect.")
     static let tvTextEntryHint = text("account.connect.tv.textEntryHint", "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.")
     static let signOut = text("account.remove.action", "Sign Out")
     static let signOutConfirmationTitle = text("account.remove.confirm.title", "Sign out of this server?")
@@ -130,6 +135,14 @@ enum DulcetStrings {
 
     static func serverConnectionFailed(_ name: String) -> String {
         formatted("status.serverConnectionFailed", "%@ · Connection failed", name)
+    }
+
+    static func serverDisconnected(_ name: String) -> String {
+        formatted("status.serverDisconnected", "%@ · Disconnected", name)
+    }
+
+    static func reconnectToServer(_ name: String) -> String {
+        formatted("account.connect.reconnectToServer", "Reconnect to %@", name)
     }
 
     static func artistNames(_ names: [String]) -> String {

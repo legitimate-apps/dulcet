@@ -368,6 +368,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var searchGeneration = 0
     private var providerInstanceID: String?
     private var accountRemovalStatus: DulcetAccountRemovalStatus = .idle
+    private var savedServerName: String?
     private var searchQuery = ""
     private var searchResults: [DulcetSearchResult] = []
     private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
@@ -397,13 +398,24 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         self.searchDebounce = searchDebounce
         self.providerInstanceIDFactory = providerInstanceIDFactory
         do {
-            let restoredRequest = try credentialStore?.load() ?? initialRequest
-            currentSnapshot = Self.snapshot(
-                state: .accountConnectIdle,
-                form: restoredRequest,
-                status: .idle
-            )
+            if let restoredRequest = try credentialStore?.load() {
+                let serverName = Self.savedServerName(for: restoredRequest.serverURL)
+                savedServerName = serverName
+                currentSnapshot = Self.snapshot(
+                    state: .accountSavedDisconnected,
+                    form: restoredRequest,
+                    status: .saved(serverName: serverName)
+                )
+            } else {
+                savedServerName = nil
+                currentSnapshot = Self.snapshot(
+                    state: .accountConnectIdle,
+                    form: initialRequest,
+                    status: .idle
+                )
+            }
         } catch {
+            savedServerName = nil
             let failure = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
                 kind: .credentialPersistenceFailed,
                 serverName: "Music server"
@@ -488,11 +500,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let operation = activeOperation
         activeOperation = nil
         operation?.cancel()
-        publish(
-            state: .accountConnectIdle,
-            form: currentSnapshot.accountForm,
-            status: .idle
-        )
+        publishSavedAccountOrIdle(form: currentSnapshot.accountForm)
     }
 
     private func submit(_ request: DulcetAccountConnectRequest) {
@@ -511,6 +519,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             case let .connected(account):
                 do {
                     try self.credentialStore?.save(request)
+                    if self.credentialStore != nil {
+                        self.savedServerName = account.serverName
+                    }
                     self.providerInstanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
                     self.publish(
                         state: .accountConnected,
@@ -533,12 +544,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     )
                 }
             case let .failed(failure) where failure.kind == .transportCancelled:
-                self.publish(
-                    state: .accountConnectIdle,
-                    destination: .settings,
-                    form: request,
-                    status: .idle
-                )
+                self.publishSavedAccountOrIdle(form: request)
             case let .failed(failure):
                 self.publish(
                     state: failure.kind.family.presentationState,
@@ -605,6 +611,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let connectivity: DulcetConnectivity = switch status {
         case .idle, .connecting:
             .unavailable
+        case let .saved(serverName):
+            .disconnected(serverName: serverName)
         case let .connected(account):
             .online(serverName: account.serverName)
         case let .failed(failure):
@@ -640,6 +648,15 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func openLibrary() {
         cancelLibraryBrowse()
         guard case let .connected(account) = currentSnapshot.accountConnection else {
+            if let savedServerName {
+                publish(
+                    state: .accountSavedDisconnected,
+                    destination: .library,
+                    form: currentSnapshot.accountForm,
+                    status: .saved(serverName: savedServerName)
+                )
+                return
+            }
             publish(
                 state: .emptyLibraryNoAccount,
                 destination: .library,
@@ -1017,13 +1034,44 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
             allowLocalHTTP: form.allowLocalHTTP
         ), completion: completion)
     }
+
+    private func publishSavedAccountOrIdle(form: DulcetAccountConnectRequest) {
+        if let savedServerName {
+            publish(
+                state: .accountSavedDisconnected,
+                destination: .settings,
+                form: form,
+                status: .saved(serverName: savedServerName)
+            )
+        } else {
+            publish(
+                state: .accountConnectIdle,
+                destination: .settings,
+                form: form,
+                status: .idle
+            )
+        }
+    }
+
+    private static func savedServerName(for serverURL: String) -> String {
+        let trimmed = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed),
+              let host = components.host,
+              !host.isEmpty else {
+            return trimmed
+        }
+        if let port = components.port {
+            return "\(host):\(port)"
+        }
+        return host
+    }
 }
 
 private extension DulcetPresentationState {
     var accountStateOrIdle: DulcetPresentationState {
         switch self {
         case .accountConnectIdle, .accountConnecting, .accountConnected,
-             .accountRemoving, .accountRemovalError,
+             .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:

@@ -158,14 +158,27 @@ jobs:
               "apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls/$control" \
               "$CAPTURE_ROOT/run-a/standard/$control"
           done
-          python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a"
+          capture_verification="$(python3 tools/verify_design_captures.py "$CAPTURE_ROOT/run-a")"
+          echo "$capture_verification"
+          current_run_references="$(
+            sed -n 's/.* current-run-references=\([0-9][0-9]*\) .*/\1/p' \
+              <<< "$capture_verification"
+          )"
+          pinned_controls="$(
+            sed -n 's/.* pinned-controls=\([0-9][0-9]*\) .*/\1/p' \
+              <<< "$capture_verification"
+          )"
+          if [[ -z "$current_run_references" || -z "$pinned_controls" ]]; then
+            echo 'DESIGN CAPTURE SUMMARY FAIL counted fields missing from verifier output'
+            exit 1
+          fi
           tools/test-design-capture-gates "$CAPTURE_ROOT/run-a"
           {
             echo '## macOS design captures'
             echo
             echo 'Two complete render runs were byte-identical.'
             echo
-            echo 'Artifact contains 56 current-run references plus 2 byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim.'
+            echo "Artifact contains ${current_run_references} current-run references plus ${pinned_controls} byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload deterministic macOS capture mismatch forensics
         if: ${{ always() && steps.deterministic_design_capture.outputs.forensics_available == 'true' }}

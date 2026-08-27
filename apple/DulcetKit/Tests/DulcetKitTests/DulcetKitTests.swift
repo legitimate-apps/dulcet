@@ -106,6 +106,18 @@ func fixtureRendersEveryDeclaredDistinctState() {
 }
 
 @Test @MainActor
+func savedAccountFixtureIsConfiguredButDisconnected() {
+    let snapshot = DulcetDeterministicFixture().snapshot(for: .accountSavedDisconnected)
+
+    #expect(snapshot.state == .accountSavedDisconnected)
+    #expect(snapshot.selectedDestination == .library)
+    #expect(!snapshot.accountConnected)
+    #expect(snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
+    #expect(snapshot.albums.isEmpty)
+}
+
+@Test @MainActor
 func fixtureCarriesEveryAwkwardSeedCorpusCase() {
     let snapshot = DulcetDeterministicFixture().snapshot(for: .libraryBrowse)
     let tracks = snapshot.albums.flatMap(\.tracks) + snapshot.looseTracks
@@ -241,6 +253,38 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 }
 
 #if os(macOS)
+@Test @MainActor
+func everyPresentationStatePublishesItsDestinationWindowTitle() {
+    for state in DulcetPresentationState.allCases {
+        let source = DulcetDeterministicDataSource(initialState: state)
+        let store = DulcetPresentationStore(source: source)
+        let hostingView = NSHostingView(rootView: DulcetRootView(store: store))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+
+        let expectedTitle = if state == .albumDetailMultiDisc {
+            store.snapshot.selectedAlbum?.title ?? DulcetSidebarDestination.library.windowTitle
+        } else {
+            store.snapshot.selectedDestination.windowTitle
+        }
+        #expect(
+            window.title == expectedTitle,
+            "\(state.rawValue) published \(window.title) instead of \(expectedTitle)"
+        )
+    }
+}
+
 @Test @MainActor
 func registeredColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {

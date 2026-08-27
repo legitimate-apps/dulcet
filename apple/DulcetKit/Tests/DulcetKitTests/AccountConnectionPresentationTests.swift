@@ -612,17 +612,35 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )
     let credentials = MemoryCredentialStore(persisted: persisted)
     let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
     let source = DulcetAccountDataSource(
         connector: connector,
-        credentialStore: credentials
+        credentialStore: credentials,
+        libraryBrowser: libraryBrowser
     )
     let store = DulcetPresentationStore(source: source)
 
-    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(store.snapshot.state == .accountSavedDisconnected)
     #expect(store.snapshot.accountForm == persisted)
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
     #expect(connector.requests.isEmpty)
+    #expect(libraryBrowser.requests.isEmpty)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(connector.requests.isEmpty)
+    #expect(libraryBrowser.requests.isEmpty)
+    #expect(DulcetStrings.reconnectToServer("music.example.invalid") == "Reconnect to music.example.invalid")
+    #expect(DulcetStrings.savedAccountDisconnectedBody.localizedCaseInsensitiveContains("saved"))
+    #expect(!DulcetStrings.savedAccountDisconnectedBody.contains(DulcetStrings.firstRunTitle))
 
     store.submitAccountConnection()
+    #expect(connector.requests == [persisted])
     connector.complete(.connected(DulcetConnectedAccountSummary(
         serverName: "Music",
         normalizedServerURL: persisted.serverURL
@@ -630,6 +648,30 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
 
     #expect(credentials.saved == [persisted])
     #expect(store.snapshot.state == .accountConnected)
+}
+
+@Test @MainActor
+func cancellingARestoredReconnectReturnsToSavedDisconnectedState() {
+    let persisted = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: MemoryCredentialStore(persisted: persisted)
+    )
+    let store = DulcetPresentationStore(source: source)
+
+    store.submitAccountConnection()
+    store.cancelAccountConnection()
+
+    #expect(connector.operation.cancelCount == 1)
+    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
 }
 
 @MainActor
