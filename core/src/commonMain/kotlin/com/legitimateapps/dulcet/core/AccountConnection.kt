@@ -865,6 +865,9 @@ internal class RequestTraceRecorder(
     fun latestRedactedUrl(): String = traces.lastOrNull()?.redactedUrl
         ?: error("Ktor send boundary did not observe the completed request")
 
+    fun latestTrace(): RequestTrace = traces.lastOrNull()
+        ?: error("Ktor send boundary did not observe the completed request")
+
     fun snapshot(): List<RequestTrace> = traces.toList()
 }
 
