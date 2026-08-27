@@ -334,10 +334,16 @@ public object PlaybackRetryPolicy {
         require(!jitter.isNegative() && jitter.isFinite())
         require(!totalWaited.isNegative() && totalWaited.isFinite())
 
+        val retryFloor = when (error) {
+            is DomainError.Server.Busy -> error.retryAfter ?: scheduledBackoff
+            DomainError.Transport.Unreachable,
+            DomainError.Transport.Timeout,
+            -> scheduledBackoff
+            else -> return PlaybackRetryDecision.SurfaceFailure
+        }
         val remaining = maximumTotalWait - totalWaited
         if (remaining <= Duration.ZERO) return PlaybackRetryDecision.SurfaceFailure
-        val floor = (error as? DomainError.Server.Busy)?.retryAfter ?: scheduledBackoff
-        if (floor > remaining) return PlaybackRetryDecision.SurfaceFailure
-        return PlaybackRetryDecision.RetryAfter(minOf(floor + jitter, remaining))
+        if (retryFloor > remaining) return PlaybackRetryDecision.SurfaceFailure
+        return PlaybackRetryDecision.RetryAfter(minOf(retryFloor + jitter, remaining))
     }
 }
