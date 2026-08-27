@@ -156,6 +156,7 @@ private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentatio
     DomainError.Protocol.MalformedEnvelope -> applePresentation("malformedEnvelope")
     is DomainError.Protocol.Incompatible -> applePresentation("incompatibleProtocol")
     DomainError.Protocol.NotASubsonicServer -> applePresentation("notASubsonicServer")
+    is DomainError.Server.Busy -> applePresentation("knownServerError")
     is DomainError.Server.Known -> applePresentation("knownServerError")
     is DomainError.Server.Unknown -> applePresentation("unknownServerError")
     DomainError.Auth.InvalidCredentials -> applePresentation("invalidCredentials")
@@ -189,6 +190,7 @@ private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) 
     DomainError.Protocol.MalformedEnvelope -> AppleAccountErrorKind.ProtocolMalformedEnvelope
     is DomainError.Protocol.Incompatible -> AppleAccountErrorKind.ProtocolIncompatible
     DomainError.Protocol.NotASubsonicServer -> AppleAccountErrorKind.ProtocolNotASubsonicServer
+    is DomainError.Server.Busy -> AppleAccountErrorKind.ServerKnown
     is DomainError.Server.Known -> AppleAccountErrorKind.ServerKnown
     is DomainError.Server.Unknown -> AppleAccountErrorKind.ServerUnknown
     DomainError.Auth.InvalidCredentials -> AppleAccountErrorKind.AuthInvalidCredentials

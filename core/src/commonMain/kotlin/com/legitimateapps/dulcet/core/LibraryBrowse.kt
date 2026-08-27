@@ -15,10 +15,15 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** Opaque server identity scoped to the locally-created provider instance. */
-internal data class ProviderItemId(
-    val providerInstanceId: String,
-    val rawId: String,
-)
+public data class ProviderItemId(
+    public val providerInstanceId: String,
+    public val rawId: String,
+) {
+    init {
+        require(providerInstanceId.isNotBlank())
+        require(rawId.isNotBlank())
+    }
+}
 
 internal enum class CreditRole {
     Artist,
