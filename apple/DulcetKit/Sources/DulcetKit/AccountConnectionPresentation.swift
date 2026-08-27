@@ -505,6 +505,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     private func submit(_ request: DulcetAccountConnectRequest) {
         cancelLibraryBrowse()
+        // Where the person was when they asked to connect. Reconnect is reachable from the library
+        // surface now, and sending them to settings on success answers a request they did not make:
+        // they pressed Reconnect on the library screen to see their library.
+        let origin = currentSnapshot.selectedDestination
         generation += 1
         let submissionGeneration = generation
         let supersededOperation = activeOperation
@@ -529,6 +533,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                         form: request,
                         status: .connected(account)
                     )
+                    if origin == .library {
+                        self.openLibrary()
+                    }
                 } catch {
                     let failure = DulcetAccountErrorPresenter.presentation(
                         for: DulcetAccountErrorContext(

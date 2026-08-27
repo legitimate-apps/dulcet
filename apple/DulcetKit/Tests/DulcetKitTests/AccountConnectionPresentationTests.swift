@@ -647,7 +647,12 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )))
 
     #expect(credentials.saved == [persisted])
-    #expect(store.snapshot.state == .accountConnected)
+    // Reconnect was pressed on the library surface, so it lands in the library rather than on the
+    // account pane. The CONF-10b guarantee is the one asserted above -- that neither the connector
+    // nor the browser was touched before the person chose to reconnect -- and it is unchanged.
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.count == 1)
 }
 
 @Test @MainActor
