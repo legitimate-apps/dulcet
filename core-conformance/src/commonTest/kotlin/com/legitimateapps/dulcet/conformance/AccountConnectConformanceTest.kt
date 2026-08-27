@@ -53,7 +53,7 @@ class AccountConnectConformanceTest {
     )
 
     private fun fixture(
-        password: String = ADMIN_PASSWORD,
+        password: String = conformancePassword(),
         hostResolver: HostResolver = HostResolver { listOf("127.0.0.1") },
     ): Fixture {
         val logs = mutableListOf<String>()
@@ -77,7 +77,7 @@ class AccountConnectConformanceTest {
     ): AccountConnectionResult = connector.connect(
         AccountConnectionRequest(
             serverUrl = serverUrl,
-            username = ADMIN_USER,
+            username = conformanceUsername(),
             password = password,
             allowLocalHttp = allowLocalHttp,
         )
@@ -325,7 +325,7 @@ class AccountConnectConformanceTest {
                         it.formAuthenticationParameters == saltedTokenAuthentication
                 },
         )
-        assertFalse(diagnosticText.contains(ADMIN_PASSWORD))
+        assertFalse(diagnosticText.contains(conformancePassword()))
         observedCredentials.values.flatten().forEach { observed ->
             assertFalse(diagnosticText.contains(observed))
         }
@@ -1081,6 +1081,12 @@ class AccountConnectConformanceTest {
     private companion object {
         const val ADMIN_USER = "dulcet-admin"
         const val ADMIN_PASSWORD = "dulcet-ci-canary-password"
+
+        fun conformanceUsername(): String =
+            environmentOrNull("DULCET_CONFORMANCE_USERNAME") ?: ADMIN_USER
+
+        fun conformancePassword(): String =
+            environmentOrNull("DULCET_CONFORMANCE_PASSWORD") ?: ADMIN_PASSWORD
 
         fun Char.isLowerCaseHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f'
     }
