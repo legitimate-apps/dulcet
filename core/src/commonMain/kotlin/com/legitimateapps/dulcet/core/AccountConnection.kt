@@ -243,6 +243,11 @@ public sealed interface DomainError {
 
     public sealed interface Protocol : DomainError {
         public data object MalformedEnvelope : Protocol
+        public data class UnexpectedContentType(
+            val actual: ObservedPlaybackContentType,
+            val expected: AudioContainer,
+        ) : Protocol
+        public data object UnexpectedBinary : Protocol
         public data class Incompatible(
             val clientVersion: ProtocolVersionLevel,
             val serverVersion: ProtocolVersionLevel?,
@@ -309,6 +314,8 @@ private val DomainError.diagnosticKind: String
         DomainError.Security.LocalExceptionViolated -> "Security.LocalExceptionViolated"
         is DomainError.Security.RedirectRejected -> "Security.RedirectRejected"
         DomainError.Protocol.MalformedEnvelope -> "Protocol.MalformedEnvelope"
+        is DomainError.Protocol.UnexpectedContentType -> "Protocol.UnexpectedContentType"
+        DomainError.Protocol.UnexpectedBinary -> "Protocol.UnexpectedBinary"
         is DomainError.Protocol.Incompatible -> "Protocol.Incompatible"
         DomainError.Protocol.NotASubsonicServer -> "Protocol.NotASubsonicServer"
         is DomainError.Server.Busy -> "Server.Busy"
@@ -348,6 +355,8 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Transport.Cancelled,
             DomainError.Security.LocalExceptionViolated,
             DomainError.Protocol.MalformedEnvelope,
+            is DomainError.Protocol.UnexpectedContentType,
+            DomainError.Protocol.UnexpectedBinary,
             DomainError.Protocol.NotASubsonicServer,
             DomainError.Auth.InvalidCredentials,
             DomainError.Auth.TokenAuthUnsupported,
