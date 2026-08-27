@@ -7,6 +7,8 @@
 "sidebar.accountSection" = "Account";
 "sidebar.noServer" = "No server connected";
 "status.online" = "Online";
+"status.disconnected" = "Disconnected";
+"status.serverDisconnected" = "%@ · Disconnected";
 "status.connectionFailed" = "Connection failed";
 "status.offline" = "Offline";
 "library.albums" = "Albums";
@@ -17,6 +19,7 @@
 "action.playAll" = "Play All";
 "action.shuffle" = "Shuffle";
 "action.connectServer" = "Connect a Server";
+"action.reconnect" = "Reconnect";
 "action.browseHelp" = "Learn About Servers";
 "action.tryAgain" = "Try Again";
 "action.connectionSettings" = "Review Connection Settings";
@@ -40,6 +43,8 @@
 "library.empty.connected.title" = "This library is empty";
 "library.empty.connected.body" = "The connected server returned no artists or albums.";
 "library.empty.connected.footnote" = "Dulcet reads the server again whenever you open Library.";
+"library.savedAccount.disconnected.body" = "This server account is saved, but Dulcet has not connected during this launch.";
+"library.savedAccount.disconnected.footnote" = "Dulcet will contact the server only after you choose Reconnect.";
 "library.loading.title" = "Reading your library…";
 "library.loading.body" = "Dulcet is fetching artists, albums, and track lists from the connected server. Large or remote libraries can take time.";
 "library.error.title" = "The library could not be loaded";
@@ -96,6 +101,8 @@
 "account.connect.localHTTP" = "Allow HTTP on this local network";
 "account.connect.localHTTP.hint" = "Use only for a server you control on a private local network.";
 "account.connect.submit" = "Connect";
+"account.connect.reconnectToServer" = "Reconnect to %@";
+"account.connect.saved.body" = "This account is saved. Dulcet remains disconnected until you choose Reconnect.";
 "account.connect.progress" = "Connecting to the server…";
 "account.connect.progress.body" = "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.";
 "account.connect.keychain" = "After a successful connection, Dulcet stores these credentials in the system Keychain.";

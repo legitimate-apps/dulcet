@@ -24,6 +24,7 @@ STATES = (
     "account-connected",
     "account-removing",
     "account-removal-error",
+    "account-saved-disconnected",
     "account-error-input",
     "account-error-transport",
     "account-error-security",
@@ -410,9 +411,13 @@ def main() -> None:
     # Counted, never spelled out. This line was a hardcoded "standard=38 jpeg=38" while the tool
     # verified a different number of files, so the evidence line asserted something the run had not
     # measured — the failure mode a stale comment causes, applied to the artifact's own summary.
-    verified_files = len(expected_standard_files())
+    current_run_references = len(STATES) * len(APPEARANCES)
+    pinned_controls = len(expected_standard_files()) - current_run_references
+    verified_files = current_run_references + pinned_controls
     print(
-        f"DESIGN CAPTURE PASS standard={verified_files} jpeg={verified_files} size=1180x760 "
+        f"DESIGN CAPTURE PASS standard={verified_files} jpeg={verified_files} "
+        f"current-run-references={current_run_references} pinned-controls={pinned_controls} "
+        "size=1180x760 "
         "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
         "decoded-pixels-pairwise-distinct=true "
         "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "

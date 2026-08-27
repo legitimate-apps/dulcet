@@ -210,6 +210,20 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(DulcetStrings.serverStatus(serverName))
+        case let .disconnected(serverName):
+            HStack(spacing: DulcetSpacing.xs) {
+                DulcetStatusDot(color: .dulcetOffline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(serverName)
+                        .font(.subheadline.weight(.medium))
+                    Text(DulcetStrings.disconnected)
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnThinMaterial)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(DulcetStrings.serverDisconnected(serverName))
         case let .connectionFailed(failure):
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetStatusDot(color: .dulcetDanger)
@@ -280,6 +294,7 @@ private struct DulcetStateSurface: View {
                     title: DulcetStrings.nowPlayingUnavailableTitle,
                     message: DulcetStrings.nowPlayingUnavailableBody
                 )
+                .navigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             }
         }
     }
@@ -287,30 +302,59 @@ private struct DulcetStateSurface: View {
     @ViewBuilder
     private var librarySurface: some View {
         switch snapshot.state {
+        case .accountSavedDisconnected:
+            if case let .saved(serverName) = snapshot.accountConnection {
+                DulcetSavedAccountLibraryView(serverName: serverName) {
+                    store.submitAccountConnection()
+                }
+                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+            } else {
+                DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+                    .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+            }
         case .emptyLibraryNoAccount:
             DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .emptyLibraryConnected:
             DulcetEmptyLibraryView(connected: true)
+                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryLoading:
             DulcetLibraryLoadingView()
+                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryError:
             DulcetLibraryErrorView(failure: snapshot.libraryFailure) {
                 store.selectDestination(.library)
             }
+            .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryBrowse:
             DulcetLibraryBrowseView(snapshot: snapshot) { album in
                 store.selectAlbum(album.id)
             }
+            .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .albumDetailMultiDisc:
             if let album = snapshot.selectedAlbum {
                 DulcetAlbumDetailView(album: album)
             } else {
                 DulcetEmptyLibraryView(connected: true)
+                    .navigationTitle(DulcetSidebarDestination.library.windowTitle)
             }
         case .offlineMetadataOnly:
             DulcetOfflineLibraryView(snapshot: snapshot)
+                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         default:
             DulcetEmptyLibraryView(connected: snapshot.accountConnected)
+                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+        }
+    }
+}
+
+extension DulcetSidebarDestination {
+    var windowTitle: String {
+        switch self {
+        case .library: DulcetStrings.library
+        case .search: DulcetStrings.search
+        case .nowPlaying: DulcetStrings.nowPlaying
+        case .settings: DulcetStrings.settings
         }
     }
 }

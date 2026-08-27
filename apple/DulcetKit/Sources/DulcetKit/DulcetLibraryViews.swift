@@ -82,6 +82,44 @@ struct DulcetLibraryLoadingView: View {
     }
 }
 
+struct DulcetSavedAccountLibraryView: View {
+    let serverName: String
+    let onReconnect: () -> Void
+
+    var body: some View {
+        VStack(spacing: DulcetSpacing.lg) {
+            Image(systemName: "bolt.horizontal.circle")
+                .font(.system(size: 42, weight: .medium))
+                .dulcetForeground(.accentIconOnTint)
+                .accessibilityHidden(true)
+            Text(DulcetStrings.reconnectToServer(serverName))
+                .font(.largeTitle.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+            Text(DulcetStrings.savedAccountDisconnectedBody)
+                .font(.title3)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .frame(maxWidth: 560)
+            Button(DulcetStrings.reconnect, systemImage: "arrow.clockwise", action: onReconnect)
+                .buttonStyle(.borderedProminent)
+                .dulcetDefaultActionShortcut()
+                .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
+            Text(DulcetStrings.savedAccountDisconnectedFootnote)
+                .font(.footnote)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .frame(maxWidth: 520)
+        }
+        .padding(DulcetSpacing.xxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+    }
+}
+
 struct DulcetLibraryErrorView: View {
     let failure: DulcetLibraryFailure?
     let onRetry: () -> Void

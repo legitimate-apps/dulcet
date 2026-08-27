@@ -191,7 +191,7 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(store.snapshot.state == .searchIdle)
 
     store.searchQuery = "at"
-    await settleSearchTask()
+    await settleSearchTask(until: { search.requests.count == 1 })
     #expect(search.requests.count == 1)
     #expect(search.requests[0].query == "at")
     #expect(search.requests[0].artistCount == 20)
@@ -199,7 +199,7 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(search.requests[0].trackCount == 20)
 
     store.searchQuery = "atlas"
-    await settleSearchTask()
+    await settleSearchTask(until: { search.requests.count == 2 })
     #expect(search.operations[0].cancelCount == 1)
     #expect(search.requests.count == 2)
     #expect(search.requests[1].query == "atlas")
@@ -235,7 +235,7 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(store.snapshot.searchHasMoreKinds.isEmpty)
 
     store.searchQuery = "another"
-    await settleSearchTask()
+    await settleSearchTask(until: { search.requests.count == 4 })
     #expect(search.requests.count == 4)
     store.selectDestination(.nowPlaying)
     #expect(search.operations[3].cancelCount == 1)
@@ -307,7 +307,7 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
     #expect(store.selectedDestination == .settings)
     #expect(libraryBrowser.requests.count == 1)
 
-    await settleSearchTask()
+    await settleSearchTask(until: { events.count == 3 })
 
     #expect(events == ["credential-delete", "library-cancel", "artwork-remove"])
     #expect(artworkFetcher.removedServerIDs == ["provider-instance-fixture"])
@@ -376,7 +376,7 @@ func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async 
 
     deleteDecision.shouldFail = false
     store.removeAccount()
-    await settleSearchTask()
+    await settleSearchTask(until: { events.count == 3 })
 
     #expect(credentials.deleteCount == 2)
     #expect(events == ["credential-delete", "credential-delete", "artwork-remove"])
@@ -612,24 +612,71 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )
     let credentials = MemoryCredentialStore(persisted: persisted)
     let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
     let source = DulcetAccountDataSource(
         connector: connector,
-        credentialStore: credentials
+        credentialStore: credentials,
+        libraryBrowser: libraryBrowser
     )
     let store = DulcetPresentationStore(source: source)
 
-    #expect(store.snapshot.state == .accountConnectIdle)
+    #expect(store.snapshot.state == .accountSavedDisconnected)
     #expect(store.snapshot.accountForm == persisted)
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
     #expect(connector.requests.isEmpty)
+    #expect(libraryBrowser.requests.isEmpty)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(connector.requests.isEmpty)
+    #expect(libraryBrowser.requests.isEmpty)
+    #expect(DulcetStrings.reconnectToServer("music.example.invalid") == "Reconnect to music.example.invalid")
+    #expect(DulcetStrings.savedAccountDisconnectedBody.localizedCaseInsensitiveContains("saved"))
+    #expect(!DulcetStrings.savedAccountDisconnectedBody.contains(DulcetStrings.firstRunTitle))
 
     store.submitAccountConnection()
+    #expect(connector.requests == [persisted])
     connector.complete(.connected(DulcetConnectedAccountSummary(
         serverName: "Music",
         normalizedServerURL: persisted.serverURL
     )))
 
     #expect(credentials.saved == [persisted])
-    #expect(store.snapshot.state == .accountConnected)
+    // Reconnect was pressed on the library surface, so it lands in the library rather than on the
+    // account pane. The CONF-10b guarantee is the one asserted above -- that neither the connector
+    // nor the browser was touched before the person chose to reconnect -- and it is unchanged.
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.count == 1)
+}
+
+@Test @MainActor
+func cancellingARestoredReconnectReturnsToSavedDisconnectedState() {
+    let persisted = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: MemoryCredentialStore(persisted: persisted)
+    )
+    let store = DulcetPresentationStore(source: source)
+
+    store.submitAccountConnection()
+    store.cancelAccountConnection()
+
+    #expect(connector.operation.cancelCount == 1)
+    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
 }
 
 @MainActor
@@ -806,6 +853,23 @@ private func fixtureLibraryAlbum() -> DulcetAlbum {
 }
 
 @MainActor
+// A fixed sleep is only long enough while nothing else is competing for the main actor, and that
+// is not a property a test can rely on: Swift Testing runs the whole suite concurrently in one
+// process, so any @MainActor test added later silently steals the window this one is counting on.
+// That is not hypothetical — adding a test that builds a window per presentation state made the
+// debounced-search assertions below fail, and the failure read as "search issued no request"
+// rather than "the settle expired". Wait for the effect, with a deadline, so a genuine regression
+// still fails and mere contention does not.
+private func settleSearchTask(until condition: () -> Bool) async {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
+        if condition() { return }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+// Absence cannot be waited for, so this one still spends a fixed interval. It is only ever used to
+// assert that nothing happened, where expiring early is the safe direction.
 private func settleSearchTask() async {
     try? await Task.sleep(for: .milliseconds(20))
 }

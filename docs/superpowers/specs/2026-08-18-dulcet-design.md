@@ -6,8 +6,11 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 77 — artwork responses now use unconditional XML/JSON-envelope-first validation and a
-positive image-signature table before bytes can cross into a platform cache; revision 76 made tvOS
+**Revision:** 78 — a restored credential now presents as a saved account awaiting an explicit
+reconnect rather than as no account at all, and every macOS destination owns its window title in
+every one of its states; revision 77 made artwork responses use unconditional XML/JSON-envelope-first
+validation and a positive image-signature table before bytes can cross into a platform cache;
+revision 76 made tvOS
 host the production account root through a remote-focused, full-screen
 navigation surface and carries tvOS-specific presentation and core-conformance evidence while the
 signed live-app boundary remains explicit; revision 75 made partial-feature promotion conditions resolve named workflow, job, and test
@@ -1474,7 +1477,10 @@ the declared accessibility attribute. The source requests disabled iCloud Keycha
 and `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; both properties of the real signed item are
 **ASSUMED** until the entitled control below reads them back. On relaunch Dulcet reads the item and
 prefills the secure account form, but performs **no network request until the person chooses
-Connect**. A missing, malformed, or unreadable active item enters the credential-persistence error
+Connect**. That policy is not a licence to present the app as unconfigured: a restored credential
+enters `accountSavedDisconnected` with a `saved(serverName:)` status, so the library surface offers
+to reconnect to the named server and the connectivity indicator reads disconnected rather than
+absent. Rendering a saved account as no account is the defect revision 78 corrected. A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition. The storage API's
 delete path removes the Keychain item before clearing its active-account pointer; an account-management
 logout control is outside this account-connect surface.
@@ -3206,6 +3212,28 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 78 (2026-08-27)** — §13.6 specified the relaunch *policy* and left its *presentation*
+unspecified, so a configured account rendered as no account.
+
+1. Explicit reconnect is unchanged and remains the decision: a restored credential prefills the form
+   and Dulcet issues **no network request until the person chooses Reconnect**. CONF-10b is
+   untouched. What was wrong was what the person was shown while that policy held.
+2. The account status a restored credential produces was not representable. `openLibrary` fell
+   through to `emptyLibraryNoAccount` for every status that was not `connected`, and
+   `accountConnected` was derived solely from `connected`, so "no account at all" and "account
+   saved, not yet connected" were the same state. OBSERVED in the running macOS DEV build: the
+   connect form prefilled correctly while the library said *"Connect an OpenSubsonic server to
+   browse your library"* and the status bar said *"No server connected"* — both false.
+   `accountSavedDisconnected` and a `saved(serverName:)` status now carry that distinction, and the
+   copy states the policy rather than hiding it.
+3. Window titles were published per destination view, so any state whose view set no title fell back
+   to the application name. MEASURED: Library and an unavailable Now Playing both published
+   `Dulcet`, while Search and Connection published their own names. Each destination now owns its
+   title across all of its states; album detail still overrides with the album title.
+4. A successful connection forced the destination to the account pane. That was invisible while
+   connecting could only start there, and became wrong the moment the library surface gained a
+   Reconnect control. The submission now returns to the destination it was started from.
 
 **Revision 77 (2026-08-26)** — `getCoverArt` adopted the binary-or-envelope contract already required
 for streaming, after the pinned reference server returned an artwork error as successful HTTP.

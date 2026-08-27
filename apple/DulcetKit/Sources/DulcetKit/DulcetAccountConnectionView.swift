@@ -37,6 +37,11 @@ struct DulcetAccountConnectionView: View {
         return false
     }
 
+    private var savedServerName: String? {
+        if case let .saved(serverName) = store.snapshot.accountConnection { return serverName }
+        return nil
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
@@ -81,6 +86,8 @@ struct DulcetAccountConnectionView: View {
                 // changes from Connect to Cancel, so there is no replacement control to focus.
                 break
             case (.connecting, .idle):
+                focusedControl = .primaryAction
+            case (.connecting, .saved), (_, .saved):
                 focusedControl = .primaryAction
             case (_, .failed):
                 focusedControl = .tryAgain
@@ -263,7 +270,7 @@ struct DulcetAccountConnectionView: View {
     @ViewBuilder
     private var connectionStatusPanel: some View {
         switch store.snapshot.accountConnection {
-        case .idle, .connecting:
+        case .idle, .saved, .connecting:
             accountPrimaryActionPanel
         case let .connected(account):
             VStack(alignment: .leading, spacing: DulcetSpacing.md) {
@@ -347,6 +354,16 @@ struct DulcetAccountConnectionView: View {
 
     private var accountPrimaryActionPanel: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            if let savedServerName, !isConnecting {
+                Text(DulcetStrings.reconnectToServer(savedServerName))
+                    .font(.headline)
+                    .lineLimit(nil)
+                Text(DulcetStrings.savedAccountReconnectBody)
+                    .font(.callout)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(nil)
+            }
+
             HStack(alignment: .top, spacing: DulcetSpacing.md) {
                 accountPrimaryAction
 
@@ -392,7 +409,9 @@ struct DulcetAccountConnectionView: View {
             performAccountPrimaryAction()
         } label: {
             Label(
-                isConnecting ? DulcetStrings.cancel : DulcetStrings.connect,
+                isConnecting
+                    ? DulcetStrings.cancel
+                    : (savedServerName == nil ? DulcetStrings.connect : DulcetStrings.reconnect),
                 systemImage: isConnecting ? "xmark" : "link"
             )
         }
@@ -492,6 +511,8 @@ struct DulcetAccountConnectionView: View {
         switch status {
         case .idle:
             .serverAddress
+        case .saved:
+            .primaryAction
         case .connecting:
             .primaryAction
         case .connected:

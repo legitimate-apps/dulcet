@@ -6,6 +6,7 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case accountConnected = "account-connected"
     case accountRemoving = "account-removing"
     case accountRemovalError = "account-removal-error"
+    case accountSavedDisconnected = "account-saved-disconnected"
     case accountErrorInput = "account-error-input"
     case accountErrorTransport = "account-error-transport"
     case accountErrorSecurity = "account-error-security"
@@ -44,6 +45,7 @@ public enum DulcetSidebarDestination: String, CaseIterable, Identifiable, Sendab
 
 public enum DulcetConnectivity: Sendable, Hashable {
     case online(serverName: String)
+    case disconnected(serverName: String)
     case connectionFailed(DulcetConnectionFailure)
     case offline(lastSyncedDescription: String)
     case unavailable
@@ -199,6 +201,7 @@ public enum DulcetAccountConnectOutcome: Sendable, Hashable {
 
 public enum DulcetAccountConnectionStatus: Sendable, Hashable {
     case idle
+    case saved(serverName: String)
     case connecting
     case connected(DulcetConnectedAccountSummary)
     case failed(DulcetAccountFailurePresentation)

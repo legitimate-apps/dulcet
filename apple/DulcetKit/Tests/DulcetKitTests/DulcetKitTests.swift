@@ -106,6 +106,18 @@ func fixtureRendersEveryDeclaredDistinctState() {
 }
 
 @Test @MainActor
+func savedAccountFixtureIsConfiguredButDisconnected() {
+    let snapshot = DulcetDeterministicFixture().snapshot(for: .accountSavedDisconnected)
+
+    #expect(snapshot.state == .accountSavedDisconnected)
+    #expect(snapshot.selectedDestination == .library)
+    #expect(!snapshot.accountConnected)
+    #expect(snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
+    #expect(snapshot.albums.isEmpty)
+}
+
+@Test @MainActor
 func fixtureCarriesEveryAwkwardSeedCorpusCase() {
     let snapshot = DulcetDeterministicFixture().snapshot(for: .libraryBrowse)
     let tracks = snapshot.albums.flatMap(\.tracks) + snapshot.looseTracks
@@ -241,6 +253,45 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 }
 
 #if os(macOS)
+// Deliberately `async`, and deliberately NOT `RunLoop.main.run(until:)`. SwiftUI needs a main
+// run-loop turn to publish the window title, but this test takes one per presentation state, and
+// pumping the run loop synchronously HOLDS the main actor for the whole sweep. Swift Testing runs
+// tests concurrently in one process, so that starves every other @MainActor test — which is not
+// hypothetical: the blocking form made serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently
+// fail, because its settle expired while this test owned the main actor. Awaiting yields the actor
+// and still lets the run loop turn.
+@Test @MainActor
+func everyPresentationStatePublishesItsDestinationWindowTitle() async {
+    for state in DulcetPresentationState.allCases {
+        let source = DulcetDeterministicDataSource(initialState: state)
+        let store = DulcetPresentationStore(source: source)
+        let hostingView = NSHostingView(rootView: DulcetRootView(store: store))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        hostingView.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(20))
+
+        let expectedTitle = if state == .albumDetailMultiDisc {
+            store.snapshot.selectedAlbum?.title ?? DulcetSidebarDestination.library.windowTitle
+        } else {
+            store.snapshot.selectedDestination.windowTitle
+        }
+        #expect(
+            window.title == expectedTitle,
+            "\(state.rawValue) published \(window.title) instead of \(expectedTitle)"
+        )
+    }
+}
+
 @Test @MainActor
 func registeredColorPairsMeetWCAGAAInBothAppearances() throws {
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {

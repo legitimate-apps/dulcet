@@ -10,11 +10,17 @@ public struct DulcetDeterministicFixture {
         let base = BaseSnapshot(
             state: state,
             destination: destination(for: state),
-            accountConnected: state != .emptyLibraryNoAccount,
+            accountConnected: state != .emptyLibraryNoAccount
+                && state != .accountSavedDisconnected,
             connectivity: connectivity(for: state),
-            albums: state == .emptyLibraryNoAccount ? [] : library,
-            looseTracks: state == .emptyLibraryNoAccount ? [] : looseTracks,
+            albums: state == .emptyLibraryNoAccount || state == .accountSavedDisconnected
+                ? []
+                : library,
+            looseTracks: state == .emptyLibraryNoAccount || state == .accountSavedDisconnected
+                ? []
+                : looseTracks,
             recentlyAddedTracks: state == .emptyLibraryNoAccount
+                || state == .accountSavedDisconnected
                 ? []
                 : Self.recentlyAddedTracks(in: library, looseTracks: looseTracks)
         )
@@ -26,6 +32,8 @@ public struct DulcetDeterministicFixture {
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
             return accountSnapshot(for: state)
+        case .accountSavedDisconnected:
+            return savedAccountSnapshot()
         case .emptyLibraryNoAccount, .libraryBrowse:
             return base.snapshot()
         case .emptyLibraryConnected, .libraryLoading, .libraryError:
@@ -85,7 +93,8 @@ public struct DulcetDeterministicFixture {
 
     private func destination(for state: DulcetPresentationState) -> DulcetSidebarDestination {
         switch state {
-        case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
+        case .accountSavedDisconnected, .emptyLibraryNoAccount, .emptyLibraryConnected,
+             .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .offlineMetadataOnly:
             .library
         case .nowPlaying, .nowPlayingUnavailable:
@@ -105,6 +114,8 @@ public struct DulcetDeterministicFixture {
         switch state {
         case .accountConnected, .accountRemoving, .accountRemovalError:
             .online(serverName: "Listening Room")
+        case .accountSavedDisconnected:
+            .disconnected(serverName: "music.example.invalid")
         case .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
@@ -139,6 +150,8 @@ public struct DulcetDeterministicFixture {
                 serverName: "Listening Room",
                 normalizedServerURL: "https://music.example.invalid"
             ))
+        case .accountSavedDisconnected:
+            .saved(serverName: "music.example.invalid")
         case .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
@@ -168,6 +181,27 @@ public struct DulcetDeterministicFixture {
             accountForm: form,
             accountConnection: status,
             accountRemoval: removal
+        )
+    }
+
+    private func savedAccountSnapshot() -> DulcetSnapshot {
+        let form = DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid",
+            username: "listener",
+            password: "fixture-password",
+            allowLocalHTTP: false
+        )
+        return DulcetSnapshot(
+            state: .accountSavedDisconnected,
+            selectedDestination: .library,
+            accountConnected: false,
+            connectivity: .disconnected(serverName: "music.example.invalid"),
+            albums: [],
+            looseTracks: [],
+            recentlyAddedTracks: [],
+            captureDate: Self.captureDate,
+            accountForm: form,
+            accountConnection: .saved(serverName: "music.example.invalid")
         )
     }
 }
@@ -201,7 +235,12 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
             case .library: .libraryBrowse
             case .search: .searchResults
             case .nowPlaying: .nowPlaying
-            case .settings: .accountConnectIdle
+            case .settings:
+                if case .saved = currentSnapshot.accountConnection {
+                    .accountSavedDisconnected
+                } else {
+                    .accountConnectIdle
+                }
             }
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
@@ -619,7 +658,7 @@ private extension DulcetDeterministicFixture {
                 nil
             )
         case .accountConnectIdle, .accountConnecting, .accountConnected,
-             .accountRemoving, .accountRemovalError,
+             .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
