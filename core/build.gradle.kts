@@ -5,6 +5,17 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.licensee)
+    alias(libs.plugins.sqldelight)
+}
+
+sqldelight {
+    databases {
+        create("DulcetDatabase") {
+            packageName.set("com.legitimateapps.dulcet.database")
+            schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+            verifyMigrations.set(true)
+        }
+    }
 }
 
 kotlin {
@@ -48,15 +59,19 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.sqldelight.runtime)
         }
         jvmMain.dependencies {
             implementation(libs.ktor.client.cio)
+            implementation(libs.sqldelight.sqlite.driver)
         }
         androidMain.dependencies {
             implementation(libs.ktor.client.cio)
+            implementation(libs.sqldelight.android.driver)
         }
         appleMain.dependencies {
             implementation(libs.ktor.client.darwin)
+            implementation(libs.sqldelight.native.driver)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
