@@ -215,11 +215,21 @@ for marker in (
 if "required Apple presentation" not in normalized_failure_modes:
     errors.append("account-setup implementation boundary is missing the Apple-presentation table label")
 
-auth_source = section(
-    account_connection_source,
-    "public sealed interface Auth : DomainError {",
-    "public data class CapabilityUnsupported",
-)
+# End the Auth block at ITS OWN closing brace, not at whatever declaration happens to follow.
+# The previous delimiter was "public data class CapabilityUnsupported", so adding any sibling
+# between Auth and that class swept the sibling's members into this set -- and the gate then
+# reported an "Auth enumeration must match" failure for a change with nothing to do with
+# authentication. That is a misleading failure, and a misleading failure costs more than a missing
+# one: it sends the reader to fix the wrong document. Adding DomainError.Playback triggered exactly
+# that.
+auth_source = re.split(
+    r"^    \}$",
+    account_connection_source.split(
+        "public sealed interface Auth : DomainError {", 1
+    )[1],
+    maxsplit=1,
+    flags=re.MULTILINE,
+)[0]
 source_auth_types = set(
     re.findall(r"public data (?:object|class) (\w+)", auth_source)
 )
