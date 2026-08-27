@@ -109,6 +109,15 @@ private struct CaptureOptions {
     }
 }
 
+/// Tracks how much settling the renders actually needed, so the PASS line can report it.
+private enum CaptureSettleStatistics {
+    nonisolated(unsafe) private(set) static var maximumAttempts = 0
+
+    static func record(attempts: Int) {
+        maximumAttempts = max(maximumAttempts, attempts)
+    }
+}
+
 private enum CaptureError: Error, CustomStringConvertible {
     case outputRequired
     case missingValue(String)
@@ -123,11 +132,14 @@ private enum CaptureError: Error, CustomStringConvertible {
     case invalidJPEGPayload
     case pinnedControlMissing(String)
     case pinnedControlHashMismatch(String, String, String)
+    case layoutDidNotConverge(String)
 
     var description: String {
         switch self {
         case .outputRequired:
             "--output is required"
+        case let .layoutDidNotConverge(detail):
+            "layout never reached two identical consecutive frames: \(detail)"
         case let .missingValue(argument):
             "missing value for \(argument)"
         case let .invalidValue(argument, value):
@@ -234,12 +246,29 @@ private struct DulcetCaptureMain {
             at: preflightDirectory,
             withIntermediateDirectories: false
         )
-        _ = try render(
-            state: .libraryBrowse,
-            appearance: .light,
-            variant: .standard,
-            outputDirectory: preflightDirectory
-        )
+        // Warm EVERY state, not just one, and discard the output.
+        //
+        // The preflight previously rendered only .libraryBrowse, so the first *recorded* capture of
+        // any other surface was also the first time that surface's text was measured. The gate's
+        // intermittent failure is a 3-pixel vertical shift of the account connection Grid, which is
+        // aligned on first-text-baseline and so has row origins that depend on resolved font
+        // metrics -- a surface the old preflight never touched.
+        //
+        // Warming is the deterministic half of the fix: it removes the pending async work rather
+        // than trying to out-wait it. The convergence loop in render() is the timing half, and on
+        // its own it is not sufficient, because two consecutive frames can both be sampled before a
+        // resolution completes and so agree on a layout that is about to change. That is consistent
+        // with the one local reproduction, which happened while the machine was under compile load.
+        for state in DulcetPresentationState.allCases {
+            for appearance in CaptureAppearance.allCases {
+                _ = try render(
+                    state: state,
+                    appearance: appearance,
+                    variant: .standard,
+                    outputDirectory: preflightDirectory
+                )
+            }
+        }
         try fileManager.removeItem(at: preflightDirectory)
 
         if options.generateControlCandidates {
@@ -303,6 +332,7 @@ private struct DulcetCaptureMain {
 
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
+                + "max-settle-attempts=\(CaptureSettleStatistics.maximumAttempts) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
                 + "control-active-state=key "
                 + "control-baseline=pinned-resource "
@@ -396,7 +426,62 @@ private struct DulcetCaptureMain {
             throw CaptureError.bitmapAllocation
         }
         bitmap.size = NSSize(width: width, height: height)
-        captureView.cacheDisplay(in: captureView.bounds, to: bitmap)
+
+        // Capture until two consecutive frames are byte-identical, rather than capturing once and
+        // hoping a fixed settle was long enough.
+        //
+        // OBSERVED 2026-08-27, hosted apple-ci run 33119117481: two runs of this binary produced
+        // macos-error-tls-untrusted-dark.jpg differing by 49,748 pixels, and the difference is a
+        // clean 3-pixel vertical TRANSLATION -- shifting one image by dy=-3 collapses the residual
+        // from 5.929 to 1.464, and every column in the band is affected, so a block moved rather
+        // than glyphs changing. The moved block is the baseline-aligned account Grid.
+        //
+        // A Grid aligned on first-text-baseline measures text, so its row origins depend on font
+        // metrics being resolved. Both runs execute the same sequence on one machine, so the
+        // nondeterminism is within a process: the fixed settle below could expire before text
+        // layout had settled, and cacheDisplay then recorded a frame that was still moving.
+        // Waiting for stability makes that unrepresentable instead of unlikely, and does it for
+        // every surface at once rather than for whichever view is currently baseline-aligned.
+        //
+        // Failing loudly matters as much as converging: a byte-exact gate that occasionally emits a
+        // non-converged frame trains everyone to re-run on red, which is how a real regression gets
+        // waved through.
+        func renderFrame() throws -> Data {
+            captureView.layoutSubtreeIfNeeded()
+            captureView.displayIfNeeded()
+            captureView.cacheDisplay(in: captureView.bounds, to: bitmap)
+            guard let tiff = bitmap.representation(using: .tiff, properties: [:]) else {
+                throw CaptureError.bitmapAllocation
+            }
+            return tiff
+        }
+
+        var previousFrame = try renderFrame()
+        var settledAttempts = 0
+        let maximumSettleAttempts = 40
+        var converged = false
+        while settledAttempts < maximumSettleAttempts {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+            let frame = try renderFrame()
+            settledAttempts += 1
+            if frame == previousFrame {
+                converged = true
+                break
+            }
+            previousFrame = frame
+        }
+        guard converged else {
+            throw CaptureError.layoutDidNotConverge(
+                "\(maximumSettleAttempts) attempts at 20ms produced no two identical consecutive frames"
+            )
+        }
+        // Reported on the PASS line so the gate says whether this wait is load-bearing. If it is
+        // always 1, the frame was already stable and this loop is costing time for nothing; if it
+        // is ever higher, it caught a frame that a fixed settle would have captured mid-layout.
+        // Without this number the fix would be unfalsifiable on a machine that never reproduces
+        // the race -- which is every machine except the one that happens to lose it.
+        CaptureSettleStatistics.record(attempts: settledAttempts)
+
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]
