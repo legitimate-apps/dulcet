@@ -70,12 +70,7 @@ public class ScrobbleEndpointSender private constructor(
     }
 }
 
-/**
- * The single hand-off for submitted plays. No production implementation is supplied in this slice:
- * returning before the event is durably persisted would not provide at-least-once delivery across
- * app death. A local uniqueness key prevents duplicate rows only; it cannot make the network call
- * idempotent when a response is lost after the server increments play count.
- */
+/** The single hand-off for submitted plays; production uses [PersistentScrobbleOutbox]. */
 internal fun interface SubmittedPlayOutboxSink {
     suspend fun persistForAtLeastOnceDelivery(event: RecordedPlaybackEvent.SubmittedPlay)
 }
