@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import com.legitimateapps.dulcet.database.DulcetDatabase
+import kotlin.random.Random
 
 internal data class ServerId(val value: String) {
     init {
@@ -57,6 +58,8 @@ internal enum class QueueRepeatMode(internal val storageValue: String) {
 
 internal enum class QueueShuffleState { Disabled, Enabled }
 
+internal enum class QueueInsertionMode { PlayNext, Append }
+
 internal data class QueueState(
     val serverId: ServerId,
     val entries: List<QueueEntry>,
@@ -98,14 +101,159 @@ internal class PersistentQueueStore(
 ) : ActiveQueuePersistence {
     fun replaceQueue(state: QueueState) {
         require(state.shuffleState == QueueShuffleState.Disabled)
-        database.transaction {
-            database.queueQueries.insertQueueStateIfMissing(state.serverId.value)
-            database.queueQueries.deleteQueueEntries(state.serverId.value)
-            state.entries.forEachIndexed { index, entry ->
-                insertEntry(state.serverId, entry, index.toLong(), index.toLong())
-            }
-            updateState(state)
+        val stored = state.entries.mapIndexed { index, entry ->
+            StoredQueueEntry(entry, index.toLong(), index.toLong())
         }
+        rewriteQueue(
+            serverId = state.serverId,
+            stored = stored,
+            currentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId,
+            repeatMode = state.repeatMode,
+            shuffleState = QueueShuffleState.Disabled,
+        )
+    }
+
+    fun enableShuffle(serverId: ServerId, random: Random = Random.Default): QueueState {
+        val state = load(serverId)
+        if (state.shuffleState == QueueShuffleState.Enabled) return state
+        val currentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId
+        val fixedPrefixSize = state.currentIndex?.plus(1) ?: 0
+        val playbackOrder =
+            state.entries.take(fixedPrefixSize) + state.entries.drop(fixedPrefixSize).shuffled(random)
+        val playbackPositions = playbackOrder.mapIndexed { index, entry ->
+            entry.queueEntryId to index.toLong()
+        }.toMap()
+        val stored = selectByOriginalPosition(serverId).map { row ->
+            row.copy(playbackPosition = checkNotNull(playbackPositions[row.entry.queueEntryId]))
+        }
+        rewriteQueue(
+            serverId,
+            stored,
+            currentEntryId,
+            state.repeatMode,
+            QueueShuffleState.Enabled,
+        )
+        return load(serverId)
+    }
+
+    fun disableShuffle(serverId: ServerId): QueueState {
+        val state = load(serverId)
+        if (state.shuffleState == QueueShuffleState.Disabled) return state
+        val currentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId
+        val restored = selectByOriginalPosition(serverId).map { row ->
+            row.copy(playbackPosition = row.originalPosition)
+        }
+        rewriteQueue(
+            serverId,
+            restored,
+            currentEntryId,
+            state.repeatMode,
+            QueueShuffleState.Disabled,
+        )
+        return load(serverId)
+    }
+
+    fun insert(
+        serverId: ServerId,
+        entry: QueueEntry,
+        mode: QueueInsertionMode,
+    ): QueueState {
+        require(entry.providerItemId.providerInstanceId == serverId.value)
+        val state = load(serverId)
+        require(state.entries.none { it.queueEntryId == entry.queueEntryId })
+        val currentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId
+        val original = selectByOriginalPosition(serverId)
+        val insertedOriginal = if (state.shuffleState == QueueShuffleState.Disabled) {
+            val insertionIndex = insertionIndex(state.currentIndex, original.size, mode)
+            original.toMutableList().apply {
+                add(insertionIndex, StoredQueueEntry(entry, 0, 0))
+            }.mapIndexed { index, row ->
+                row.copy(originalPosition = index.toLong(), playbackPosition = index.toLong())
+            }
+        } else {
+            original + StoredQueueEntry(
+                entry = entry,
+                originalPosition = original.size.toLong(),
+                playbackPosition = -1,
+            )
+        }
+        val rewritten = if (state.shuffleState == QueueShuffleState.Disabled) {
+            insertedOriginal
+        } else {
+            val playback = selectByPlaybackPosition(serverId).toMutableList()
+            playback.add(
+                insertionIndex(state.currentIndex, playback.size, mode),
+                insertedOriginal.last(),
+            )
+            val playbackPositions = playback.mapIndexed { index, row ->
+                row.entry.queueEntryId to index.toLong()
+            }.toMap()
+            insertedOriginal.map { row ->
+                row.copy(playbackPosition = checkNotNull(playbackPositions[row.entry.queueEntryId]))
+            }
+        }
+        rewriteQueue(
+            serverId,
+            rewritten,
+            currentEntryId,
+            state.repeatMode,
+            state.shuffleState,
+        )
+        return load(serverId)
+    }
+
+    fun remove(serverId: ServerId, queueEntryId: QueueEntryId): QueueState {
+        val state = load(serverId)
+        val active = if (state.shuffleState == QueueShuffleState.Enabled) {
+            selectByPlaybackPosition(serverId)
+        } else {
+            selectByOriginalPosition(serverId)
+        }
+        val removeIndex = active.indexOfFirst { it.entry.queueEntryId == queueEntryId }
+        if (removeIndex < 0) return state
+        val oldCurrentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId
+        val remainingActive = active.filterNot { it.entry.queueEntryId == queueEntryId }
+        val currentEntryId = if (oldCurrentEntryId == queueEntryId) {
+            remainingActive.getOrNull(removeIndex)?.entry?.queueEntryId
+                ?: remainingActive.lastOrNull()?.entry?.queueEntryId
+        } else {
+            oldCurrentEntryId
+        }
+        val original = selectByOriginalPosition(serverId)
+            .filterNot { it.entry.queueEntryId == queueEntryId }
+            .mapIndexed { index, row -> row.copy(originalPosition = index.toLong()) }
+        val playbackPositions = remainingActive.mapIndexed { index, row ->
+            row.entry.queueEntryId to index.toLong()
+        }.toMap()
+        val rewritten = original.map { row ->
+            row.copy(playbackPosition = checkNotNull(playbackPositions[row.entry.queueEntryId]))
+        }
+        rewriteQueue(
+            serverId,
+            rewritten,
+            currentEntryId,
+            state.repeatMode,
+            state.shuffleState,
+        )
+        return load(serverId)
+    }
+
+    fun setCurrentIndex(serverId: ServerId, currentIndex: Int?): QueueState {
+        val updated = load(serverId).copy(currentIndex = currentIndex)
+        database.transaction {
+            database.queueQueries.insertQueueStateIfMissing(serverId.value)
+            updateState(updated)
+        }
+        return load(serverId)
+    }
+
+    fun setRepeatMode(serverId: ServerId, repeatMode: QueueRepeatMode): QueueState {
+        val updated = load(serverId).copy(repeatMode = repeatMode)
+        database.transaction {
+            database.queueQueries.insertQueueStateIfMissing(serverId.value)
+            updateState(updated)
+        }
+        return load(serverId)
     }
 
     override fun load(serverId: ServerId): QueueState {
@@ -149,6 +297,45 @@ internal class PersistentQueueStore(
             shuffle_enabled = if (state.shuffleState == QueueShuffleState.Enabled) 1 else 0,
             server_id = state.serverId.value,
         )
+    }
+
+    private fun rewriteQueue(
+        serverId: ServerId,
+        stored: List<StoredQueueEntry>,
+        currentEntryId: QueueEntryId?,
+        repeatMode: QueueRepeatMode,
+        shuffleState: QueueShuffleState,
+    ) {
+        val active = if (shuffleState == QueueShuffleState.Enabled) {
+            stored.sortedBy(StoredQueueEntry::playbackPosition)
+        } else {
+            stored.sortedBy(StoredQueueEntry::originalPosition)
+        }
+        val currentIndex = currentEntryId?.let { id ->
+            active.indexOfFirst { it.entry.queueEntryId == id }
+                .takeIf { it >= 0 }
+        }
+        database.transaction {
+            database.queueQueries.insertQueueStateIfMissing(serverId.value)
+            database.queueQueries.deleteQueueEntries(serverId.value)
+            stored.sortedBy(StoredQueueEntry::originalPosition).forEach { row ->
+                insertEntry(
+                    serverId,
+                    row.entry,
+                    row.originalPosition,
+                    row.playbackPosition,
+                )
+            }
+            updateState(
+                QueueState(
+                    serverId = serverId,
+                    entries = active.map(StoredQueueEntry::entry),
+                    currentIndex = currentIndex,
+                    repeatMode = repeatMode,
+                    shuffleState = shuffleState,
+                ),
+            )
+        }
     }
 
     private fun insertEntry(
@@ -232,3 +419,12 @@ private fun queueAddedBy(value: String): QueueAddedBy =
 private fun queueRepeatMode(value: String): QueueRepeatMode =
     QueueRepeatMode.entries.singleOrNull { it.storageValue == value }
         ?: error("Unknown queue repeat mode")
+
+private fun insertionIndex(
+    currentIndex: Int?,
+    queueSize: Int,
+    mode: QueueInsertionMode,
+): Int = when (mode) {
+    QueueInsertionMode.PlayNext -> currentIndex?.plus(1) ?: queueSize
+    QueueInsertionMode.Append -> queueSize
+}
