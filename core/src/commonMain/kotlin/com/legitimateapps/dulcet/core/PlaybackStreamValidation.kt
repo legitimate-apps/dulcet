@@ -65,7 +65,7 @@ internal object PlaybackStreamValidator {
                 requestUrl = response.redactedUrl,
             )
             val decisionError = if (response.statusCode == TOO_MANY_REQUESTS) {
-                DomainError.Server.Busy(parseRetryAfter(response.headers.retryAfter))
+                DomainError.Server.Busy(parseRetryAfterSeconds(response.headers.retryAfter))
             } else {
                 presentationError
             }
@@ -137,21 +137,21 @@ internal object PlaybackStreamValidator {
     private fun statusError(response: AuthenticatedEndpointResponse): DomainError? = when (
         response.statusCode
     ) {
-        TOO_MANY_REQUESTS -> DomainError.Server.Busy(parseRetryAfter(response.headers.retryAfter))
+        TOO_MANY_REQUESTS -> DomainError.Server.Busy(parseRetryAfterSeconds(response.headers.retryAfter))
         401 -> DomainError.Auth.InvalidCredentials
         403 -> DomainError.Auth.Forbidden
         else -> null
     }
 
-    private fun parseRetryAfter(value: String?) = value
-        ?.trim()
-        ?.toLongOrNull()
-        ?.takeIf { it >= 0 }
-        ?.seconds
-
     private const val PARTIAL_CONTENT = 206
     private const val TOO_MANY_REQUESTS = 429
 }
+
+internal fun parseRetryAfterSeconds(value: String?) = value
+    ?.trim()
+    ?.toLongOrNull()
+    ?.takeIf { it >= 0 }
+    ?.seconds
 
 private data class AudioSignatureRule(
     val acceptedContentTypes: Set<ObservedPlaybackContentType>,

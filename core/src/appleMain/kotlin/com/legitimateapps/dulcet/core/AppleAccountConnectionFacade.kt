@@ -172,6 +172,7 @@ private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentatio
         targetHost = targetHost.value,
         invalidServerURLIsInternationalized = false,
     )
+    DomainError.Playback.NoPlayableSource -> applePresentation("knownServerError")
     is DomainError.CapabilityUnsupported -> applePresentation("capabilityUnsupported")
 }
 
@@ -206,5 +207,6 @@ private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) 
         AppleAccountErrorKind.AuthUnsupportedAuthenticationChallenge
     is DomainError.Auth.CrossOriginRedirectRejected ->
         AppleAccountErrorKind.AuthCrossOriginRedirectRejected
+    DomainError.Playback.NoPlayableSource -> AppleAccountErrorKind.ServerKnown
     is DomainError.CapabilityUnsupported -> AppleAccountErrorKind.CapabilityUnsupported
 }

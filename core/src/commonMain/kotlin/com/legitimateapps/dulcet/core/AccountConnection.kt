@@ -289,6 +289,10 @@ public sealed interface DomainError {
         ) : Auth
     }
 
+    public sealed interface Playback : DomainError {
+        public data object NoPlayableSource : Playback
+    }
+
     public data class CapabilityUnsupported(val featureId: CapabilityFeature) : DomainError
 }
 
@@ -326,6 +330,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Auth.Forbidden -> "Auth.Forbidden"
         DomainError.Auth.UnsupportedAuthenticationChallenge -> "Auth.UnsupportedAuthenticationChallenge"
         is DomainError.Auth.CrossOriginRedirectRejected -> "Auth.CrossOriginRedirectRejected"
+        DomainError.Playback.NoPlayableSource -> "Playback.NoPlayableSource"
         is DomainError.CapabilityUnsupported -> "Capability.Unsupported"
     }
 
@@ -363,6 +368,7 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Auth.Forbidden,
             DomainError.Auth.UnsupportedAuthenticationChallenge,
             is DomainError.Auth.CrossOriginRedirectRejected,
+            DomainError.Playback.NoPlayableSource,
             -> Unit
             is DomainError.CapabilityUnsupported -> put(
                 "featureId",
