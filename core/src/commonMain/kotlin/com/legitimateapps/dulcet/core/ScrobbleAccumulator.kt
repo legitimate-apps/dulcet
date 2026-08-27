@@ -5,7 +5,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
-public data class ScrobbleAccumulatorState(
+internal data class ScrobbleAccumulatorState(
     val accruedMediaTime: Duration,
     val lastPosition: Duration?,
     val lastMonotonic: PlaybackMonotonicTime?,
@@ -36,7 +36,7 @@ public data class ScrobbleAccumulatorState(
     }
 }
 
-public sealed interface ScrobbleAccumulatorEvent {
+internal sealed interface ScrobbleAccumulatorEvent {
     public data class PlaybackProgressBegan(
         val wallClock: PlaybackWallClockTime,
         val mediaPosition: Duration,
@@ -45,6 +45,11 @@ public sealed interface ScrobbleAccumulatorEvent {
     public data class PositionChanged(
         val mediaPosition: Duration,
         val monotonicTime: PlaybackMonotonicTime,
+    ) : ScrobbleAccumulatorEvent
+
+    public data class ProgressObservationResynced(
+        val sessionStartWallClock: PlaybackWallClockTime,
+        val mediaPosition: Duration,
     ) : ScrobbleAccumulatorEvent
 
     public data class DurationChanged(val duration: Duration) : ScrobbleAccumulatorEvent
@@ -74,14 +79,14 @@ public sealed interface ScrobbleAccumulatorEvent {
     public data object SessionFinalized : ScrobbleAccumulatorEvent
 }
 
-public sealed interface ScrobbleAccumulatorEffect {
+internal sealed interface ScrobbleAccumulatorEffect {
     public data object NowPlaying : ScrobbleAccumulatorEffect
     public data class SubmittedPlay(val sessionStartWallClock: PlaybackWallClockTime) : ScrobbleAccumulatorEffect
     public data class DiscontinuityDiscarded(val mediaDelta: Duration) : ScrobbleAccumulatorEffect
     public data object DurationUnknownAtTerminal : ScrobbleAccumulatorEffect
 }
 
-public data class ScrobbleAccumulatorReduction(
+internal data class ScrobbleAccumulatorReduction(
     val state: ScrobbleAccumulatorState,
     val effects: List<ScrobbleAccumulatorEffect>,
 )
@@ -89,7 +94,7 @@ public data class ScrobbleAccumulatorReduction(
 /**
  * Pure scrobble arithmetic. It reads no clock and performs no I/O; every time value is event data.
  */
-public object ScrobbleAccumulator {
+internal object ScrobbleAccumulator {
     public val cadenceTarget: Duration = 500.milliseconds
     public val cadenceMax: Duration = 2.seconds
     public val nowPlayingInterval: Duration = 1.minutes
@@ -115,6 +120,18 @@ public object ScrobbleAccumulator {
         }
 
         is ScrobbleAccumulatorEvent.PositionChanged -> reducePosition(state, event)
+        is ScrobbleAccumulatorEvent.ProgressObservationResynced -> {
+            requireValidPosition(event.mediaPosition)
+            reduction(
+                state.copy(
+                    lastPosition = event.mediaPosition,
+                    lastMonotonic = null,
+                    progressing = true,
+                    sessionStartWallClock =
+                        state.sessionStartWallClock ?: event.sessionStartWallClock,
+                ),
+            )
+        }
         is ScrobbleAccumulatorEvent.DurationChanged -> {
             requireValidMediaDuration(event.duration)
             evaluateSubmission(state.copy(durationKnown = event.duration))
@@ -135,8 +152,10 @@ public object ScrobbleAccumulator {
             ),
         )
 
-        is ScrobbleAccumulatorEvent.SeekCompleted -> anchorAt(state, event.to)
-        is ScrobbleAccumulatorEvent.SeekFailed -> anchorAt(state, event.from)
+        // Seek events carry no monotonic sample. Preserve the old anchor so the next PositionChanged
+        // goes through the same delta/discontinuity rule whether or not either seek event arrived.
+        is ScrobbleAccumulatorEvent.SeekCompleted -> reduction(state)
+        is ScrobbleAccumulatorEvent.SeekFailed -> reduction(state)
         is ScrobbleAccumulatorEvent.RateChanged -> reduction(
             state.copy(rate = event.rate, lastPosition = null, lastMonotonic = null),
         )
@@ -268,14 +287,6 @@ public object ScrobbleAccumulator {
         )
     }
 
-    private fun anchorAt(
-        state: ScrobbleAccumulatorState,
-        position: Duration,
-    ): ScrobbleAccumulatorReduction {
-        requireValidPosition(position)
-        return reduction(state.copy(lastPosition = position, lastMonotonic = null))
-    }
-
     private fun reduction(state: ScrobbleAccumulatorState) =
         ScrobbleAccumulatorReduction(state, emptyList())
 }
@@ -288,7 +299,7 @@ private fun requireValidMediaDuration(duration: Duration?) {
     require(duration == null || (!duration.isNegative() && duration.isFinite()))
 }
 
-public sealed interface RecordedPlaybackEvent {
+internal sealed interface RecordedPlaybackEvent {
     public val itemId: ProviderItemId
 
     public data class NowPlaying(override val itemId: ProviderItemId) : RecordedPlaybackEvent
@@ -300,6 +311,6 @@ public sealed interface RecordedPlaybackEvent {
 }
 
 /** The provider seam consumes core policy effects; v1 has no alternate timeline-reporting path. */
-public fun interface PlaybackEventRecorder {
+internal fun interface PlaybackEventRecorder {
     public suspend fun recordPlaybackEvent(event: RecordedPlaybackEvent)
 }

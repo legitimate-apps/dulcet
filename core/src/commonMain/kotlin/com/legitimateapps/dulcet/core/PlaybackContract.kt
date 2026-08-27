@@ -4,46 +4,46 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** Opaque queue identity. Its value is never interpreted as a number. */
-public data class QueueEntryId(public val value: String) {
+internal data class QueueEntryId(public val value: String) {
     init {
         require(value.isNotBlank())
     }
 }
 
 /** Opaque identity for one play of one queue entry. */
-public data class PlaybackSessionId(public val value: String) {
+internal data class PlaybackSessionId(public val value: String) {
     init {
         require(value.isNotBlank())
     }
 }
 
 /** Opaque identity for one resolved plan handed to the playback engine. */
-public data class AttemptId(public val value: String) {
+internal data class AttemptId(public val value: String) {
     init {
         require(value.isNotBlank())
     }
 }
 
 /** Opaque correlation identity for one asynchronous engine command. */
-public data class PlaybackCommandId(public val value: String) {
+internal data class PlaybackCommandId(public val value: String) {
     init {
         require(value.isNotBlank())
     }
 }
 
 /**
- * A monotonic instant supplied by an adapter. This type is deliberately not serializable: its only
- * valid use is subtraction from another instant originating from the same clock.
+ * A transient monotonic instant supplied by an adapter. Playback types stay internal and are not
+ * part of a persistence schema; the instant's only valid use is subtraction from the same clock.
  */
-public data class PlaybackMonotonicTime(public val elapsed: Duration)
+internal data class PlaybackMonotonicTime(public val elapsed: Duration)
 
 /** Wall-clock epoch milliseconds used only as a scrobble session-start timestamp. */
-public data class PlaybackWallClockTime(public val epochMilliseconds: Long)
+internal data class PlaybackWallClockTime(public val epochMilliseconds: Long)
 
 /** Marker implemented by the resolved-plan contract in the platform-adapter slice. */
-public interface PlaybackPlan
+internal interface PlaybackPlan
 
-public sealed interface PlaybackCommand {
+internal sealed interface PlaybackCommand {
     public val commandId: PlaybackCommandId
 
     public data class Prepare(
@@ -86,7 +86,7 @@ public sealed interface PlaybackCommand {
     public data class Release(override val commandId: PlaybackCommandId) : PlaybackCommand
 }
 
-public sealed interface PlaybackCommandRejectionReason {
+internal sealed interface PlaybackCommandRejectionReason {
     public data object InvalidState : PlaybackCommandRejectionReason
     public data object Unsupported : PlaybackCommandRejectionReason
     public data object EngineReleased : PlaybackCommandRejectionReason
@@ -94,12 +94,12 @@ public sealed interface PlaybackCommandRejectionReason {
 }
 
 /** Result details are adapter-defined until a command needs a normative result payload. */
-public interface PlaybackCommandResult
+internal interface PlaybackCommandResult
 
-public data object PlaybackCommandCompletedWithoutData : PlaybackCommandResult
+internal data object PlaybackCommandCompletedWithoutData : PlaybackCommandResult
 
-/** Returning one sealed value makes multiple or missing command outcomes impossible at this seam. */
-public sealed interface PlaybackCommandOutcome {
+/** Models the three normal outcomes; engine implementations must map failures instead of throwing. */
+internal sealed interface PlaybackCommandOutcome {
     public val commandId: PlaybackCommandId
 
     public data class CommandAccepted(
@@ -117,29 +117,29 @@ public sealed interface PlaybackCommandOutcome {
     ) : PlaybackCommandOutcome
 }
 
-public fun interface PlaybackEngineEventListener {
+internal fun interface PlaybackEngineEventListener {
     public fun onPlaybackEngineEvent(event: PlaybackEngineEvent)
 }
 
 /** Platform adapters execute commands and publish observations; retry policy remains in the core. */
-public interface PlaybackEngine {
+internal interface PlaybackEngine {
     public suspend fun execute(command: PlaybackCommand): PlaybackCommandOutcome
     public fun setEventListener(listener: PlaybackEngineEventListener)
 }
 
-public enum class PlaybackSeekability {
+internal enum class PlaybackSeekability {
     Seekable,
     NotSeekable,
     Unknown,
 }
 
-public enum class PlaybackSkipReason {
+internal enum class PlaybackSkipReason {
     User,
     AutoAdvance,
     QueueReplacement,
 }
 
-public enum class PlaybackRouteKind {
+internal enum class PlaybackRouteKind {
     BuiltIn,
     Wired,
     Bluetooth,
@@ -148,7 +148,7 @@ public enum class PlaybackRouteKind {
     Unknown,
 }
 
-public enum class PlaybackEngineTeardownReason {
+internal enum class PlaybackEngineTeardownReason {
     BackgroundLimit,
     Lifecycle,
     SystemReclaimed,
@@ -156,13 +156,13 @@ public enum class PlaybackEngineTeardownReason {
     Unknown,
 }
 
-public enum class PlaybackSourceRefreshReason {
+internal enum class PlaybackSourceRefreshReason {
     Unauthorized,
     Expired,
     ValidationFailed,
 }
 
-public enum class PlaybackObservationStatus {
+internal enum class PlaybackObservationStatus {
     Preparing,
     Ready,
     Progressing,
@@ -172,16 +172,18 @@ public enum class PlaybackObservationStatus {
     Failed,
 }
 
-public data class PlaybackObservationSnapshot(
+internal data class PlaybackObservationSnapshot(
     val status: PlaybackObservationStatus,
     val mediaPosition: Duration?,
     val duration: Duration?,
     val seekability: PlaybackSeekability,
     val rate: Double,
+    /** Original progression-start time, required when [status] is [PlaybackObservationStatus.Progressing]. */
+    val sessionStartWallClock: PlaybackWallClockTime? = null,
 )
 
 /** Every event is correlated to an attempt, including global-looking route and lifecycle events. */
-public sealed interface PlaybackEngineEvent {
+internal sealed interface PlaybackEngineEvent {
     public val attemptId: AttemptId
 
     public data class Preparing(override val attemptId: AttemptId) : PlaybackEngineEvent
@@ -315,13 +317,13 @@ public sealed interface PlaybackEngineEvent {
     ) : PlaybackEngineEvent
 }
 
-public sealed interface PlaybackRetryDecision {
+internal sealed interface PlaybackRetryDecision {
     public data class RetryAfter(val delay: Duration) : PlaybackRetryDecision
     public data object SurfaceFailure : PlaybackRetryDecision
 }
 
 /** Pure retry arithmetic. The caller supplies non-negative jitter, so this policy reads no clock or RNG. */
-public object PlaybackRetryPolicy {
+internal object PlaybackRetryPolicy {
     public val maximumTotalWait: Duration = 60.seconds
 
     public fun decide(

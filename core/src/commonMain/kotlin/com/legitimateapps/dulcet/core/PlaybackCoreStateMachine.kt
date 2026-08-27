@@ -2,17 +2,17 @@ package com.legitimateapps.dulcet.core
 
 import kotlin.time.Duration
 
-public data class PositionCadenceState(
+internal data class PositionCadenceState(
     val lastEmittedByAttempt: Map<AttemptId, PlaybackMonotonicTime> = emptyMap(),
 )
 
-public data class PositionCadenceReduction(
+internal data class PositionCadenceReduction(
     val state: PositionCadenceState,
     val eventToEmit: PlaybackEngineEvent.PositionChanged?,
 )
 
 /** Pure core-side coalescing. Adapter samples remain timestamped by the adapter's monotonic clock. */
-public object PositionCadenceCoalescer {
+internal object PositionCadenceCoalescer {
     public fun reduce(
         state: PositionCadenceState,
         event: PlaybackEngineEvent.PositionChanged,
@@ -35,7 +35,7 @@ public object PositionCadenceCoalescer {
         state.copy(lastEmittedByAttempt = state.lastEmittedByAttempt - attemptId)
 }
 
-public data class PlaybackSessionStart(
+internal data class PlaybackSessionStart(
     val queueEntryId: QueueEntryId,
     val playbackSessionId: PlaybackSessionId,
     val attemptId: AttemptId,
@@ -43,7 +43,7 @@ public data class PlaybackSessionStart(
     val initialDuration: Duration? = null,
 )
 
-public enum class PlaybackAttemptPhase {
+internal enum class PlaybackAttemptPhase {
     Created,
     Preparing,
     Ready,
@@ -55,7 +55,7 @@ public enum class PlaybackAttemptPhase {
     TornDown,
 }
 
-public data class PlaybackAttemptSnapshot(
+internal data class PlaybackAttemptSnapshot(
     val attemptId: AttemptId,
     val phase: PlaybackAttemptPhase,
     val position: Duration?,
@@ -64,7 +64,7 @@ public data class PlaybackAttemptSnapshot(
     val rate: Double,
 )
 
-public sealed interface PlaybackTerminalOutcome {
+internal sealed interface PlaybackTerminalOutcome {
     public val attemptId: AttemptId
 
     public data class EndedNaturally(override val attemptId: AttemptId) : PlaybackTerminalOutcome
@@ -74,60 +74,95 @@ public sealed interface PlaybackTerminalOutcome {
     public data class EngineTornDown(override val attemptId: AttemptId) : PlaybackTerminalOutcome
 }
 
-public data class PlaybackSessionSnapshot(
+internal data class PlaybackSessionSnapshot(
     val queueEntryId: QueueEntryId,
     val playbackSessionId: PlaybackSessionId,
     val itemId: ProviderItemId,
     val currentAttempt: PlaybackAttemptSnapshot,
     val accumulator: ScrobbleAccumulatorState,
     val terminalOutcomes: List<PlaybackTerminalOutcome>,
-    val finalized: Boolean,
 )
 
-public data class PlaybackCoreDiagnostics(
+internal data class PlaybackCoreDiagnostics(
     val unknownAttemptDropCount: Long = 0,
     val finalizedSessionDropCount: Long = 0,
     val discontinuityCount: Long = 0,
     val durationUnknownTerminalCount: Long = 0,
     val terminalEvaluationCount: Long = 0,
+    val finalizedSessionCount: Long = 0,
+    val unregisteredPreloadAdvanceCount: Long = 0,
+    val invalidPreloadAdvanceCount: Long = 0,
+    val discardedPreloadEventCount: Long = 0,
+    val attemptCollisionCount: Long = 0,
+    val invalidProgressingResyncCount: Long = 0,
+    val retiredAttemptTombstoneEvictionCount: Long = 0,
 )
 
-public sealed interface PlaybackCoreEffect {
+internal sealed interface PlaybackCoreEffect {
     public data class RecordPlaybackEvent(val event: RecordedPlaybackEvent) : PlaybackCoreEffect
     public data class AccumulatorDiagnostic(val effect: ScrobbleAccumulatorEffect) : PlaybackCoreEffect
 }
 
-public enum class PlaybackEventDisposition {
+internal enum class PlaybackEventDisposition {
     AcceptedCurrentAttempt,
     AcceptedSupersededSessionOnly,
     AcceptedCoalesced,
     DroppedUnknownAttempt,
     DroppedFinalizedSession,
+    DroppedDiscardedPreload,
+    RejectedUnregisteredPreload,
+    RejectedInvalidPreload,
+    RejectedAttemptCollision,
 }
 
-public data class PlaybackEventRecordResult(
+internal data class PlaybackEventRecordResult(
     val disposition: PlaybackEventDisposition,
     val effects: List<PlaybackCoreEffect>,
 )
 
-public data class PlaybackTransitionResult(val effects: List<PlaybackCoreEffect>)
+internal enum class PlaybackTransitionRejection {
+    CurrentSessionExists,
+    NoCurrentSession,
+    DuplicatePlaybackSessionId,
+    AttemptIdAlreadyUsed,
+    PreloadNotFound,
+    PreloadDoesNotMatch,
+}
+
+internal sealed interface PlaybackTransitionResult {
+    public val effects: List<PlaybackCoreEffect>
+
+    public data class Applied(
+        override val effects: List<PlaybackCoreEffect>,
+    ) : PlaybackTransitionResult
+
+    public data class Rejected(
+        val reason: PlaybackTransitionRejection,
+    ) : PlaybackTransitionResult {
+        override val effects: List<PlaybackCoreEffect> = emptyList()
+    }
+}
 
 /**
  * Deterministic playback coordinator. It is intentionally synchronous: its owner serializes calls
  * on one dispatcher, and this class reads neither clock nor randomness.
  */
-public class PlaybackCoreStateMachine {
+internal class PlaybackCoreStateMachine {
     private data class MutableSession(
         val start: PlaybackSessionStart,
         var currentAttempt: PlaybackAttemptSnapshot,
         var accumulator: ScrobbleAccumulatorState,
         val terminalOutcomes: MutableList<PlaybackTerminalOutcome> = mutableListOf(),
-        var finalized: Boolean = false,
+        val attemptIds: MutableSet<AttemptId> = mutableSetOf(start.attemptId),
     )
+
+    private enum class RetiredAttemptKind { FinalizedSession, DiscardedPreload }
 
     private val sessions = mutableMapOf<PlaybackSessionId, MutableSession>()
     private val attemptOwners = mutableMapOf<AttemptId, PlaybackSessionId>()
     private val preloadedSessions = mutableMapOf<AttemptId, PlaybackSessionId>()
+    private val retiredAttempts = mutableMapOf<AttemptId, RetiredAttemptKind>()
+    private val retiredAttemptOrder = ArrayDeque<AttemptId>()
     private var cadenceState = PositionCadenceState()
     private var currentSessionId: PlaybackSessionId? = null
 
@@ -140,15 +175,21 @@ public class PlaybackCoreStateMachine {
     internal val retainedSessionStateCount: Int get() = sessions.size
     internal val trackedAttemptOwnerCount: Int get() = attemptOwners.size
     internal val trackedCadenceAttemptCount: Int get() = cadenceState.lastEmittedByAttempt.size
+    internal val retiredAttemptTombstoneCount: Int get() = retiredAttempts.size
 
     public fun sessionSnapshot(sessionId: PlaybackSessionId): PlaybackSessionSnapshot? =
         sessions[sessionId]?.snapshot()
 
     public fun startPlaying(start: PlaybackSessionStart): PlaybackTransitionResult {
-        check(currentSessionId == null) { "Finalize the current session before starting another" }
-        createSession(start)
+        if (currentSessionId != null) {
+            return PlaybackTransitionResult.Rejected(
+                PlaybackTransitionRejection.CurrentSessionExists,
+            )
+        }
+        validateNewSession(start)?.let { return PlaybackTransitionResult.Rejected(it) }
+        createSessionUnchecked(start)
         currentSessionId = start.playbackSessionId
-        return PlaybackTransitionResult(emptyList())
+        return PlaybackTransitionResult.Applied(emptyList())
     }
 
     public fun planRefresh(newAttemptId: AttemptId): PlaybackTransitionResult =
@@ -161,17 +202,38 @@ public class PlaybackCoreStateMachine {
         replaceCurrentAttempt(newAttemptId)
 
     public fun advanceToNext(start: PlaybackSessionStart): PlaybackTransitionResult {
+        val preloaded = sessions[start.playbackSessionId]
+        if (preloaded != null) {
+            if (
+                preloaded.start != start ||
+                preloadedSessions[start.attemptId] != start.playbackSessionId
+            ) {
+                return PlaybackTransitionResult.Rejected(
+                    PlaybackTransitionRejection.PreloadDoesNotMatch,
+                )
+            }
+            val effects = finalizeCurrentSession()
+            preloadedSessions.remove(start.attemptId)
+            discardAllPreloads(exceptSessionId = start.playbackSessionId)
+            currentSessionId = start.playbackSessionId
+            return PlaybackTransitionResult.Applied(effects)
+        }
+
+        validateNewSession(start)?.let { return PlaybackTransitionResult.Rejected(it) }
+        discardAllPreloads()
         val effects = finalizeCurrentSession()
-        createSession(start)
+        createSessionUnchecked(start)
         currentSessionId = start.playbackSessionId
-        return PlaybackTransitionResult(effects)
+        return PlaybackTransitionResult.Applied(effects)
     }
 
     public fun repeatOne(
         playbackSessionId: PlaybackSessionId,
         attemptId: AttemptId,
     ): PlaybackTransitionResult {
-        val outgoing = currentSession ?: error("No current session")
+        val outgoing = currentSession ?: return PlaybackTransitionResult.Rejected(
+            PlaybackTransitionRejection.NoCurrentSession,
+        )
         return advanceToNext(
             PlaybackSessionStart(
                 queueEntryId = outgoing.queueEntryId,
@@ -188,18 +250,45 @@ public class PlaybackCoreStateMachine {
         advanceToNext(replacement)
 
     public fun clearQueue(): PlaybackTransitionResult =
-        PlaybackTransitionResult(finalizeCurrentSession())
+        PlaybackTransitionResult.Applied(
+            finalizeCurrentSession().also { discardAllPreloads() },
+        )
 
-    public fun registerPreloaded(start: PlaybackSessionStart) {
-        createSession(start)
+    public fun registerPreloaded(start: PlaybackSessionStart): PlaybackTransitionResult {
+        validateNewSession(start)?.let { return PlaybackTransitionResult.Rejected(it) }
+        createSessionUnchecked(start)
         preloadedSessions[start.attemptId] = start.playbackSessionId
+        return PlaybackTransitionResult.Applied(emptyList())
+    }
+
+    public fun discardPreloaded(attemptId: AttemptId): PlaybackTransitionResult {
+        val sessionId = preloadedSessions.remove(attemptId)
+            ?: return PlaybackTransitionResult.Rejected(
+                PlaybackTransitionRejection.PreloadNotFound,
+            )
+        val session = sessions[sessionId]
+            ?: return PlaybackTransitionResult.Rejected(
+                PlaybackTransitionRejection.PreloadNotFound,
+            )
+        retireSession(session, RetiredAttemptKind.DiscardedPreload)
+        return PlaybackTransitionResult.Applied(emptyList())
     }
 
     public fun recordPlaybackEvent(event: PlaybackEngineEvent): PlaybackEventRecordResult {
-        val ownerId = attemptOwners[event.attemptId]
-            ?: return droppedUnknownAttempt()
+        val ownerId = attemptOwners[event.attemptId] ?: return when (
+            retiredAttempts[event.attemptId]
+        ) {
+            RetiredAttemptKind.FinalizedSession -> droppedFinalizedSession()
+            RetiredAttemptKind.DiscardedPreload -> droppedDiscardedPreload()
+            null -> droppedUnknownAttempt()
+        }
         val session = sessions.getValue(ownerId)
-        if (session.finalized) return droppedFinalizedSession()
+
+        // A gapless boundary belongs to the outgoing session, even when oldAttemptId was superseded
+        // by a same-session refresh before the adapter delivered the boundary event.
+        if (event is PlaybackEngineEvent.AdvancedToPreloaded) {
+            return recordAdvancedToPreloaded(session, event)
+        }
 
         val isCurrentAttempt = session.currentAttempt.attemptId == event.attemptId
         if (!isCurrentAttempt) {
@@ -209,10 +298,6 @@ public class PlaybackCoreStateMachine {
         if (event is PlaybackEngineEvent.AttemptReplaced) {
             return recordAttemptReplaced(session, event)
         }
-        if (event is PlaybackEngineEvent.AdvancedToPreloaded) {
-            return recordAdvancedToPreloaded(session, event)
-        }
-
         if (event is PlaybackEngineEvent.PositionChanged) {
             val cadence = PositionCadenceCoalescer.reduce(cadenceState, event)
             cadenceState = cadence.state
@@ -226,6 +311,13 @@ public class PlaybackCoreStateMachine {
 
         updateCurrentAttempt(session, event)
         terminalOutcome(event)?.let(session.terminalOutcomes::add)
+        if (event is PlaybackEngineEvent.EngineTornDown) {
+            val effects = finalizeSession(session)
+            return PlaybackEventRecordResult(
+                PlaybackEventDisposition.AcceptedCurrentAttempt,
+                effects,
+            )
+        }
         val effects = if (event is PlaybackEngineEvent.ObservationResynced) {
             applyObservationSnapshot(session, event.snapshot)
         } else {
@@ -238,14 +330,28 @@ public class PlaybackCoreStateMachine {
     }
 
     private fun replaceCurrentAttempt(newAttemptId: AttemptId): PlaybackTransitionResult {
-        val session = currentMutableSession()
-        registerAttempt(newAttemptId, session.start.playbackSessionId)
+        val session = currentSessionId?.let(sessions::get)
+            ?: return PlaybackTransitionResult.Rejected(
+                PlaybackTransitionRejection.NoCurrentSession,
+            )
+        if (attemptIdWasUsed(newAttemptId)) {
+            return PlaybackTransitionResult.Rejected(
+                PlaybackTransitionRejection.AttemptIdAlreadyUsed,
+            )
+        }
+        val oldAttemptId = session.currentAttempt.attemptId
+        registerAttemptUnchecked(newAttemptId, session)
+        cadenceState = PositionCadenceCoalescer.forget(cadenceState, oldAttemptId)
         session.accumulator = ScrobbleAccumulator.reduce(
             session.accumulator,
             ScrobbleAccumulatorEvent.AttemptReplaced,
         ).state
-        session.currentAttempt = newAttemptSnapshot(newAttemptId, session.accumulator.durationKnown)
-        return PlaybackTransitionResult(emptyList())
+        session.currentAttempt = newAttemptSnapshot(
+            newAttemptId,
+            session.accumulator.durationKnown,
+            session.accumulator.rate,
+        )
+        return PlaybackTransitionResult.Applied(emptyList())
     }
 
     private fun recordAttemptReplaced(
@@ -253,10 +359,21 @@ public class PlaybackCoreStateMachine {
         event: PlaybackEngineEvent.AttemptReplaced,
     ): PlaybackEventRecordResult {
         val existingOwner = attemptOwners[event.newAttemptId]
-        if (existingOwner != null && existingOwner != session.start.playbackSessionId) {
-            return droppedUnknownAttempt()
+        if (
+            retiredAttempts.containsKey(event.newAttemptId) ||
+            existingOwner != null
+        ) {
+            diagnostics = diagnostics.copy(
+                attemptCollisionCount = diagnostics.attemptCollisionCount + 1,
+            )
+            return PlaybackEventRecordResult(
+                PlaybackEventDisposition.RejectedAttemptCollision,
+                emptyList(),
+            )
         }
-        registerAttempt(event.newAttemptId, session.start.playbackSessionId)
+        val oldAttemptId = session.currentAttempt.attemptId
+        registerAttemptUnchecked(event.newAttemptId, session)
+        cadenceState = PositionCadenceCoalescer.forget(cadenceState, oldAttemptId)
         session.accumulator = ScrobbleAccumulator.reduce(
             session.accumulator,
             ScrobbleAccumulatorEvent.AttemptReplaced,
@@ -264,6 +381,7 @@ public class PlaybackCoreStateMachine {
         session.currentAttempt = newAttemptSnapshot(
             event.newAttemptId,
             session.accumulator.durationKnown,
+            session.accumulator.rate,
         )
         return PlaybackEventRecordResult(
             PlaybackEventDisposition.AcceptedCurrentAttempt,
@@ -275,12 +393,37 @@ public class PlaybackCoreStateMachine {
         outgoing: MutableSession,
         event: PlaybackEngineEvent.AdvancedToPreloaded,
     ): PlaybackEventRecordResult {
-        val nextSessionId = preloadedSessions.remove(event.newAttemptId)
-            ?: return droppedUnknownAttempt()
-        val next = sessions.getValue(nextSessionId)
-        if (next.finalized || next.currentAttempt.attemptId != event.newAttemptId) {
-            return droppedFinalizedSession()
+        if (outgoing.start.playbackSessionId != currentSessionId) {
+            diagnostics = diagnostics.copy(
+                invalidPreloadAdvanceCount = diagnostics.invalidPreloadAdvanceCount + 1,
+            )
+            return PlaybackEventRecordResult(
+                PlaybackEventDisposition.RejectedInvalidPreload,
+                emptyList(),
+            )
         }
+        val nextSessionId = preloadedSessions[event.newAttemptId]
+        if (nextSessionId == null) {
+            diagnostics = diagnostics.copy(
+                unregisteredPreloadAdvanceCount =
+                    diagnostics.unregisteredPreloadAdvanceCount + 1,
+            )
+            return PlaybackEventRecordResult(
+                PlaybackEventDisposition.RejectedUnregisteredPreload,
+                emptyList(),
+            )
+        }
+        val next = sessions[nextSessionId]
+        if (next == null || next.currentAttempt.attemptId != event.newAttemptId) {
+            diagnostics = diagnostics.copy(
+                invalidPreloadAdvanceCount = diagnostics.invalidPreloadAdvanceCount + 1,
+            )
+            return PlaybackEventRecordResult(
+                PlaybackEventDisposition.RejectedInvalidPreload,
+                emptyList(),
+            )
+        }
+        preloadedSessions.remove(event.newAttemptId)
         val effects = finalizeSession(outgoing)
         currentSessionId = nextSessionId
         return PlaybackEventRecordResult(
@@ -323,7 +466,7 @@ public class PlaybackCoreStateMachine {
             is PlaybackEngineEvent.Preparing -> current.copy(phase = PlaybackAttemptPhase.Preparing)
             is PlaybackEngineEvent.Ready -> current.copy(
                 phase = PlaybackAttemptPhase.Ready,
-                duration = event.duration,
+                duration = event.duration ?: current.duration,
                 seekability = event.seekability,
             )
             is PlaybackEngineEvent.PlaybackProgressBegan -> current.copy(
@@ -376,7 +519,7 @@ public class PlaybackCoreStateMachine {
             is PlaybackEngineEvent.ObservationResynced -> current.copy(
                 phase = event.snapshot.status.toAttemptPhase(),
                 position = event.snapshot.mediaPosition,
-                duration = event.snapshot.duration,
+                duration = event.snapshot.duration ?: current.duration,
                 seekability = event.snapshot.seekability,
                 rate = event.snapshot.rate,
             )
@@ -414,7 +557,21 @@ public class PlaybackCoreStateMachine {
         val position = snapshot.mediaPosition
         if (position != null) {
             val observation = when (snapshot.status) {
-                PlaybackObservationStatus.Progressing -> ScrobbleAccumulatorEvent.Resumed(position)
+                PlaybackObservationStatus.Progressing -> {
+                    val sessionStart = snapshot.sessionStartWallClock
+                    if (sessionStart == null) {
+                        diagnostics = diagnostics.copy(
+                            invalidProgressingResyncCount =
+                                diagnostics.invalidProgressingResyncCount + 1,
+                        )
+                        null
+                    } else {
+                        ScrobbleAccumulatorEvent.ProgressObservationResynced(
+                            sessionStart,
+                            position,
+                        )
+                    }
+                }
                 PlaybackObservationStatus.Buffering -> ScrobbleAccumulatorEvent.Buffering(position)
                 PlaybackObservationStatus.Paused,
                 PlaybackObservationStatus.Stopped,
@@ -424,7 +581,7 @@ public class PlaybackCoreStateMachine {
                 PlaybackObservationStatus.Ready,
                 -> ScrobbleAccumulatorEvent.SeekFailed(position, position)
             }
-            effects += applyAccumulator(session, observation)
+            if (observation != null) effects += applyAccumulator(session, observation)
         }
         return effects
     }
@@ -460,40 +617,77 @@ public class PlaybackCoreStateMachine {
 
     private fun finalizeCurrentSession(): List<PlaybackCoreEffect> {
         val session = currentSessionId?.let(sessions::get) ?: return emptyList()
-        val effects = finalizeSession(session)
-        currentSessionId = null
-        return effects
+        return finalizeSession(session)
     }
 
     private fun finalizeSession(session: MutableSession): List<PlaybackCoreEffect> {
-        if (session.finalized) return emptyList()
         val effects = applyAccumulator(session, ScrobbleAccumulatorEvent.SessionFinalized)
-        session.finalized = true
-        cadenceState = PositionCadenceCoalescer.forget(
-            cadenceState,
-            session.currentAttempt.attemptId,
+        diagnostics = diagnostics.copy(
+            finalizedSessionCount = diagnostics.finalizedSessionCount + 1,
         )
+        retireSession(session, RetiredAttemptKind.FinalizedSession)
         return effects
     }
 
-    private fun createSession(start: PlaybackSessionStart) {
-        check(start.playbackSessionId !in sessions) { "PlaybackSessionId must be unique" }
-        registerAttempt(start.attemptId, start.playbackSessionId)
-        sessions[start.playbackSessionId] = MutableSession(
+    private fun validateNewSession(start: PlaybackSessionStart): PlaybackTransitionRejection? =
+        when {
+            start.playbackSessionId in sessions ->
+                PlaybackTransitionRejection.DuplicatePlaybackSessionId
+            attemptIdWasUsed(start.attemptId) -> PlaybackTransitionRejection.AttemptIdAlreadyUsed
+            else -> null
+        }
+
+    private fun createSessionUnchecked(start: PlaybackSessionStart) {
+        val session = MutableSession(
             start = start,
-            currentAttempt = newAttemptSnapshot(start.attemptId, start.initialDuration),
+            currentAttempt = newAttemptSnapshot(start.attemptId, start.initialDuration, 1.0),
             accumulator = ScrobbleAccumulatorState.initial(start.initialDuration),
         )
+        sessions[start.playbackSessionId] = session
+        attemptOwners[start.attemptId] = start.playbackSessionId
     }
 
-    private fun registerAttempt(attemptId: AttemptId, sessionId: PlaybackSessionId) {
-        val previous = attemptOwners[attemptId]
-        check(previous == null || previous == sessionId) { "AttemptId must belong to one session" }
-        if (previous == null) attemptOwners[attemptId] = sessionId
+    private fun registerAttemptUnchecked(attemptId: AttemptId, session: MutableSession) {
+        attemptOwners[attemptId] = session.start.playbackSessionId
+        session.attemptIds += attemptId
     }
 
-    private fun currentMutableSession(): MutableSession =
-        currentSessionId?.let(sessions::get) ?: error("No current session")
+    private fun attemptIdWasUsed(attemptId: AttemptId): Boolean =
+        attemptId in attemptOwners || attemptId in retiredAttempts
+
+    private fun discardAllPreloads(exceptSessionId: PlaybackSessionId? = null) {
+        preloadedSessions.values.toSet().forEach { sessionId ->
+            if (sessionId != exceptSessionId) {
+                sessions[sessionId]?.let {
+                    retireSession(it, RetiredAttemptKind.DiscardedPreload)
+                }
+            }
+        }
+    }
+
+    private fun retireSession(session: MutableSession, kind: RetiredAttemptKind) {
+        val sessionId = session.start.playbackSessionId
+        sessions.remove(sessionId)
+        if (currentSessionId == sessionId) currentSessionId = null
+        preloadedSessions.entries.removeAll { it.value == sessionId }
+        session.attemptIds.forEach { attemptId ->
+            attemptOwners.remove(attemptId)
+            cadenceState = PositionCadenceCoalescer.forget(cadenceState, attemptId)
+            rememberRetiredAttempt(attemptId, kind)
+        }
+    }
+
+    private fun rememberRetiredAttempt(attemptId: AttemptId, kind: RetiredAttemptKind) {
+        if (retiredAttempts.put(attemptId, kind) == null) retiredAttemptOrder.addLast(attemptId)
+        while (retiredAttemptOrder.size > MAX_RETIRED_ATTEMPT_TOMBSTONES) {
+            val evicted = retiredAttemptOrder.removeFirst()
+            retiredAttempts.remove(evicted)
+            diagnostics = diagnostics.copy(
+                retiredAttemptTombstoneEvictionCount =
+                    diagnostics.retiredAttemptTombstoneEvictionCount + 1,
+            )
+        }
+    }
 
     private fun droppedUnknownAttempt(): PlaybackEventRecordResult {
         diagnostics = diagnostics.copy(
@@ -515,6 +709,16 @@ public class PlaybackCoreStateMachine {
         )
     }
 
+    private fun droppedDiscardedPreload(): PlaybackEventRecordResult {
+        diagnostics = diagnostics.copy(
+            discardedPreloadEventCount = diagnostics.discardedPreloadEventCount + 1,
+        )
+        return PlaybackEventRecordResult(
+            PlaybackEventDisposition.DroppedDiscardedPreload,
+            emptyList(),
+        )
+    }
+
     private fun MutableSession.snapshot() = PlaybackSessionSnapshot(
         queueEntryId = start.queueEntryId,
         playbackSessionId = start.playbackSessionId,
@@ -522,20 +726,24 @@ public class PlaybackCoreStateMachine {
         currentAttempt = currentAttempt,
         accumulator = accumulator,
         terminalOutcomes = terminalOutcomes.toList(),
-        finalized = finalized,
     )
+
+    private companion object {
+        const val MAX_RETIRED_ATTEMPT_TOMBSTONES = 256
+    }
 }
 
 private fun newAttemptSnapshot(
     attemptId: AttemptId,
     duration: Duration?,
+    rate: Double,
 ) = PlaybackAttemptSnapshot(
     attemptId = attemptId,
     phase = PlaybackAttemptPhase.Created,
     position = null,
     duration = duration,
     seekability = PlaybackSeekability.Unknown,
-    rate = 1.0,
+    rate = rate,
 )
 
 private fun PlaybackObservationStatus.toAttemptPhase(): PlaybackAttemptPhase = when (this) {
@@ -577,8 +785,8 @@ private fun PlaybackEngineEvent.toAccumulatorEvent(): ScrobbleAccumulatorEvent? 
     } else {
         null
     }
-    is PlaybackEngineEvent.EngineTornDown -> ScrobbleAccumulatorEvent.SessionFinalized
     is PlaybackEngineEvent.Preparing,
+    is PlaybackEngineEvent.EngineTornDown,
     is PlaybackEngineEvent.AttemptReplaced,
     is PlaybackEngineEvent.AdvancedToPreloaded,
     is PlaybackEngineEvent.SourceRefreshRequired,
