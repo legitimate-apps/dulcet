@@ -1,0 +1,19 @@
+CREATE TABLE resume_position (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  position_milliseconds INTEGER NOT NULL CHECK (position_milliseconds >= 0),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+save:
+INSERT OR REPLACE INTO resume_position(server_id, raw_id, position_milliseconds)
+VALUES (?, ?, ?);
+
+selectPosition:
+SELECT position_milliseconds
+FROM resume_position
+WHERE server_id = ? AND raw_id = ?;
+
+clear:
+DELETE FROM resume_position
+WHERE server_id = ? AND raw_id = ?;

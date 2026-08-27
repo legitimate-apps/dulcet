@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 internal data class PositionCadenceState(
     val lastEmittedByAttempt: Map<AttemptId, PlaybackMonotonicTime> = emptyMap(),
@@ -100,6 +101,11 @@ internal data class PlaybackCoreDiagnostics(
 
 internal sealed interface PlaybackCoreEffect {
     public data class RecordPlaybackEvent(val event: RecordedPlaybackEvent) : PlaybackCoreEffect
+    public data class PersistResumePosition(
+        val itemId: ProviderItemId,
+        val position: Duration,
+    ) : PlaybackCoreEffect
+    public data class ClearResumePosition(val itemId: ProviderItemId) : PlaybackCoreEffect
     public data class AccumulatorDiagnostic(val effect: ScrobbleAccumulatorEffect) : PlaybackCoreEffect
 }
 
@@ -154,6 +160,9 @@ internal class PlaybackCoreStateMachine {
         var accumulator: ScrobbleAccumulatorState,
         val terminalOutcomes: MutableList<PlaybackTerminalOutcome> = mutableListOf(),
         val attemptIds: MutableSet<AttemptId> = mutableSetOf(start.attemptId),
+        var resumeCadenceElapsed: Duration = Duration.ZERO,
+        var resumeCadenceAnchor: PlaybackMonotonicTime? = null,
+        var resumePositionClearedAtEnd: Boolean = false,
     )
 
     private enum class RetiredAttemptKind { FinalizedSession, DiscardedPreload }
@@ -323,9 +332,10 @@ internal class PlaybackCoreStateMachine {
         } else {
             event.toAccumulatorEvent()?.let { applyAccumulator(session, it) }.orEmpty()
         }
+        val resumeEffects = resumeEffectsForEvent(session, event)
         return PlaybackEventRecordResult(
             PlaybackEventDisposition.AcceptedCurrentAttempt,
-            effects,
+            effects + resumeEffects,
         )
     }
 
@@ -622,11 +632,96 @@ internal class PlaybackCoreStateMachine {
 
     private fun finalizeSession(session: MutableSession): List<PlaybackCoreEffect> {
         val effects = applyAccumulator(session, ScrobbleAccumulatorEvent.SessionFinalized)
+            .toMutableList()
+        val position = session.currentAttempt.position
+        if (session.resumePositionClearedAtEnd) {
+            effects += PlaybackCoreEffect.ClearResumePosition(session.start.itemId)
+        } else if (position != null) {
+            if (session.accumulator.submitted && session.hasReachedEnd(position)) {
+                session.resumePositionClearedAtEnd = true
+                effects += PlaybackCoreEffect.ClearResumePosition(session.start.itemId)
+            } else {
+                effects += PlaybackCoreEffect.PersistResumePosition(session.start.itemId, position)
+            }
+        }
         diagnostics = diagnostics.copy(
             finalizedSessionCount = diagnostics.finalizedSessionCount + 1,
         )
         retireSession(session, RetiredAttemptKind.FinalizedSession)
         return effects
+    }
+
+    private fun resumeEffectsForEvent(
+        session: MutableSession,
+        event: PlaybackEngineEvent,
+    ): List<PlaybackCoreEffect> = when (event) {
+        is PlaybackEngineEvent.EndedNaturally -> {
+            session.resumePositionClearedAtEnd = true
+            session.resetResumeCadence()
+            listOf(PlaybackCoreEffect.ClearResumePosition(session.start.itemId))
+        }
+        is PlaybackEngineEvent.Paused -> {
+            session.resetResumeCadence()
+            listOf(PlaybackCoreEffect.PersistResumePosition(session.start.itemId, event.position))
+        }
+        is PlaybackEngineEvent.Skipped -> session.persistOrClearTerminalPosition(event.position)
+        is PlaybackEngineEvent.FailedAfterPartial ->
+            session.persistOrClearTerminalPosition(event.position)
+        is PlaybackEngineEvent.PositionChanged -> session.resumeCadenceEffect(event)
+        is PlaybackEngineEvent.PlaybackProgressBegan,
+        is PlaybackEngineEvent.BufferingEnded,
+        is PlaybackEngineEvent.Resumed,
+        -> {
+            session.resumeCadenceAnchor = null
+            emptyList()
+        }
+        is PlaybackEngineEvent.Buffering,
+        is PlaybackEngineEvent.InterruptionBegan,
+        -> {
+            session.resumeCadenceAnchor = null
+            emptyList()
+        }
+        else -> emptyList()
+    }
+
+    private fun MutableSession.resumeCadenceEffect(
+        event: PlaybackEngineEvent.PositionChanged,
+    ): List<PlaybackCoreEffect> {
+        if (currentAttempt.phase != PlaybackAttemptPhase.Progressing) {
+            resumeCadenceAnchor = null
+            return emptyList()
+        }
+        val previous = resumeCadenceAnchor
+        resumeCadenceAnchor = event.monotonicTime
+        if (previous == null) return emptyList()
+        val delta = event.monotonicTime.elapsed - previous.elapsed
+        if (delta <= Duration.ZERO || delta > RESUME_CADENCE_MAX_SAMPLE_GAP) return emptyList()
+        resumeCadenceElapsed += delta
+        if (resumeCadenceElapsed < RESUME_PERSIST_CADENCE) return emptyList()
+        resumeCadenceElapsed = Duration.ZERO
+        return listOf(
+            PlaybackCoreEffect.PersistResumePosition(start.itemId, event.mediaPosition),
+        )
+    }
+
+    private fun MutableSession.persistOrClearTerminalPosition(
+        position: Duration,
+    ): List<PlaybackCoreEffect> {
+        resetResumeCadence()
+        return if (accumulator.submitted && hasReachedEnd(position)) {
+            resumePositionClearedAtEnd = true
+            listOf(PlaybackCoreEffect.ClearResumePosition(start.itemId))
+        } else {
+            listOf(PlaybackCoreEffect.PersistResumePosition(start.itemId, position))
+        }
+    }
+
+    private fun MutableSession.hasReachedEnd(position: Duration): Boolean =
+        accumulator.durationKnown?.let { position >= it } == true
+
+    private fun MutableSession.resetResumeCadence() {
+        resumeCadenceElapsed = Duration.ZERO
+        resumeCadenceAnchor = null
     }
 
     private fun validateNewSession(start: PlaybackSessionStart): PlaybackTransitionRejection? =
@@ -730,6 +825,8 @@ internal class PlaybackCoreStateMachine {
 
     private companion object {
         const val MAX_RETIRED_ATTEMPT_TOMBSTONES = 256
+        val RESUME_PERSIST_CADENCE: Duration = 30.seconds
+        val RESUME_CADENCE_MAX_SAMPLE_GAP: Duration = 4.seconds
     }
 }
 
