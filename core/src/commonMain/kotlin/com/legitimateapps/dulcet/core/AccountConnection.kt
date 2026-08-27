@@ -251,6 +251,13 @@ public sealed interface DomainError {
     }
 
     public sealed interface Server : DomainError {
+        /** A transient server capacity limit. [retryAfter] is an interval, never a clock reading. */
+        public data class Busy(val retryAfter: kotlin.time.Duration?) : Server {
+            init {
+                require(retryAfter == null || (!retryAfter.isNegative() && retryAfter.isFinite()))
+            }
+        }
+
         public data class Known(
             val code: Int,
             val message: SuppressedServerText = SuppressedServerText,
@@ -304,6 +311,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Protocol.MalformedEnvelope -> "Protocol.MalformedEnvelope"
         is DomainError.Protocol.Incompatible -> "Protocol.Incompatible"
         DomainError.Protocol.NotASubsonicServer -> "Protocol.NotASubsonicServer"
+        is DomainError.Server.Busy -> "Server.Busy"
         is DomainError.Server.Known -> "Server.Known"
         is DomainError.Server.Unknown -> "Server.Unknown"
         DomainError.Auth.InvalidCredentials -> "Auth.InvalidCredentials"
@@ -329,6 +337,9 @@ public fun DomainError.toDiagnosticJson(): String {
                     put("serverMajor", JsonPrimitive(it.major))
                     put("serverMinor", JsonPrimitive(it.minor))
                 }
+            }
+            is DomainError.Server.Busy -> error.retryAfter?.let {
+                put("retryAfterMilliseconds", JsonPrimitive(it.inWholeMilliseconds))
             }
             is DomainError.Server.Known -> put("code", JsonPrimitive(error.code))
             is DomainError.Server.Unknown -> put("code", JsonPrimitive(error.code))

@@ -18,7 +18,12 @@ import kotlin.time.Duration.Companion.seconds
 internal data class ProviderItemId(
     val providerInstanceId: String,
     val rawId: String,
-)
+) {
+    init {
+        require(providerInstanceId.isNotBlank())
+        require(rawId.isNotBlank())
+    }
+}
 
 internal enum class CreditRole {
     Artist,
