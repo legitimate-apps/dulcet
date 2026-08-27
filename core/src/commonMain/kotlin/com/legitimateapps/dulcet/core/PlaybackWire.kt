@@ -16,7 +16,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlin.time.Duration
 
-internal data class PlaybackEndpointAccount(
+public data class PlaybackEndpointAccount(
     val providerInstanceId: String,
     val normalizedBaseUrl: String,
     val username: String,
@@ -30,7 +30,7 @@ internal data class PlaybackEndpointAccount(
     override fun toString(): String = "PlaybackEndpointAccount(<redacted>)"
 }
 
-internal data class DirectPlayAudioProfile(
+public data class DirectPlayAudioProfile(
     val containers: List<AudioContainer>,
     val audioCodecs: List<String>,
     val protocols: List<String> = listOf("http"),
@@ -44,7 +44,7 @@ internal data class DirectPlayAudioProfile(
     }
 }
 
-internal data class TranscodingAudioProfile(
+public data class TranscodingAudioProfile(
     val container: AudioContainer,
     val audioCodec: String,
     val protocol: String = "http",
@@ -57,7 +57,7 @@ internal data class TranscodingAudioProfile(
     }
 }
 
-internal data class PlaybackDeviceProfile(
+public data class PlaybackDeviceProfile(
     val name: String,
     val platform: String,
     val maxAudioBitrate: Int,
@@ -102,7 +102,7 @@ internal data class PlaybackDeviceProfile(
     }.toString()
 }
 
-internal data class LegacyPlaybackPreference(
+public data class LegacyPlaybackPreference(
     val format: AudioContainer?,
     val maxBitRateKbps: Int?,
 ) {
@@ -113,7 +113,7 @@ internal data class LegacyPlaybackPreference(
     val requestsTranscode: Boolean get() = format != null || maxBitRateKbps != null
 }
 
-internal data class PlaybackResolveRequest(
+public data class PlaybackResolveRequest(
     val playbackSessionId: PlaybackSessionId,
     val attemptId: AttemptId,
     val itemId: ProviderItemId,
@@ -133,18 +133,18 @@ internal data class PlaybackResolveRequest(
     override fun toString(): String = "PlaybackResolveRequest(<redacted>)"
 }
 
-internal enum class PlaybackDeliveryPath {
+public enum class PlaybackDeliveryPath {
     ExtensionDirect,
     ExtensionTranscode,
     Legacy,
 }
 
-internal enum class PlaybackDeliveryProtocol {
+public enum class PlaybackDeliveryProtocol {
     HttpProgressive,
     Hls,
 }
 
-internal sealed interface PlaybackWireTranscodeDecision {
+public sealed interface PlaybackWireTranscodeDecision {
     data object DirectPlay : PlaybackWireTranscodeDecision
 
     class Transcoded internal constructor(
@@ -164,7 +164,7 @@ internal sealed interface PlaybackWireTranscodeDecision {
     ) : PlaybackWireTranscodeDecision
 }
 
-internal data class RemotePlaybackWirePlan(
+public class RemotePlaybackWirePlan internal constructor(
     val playbackSessionId: PlaybackSessionId,
     val attemptId: AttemptId,
     val itemId: ProviderItemId,
@@ -179,7 +179,7 @@ internal data class RemotePlaybackWirePlan(
     override fun toString(): String = "RemotePlaybackWirePlan(<redacted>)"
 }
 
-internal sealed interface PlaybackResolutionResult {
+public sealed interface PlaybackResolutionResult {
     data class Resolved(val plan: RemotePlaybackWirePlan) : PlaybackResolutionResult
     data class Failed(val error: DomainError) : PlaybackResolutionResult
 }
@@ -204,7 +204,7 @@ internal fun interface PlaybackAttemptIdSource {
     fun nextAttemptId(): AttemptId
 }
 
-internal data class PlaybackByteRange(
+public data class PlaybackByteRange(
     val start: Long,
     val endInclusive: Long? = null,
 ) {
@@ -216,13 +216,13 @@ internal data class PlaybackByteRange(
     internal fun render(): String = "bytes=$start-${endInclusive ?: ""}"
 }
 
-internal enum class PlaybackWireRequestPurpose {
+public enum class PlaybackWireRequestPurpose {
     CurrentPlayback,
     Preload,
     Download,
 }
 
-internal data class ActiveTranscodeCounts(
+public data class ActiveTranscodeCounts(
     val currentPlayback: Int = 0,
     val preload: Int = 0,
     val downloads: Int = 0,
@@ -233,7 +233,7 @@ internal data class ActiveTranscodeCounts(
 }
 
 /** Learned account-server budget. Current playback may preempt every lower-priority consumer. */
-internal class PlaybackTranscodeBudget {
+public class PlaybackTranscodeBudget {
     var maximumConcurrentTranscodes: Int = OPTIMISTIC_BUDGET
         private set
 
@@ -276,7 +276,7 @@ internal class PlaybackTranscodeBudget {
     }
 }
 
-internal sealed interface PlaybackLoadResult {
+public sealed interface PlaybackLoadResult {
     data class Audio(
         val bytes: ByteArray,
         val plan: RemotePlaybackWirePlan,
@@ -295,7 +295,7 @@ internal sealed interface PlaybackLoadResult {
     ) : PlaybackLoadResult
 }
 
-internal class PlaybackWireClient private constructor(
+public class PlaybackWireClient private constructor(
     private val account: PlaybackEndpointAccount,
     private val transport: PlaybackEndpointTransport,
     private val attemptIdSource: PlaybackAttemptIdSource,

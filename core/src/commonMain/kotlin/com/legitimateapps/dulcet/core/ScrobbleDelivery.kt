@@ -7,13 +7,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
-internal data class ScrobbleEndpointRequest(
+public data class ScrobbleEndpointRequest(
     val event: RecordedPlaybackEvent,
 ) {
     override fun toString(): String = "ScrobbleEndpointRequest(<redacted>)"
 }
 
-internal sealed interface ScrobbleSendResult {
+public sealed interface ScrobbleSendResult {
     data class Sent(val requestTrace: RequestTrace) : ScrobbleSendResult
     data class Failed(
         val error: DomainError,
@@ -26,7 +26,7 @@ internal fun interface ScrobbleEndpointTransport {
 }
 
 /** Low-level sender shared by ephemeral now-playing and the later durable outbox worker. */
-internal class ScrobbleEndpointSender private constructor(
+public class ScrobbleEndpointSender private constructor(
     private val transport: ScrobbleEndpointTransport,
     private val closeTransport: (() -> Unit)?,
 ) {

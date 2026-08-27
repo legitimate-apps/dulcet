@@ -11,14 +11,14 @@ internal data class QueueEntryId(public val value: String) {
 }
 
 /** Opaque identity for one play of one queue entry. */
-internal data class PlaybackSessionId(public val value: String) {
+public data class PlaybackSessionId(public val value: String) {
     init {
         require(value.isNotBlank())
     }
 }
 
 /** Opaque identity for one resolved plan handed to the playback engine. */
-internal data class AttemptId(public val value: String) {
+public data class AttemptId(public val value: String) {
     init {
         require(value.isNotBlank())
     }
@@ -38,10 +38,10 @@ internal data class PlaybackCommandId(public val value: String) {
 internal data class PlaybackMonotonicTime(public val elapsed: Duration)
 
 /** Wall-clock epoch milliseconds used only as a scrobble session-start timestamp. */
-internal data class PlaybackWallClockTime(public val epochMilliseconds: Long)
+public data class PlaybackWallClockTime(public val epochMilliseconds: Long)
 
 /** Marker implemented by the resolved-plan contract in the platform-adapter slice. */
-internal interface PlaybackPlan
+public interface PlaybackPlan
 
 internal sealed interface PlaybackCommand {
     public val commandId: PlaybackCommandId

@@ -25,7 +25,7 @@ public enum class ObservedPlaybackContentType {
     Other,
 }
 
-internal enum class PlaybackErrorResponseShape {
+public enum class PlaybackErrorResponseShape {
     EnvelopeAtSuccess,
     BareHttpError,
     EnvelopeAtHttpError,
@@ -33,7 +33,7 @@ internal enum class PlaybackErrorResponseShape {
     UnexpectedSuccessfulPayload,
 }
 
-internal sealed interface PlaybackStreamValidationResult {
+public sealed interface PlaybackStreamValidationResult {
     data class Audio(
         val container: AudioContainer,
         val contentLength: Long?,

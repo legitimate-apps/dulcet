@@ -15,7 +15,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** Opaque server identity scoped to the locally-created provider instance. */
-internal data class ProviderItemId(
+public data class ProviderItemId(
     val providerInstanceId: String,
     val rawId: String,
 ) {
