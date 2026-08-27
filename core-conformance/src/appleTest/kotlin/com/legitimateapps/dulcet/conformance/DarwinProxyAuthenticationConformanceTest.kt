@@ -43,7 +43,11 @@ class DarwinProxyAuthenticationConformanceTest {
         val storage = NSURLCredentialStorage.sharedCredentialStorage
         storage.setCredential(credential, protectionSpace)
         storage.setDefaultCredential(credential, protectionSpace)
-        assertNotNull(storage.defaultCredentialForProtectionSpace(protectionSpace))
+        assertNotNull(
+            storage.defaultCredentialForProtectionSpace(protectionSpace),
+            "shared credential storage did not return the ambient proxy credential just written; " +
+                "the fixture precondition never held, so the rest of this test proves nothing",
+        )
 
         val observationClient = HttpClient(Darwin) { expectSuccess = false }
         try {
@@ -59,8 +63,15 @@ class DarwinProxyAuthenticationConformanceTest {
                     allowLocalHttp = false,
                 ),
             )
-            val failure = assertIs<AccountConnectionResult.Failed>(result)
-            assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(failure.error)
+            val failure = assertIs<AccountConnectionResult.Failed>(
+                result,
+                "connecting through the forward proxy was expected to fail closed, but returned $result",
+            )
+            assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(
+                failure.error,
+                "expected the proxy challenge to surface as UnsupportedAuthenticationChallenge, " +
+                    "observed ${failure.error}",
+            )
 
             val observation = observationClient.get(
                 "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
