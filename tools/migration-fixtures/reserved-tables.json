@@ -1,0 +1,14 @@
+{
+  "schema_intent_version": 1,
+  "reserved_unpopulated_table_names": [
+    "album",
+    "artist",
+    "artwork_cache",
+    "credit",
+    "playlist",
+    "playlist_entry",
+    "server_account",
+    "sync_checkpoint",
+    "track"
+  ]
+}

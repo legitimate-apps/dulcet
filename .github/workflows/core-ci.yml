@@ -35,9 +35,12 @@ jobs:
         run: python3 tools/verify_ci_policy.py
       - name: Verify deployment configuration
         run: python3 tools/verify_os_floors.py --configuration-only
+      - name: Verify protected-data migration semantics
+        run: python3 tools/migration_gate.py
       - name: Build, test, and audit dependency licences
         run: >-
           ./gradlew --no-daemon
+          :core:verifySqlDelightMigration
           :core:allMetadataJar
           :core:jvmTest
           :core:testAndroidHostTest

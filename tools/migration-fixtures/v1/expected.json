@@ -1,0 +1,45 @@
+{
+  "scrobble_outbox": [
+    {
+      "server_id": "server:fixture-alpha",
+      "raw_id": "track:scrobble-opaque",
+      "session_start_wall_clock": 1788000123456,
+      "created_at_wall_clock": 1788000999000,
+      "attempt_count": 2
+    }
+  ],
+  "mutation_outbox": [
+    {
+      "server_id": "server:fixture-alpha",
+      "target_id": "track:rating-opaque",
+      "field": "rating",
+      "value": "4",
+      "local_sequence": 17,
+      "wall_clock": 1788000777000
+    }
+  ],
+  "download": [
+    {
+      "server_id": "server:fixture-alpha",
+      "raw_id": "track:download-opaque",
+      "transcode_profile": "direct:audio/flac",
+      "download_id": "download:opaque-alpha",
+      "state": "complete",
+      "file_relative_path": "downloads/fixture-audio-v1.bin",
+      "expected_byte_length": 28,
+      "file_size_bytes": 28,
+      "platform_resume_data": null,
+      "resume_data_created_at_wall_clock": null,
+      "reconciled_file_size": 28,
+      "reconciled_file_sha256": "2ed6b943b08d27112430875e06e25e7dbe4c7b4046516608295a38b9ce151f41"
+    }
+  ],
+  "resume_position": [
+    {
+      "server_id": "server:fixture-alpha",
+      "raw_id": "track:resume-opaque",
+      "position_milliseconds": 98765
+    }
+  ],
+  "schema_meta": [1, 1, 42]
+}

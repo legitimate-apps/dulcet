@@ -21,6 +21,14 @@ for workflow in workflows:
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             errors.append(f"{workflow}: {action} is not pinned to an immutable commit")
 
+core_ci = Path(".github/workflows/core-ci.yml").read_text()
+for required in (
+    "python3 tools/migration_gate.py",
+    ":core:verifySqlDelightMigration",
+):
+    if required not in core_ci:
+        errors.append(f".github/workflows/core-ci.yml: missing database gate {required}")
+
 if errors:
     print("\n".join(errors), file=sys.stderr)
     raise SystemExit(1)
