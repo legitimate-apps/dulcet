@@ -200,9 +200,107 @@ internal interface PlaybackEndpointTransport {
     fun close()
 }
 
+internal fun interface PlaybackAttemptIdSource {
+    fun nextAttemptId(): AttemptId
+}
+
+internal data class PlaybackByteRange(
+    val start: Long,
+    val endInclusive: Long? = null,
+) {
+    init {
+        require(start >= 0)
+        require(endInclusive == null || endInclusive >= start)
+    }
+
+    internal fun render(): String = "bytes=$start-${endInclusive ?: ""}"
+}
+
+internal enum class PlaybackWireRequestPurpose {
+    CurrentPlayback,
+    Preload,
+    Download,
+}
+
+internal data class ActiveTranscodeCounts(
+    val currentPlayback: Int = 0,
+    val preload: Int = 0,
+    val downloads: Int = 0,
+) {
+    init {
+        require(currentPlayback >= 0 && preload >= 0 && downloads >= 0)
+    }
+}
+
+/** Learned account-server budget. Current playback may preempt every lower-priority consumer. */
+internal class PlaybackTranscodeBudget {
+    var maximumConcurrentTranscodes: Int = OPTIMISTIC_BUDGET
+        private set
+
+    fun maySchedule(
+        purpose: PlaybackWireRequestPurpose,
+        isTranscoded: Boolean,
+        active: ActiveTranscodeCounts,
+    ): Boolean {
+        if (!isTranscoded) return true
+        return when (purpose) {
+            PlaybackWireRequestPurpose.CurrentPlayback -> true
+            PlaybackWireRequestPurpose.Preload ->
+                active.currentPlayback + active.preload < maximumConcurrentTranscodes
+            PlaybackWireRequestPurpose.Download ->
+                active.currentPlayback + active.preload + active.downloads <
+                    maximumConcurrentTranscodes
+        }
+    }
+
+    fun observeFailure(
+        purpose: PlaybackWireRequestPurpose,
+        isTranscoded: Boolean,
+        error: DomainError,
+    ) {
+        if (
+            purpose == PlaybackWireRequestPurpose.Preload &&
+            isTranscoded &&
+            error is DomainError.Server.Busy
+        ) {
+            maximumConcurrentTranscodes = 1
+        }
+    }
+
+    fun reset() {
+        maximumConcurrentTranscodes = OPTIMISTIC_BUDGET
+    }
+
+    private companion object {
+        const val OPTIMISTIC_BUDGET = 2
+    }
+}
+
+internal sealed interface PlaybackLoadResult {
+    data class Audio(
+        val bytes: ByteArray,
+        val plan: RemotePlaybackWirePlan,
+        val validation: PlaybackStreamValidationResult.Audio,
+        val requestTrace: RequestTrace,
+        val didReresolveAfterBadRequest: Boolean,
+    ) : PlaybackLoadResult
+
+    data class Failed(
+        val error: DomainError,
+        val presentationError: DomainError,
+        val plan: RemotePlaybackWirePlan,
+        val shape: PlaybackErrorResponseShape?,
+        val statusCode: Int?,
+        val didReresolveAfterBadRequest: Boolean,
+    ) : PlaybackLoadResult
+}
+
 internal class PlaybackWireClient private constructor(
     private val account: PlaybackEndpointAccount,
     private val transport: PlaybackEndpointTransport,
+    private val attemptIdSource: PlaybackAttemptIdSource,
+    val transcodeBudget: PlaybackTranscodeBudget,
+    @Suppress("UNUSED_PARAMETER") ownsTransportLifetime: Boolean,
 ) {
     constructor(
         account: PlaybackEndpointAccount,
@@ -212,13 +310,17 @@ internal class PlaybackWireClient private constructor(
     ) : this(
         account = account,
         transport = KtorPlaybackEndpointTransport(account, saltSource, logSink, hostResolver),
+        attemptIdSource = SecurePlaybackAttemptIdSource,
+        transcodeBudget = PlaybackTranscodeBudget(),
+        ownsTransportLifetime = true,
     )
 
     internal constructor(
         account: PlaybackEndpointAccount,
         transport: PlaybackEndpointTransport,
-        @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
-    ) : this(account, transport)
+        attemptIdSource: PlaybackAttemptIdSource = SecurePlaybackAttemptIdSource,
+        transcodeBudget: PlaybackTranscodeBudget = PlaybackTranscodeBudget(),
+    ) : this(account, transport, attemptIdSource, transcodeBudget, true)
 
     suspend fun resolve(request: PlaybackResolveRequest): PlaybackResolutionResult {
         require(request.itemId.providerInstanceId == account.providerInstanceId)
@@ -240,6 +342,108 @@ internal class PlaybackWireClient private constructor(
     fun close() {
         transport.close()
     }
+
+    suspend fun load(
+        plan: RemotePlaybackWirePlan,
+        purpose: PlaybackWireRequestPurpose = PlaybackWireRequestPurpose.CurrentPlayback,
+        range: PlaybackByteRange? = null,
+    ): PlaybackLoadResult = load(plan, purpose, range, allowBadRequestReresolution = true)
+
+    private suspend fun load(
+        plan: RemotePlaybackWirePlan,
+        purpose: PlaybackWireRequestPurpose,
+        range: PlaybackByteRange?,
+        allowBadRequestReresolution: Boolean,
+    ): PlaybackLoadResult {
+        require(plan.itemId.providerInstanceId == account.providerInstanceId)
+        return try {
+            val response = transport.get(
+                endpoint = plan.endpoint,
+                parameters = plan.parameters,
+                options = AuthenticatedEndpointRequestOptions(range = range?.render()),
+            )
+            val validation = PlaybackStreamValidator.validate(response, plan.expectedContainer)
+            if (validation is PlaybackStreamValidationResult.Audio) {
+                return PlaybackLoadResult.Audio(
+                    bytes = response.body,
+                    plan = plan,
+                    validation = validation,
+                    requestTrace = response.requestTrace,
+                    didReresolveAfterBadRequest = !allowBadRequestReresolution,
+                )
+            }
+            validation as PlaybackStreamValidationResult.Failure
+            if (
+                allowBadRequestReresolution &&
+                plan.path == PlaybackDeliveryPath.ExtensionTranscode &&
+                validation.statusCode == BAD_REQUEST
+            ) {
+                return reresolveAfterBadRequest(plan, purpose, range)
+            }
+            val isTranscoded = plan.isTranscoded()
+            transcodeBudget.observeFailure(purpose, isTranscoded, validation.error)
+            PlaybackLoadResult.Failed(
+                error = validation.error,
+                presentationError = validation.presentationError,
+                plan = plan,
+                shape = validation.shape,
+                statusCode = validation.statusCode,
+                didReresolveAfterBadRequest = !allowBadRequestReresolution,
+            )
+        } catch (_: CancellationException) {
+            loadFailure(plan, DomainError.Transport.Cancelled, !allowBadRequestReresolution)
+        } catch (failure: AuthenticatedEndpointFailure) {
+            loadFailure(plan, failure.error, !allowBadRequestReresolution)
+        } catch (failure: Throwable) {
+            loadFailure(
+                plan,
+                mapAccountConnectionFailure(failure),
+                !allowBadRequestReresolution,
+            )
+        }
+    }
+
+    private suspend fun reresolveAfterBadRequest(
+        stalePlan: RemotePlaybackWirePlan,
+        purpose: PlaybackWireRequestPurpose,
+        range: PlaybackByteRange?,
+    ): PlaybackLoadResult {
+        val nextAttemptId = attemptIdSource.nextAttemptId()
+        check(nextAttemptId != stalePlan.attemptId) {
+            "PlaybackAttemptIdSource returned the current attempt identity"
+        }
+        val refreshedRequest = stalePlan.resolutionRequest.copy(attemptId = nextAttemptId)
+        val resolution = resolve(refreshedRequest)
+        if (resolution is PlaybackResolutionResult.Failed) {
+            return loadFailure(
+                stalePlan,
+                resolution.error,
+                didReresolveAfterBadRequest = true,
+            )
+        }
+        val refreshedPlan = (resolution as PlaybackResolutionResult.Resolved).plan
+        check(refreshedPlan.playbackSessionId == stalePlan.playbackSessionId)
+        check(refreshedPlan.attemptId != stalePlan.attemptId)
+        return load(
+            plan = refreshedPlan,
+            purpose = purpose,
+            range = range,
+            allowBadRequestReresolution = false,
+        )
+    }
+
+    private fun loadFailure(
+        plan: RemotePlaybackWirePlan,
+        error: DomainError,
+        didReresolveAfterBadRequest: Boolean,
+    ) = PlaybackLoadResult.Failed(
+        error = error,
+        presentationError = error,
+        plan = plan,
+        shape = null,
+        statusCode = null,
+        didReresolveAfterBadRequest = didReresolveAfterBadRequest,
+    )
 
     private suspend fun resolveExtension(
         request: PlaybackResolveRequest,
@@ -351,11 +555,25 @@ internal class PlaybackWireClient private constructor(
     }
 
     private companion object {
+        const val BAD_REQUEST = 400
         const val LEGACY_STREAM_ENDPOINT = "stream"
         const val TRANSCODE_DECISION_ENDPOINT = "getTranscodeDecision"
         const val TRANSCODE_STREAM_ENDPOINT = "getTranscodeStream"
         const val MEDIA_TYPE_SONG = "song"
     }
+}
+
+private fun RemotePlaybackWirePlan.isTranscoded(): Boolean = when (val decision = transcode) {
+    PlaybackWireTranscodeDecision.DirectPlay -> false
+    is PlaybackWireTranscodeDecision.Transcoded -> true
+    is PlaybackWireTranscodeDecision.LegacyHint ->
+        decision.format != null || decision.maxBitRateKbps != null
+}
+
+private object SecurePlaybackAttemptIdSource : PlaybackAttemptIdSource {
+    override fun nextAttemptId(): AttemptId = AttemptId(
+        "attempt:${secureRandomBytes(16).toLowerHex()}",
+    )
 }
 
 private class KtorPlaybackEndpointTransport(
