@@ -89,6 +89,7 @@ public data class PlaybackCoreDiagnostics(
     val finalizedSessionDropCount: Long = 0,
     val discontinuityCount: Long = 0,
     val durationUnknownTerminalCount: Long = 0,
+    val terminalEvaluationCount: Long = 0,
 )
 
 public sealed interface PlaybackCoreEffect {
@@ -135,6 +136,10 @@ public class PlaybackCoreStateMachine {
 
     public val currentSession: PlaybackSessionSnapshot?
         get() = currentSessionId?.let(::sessionSnapshot)
+
+    internal val retainedSessionStateCount: Int get() = sessions.size
+    internal val trackedAttemptOwnerCount: Int get() = attemptOwners.size
+    internal val trackedCadenceAttemptCount: Int get() = cadenceState.lastEmittedByAttempt.size
 
     public fun sessionSnapshot(sessionId: PlaybackSessionId): PlaybackSessionSnapshot? =
         sessions[sessionId]?.snapshot()
@@ -293,6 +298,9 @@ public class PlaybackCoreStateMachine {
         val effects = if (terminalEvent == null) {
             emptyList()
         } else {
+            diagnostics = diagnostics.copy(
+                terminalEvaluationCount = diagnostics.terminalEvaluationCount + 1,
+            )
             val before = session.accumulator
             val reduction = ScrobbleAccumulator.reduce(before, terminalEvent)
             // A late terminal event may finalize submission state, but its old position/transport
@@ -382,6 +390,11 @@ public class PlaybackCoreStateMachine {
         session: MutableSession,
         event: ScrobbleAccumulatorEvent,
     ): List<PlaybackCoreEffect> {
+        if (event.isTerminalEvaluation()) {
+            diagnostics = diagnostics.copy(
+                terminalEvaluationCount = diagnostics.terminalEvaluationCount + 1,
+            )
+        }
         val reduction = ScrobbleAccumulator.reduce(session.accumulator, event)
         session.accumulator = reduction.state
         return mapAccumulatorEffects(session, reduction.effects)
@@ -589,4 +602,13 @@ private fun terminalOutcome(event: PlaybackEngineEvent): PlaybackTerminalOutcome
     is PlaybackEngineEvent.FailedAfterPartial -> PlaybackTerminalOutcome.FailedAfterPartial(event.attemptId)
     is PlaybackEngineEvent.EngineTornDown -> PlaybackTerminalOutcome.EngineTornDown(event.attemptId)
     else -> null
+}
+
+private fun ScrobbleAccumulatorEvent.isTerminalEvaluation(): Boolean = when (this) {
+    is ScrobbleAccumulatorEvent.EndedNaturally,
+    is ScrobbleAccumulatorEvent.Skipped,
+    is ScrobbleAccumulatorEvent.FailedAfterPartial,
+    ScrobbleAccumulatorEvent.SessionFinalized,
+    -> true
+    else -> false
 }

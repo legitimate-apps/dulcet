@@ -82,8 +82,10 @@ class ScrobbleAccumulatorTest {
 
         reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.RateChanged(0.0))
         reduction = reduce(reduction.state, position(10, 5))
+        reduction = reduce(reduction.state, position(11, 6))
         reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.RateChanged(-1.0))
-        reduction = reduce(reduction.state, position(12, 6))
+        reduction = reduce(reduction.state, position(12, 7))
+        reduction = reduce(reduction.state, position(13, 8))
         assertEquals(8.seconds, reduction.state.accruedMediaTime)
     }
 
@@ -186,11 +188,12 @@ class ScrobbleAccumulatorTest {
             reduction.state,
             ScrobbleAccumulatorEvent.SeekCompleted(2.seconds, 99.seconds),
         )
-        reduction = reduce(reduction.state, position(100, 2))
-        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.EndedNaturally(100.seconds))
+        val seekJump = reduce(reduction.state, position(100, 2))
+        reduction = reduce(seekJump.state, ScrobbleAccumulatorEvent.EndedNaturally(100.seconds))
 
-        assertEquals(3.seconds, reduction.state.accruedMediaTime)
+        assertEquals(2.seconds, reduction.state.accruedMediaTime)
         assertFalse(reduction.state.submitted)
+        assertIs<ScrobbleAccumulatorEffect.DiscontinuityDiscarded>(seekJump.effects.single())
     }
 
     @Test
@@ -216,6 +219,21 @@ class ScrobbleAccumulatorTest {
         )
         var reduction = reduce(state, ScrobbleAccumulatorEvent.Paused(Duration.ZERO))
         reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.Resumed(Duration.ZERO))
+        reduction = reduce(reduction.state, position(1, 100))
+        assertTrue(reduction.effects.isEmpty())
+        reduction = reduce(reduction.state, position(2, 101))
+        assertEquals(listOf(ScrobbleAccumulatorEffect.NowPlaying), reduction.effects)
+    }
+
+    @Test
+    fun nowPlayingCadenceExcludesBufferingGapAndResumesFromFreshAnchors() {
+        var state = eligibleState(10.minutes, Duration.ZERO).copy(
+            progressingTimeSinceNowPlaying = 59.seconds,
+            lastPosition = Duration.ZERO,
+            lastMonotonic = PlaybackMonotonicTime(Duration.ZERO),
+        )
+        var reduction = reduce(state, ScrobbleAccumulatorEvent.Buffering(Duration.ZERO))
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.BufferingEnded(Duration.ZERO))
         reduction = reduce(reduction.state, position(1, 100))
         assertTrue(reduction.effects.isEmpty())
         reduction = reduce(reduction.state, position(2, 101))

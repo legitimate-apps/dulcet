@@ -212,10 +212,10 @@ class PlaybackCoreStateMachineTest {
     }
 
     @Test
-    fun observationResyncRestoresProgressionAnchorsWithoutClaimingAPlaybackStart() {
+    fun observationResyncCarriesSessionStartAndSubmitsAfterAccruingPastThreshold() {
         val machine = PlaybackCoreStateMachine()
-        machine.startPlaying(start(initialDuration = null))
-        val result = machine.recordPlaybackEvent(
+        machine.startPlaying(start(initialDuration = 100.seconds))
+        machine.recordPlaybackEvent(
             PlaybackEngineEvent.ObservationResynced(
                 ATTEMPT_1,
                 PlaybackObservationSnapshot(
@@ -227,15 +227,170 @@ class PlaybackCoreStateMachineTest {
                 ),
             ),
         )
+        val effects = mutableListOf<PlaybackCoreEffect>()
+        repeat(13) { index ->
+            effects += machine.recordPlaybackEvent(
+                positionEvent(ATTEMPT_1, 44 + index * 4, index + 1),
+            ).effects
+        }
+        effects += machine.recordPlaybackEvent(
+            PlaybackEngineEvent.EndedNaturally(ATTEMPT_1, 92.seconds),
+        ).effects
 
-        assertTrue(result.effects.isEmpty())
         val current = machine.currentSession!!
-        assertEquals(PlaybackAttemptPhase.Progressing, current.currentAttempt.phase)
-        assertTrue(current.accumulator.progressing)
-        assertEquals(40.seconds, current.accumulator.lastPosition)
-        assertEquals(100.seconds, current.accumulator.durationKnown)
-        assertEquals(2.0, current.accumulator.rate)
-        assertNull(current.accumulator.sessionStartWallClock)
+        assertEquals(52.seconds, current.accumulator.accruedMediaTime)
+        assertTrue(current.accumulator.submitted)
+        assertEquals(WALL_CLOCK, current.accumulator.sessionStartWallClock)
+        assertEquals(1, effects.count {
+            it is PlaybackCoreEffect.RecordPlaybackEvent &&
+                it.event is RecordedPlaybackEvent.SubmittedPlay
+        })
+    }
+
+    @Test
+    fun advancedToPreloadedFromSupersededAttemptStillCreatesSessionBoundary() {
+        val machine = progressingMachine()
+        machine.recordPlaybackEvent(positionEvent(ATTEMPT_1, 2, 1))
+        val next = start("queue-preload", "session-preload", "attempt-preload", 30.seconds)
+        machine.registerPreloaded(next)
+        machine.recordPlaybackEvent(
+            PlaybackEngineEvent.PlaybackProgressBegan(next.attemptId, WALL_CLOCK, 0.seconds),
+        )
+        listOf(4, 8, 12, 16).forEachIndexed { index, position ->
+            machine.recordPlaybackEvent(positionEvent(next.attemptId, position, index + 1))
+        }
+        assertEquals(2.seconds, machine.currentSession!!.accumulator.accruedMediaTime)
+        assertFalse(machine.currentSession!!.accumulator.submitted)
+        assertTrue(machine.sessionSnapshot(next.playbackSessionId)!!.accumulator.submitted)
+        machine.planRefresh(ATTEMPT_2)
+
+        val result = machine.recordPlaybackEvent(
+            PlaybackEngineEvent.AdvancedToPreloaded(ATTEMPT_1, next.attemptId),
+        )
+
+        assertEquals(PlaybackEventDisposition.AcceptedCurrentAttempt, result.disposition)
+        assertEquals(next.playbackSessionId, machine.currentSession!!.playbackSessionId)
+        assertEquals(16.seconds, machine.currentSession!!.accumulator.accruedMediaTime)
+        assertTrue(machine.currentSession!!.accumulator.submitted)
+    }
+
+    @Test
+    fun readyWithoutDurationPreservesKnownAttemptDuration() {
+        val machine = PlaybackCoreStateMachine()
+        machine.startPlaying(start(initialDuration = 100.seconds))
+        machine.recordPlaybackEvent(
+            PlaybackEngineEvent.Ready(ATTEMPT_1, null, PlaybackSeekability.NotSeekable),
+        )
+
+        assertEquals(100.seconds, machine.currentSession!!.currentAttempt.duration)
+        assertEquals(PlaybackSeekability.NotSeekable, machine.currentSession!!.currentAttempt.seekability)
+    }
+
+    @Test
+    fun observationResyncWithoutDurationPreservesKnownAttemptDuration() {
+        val machine = PlaybackCoreStateMachine()
+        machine.startPlaying(start(initialDuration = 100.seconds))
+        machine.recordPlaybackEvent(
+            PlaybackEngineEvent.ObservationResynced(
+                ATTEMPT_1,
+                PlaybackObservationSnapshot(
+                    PlaybackObservationStatus.Ready,
+                    0.seconds,
+                    null,
+                    PlaybackSeekability.Seekable,
+                    1.0,
+                ),
+            ),
+        )
+
+        assertEquals(100.seconds, machine.currentSession!!.currentAttempt.duration)
+    }
+
+    @Test
+    fun sameSessionAttemptReplacementPreservesSnapshotRate() {
+        val machine = progressingMachine()
+        machine.recordPlaybackEvent(PlaybackEngineEvent.RateChanged(ATTEMPT_1, 2.0))
+        machine.planRefresh(ATTEMPT_2)
+
+        assertEquals(2.0, machine.currentSession!!.accumulator.rate)
+        assertEquals(2.0, machine.currentSession!!.currentAttempt.rate)
+    }
+
+    @Test
+    fun manualAdvancePromotesRegisteredPreloadWithoutThrowingOrDuplicatingSession() {
+        val machine = PlaybackCoreStateMachine()
+        machine.startPlaying(start())
+        val next = start("queue-manual", "session-manual", "attempt-manual")
+        machine.registerPreloaded(next)
+
+        machine.advanceToNext(next)
+
+        assertEquals(next.playbackSessionId, machine.currentSession!!.playbackSessionId)
+        assertEquals(1, machine.diagnostics.terminalEvaluationCount)
+    }
+
+    @Test
+    fun finalizedSessionsAndSupersededCadenceEntriesDoNotAccumulateForever() {
+        val machine = progressingMachine()
+        var attempt = ATTEMPT_1
+        repeat(40) { index ->
+            machine.recordPlaybackEvent(positionEvent(attempt, index + 1, index + 1))
+            attempt = AttemptId("attempt-refresh-$index")
+            machine.planRefresh(attempt)
+            machine.recordPlaybackEvent(
+                PlaybackEngineEvent.PlaybackProgressBegan(attempt, WALL_CLOCK, 0.seconds),
+            )
+        }
+        machine.recordPlaybackEvent(positionEvent(attempt, 1, 100))
+        assertEquals(1, machine.trackedCadenceAttemptCount)
+        machine.clearQueue()
+        assertEquals(0, machine.retainedSessionStateCount)
+        assertEquals(0, machine.trackedAttemptOwnerCount)
+        assertEquals(0, machine.trackedCadenceAttemptCount)
+    }
+
+    @Test
+    fun supersededTerminalEvaluatesSessionDiagnosticsWithoutChangingCurrentAnchors() {
+        val machine = PlaybackCoreStateMachine()
+        machine.startPlaying(start(initialDuration = null))
+        machine.recordPlaybackEvent(
+            PlaybackEngineEvent.PlaybackProgressBegan(ATTEMPT_1, WALL_CLOCK, 0.seconds),
+        )
+        machine.planRefresh(ATTEMPT_2)
+        machine.recordPlaybackEvent(
+            PlaybackEngineEvent.PlaybackProgressBegan(ATTEMPT_2, WALL_CLOCK, 100.seconds),
+        )
+
+        val result = machine.recordPlaybackEvent(
+            PlaybackEngineEvent.EndedNaturally(ATTEMPT_1, 4.seconds),
+        )
+
+        assertEquals(PlaybackEventDisposition.AcceptedSupersededSessionOnly, result.disposition)
+        assertIs<PlaybackCoreEffect.AccumulatorDiagnostic>(result.effects.single())
+        assertEquals(1, machine.diagnostics.durationUnknownTerminalCount)
+        assertEquals(1, machine.diagnostics.terminalEvaluationCount)
+        assertEquals(100.seconds, machine.currentSession!!.accumulator.lastPosition)
+        assertTrue(machine.currentSession!!.accumulator.progressing)
+    }
+
+    @Test
+    fun engineTornDownFinalizesSessionAndEvaluatesTerminalExactlyOnce() {
+        val machine = PlaybackCoreStateMachine()
+        machine.startPlaying(start(initialDuration = null))
+
+        val tornDown = machine.recordPlaybackEvent(
+            PlaybackEngineEvent.EngineTornDown(
+                ATTEMPT_1,
+                PlaybackEngineTeardownReason.SystemReclaimed,
+            ),
+        )
+        val laterFinalize = machine.clearQueue()
+
+        assertNull(machine.currentSession)
+        assertEquals(1, machine.diagnostics.terminalEvaluationCount)
+        assertEquals(1, machine.diagnostics.durationUnknownTerminalCount)
+        assertEquals(1, tornDown.effects.size)
+        assertTrue(laterFinalize.effects.isEmpty())
     }
 
     private companion object {
