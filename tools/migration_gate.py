@@ -334,9 +334,10 @@ def migrate_and_assert_fixture(
 
 
 DESTRUCTIVE_SAME_NAME_MIGRATION = """
-UPDATE scrobble_outbox SET session_start_wall_clock = 0;
+UPDATE scrobble_outbox SET session_start_wall_clock = session_start_wall_clock + 1;
 UPDATE mutation_outbox SET value = 'destroyed-by-negative-control';
-UPDATE download SET file_relative_path = 'downloads/missing-after-migration.bin';
+UPDATE download
+SET file_relative_path = 'downloads/missing-after-migration-' || download_id || '.bin';
 UPDATE resume_position SET position_milliseconds = 0;
 """
 
