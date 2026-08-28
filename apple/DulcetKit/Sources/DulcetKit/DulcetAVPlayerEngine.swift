@@ -74,6 +74,14 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    public func setRemoteCommandRouter(
+        _ router: (any DulcetRemotePlaybackCommandRouting)?
+    ) {
+        performOnQueueSynchronously { [self] in
+            remoteCommandRouter = router
+        }
+    }
+
     /// Applies queue/role capability changes only to the named live session.
     @discardableResult
     public func updateRemoteCommandCapabilities(
@@ -120,9 +128,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 completion(.rejected(commandID: commandID, reason: .invalidState))
                 return
             }
+            let wasRequested = current.playRequested
             current.playRequested = true
             player.playImmediately(atRate: desiredRate)
             updateSystemTransport(for: current, isPlaying: true)
+            if current.readyEmitted && !wasRequested {
+                emit(.resumed(attemptID: current.plan.attemptID, position: currentPosition()))
+            }
             completion(.accepted(commandID: commandID))
         case let .pause(commandID):
             guard let current else {
@@ -812,6 +824,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             guard !released,
                   let current,
                   current.plan.playbackSessionID == command.sessionID else { return }
+            if let remoteCommandRouter {
+                handled = remoteCommandRouter.handleRemotePlaybackCommand(command)
+                return
+            }
             switch command {
             case .play:
                 current.playRequested = true
@@ -840,7 +856,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 ) { _ in }
                 handled = true
             case .next, .previous, .rating, .favourite:
-                handled = remoteCommandRouter?.handleRemotePlaybackCommand(command) == true
+                handled = false
             }
         }
         return handled

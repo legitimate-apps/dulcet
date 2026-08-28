@@ -6,6 +6,10 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case loadMoreSearchResults(DulcetSearchResultKind)
     case retrySearch
     case selectAlbum(DulcetProviderItemID)
+    case playLibrary(shuffle: Bool)
+    case playAlbum(DulcetProviderItemID, shuffle: Bool)
+    case activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID)
+    case playbackControl(DulcetPlaybackControlIntent)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
     case removeAccount
@@ -88,6 +92,22 @@ public final class DulcetPresentationStore {
 
     public func selectAlbum(_ id: DulcetProviderItemID) {
         source.send(.selectAlbum(id))
+    }
+
+    public func playLibrary(shuffle: Bool) {
+        source.send(.playLibrary(shuffle: shuffle))
+    }
+
+    public func playAlbum(_ id: DulcetProviderItemID, shuffle: Bool) {
+        source.send(.playAlbum(id, shuffle: shuffle))
+    }
+
+    public func activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID) {
+        source.send(.activateTrack(albumID: albumID, trackID: trackID))
+    }
+
+    public func sendPlaybackControl(_ intent: DulcetPlaybackControlIntent) {
+        source.send(.playbackControl(intent))
     }
 
     public func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {

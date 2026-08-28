@@ -31,13 +31,17 @@
 		98B5A6D548E28EC4DF8D2E70 /* DulcetKitIOSRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C57C7DD02906D31F5E33C5 /* DulcetKitIOSRenderTests.swift */; };
 		9A94A6EBD306C1893B42ED29 /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
 		9EE4EBF8CBDD862FB476661D /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = CDEA56097F109D780F3EA786 /* DulcetKit */; };
+		A01C59387EEF3C8DCC9B6B1C /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
 		B8C12710E54838C3D635DBDD /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
+		B981F86E8C0480ED0206769B /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		BAB4B7701A6C1A3099481FC7 /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = C3E4AFCE27D1BEC8BBC49180 /* DulcetKit */; };
 		BAFBB629BB389F4FE6AEC78F /* DulcetMacAccountConnectAppTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708A2DD03E359D16B2324C1E /* DulcetMacAccountConnectAppTest.swift */; };
 		BC860137DF4ECED571E259C4 /* DulcetKitTVOSRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39F42D228CAB447B990FAEC6 /* DulcetKitTVOSRenderTests.swift */; };
+		BD51746B8A8FE55FB7DF586A /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		C2003F9A1EFEFFD6DAEA31AA /* PlaybackContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DA917DCA1907604B04ADF3 /* PlaybackContractTests.swift */; };
 		C38919F0E3179317BEACA2E4 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */; };
+		C64BD70D8F21FC14098CD95F /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		C739909A749B4D5CBFE01764 /* AVPlayerEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22ED479F9A02BD779D206FCE /* AVPlayerEngineTests.swift */; };
 		C946B5AD4C5EB581134B8FCA /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */; };
 		D079CA034F7F9A97CD373523 /* SQLiteLoadExtensionUnsupported.c in Sources */ = {isa = PBXBuildFile; fileRef = E622424025E4EC04C102373D /* SQLiteLoadExtensionUnsupported.c */; };
@@ -91,6 +95,7 @@
 		BEEA9FDD39E4CA2FF12180FC /* DulcetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DulcetKit; path = DulcetKit; sourceTree = SOURCE_ROOT; };
 		C94F682F0DA4A7A7D82934B3 /* DulcetiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetiOSApp.swift; sourceTree = "<group>"; };
+		D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlaybackController.swift; sourceTree = "<group>"; };
 		E622424025E4EC04C102373D /* SQLiteLoadExtensionUnsupported.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = SQLiteLoadExtensionUnsupported.c; sourceTree = "<group>"; };
 		EBEE55499C6E454B3A373AE1 /* DulcetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DulcetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F2F83D78299EE3EF933374F5 /* DulcetKitIOSTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DulcetKitIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -201,6 +206,7 @@
 			children = (
 				B0981D7D7493E2D1ED3C611B /* DulcetAppleProduction.swift */,
 				B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */,
+				D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */,
 				E622424025E4EC04C102373D /* SQLiteLoadExtensionUnsupported.c */,
 			);
 			path = DulcetAppleShared;
@@ -637,6 +643,7 @@
 			files = (
 				03A0B7EE0E2DFDDE95901A8F /* DulcetAppleProduction.swift in Sources */,
 				5A24D1AB2F01FB439097327A /* DulcetCorePlayback.swift in Sources */,
+				BD51746B8A8FE55FB7DF586A /* DulcetCorePlaybackController.swift in Sources */,
 				9A94A6EBD306C1893B42ED29 /* DulcetMacApp.swift in Sources */,
 				89182679B81C6C47DC1FCE77 /* SQLiteLoadExtensionUnsupported.c in Sources */,
 			);
@@ -671,6 +678,7 @@
 			files = (
 				57E70A80B0CB0A7E88A62776 /* DulcetAppleProduction.swift in Sources */,
 				1D698E922A99003F2B2EE47F /* DulcetCorePlayback.swift in Sources */,
+				A01C59387EEF3C8DCC9B6B1C /* DulcetCorePlaybackController.swift in Sources */,
 				F102F29962BAFAAE1D0152DF /* DulcetTVApp.swift in Sources */,
 				E0CE434323A03C345E5CF908 /* SQLiteLoadExtensionUnsupported.c in Sources */,
 			);
@@ -682,6 +690,7 @@
 			files = (
 				4BE2ED7747B9D4B9D8708E4F /* DulcetAppleProduction.swift in Sources */,
 				B8C12710E54838C3D635DBDD /* DulcetCorePlayback.swift in Sources */,
+				C64BD70D8F21FC14098CD95F /* DulcetCorePlaybackController.swift in Sources */,
 				A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */,
 				44030A0E248E0E9511102FE9 /* SQLiteLoadExtensionUnsupported.c in Sources */,
 			);
@@ -693,6 +702,7 @@
 			files = (
 				127D19FAA195A69D247E6A57 /* DulcetAppleProduction.swift in Sources */,
 				F625D393D296C4E3300A33B2 /* DulcetCorePlayback.swift in Sources */,
+				B981F86E8C0480ED0206769B /* DulcetCorePlaybackController.swift in Sources */,
 				766392F104BA53385E1EDE0A /* DulcetiOSApp.swift in Sources */,
 				D079CA034F7F9A97CD373523 /* SQLiteLoadExtensionUnsupported.c in Sources */,
 			);

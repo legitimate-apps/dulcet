@@ -245,7 +245,8 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
-        case .loadMoreSearchResults, .retrySearch:
+        case .loadMoreSearchResults, .retrySearch, .playLibrary, .playAlbum,
+             .activateTrack, .playbackControl:
             break
         case let .selectAlbum(id):
             if let album = currentSnapshot.albums.first(where: { $0.id == id }) {

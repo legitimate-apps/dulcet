@@ -13,7 +13,8 @@ enum DulcetAppleProduction {
                 credentialStore: DulcetKeychainCredentialStore(),
                 libraryBrowser: DulcetCoreLibraryBrowser(),
                 artworkFetcher: DulcetCoreArtworkFetcher(),
-                serverSearch: DulcetCoreServerSearch()
+                serverSearch: DulcetCoreServerSearch(),
+                playbackController: DulcetCorePlaybackController()
             )
         )
     }
