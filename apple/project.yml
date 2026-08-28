@@ -30,6 +30,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
@@ -54,6 +55,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet
@@ -124,6 +126,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -175,6 +178,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
         PRODUCT_NAME: Dulcet DEV
     preBuildScripts:
