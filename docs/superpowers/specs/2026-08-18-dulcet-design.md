@@ -1233,6 +1233,16 @@ HLS again requires new evidence and a spec revision.
   server error instead of an opaque `AVFoundation` failure. Cost, stated honestly: we must satisfy
   `contentInformationRequest` correctly and implement range handling ourselves, or seeking breaks.
   **This is Phase-1 work. HLS is not accepted on this platform.**
+
+  **OBSERVED 2026-08-28:** for a progressive MP3 reached through the custom loader, AVFoundation's
+  first data request was only `bytes=0-1`. Two bytes cannot satisfy the normative MP3 signature rule
+  below, whose shortest valid shape is the three-byte `ID3` marker. Passing that exact range to the
+  inline validator rejected valid audio before `AVPlayerItem` could become ready. The loader therefore
+  fetches up to one bounded validation chunk for a request that still needs its audio signature,
+  validates those actual response bytes, and responds to AVFoundation with no more than the range it
+  requested. A loopback HTTP server serving a real MP3 with `Content-Type: audio/mpeg` and byte-range
+  support now drives `AVPlayer` through `Ready` to `PlaybackProgressBegan`; this also rules out the
+  response MIME type versus MP3 UTI as the cause of that failure.
 - **Android:** a custom `DataSource.Factory` wrapping the HTTP client, giving the same visibility for
   substantially less work.
 - **Preflight is demoted to an optional, advisory fast-fail** used only where inline validation is
@@ -3214,6 +3224,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 80 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
+two-byte request.
+
+1. A loopback HTTP/Range test reproduced the production stall with real MP3 bytes: the server served
+   the stream, but the item never became ready.
+2. The observed first request was `bytes=0-1`; forwarding it unchanged made the core reject valid MP3
+   as too short to contain its three-byte `ID3` signature.
+3. The loader now over-fetches one bounded validation chunk without over-responding to AVFoundation.
+   The same test reaches both `Ready` and `PlaybackProgressBegan` with `Content-Type: audio/mpeg`, so
+   the range/signature interaction—not MIME-versus-UTI disagreement—was the measured root cause.
 
 **Revision 79 (2026-08-27)** — the queue ownership tables joined the complete schema-name contract.
 
