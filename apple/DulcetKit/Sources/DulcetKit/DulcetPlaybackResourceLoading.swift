@@ -461,10 +461,11 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
             complete(context)
             return
         }
-        let endInclusive = min(
-            desiredEndExclusive - 1,
-            context.nextOffset + Self.maximumChunkLength - 1
-        )
+        let chunkEndExclusive = context.nextOffset + Self.maximumChunkLength
+        let fetchEndExclusive = context.requiresAudioSignature
+            ? chunkEndExclusive
+            : min(desiredEndExclusive, chunkEndExclusive)
+        let endInclusive = fetchEndExclusive - 1
         let range = DulcetPlaybackByteRange(
             start: context.nextOffset,
             endInclusive: endInclusive
@@ -493,8 +494,15 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
                 }
                 context.contentInformation = information
                 self.fillContentInformation(context.loadingRequest, with: information)
-                context.loadingRequest.dataRequest?.respond(with: data)
-                context.nextOffset += Int64(data.count)
+                let responseLength = context.requestsToEnd
+                    ? data.count
+                    : min(
+                        data.count,
+                        Int(context.requestedEndExclusive - context.nextOffset)
+                    )
+                let responseData = data.prefix(responseLength)
+                context.loadingRequest.dataRequest?.respond(with: responseData)
+                context.nextOffset += Int64(responseData.count)
                 context.requiresAudioSignature = false
                 if context.nextOffset >= information.contentLength ||
                     (!context.requestsToEnd && context.nextOffset >= context.requestedEndExclusive) {
