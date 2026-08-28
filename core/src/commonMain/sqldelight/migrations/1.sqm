@@ -1,0 +1,46 @@
+CREATE TABLE queue_entry_v2 (
+  server_id TEXT NOT NULL,
+  queue_entry_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  source_context_kind TEXT NOT NULL CHECK (
+    source_context_kind IN ('library', 'album', 'playlist', 'search', 'artist')
+  ),
+  source_context_raw_id TEXT,
+  source_context_display_name TEXT NOT NULL,
+  added_by TEXT NOT NULL CHECK (
+    added_by IN ('play_now', 'play_next', 'add_to_queue', 'autoplay')
+  ),
+  original_position INTEGER NOT NULL CHECK (original_position >= 0),
+  playback_position INTEGER NOT NULL CHECK (playback_position >= 0),
+  PRIMARY KEY (server_id, queue_entry_id),
+  UNIQUE (server_id, original_position),
+  UNIQUE (server_id, playback_position),
+  FOREIGN KEY (server_id) REFERENCES queue_state(server_id) ON DELETE CASCADE
+);
+
+INSERT INTO queue_entry_v2(
+  server_id,
+  queue_entry_id,
+  raw_id,
+  source_context_kind,
+  source_context_raw_id,
+  source_context_display_name,
+  added_by,
+  original_position,
+  playback_position
+)
+SELECT
+  server_id,
+  queue_entry_id,
+  raw_id,
+  source_context_kind,
+  source_context_raw_id,
+  source_context_display_name,
+  added_by,
+  original_position,
+  playback_position
+FROM queue_entry;
+
+DROP TABLE queue_entry;
+
+ALTER TABLE queue_entry_v2 RENAME TO queue_entry;
