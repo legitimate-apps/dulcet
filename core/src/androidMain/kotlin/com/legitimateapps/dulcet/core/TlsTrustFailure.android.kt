@@ -28,6 +28,4 @@ internal actual fun tlsTrustFailureOrNull(failure: Throwable): TlsTrustFailure? 
     return null
 }
 
-internal actual fun isUnsupportedAuthenticationChallenge(failure: Throwable): Boolean = false
-
 private const val MAX_CAUSE_DEPTH = 16

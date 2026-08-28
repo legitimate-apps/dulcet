@@ -145,6 +145,7 @@ def stop_auxiliary(root: Path) -> None:
     for name, expected in (
         ("redirect.pid", "redirect-server"),
         ("tls.pid", "untrusted-tls-server"),
+        ("proxy.pid", "redirect-server"),
     ):
         path = root / "logs" / name
         if not path.is_file():
@@ -188,27 +189,33 @@ def clear_directory(root: Path, name: str) -> None:
 
 
 def require_available_loopback_ports() -> None:
-    occupied: list[int] = []
-    reservations: list[socket.socket] = []
-    try:
-        for port in (4533, 4540, 4541, 4542):
-            reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                reservation.bind(("127.0.0.1", port))
-            except OSError:
+    deadline = time.monotonic() + 5
+    while True:
+        occupied: list[int] = []
+        reservations: list[socket.socket] = []
+        try:
+            for port in (4533, 4540, 4541, 4542, 4543):
+                reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    reservation.bind(("127.0.0.1", port))
+                except OSError:
+                    reservation.close()
+                    occupied.append(port)
+                else:
+                    reservations.append(reservation)
+        finally:
+            for reservation in reservations:
                 reservation.close()
-                occupied.append(port)
-            else:
-                reservations.append(reservation)
-    finally:
-        for reservation in reservations:
-            reservation.close()
-    if occupied:
-        ports = ", ".join(str(port) for port in occupied)
-        raise RuntimeError(
-            f"required loopback port(s) already in use: {ports}; "
-            "refusing to replace or attach to another service"
-        )
+        if not occupied:
+            return
+        if time.monotonic() >= deadline:
+            ports = ", ".join(str(port) for port in occupied)
+            raise RuntimeError(
+                f"required loopback port(s) already in use: {ports}; "
+                "refusing to replace or attach to another service"
+            )
+        time.sleep(0.1)
 
 
 def ensure_corpus(root: Path, image: str) -> None:
@@ -303,6 +310,20 @@ def start_auxiliary(root: Path) -> None:
         start_new_session=True,
     )
     (logs / "tls.pid").write_text(f"{tls.pid}\n")
+    proxy_log = (logs / "proxy.log").open("ab")
+    proxy = subprocess.Popen(
+        [
+            sys.executable,
+            str(TOOLS / "redirect-server"),
+            "--port",
+            "4543",
+            "--forward-proxy-auth",
+        ],
+        stdout=proxy_log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    (logs / "proxy.pid").write_text(f"{proxy.pid}\n")
 
 
 def wait_for_url(url: str, *, insecure: bool = False) -> None:
@@ -400,6 +421,7 @@ def up(root: Path) -> None:
         start_auxiliary(root)
         wait_for_url("http://127.0.0.1:4540/health")
         wait_for_url("https://127.0.0.1:4542/health", insecure=True)
+        wait_for_url("http://127.0.0.1:4543/health")
         start_container(root, image, name)
         health_check(root, name)
     except Exception:

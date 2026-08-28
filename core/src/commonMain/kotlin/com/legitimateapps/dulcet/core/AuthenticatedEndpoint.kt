@@ -102,7 +102,8 @@ internal class AuthenticatedEndpointClient(
     private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
     private val traceRecorder = RequestTraceRecorder(logSink, operationName)
-    private val client: HttpClient = createAccountHttpClient(AccountClientTransport.Default) {
+    private val clientTransport = AccountClientTransport.Default()
+    private val client: HttpClient = createAccountHttpClient(clientTransport) {
         expectSuccess = false
         followRedirects = false
         install(RequestTracePlugin) { observe = traceRecorder::observe }
@@ -159,36 +160,52 @@ internal class AuthenticatedEndpointClient(
         var redirects = 0
         while (true) {
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
-            val snapshot = if (
-                jsonBody == null &&
-                options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
-                options.range == null
-            ) {
-                client.prepareGet(target.url) {
-                    applyRequestParts(target.hostHeader, common, options)
-                }.execute { response ->
-                    response.toSnapshot(
-                        body = if (response.status.value in 200..299) {
-                            response.bodyAsBytesAllowingEstimatedEnd()
-                        } else {
-                            response.bodyAsBytes()
-                        },
-                        options = options,
-                    )
-                }
-            } else {
-                val response = if (jsonBody == null) {
-                    client.get(target.url) {
-                        applyRequestParts(target.hostHeader, common, options)
+            val snapshot = try {
+                if (
+                    jsonBody == null &&
+                    options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
+                    options.range == null
+                ) {
+                    var completedSnapshot: AuthenticatedEndpointHttpSnapshot? = null
+                    try {
+                        client.prepareGet(target.url) {
+                            applyRequestParts(target.hostHeader, common, options)
+                        }.execute { response ->
+                            response.toSnapshot(
+                                body = if (response.status.value in 200..299) {
+                                    response.bodyAsBytesAllowingEstimatedEnd()
+                                } else {
+                                    response.bodyAsBytes()
+                                },
+                                options = options,
+                            ).also { completedSnapshot = it }
+                        }
+                    } catch (failure: Throwable) {
+                        completedSnapshot?.takeIf {
+                            it.body.isNotEmpty() && isPlatformEstimatedLengthCompletion(failure)
+                        } ?: throw failure
                     }
                 } else {
-                    client.post(target.url) {
-                        applyRequestParts(target.hostHeader, common, options)
-                        contentType(ContentType.Application.Json)
-                        setBody(jsonBody)
+                    val response = if (jsonBody == null) {
+                        client.get(target.url) {
+                            applyRequestParts(target.hostHeader, common, options)
+                        }
+                    } else {
+                        client.post(target.url) {
+                            applyRequestParts(target.hostHeader, common, options)
+                            contentType(ContentType.Application.Json)
+                            setBody(jsonBody)
+                        }
                     }
+                    response.toSnapshot(response.bodyAsBytes(), options)
                 }
-                response.toSnapshot(response.bodyAsBytes(), options)
+            } catch (failure: Throwable) {
+                if (clientTransport.challengeTracker.consumeUnsupported()) {
+                    throw AuthenticatedEndpointFailure(
+                        DomainError.Auth.UnsupportedAuthenticationChallenge,
+                    )
+                }
+                throw failure
             }
             val redactedUrl = traceRecorder.latestRedactedUrl()
             if (snapshot.statusCode !in REDIRECT_STATUS_CODES) {
@@ -272,10 +289,11 @@ internal class AuthenticatedEndpointClient(
         }
 
     /**
-     * Ktor correctly reports an exact Content-Length mismatch as EOF. Navidrome's
-     * estimateContentLength contract is different: all bytes already received are the complete
-     * representation even when the estimate overshoots. Read incrementally so those bytes survive
-     * the terminal EOF; every other transport failure still propagates.
+     * Ktor correctly reports an exact Content-Length mismatch as a terminal read failure.
+     * Navidrome's estimateContentLength contract is different: all bytes already received are the
+     * complete representation even when the estimate overshoots. Read incrementally so those bytes
+     * survive CIO's EOF or Darwin's specifically typed completion; every other transport failure
+     * still propagates.
      */
     private suspend fun io.ktor.client.statement.HttpResponse.bodyAsBytesAllowingEstimatedEnd(): ByteArray {
         val channel = bodyAsChannel()
@@ -286,7 +304,13 @@ internal class AuthenticatedEndpointClient(
             val count = try {
                 channel.readAvailable(scratch, 0, scratch.size)
             } catch (failure: Throwable) {
-                if (total > 0 && failure.isPrematureEndOfHttpBody()) break
+                if (
+                    total > 0 &&
+                    (failure.isPrematureEndOfHttpBody() ||
+                        isPlatformEstimatedLengthCompletion(failure))
+                ) {
+                    break
+                }
                 throw failure
             }
             if (count < 0) break

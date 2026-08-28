@@ -7,6 +7,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.UnsafeNumber
 import platform.Foundation.NSURLAuthenticationMethodServerTrust
 import platform.Foundation.NSURLSessionAuthChallengePerformDefaultHandling
+import platform.Foundation.NSURLSessionAuthChallengeCancelAuthenticationChallenge
 
 @OptIn(ExperimentalForeignApi::class, UnsafeNumber::class)
 internal actual fun createAccountHttpClient(
@@ -37,15 +38,13 @@ internal actual fun createAccountHttpClient(
                     challenge.proposedCredential,
                 )
             } else {
-                throw UnsupportedAuthenticationChallengeFailure()
+                transport.challengeTracker.markUnsupported()
+                completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, null)
             }
         }
     }
     configure()
 }
-
-/** Content-free marker retained by Ktor's Darwin task handler when it cancels the challenge. */
-internal class UnsupportedAuthenticationChallengeFailure : Exception()
 
 /**
  * Explicit forward-proxy connector used by the hosted Darwin wire conformance control.

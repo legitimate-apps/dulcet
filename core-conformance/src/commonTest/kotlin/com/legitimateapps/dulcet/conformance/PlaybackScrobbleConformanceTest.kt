@@ -140,6 +140,16 @@ class PlaybackScrobbleConformanceTest {
             assertPartialRange("CONF-13 raw", raw, range, expectedSize = 64)
             assertTrue(raw.body.matchesAscii(0, "fLaC"))
 
+            // A cold Navidrome transcode is a live pipe and explicitly reports Accept-Ranges:
+            // none. Consume it once so CONF-13 measures the cached, seekable representation on
+            // every platform instead of depending on the test runner's execution order.
+            val transcodeWarmup = rest.getTranscodeStream(decision.params, mediaId = source.id)
+            assertEquals(200, transcodeWarmup.status, "CONF-13 transcode warmup status")
+            assertTrue(
+                transcodeWarmup.body.hasMp3Signature(),
+                "CONF-13 transcode warmup MP3 signature absent",
+            )
+
             val transcoded = rest.getTranscodeStream(
                 decision.params,
                 mediaId = source.id,

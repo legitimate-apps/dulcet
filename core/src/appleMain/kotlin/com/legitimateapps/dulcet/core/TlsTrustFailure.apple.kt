@@ -24,16 +24,6 @@ internal actual fun tlsTrustFailureOrNull(failure: Throwable): TlsTrustFailure? 
 }
 
 @OptIn(ExperimentalForeignApi::class)
-internal actual fun isUnsupportedAuthenticationChallenge(failure: Throwable): Boolean {
-    var current: Throwable? = failure
-    repeat(MAX_CAUSE_DEPTH) {
-        val candidate = current ?: return false
-        if (candidate is UnsupportedAuthenticationChallengeFailure) return true
-        current = candidate.cause
-    }
-    return false
-}
-
 private const val SERVER_CERTIFICATE_HAS_BAD_DATE = -1201L
 private const val SERVER_CERTIFICATE_UNTRUSTED = -1202L
 private const val SERVER_CERTIFICATE_HAS_UNKNOWN_ROOT = -1203L
