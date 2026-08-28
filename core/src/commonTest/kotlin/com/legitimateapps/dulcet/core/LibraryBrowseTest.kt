@@ -42,6 +42,7 @@ class LibraryBrowseTest {
         val track = first.tracks.single()
         assertEquals("track:000000000000000000000000000001", track.id.rawId)
         assertEquals(61.seconds, track.duration)
+        assertEquals(AudioContainer.Flac, track.sourceContainer)
         assertEquals(
             Credit(CreditRole.Artist, "Opaque Artist", ProviderItemId(PROVIDER_INSTANCE_ID, "artist:opaque-A")),
             track.credits.single(),
@@ -298,7 +299,7 @@ class LibraryBrowseTest {
                 "\"title\":\"Opaque Track\",\"artist\":\"Opaque Artist\"," +
                 "\"artistId\":\"artist:opaque-A\",\"album\":\"Album $id\"," +
                 "\"coverArt\":\"artwork:track:000000000000000000000000000001\"," +
-                "\"duration\":61,\"discNumber\":1,\"track\":1}]}"
+                "\"duration\":61,\"discNumber\":1,\"track\":1,\"suffix\":\"flac\"}]}"
         )
 
         fun numericAlbumListBody() = envelope(
@@ -314,7 +315,7 @@ class LibraryBrowseTest {
                 "\"id\":9,\"title\":\"Numeric Track\",\"artist\":\"Opaque Artist\"," +
                 "\"artistId\":\"artist:opaque-A\",\"album\":\"Numeric Album\"," +
                 "\"coverArt\":12," +
-                "\"duration\":61,\"discNumber\":1,\"track\":1}]}"
+                "\"duration\":61,\"discNumber\":1,\"track\":1,\"contentType\":\"audio/mpeg\"}]}"
         )
 
         fun errorBody(code: Int, message: String) =

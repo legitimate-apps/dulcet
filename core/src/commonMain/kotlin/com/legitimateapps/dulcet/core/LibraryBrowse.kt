@@ -55,6 +55,7 @@ internal data class LibraryTrack(
     val discNumber: Int?,
     val trackNumber: Int?,
     val duration: Duration,
+    val sourceContainer: AudioContainer?,
     val mediaSourceId: String?,
     val artworkKey: String?,
 )
@@ -357,6 +358,7 @@ private fun parseAlbum(
             discNumber = track.int("discNumber"),
             trackNumber = track.int("track"),
             duration = track.duration(),
+            sourceContainer = track.libraryAudioContainer(),
             mediaSourceId = null,
             artworkKey = track.optionalOpaqueId("coverArt"),
         )
@@ -374,6 +376,28 @@ private fun parseAlbum(
         artworkKey = album.optionalOpaqueId("coverArt") ?: summary.artworkKey,
         tracks = tracks,
     )
+}
+
+private fun JsonObject.libraryAudioContainer(): AudioContainer? {
+    string("suffix")?.lowercase()?.let { suffix ->
+        when (suffix) {
+            "mp3" -> return AudioContainer.Mp3
+            "mp4", "m4a" -> return AudioContainer.Mp4
+            "wav", "wave" -> return AudioContainer.Wav
+            "flac" -> return AudioContainer.Flac
+            "ogg", "oga", "opus" -> return AudioContainer.Ogg
+            "aac", "adts" -> return AudioContainer.AdtsAac
+        }
+    }
+    return when (string("contentType")?.substringBefore(';')?.trim()?.lowercase()) {
+        "audio/mpeg", "audio/mp3" -> AudioContainer.Mp3
+        "audio/mp4", "audio/x-m4a", "audio/m4a" -> AudioContainer.Mp4
+        "audio/wav", "audio/wave", "audio/x-wav" -> AudioContainer.Wav
+        "audio/flac", "audio/x-flac" -> AudioContainer.Flac
+        "audio/ogg", "application/ogg" -> AudioContainer.Ogg
+        "audio/aac", "audio/aacp" -> AudioContainer.AdtsAac
+        else -> null
+    }
 }
 
 private fun JsonObject.credit(providerInstanceId: String, role: CreditRole): List<Credit> {
