@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 83 — a legacy transcode's `estimateContentLength` is now carried as an estimate rather
+**Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
+
+A legacy transcode's `estimateContentLength` is now carried as an estimate rather
 than an exact byte count, which is what made a cold transcode cache fail every transcoded load;
 revision 82's pinned playback/scrobble controls measured both stream paths, legacy and
 extension offsets, exact opaque-parameter forwarding, and reference-server scrobble side effects;
@@ -3278,7 +3280,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 85 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
+**Revision 84 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
 representation lengths.
 
 1. OBSERVED against a cold Navidrome 0.63.2 transcode cache: `estimateContentLength=true` produced
@@ -3303,8 +3305,6 @@ representation lengths.
    and reject the same mismatch when exact, including the Apple total-length calculation. CONF-14a
    and CONF-17 use unique bitrate keys in a fresh disposable instance so the relevant requests cannot
    accidentally measure a warmed transcode cache. `FEATURES.yml` status cells remain unchanged.
-
-**Revision 86 (2026-08-28)** — the declared playback and scrobble controls became executable and
 
 **Revision 83 (2026-08-28)** — the declared playback and scrobble controls became executable and
 the defensive assumptions they existed to measure became bounded observations.
@@ -3337,8 +3337,6 @@ the defensive assumptions they existed to measure became bounded observations.
    instance can coexist with another local service without weakening the disposable-only gate.
    `FEATURES.yml` status cells remain unchanged pending a merge-backed CI run identity.
 
-**Revision 84 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
-
 **Revision 82 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
 range failure that the generated MP3 fixture missed.
 
@@ -3366,19 +3364,6 @@ two-byte request.
    new now-playing entry. This is a manual operator-grade observation on one machine, not a CI
    control; CONF-11 through CONF-15 and CONF-22/CONF-23 remain unimplemented, so `playback.stream`
    and `playback.scrobble` stay `planned` in `FEATURES.yml`.
-
-**Revision 80 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
-two-byte request; this was an intermediate defect, not the complete production root cause.
-
-1. A generated-MP3 loopback HTTP/Range test reproduced the initial two-byte validation rejection:
-   the server served the stream, but the item never became ready before the over-fetch correction.
-2. The observed first request was `bytes=0-1`; forwarding it unchanged made the core reject valid MP3
-   as too short to contain its three-byte `ID3` signature.
-3. The loader now over-fetches one bounded validation chunk without over-responding to AVFoundation.
-   The generated fixture reached both `Ready` and `PlaybackProgressBegan` with
-   `Content-Type: audio/mpeg`, ruling out MIME-versus-UTI disagreement for that fixture but not
-   reproducing the continuing reference-server loop. Revision 81 records the exact-asset reproduction
-   and the additional root cause.
 
 **Revision 80 (2026-08-28)** — CI evidence became structured and its disposable Linux environment
 became locally reproducible.
