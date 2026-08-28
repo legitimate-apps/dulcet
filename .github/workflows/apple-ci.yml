@@ -91,9 +91,15 @@ jobs:
         run: |
           set -o pipefail
           cd apple/DulcetKit
+          # -parallel-testing-enabled NO restores the serial execution `swift test` gave us before
+          # the move to result bundles. xcodebuild parallelises by default, and these suites drive
+          # real AVFoundation: under contention a readiness wait that normally settles in ~4s
+          # exceeded its 20s timeout while unrelated instant tests took 6s. The iOS and tvOS
+          # invocations below already pass this flag; the macOS package was the one that did not.
           xcodebuild test \
             -scheme DulcetKit-Package \
             -destination 'platform=macOS' \
+            -parallel-testing-enabled NO \
             -derivedDataPath "$RUNNER_TEMP/DulcetKitDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-swift-testing.xcresult" 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-swift-testing.log"
@@ -412,6 +418,7 @@ jobs:
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
+              -parallel-testing-enabled NO \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
