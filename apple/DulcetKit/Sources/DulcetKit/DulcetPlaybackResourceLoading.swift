@@ -394,6 +394,13 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
     ) -> Void
     private let lock = NSLock()
     private var contexts: [ObjectIdentifier: LoadingContext] = [:]
+    private var contentInformation: DulcetPlaybackContentInformation?
+
+    public var latestContentInformation: DulcetPlaybackContentInformation? {
+        lock.lock()
+        defer { lock.unlock() }
+        return contentInformation
+    }
 
     public init(
         resource: any DulcetPlaybackResourceLoading,
@@ -513,6 +520,9 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         _ loadingRequest: AVAssetResourceLoadingRequest,
         with information: DulcetPlaybackContentInformation
     ) {
+        lock.lock()
+        contentInformation = information
+        lock.unlock()
         guard let target = loadingRequest.contentInformationRequest else { return }
         target.contentType = expectedContainer.uniformTypeIdentifier
         target.contentLength = information.contentLength
