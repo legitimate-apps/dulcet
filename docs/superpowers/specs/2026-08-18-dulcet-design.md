@@ -1336,6 +1336,20 @@ missed. **OBSERVED:** `stream` takes `estimateContentLength`, which *"Sets Conte
 transcoded media."* Without it a cold legacy transcoded stream has no declared length, so it is
 delivered chunked and cannot advertise a seekable resource size. Keep sending it.
 
+🚨 **OBSERVED 2026-08-28 by CONF-13 against Navidrome 0.63.2: a COLD transcode is not
+range-capable at all.** A ranged `getTranscodeStream` against a transcode that is not yet cached
+answers **HTTP 200 with no `Content-Range` and `Accept-Ranges: none`** — the `Range` header is
+transmitted unchanged and simply not honoured. Once the same transcode is cached, the identical
+request returns **HTTP 206** with the exact requested bytes. So seekability of a transcoded stream
+is a property of the *server's cache state*, not of the endpoint, and a seek attempted on a
+just-started transcode will not be served. Any UI that offers seeking on a transcoded stream must
+treat the first play as potentially unseekable rather than assuming the 206 it will get later.
+
+⚠️ This also produced a false green: the JVM conformance run passed CONF-13 only because an earlier
+test in the same run had warmed that transcode. The control now establishes its own warm precondition
+instead of depending on execution order — a test whose outcome depends on what ran before it is not
+measuring what it claims.
+
 **OBSERVED 2026-08-28 by CONF-17 against Navidrome 0.63.2:** this value is usable only as an
 **estimate**, not an authoritative representation length. On a cold transcode cache, representative
 declared/body pairs were 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes: the
@@ -3279,6 +3293,27 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 85 (2026-08-28)** — the estimated-body completion rule was platform-specific, and a
+Foundation delegate could terminate the process.
+
+1. OBSERVED: CIO surfaces an estimate-overshooting body as a terminal `EOFException`, while the
+   Darwin engine cancels the channel and raises `ClosedByteChannelException` wrapping
+   `DarwinHttpRequestException` whose `NSError` is `NSURLErrorDomain/-1005`. The same three controls
+   were green on JVM and red on `macosArm64` for that reason alone. Recovery is now matched on the
+   **typed** Darwin origin plus at least one received byte, an estimated length, and no range
+   request; it is not matched on exception text and does not accept a broader `NSError` family.
+   Exact lengths and ranged responses stay on the strict buffered path, and a truncation against an
+   exact length still fails — proven by mutating the predicate and observing the control die.
+2. OBSERVED: a cold transcode is not range-capable — see §12.5. CONF-13 had been passing on JVM only
+   because execution order warmed the transcode first; it now establishes that precondition itself.
+3. OBSERVED: the Darwin authentication-challenge handler threw a Kotlin marker exception from an
+   `NSURLSession` delegate callback. A Kotlin exception crossing that boundary terminates the
+   process, so this was a latent crash rather than a style issue. The challenge is now recorded
+   through a per-client thread-safe handoff, the delegate cancels the challenge, and Kotlin maps the
+   recorded fact to `Auth.UnsupportedAuthenticationChallenge` after Ktor returns control.
+4. The local conformance lifecycle now starts and guards the forward-proxy fixture that `apple-ci`
+   uses, so a local run exercises the same surface rather than a subset of it.
 
 **Revision 84 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
 representation lengths.
