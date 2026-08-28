@@ -209,6 +209,29 @@ public class ApplePlaybackQueueClient private constructor(
         controllerOrThrow().previous()
     }
 
+    public fun nextForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
+        runClosed {
+            controllerOrThrow().nextForSession(PlaybackSessionId(playbackSessionId))
+        }
+
+    public fun previousForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
+        runClosed {
+            controllerOrThrow().previousForSession(PlaybackSessionId(playbackSessionId))
+        }
+
+    public fun acceptsCommand(
+        playbackSessionId: String,
+        requiresSeekable: Boolean,
+    ): Boolean = try {
+        initializationErrorKind == null &&
+            controllerOrThrow().acceptsCommand(
+                PlaybackSessionId(playbackSessionId),
+                requiresSeekable,
+            )
+    } catch (_: Throwable) {
+        false
+    }
+
     public fun setShuffle(enabled: Boolean): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().setShuffle(enabled)
     }

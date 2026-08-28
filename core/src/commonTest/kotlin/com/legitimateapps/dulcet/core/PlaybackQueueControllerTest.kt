@@ -118,6 +118,49 @@ class PlaybackQueueControllerTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun staleSessionCommandsAreRejectedWithoutMovingTheCurrentQueue() {
+        val fixture = fixture()
+        val first = assertNotNull(
+            fixture.controller.replaceAndStart(request(listOf("a", "b"))).startDirective,
+        )
+        val second = assertNotNull(fixture.controller.next().startDirective)
+
+        val stale = fixture.controller.previousForSession(first.playbackSessionId)
+
+        assertNull(stale.startDirective)
+        assertEquals("b", stale.snapshot.entries[stale.snapshot.currentIndex!!].itemId.rawId)
+        assertEquals(second.playbackSessionId, stale.snapshot.currentSession?.playbackSessionId)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun seekCommandAcceptanceComesOnlyFromReadySeekability() {
+        val fixture = fixture()
+        val directive = assertNotNull(
+            fixture.controller.replaceAndStart(request(listOf("a"))).startDirective,
+        )
+
+        assertEquals(false, fixture.controller.acceptsCommand(directive.playbackSessionId, true))
+        fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.Ready(
+                directive.attemptId,
+                180.seconds,
+                PlaybackSeekability.NotSeekable,
+            ),
+        )
+        assertEquals(false, fixture.controller.acceptsCommand(directive.playbackSessionId, true))
+        fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.Ready(
+                directive.attemptId,
+                180.seconds,
+                PlaybackSeekability.Seekable,
+            ),
+        )
+        assertEquals(true, fixture.controller.acceptsCommand(directive.playbackSessionId, true))
+        fixture.driver.close()
+    }
+
     private fun fixture(shuffleSeed: Int = 1): Fixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
