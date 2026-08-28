@@ -1090,7 +1090,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             albums: currentSnapshot.albums,
             selectedAlbum: currentSnapshot.selectedAlbum,
             libraryFailure: currentSnapshot.libraryFailure,
-            nowPlaying: presentation.nowPlaying
+            nowPlaying: presentation.status == .ready ? presentation.nowPlaying : nil
         )
     }
 
