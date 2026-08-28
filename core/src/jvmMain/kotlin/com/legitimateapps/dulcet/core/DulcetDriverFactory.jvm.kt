@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.legitimateapps.dulcet.database.DulcetDatabase
 import java.sql.DriverManager
+import java.util.Properties
 
 internal actual class DulcetDriverFactory(
     private val databasePath: String,
@@ -14,7 +15,10 @@ internal actual class DulcetDriverFactory(
 
     actual fun createDriver(): SqlDriver {
         val url = "jdbc:sqlite:$databasePath"
-        val driver = JdbcSqliteDriver(url)
+        val driver = JdbcSqliteDriver(
+            url = url,
+            properties = Properties().apply { put("foreign_keys", "true") },
+        )
         val inspection = inspectSchema(url)
         if (!inspection.hasSchema) {
             DulcetDatabase.Schema.create(driver)
