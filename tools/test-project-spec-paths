@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Prove the project-spec path gate rejects the exact rot it exists to catch."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+GATE = "tools/verify_project_spec_paths.py"
+
+
+def run(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, GATE], cwd=root, capture_output=True, text=True, check=False
+    )
+
+
+def materialize(root: Path) -> None:
+    (root / "tools").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / GATE, root / GATE)
+    (root / "apple").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "apple/project.yml", root / "apple/project.yml")
+    for line in (ROOT / "apple/project.yml").read_text().splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- path:") and not stripped.startswith("path:"):
+            continue
+        raw = stripped.split("path:", 1)[1].strip().strip("\"'")
+        if not Path(raw).suffix:
+            continue
+        target = root / "apple" / raw
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("fixture")
+
+
+with tempfile.TemporaryDirectory(prefix="dulcet-project-spec-ok-") as directory:
+    root = Path(directory)
+    materialize(root)
+    result = run(root)
+    if result.returncode != 0:
+        raise AssertionError(f"a complete project spec was rejected: {result.stdout}{result.stderr}")
+
+# The real regression: origin/main named Fixtures/realistic-tone.mp3, which did not exist, and every
+# workflow stayed green because CI builds the committed .xcodeproj and never runs xcodegen.
+with tempfile.TemporaryDirectory(prefix="dulcet-project-spec-missing-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec = root / "apple/project.yml"
+    text = spec.read_text()
+    marker = "DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3"
+    if marker not in text:
+        raise AssertionError("fixture spec no longer contains the path this control rewrites")
+    spec.write_text(text.replace(marker, "DulcetKit/Tests/DulcetKitTests/Fixtures/absent.mp3", 1))
+    result = run(root)
+    if result.returncode == 0 or "do not exist" not in result.stderr:
+        raise AssertionError(
+            f"a spec naming a missing file was accepted: returncode={result.returncode}, "
+            f"stderr={result.stderr!r}"
+        )
+
+print("project spec path gate accepts a complete spec and rejects a missing referenced file")
