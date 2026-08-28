@@ -32,7 +32,9 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
-        withHostTestBuilder {}
+        withHostTestBuilder {}.configure {
+            isIncludeAndroidResources = true
+        }
     }
 
     macosArm64()
@@ -78,6 +80,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
         }
         getByName("androidHostTest").dependencies {
+            implementation(libs.robolectric)
             implementation(libs.sqldelight.sqlite.driver)
         }
     }
