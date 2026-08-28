@@ -41,5 +41,9 @@
       "position_milliseconds": 98765
     }
   ],
-  "schema_meta": [1, 1, 42]
+  "schema_meta": {
+    "source_schema_version": 1,
+    "cache_format_version": 1,
+    "committed_generation": 42
+  }
 }

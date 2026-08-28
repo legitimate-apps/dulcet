@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -98,6 +99,16 @@ def current_schema_version() -> int:
     if not snapshots:
         raise SemanticPreservationError("no numbered SQLDelight schema snapshots found")
     return max(snapshots)
+
+
+def current_cache_format_version() -> int:
+    source = (
+        ROOT / "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DulcetDatabase.kt"
+    ).read_text()
+    match = re.search(r"DULCET_CACHE_FORMAT_VERSION:\s*Long\s*=\s*(\d+)", source)
+    if match is None:
+        raise SemanticPreservationError("cannot resolve current cache-format version")
+    return int(match.group(1))
 
 
 def table_names(connection: sqlite3.Connection) -> set[str]:
@@ -225,7 +236,12 @@ def reconcile_download_files(
     return enriched, errors
 
 
-def assert_fixture_semantics(database: Path, files: Path, expected_path: Path) -> None:
+def assert_fixture_semantics(
+    database: Path,
+    files: Path,
+    expected_path: Path,
+    target_version: int,
+) -> None:
     expected = json.loads(expected_path.read_text())
     errors: list[str] = []
     with sqlite3.connect(database) as connection:
@@ -244,13 +260,24 @@ def assert_fixture_semantics(database: Path, files: Path, expected_path: Path) -
             "FROM schema_meta WHERE singleton_id = 1"
         ).fetchone()
         actual["schema_meta"] = list(metadata) if metadata is not None else None
-    for table in (*PROTECTED_COLUMNS, "schema_meta"):
+    for table in PROTECTED_COLUMNS:
         if actual[table] != expected[table]:
             errors.append(
                 f"{table}: semantic rows changed\n"
                 f"expected={json.dumps(expected[table], sort_keys=True)}\n"
                 f"actual={json.dumps(actual[table], sort_keys=True)}"
             )
+    expected_metadata = [
+        target_version,
+        current_cache_format_version(),
+        expected["schema_meta"]["committed_generation"],
+    ]
+    if actual["schema_meta"] != expected_metadata:
+        errors.append(
+            "schema_meta: target version/cache format or committed generation changed incorrectly\n"
+            f"expected={json.dumps(expected_metadata)}\n"
+            f"actual={json.dumps(actual['schema_meta'])}"
+        )
     if errors:
         raise SemanticPreservationError("\n".join(errors))
 
@@ -267,13 +294,28 @@ def migrate_and_assert_fixture(
         files = work / "files"
         shutil.copy2(fixture / "database.db", database)
         shutil.copytree(fixture / "files", files)
+        expected_metadata = json.loads((fixture / "expected.json").read_text())["schema_meta"]
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
+            source_metadata = connection.execute(
+                "SELECT schema_version, cache_format_version, committed_generation "
+                "FROM schema_meta WHERE singleton_id = 1"
+            ).fetchone()
+            expected_source_metadata = (
+                expected_metadata["source_schema_version"],
+                expected_metadata["cache_format_version"],
+                expected_metadata["committed_generation"],
+            )
+            if source_metadata != expected_source_metadata:
+                raise SemanticPreservationError(
+                    f"fixture v{fixture_version} schema_meta does not match its manifest: "
+                    f"expected={expected_source_metadata} actual={source_metadata}"
+                )
             apply_released_migrations(connection, fixture_version, target_version)
             if destructive_sql is not None:
                 connection.executescript(destructive_sql)
             connection.commit()
-        assert_fixture_semantics(database, files, fixture / "expected.json")
+        assert_fixture_semantics(database, files, fixture / "expected.json", target_version)
 
 
 DESTRUCTIVE_SAME_NAME_MIGRATION = """
