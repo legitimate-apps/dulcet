@@ -403,6 +403,7 @@ enum DulcetPlaybackResourceLoaderTraceEvent: Sendable {
         requiresAudioSignature: Bool
     )
     case rangeRequested(requestID: Int, range: DulcetPlaybackByteRange)
+    case contentInformationPublished(requestID: Int)
     case responded(requestID: Int, byteCount: Int)
     case finished(requestID: Int)
     case cancelled(requestID: Int)
@@ -565,8 +566,20 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
                     )
                     return
                 }
-                context.contentInformation = information
-                self.fillContentInformation(context.loadingRequest, with: information)
+                if let existingInformation = context.contentInformation {
+                    guard existingInformation == information else {
+                        self.finish(
+                            context.loadingRequest,
+                            failure: .protocolViolation,
+                            refreshReason: .validationFailed
+                        )
+                        return
+                    }
+                } else {
+                    context.contentInformation = information
+                    self.fillContentInformation(context.loadingRequest, with: information)
+                    self.traceHandler?(.contentInformationPublished(requestID: context.requestID))
+                }
                 let responseLength = context.requestsToEnd
                     ? data.count
                     : min(
