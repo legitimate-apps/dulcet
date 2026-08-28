@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.AbstractTestTask
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -46,7 +47,13 @@ kotlin {
 // diagnose from: OBSERVED 2026-08-28, a CONF-14a failure in core-ci reported exactly that and the
 // cause could not be determined from the log at all. Print the message and stack, and keep the
 // JUnit XML as an artifact (see .github/workflows/core-ci.yml).
-tasks.withType<Test>().configureEach {
+//
+// AbstractTestTask, not Test: `Test` is the JVM task type only, so the first version of this block
+// left the Kotlin/Native test tasks reporting bare "AssertionError at <file>:<line>" exactly as
+// before. OBSERVED 2026-08-28 when :core-conformance:macosArm64Test failed three controls and the
+// log carried no message for any of them, while the JVM run of the same suite was fully legible.
+// AbstractTestTask is the common supertype of the JVM, native and JS test tasks.
+tasks.withType<AbstractTestTask>().configureEach {
     testLogging {
         events("failed")
         exceptionFormat = TestExceptionFormat.FULL
