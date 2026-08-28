@@ -2612,13 +2612,18 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-21 | does `playbackReport` increment play count? (gates §15.4 — **not a Phase-1 test**) |
 | CONF-22 | `scrobble submission=false` does not change play count; `submission=true` does |
 | CONF-23 | repeated `scrobble` with the same `time` — measures whether the server deduplicates (§15.3) |
-| CONF-31 | `getIndexes?ifModifiedSince` behavior and granularity (§16.1) |
-| CONF-32 | paging past the end returns an empty list, not an error |
+| CONF-34 | `getIndexes?ifModifiedSince` behavior and granularity (§16.1) |
+| CONF-35 | paging past the end returns an empty list, not an error |
 | CONF-33 | library mutated mid-import: the committed generation is internally consistent and the stability witness detects the change |
-| CONF-41 | `getCoverArt` size behavior, content types, HTTP-200 JSON/XML error envelopes, code-70 unavailable mapping, and positive image signatures |
+| CONF-44 | `getCoverArt` size behavior, content types, HTTP-200 JSON/XML error envelopes, code-70 unavailable mapping, and positive image signatures |
 | CONF-42 | `songLyrics` v2 structured response shape |
-| CONF-51 | permission errors for the restricted user map to `Auth.Forbidden`, not a generic failure |
-| CONF-52 | unknown fields in a response are preserved and ignored |
+| CONF-10d | permission errors for the restricted user map to `Auth.Forbidden`, not a generic failure |
+| CONF-61 | unknown fields in a response are preserved and ignored |
+| CONF-31 | generation-pinned reads: a sync generation's reads observe one committed snapshot (§16.3) |
+| CONF-32 | atomic sync-generation commit: a generation becomes visible in one step or not at all (§16.4) |
+| CONF-41 | local and server search results merge without duplicating or dropping an entry (§18.1) |
+| CONF-51 | validated atomic download promotion: a download is validated, then promoted atomically (§14.5) |
+| CONF-52 | offline playback plan: a downloaded item plays with no network dependency (§14.5) |
 
 ### 20.5 Facade header review
 
@@ -3296,6 +3301,27 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 86 (2026-08-28)** — the conformance registry and the design's representative-test table
+became one id space again, and the gate can now see it.
+
+1. They had drifted into two. Five ids named entirely different tests in the two documents —
+   `CONF-41` was "local and server search merge" in the registry and "`getCoverArt` size behavior" in
+   the design — and five more (`CONF-07b`, `CONF-16`, `CONF-21`, `CONF-42`, `CONF-43`) existed only
+   in the design. The registry is authoritative, so it kept its meanings and the design's five
+   descriptions moved to ids in the registry's own scheme: `getIndexes?ifModifiedSince` → CONF-34,
+   paging past the end → CONF-35, `getCoverArt` → CONF-44, restricted-user permission errors →
+   CONF-10d, unknown-field preservation → CONF-61. The five design-only ids were added to the
+   registry unchanged; they were absent, not conflicting.
+2. `tools/parity_gate.py` now fails when either document names an id the other does not. It
+   previously checked only that a declared id **exists** in the registry and is evidenced exactly
+   once, never what the id meant — so a shipped cell could carry evidence labelled with one test
+   while citing an id the design assigns to a different one, and stay green. That is worse than a
+   broken gate, because the evidence reads as verified. Both directions are proven by removing an
+   id from each document in turn and observing the gate fail.
+3. Set equality is deliberately the whole check. Comparing prose would be brittle and would fail on
+   harmless rewording, while a one-sided id is unambiguous and is the shape every observed drift
+   took.
 
 **Revision 85 (2026-08-28)** — macOS search activation and keyboard playback now enter through the
 same presentation intent boundary as their pointer-driven library and transport counterparts.
