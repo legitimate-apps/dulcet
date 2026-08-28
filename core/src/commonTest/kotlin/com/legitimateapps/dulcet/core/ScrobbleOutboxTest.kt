@@ -338,7 +338,7 @@ class ScrobbleOutboxTest {
                 redactedUrl = "https://music.invalid/rest/scrobble.view?<redacted>",
                 headers = AuthenticatedEndpointResponseHeaders(
                     contentType = "application/json",
-                    contentLength = body.size.toLong(),
+                    contentLength = PlaybackContentLength.Exact(body.size.toLong()),
                     retryAfter = null,
                     acceptRanges = null,
                     contentRange = null,

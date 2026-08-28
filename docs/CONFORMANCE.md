@@ -26,6 +26,7 @@ the detailed assertion.
 | CONF-14a | legacy `transcodeOffset` seek |
 | CONF-14b | `transcoding` extension offset behavior |
 | CONF-15 | POST transcode decision and opaque-parameter stream round-trip |
+| CONF-17 | cold legacy-transcode `Content-Length` estimate semantics |
 | CONF-22 | `submission=false` versus `submission=true` play-count behavior |
 | CONF-23 | repeated same-time scrobble deduplication behavior |
 | CONF-31 | generation-pinned reads |

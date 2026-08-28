@@ -172,11 +172,28 @@ public class RemotePlaybackWirePlan internal constructor(
     val deliveryProtocol: PlaybackDeliveryProtocol,
     val expectedContainer: AudioContainer,
     val transcode: PlaybackWireTranscodeDecision,
+    /** Length observed while loading this immutable plan; null until a full response is loaded. */
+    val contentLength: PlaybackContentLength? = null,
     internal val endpoint: String,
     internal val parameters: Map<String, String>,
     internal val resolutionRequest: PlaybackResolveRequest,
 ) : PlaybackPlan {
     override fun toString(): String = "RemotePlaybackWirePlan(<redacted>)"
+
+    internal fun recording(contentLength: PlaybackContentLength?): RemotePlaybackWirePlan =
+        RemotePlaybackWirePlan(
+            playbackSessionId = playbackSessionId,
+            attemptId = attemptId,
+            itemId = itemId,
+            path = path,
+            deliveryProtocol = deliveryProtocol,
+            expectedContainer = expectedContainer,
+            transcode = transcode,
+            contentLength = contentLength,
+            endpoint = endpoint,
+            parameters = parameters,
+            resolutionRequest = resolutionRequest,
+        )
 }
 
 public sealed interface PlaybackResolutionResult {
@@ -360,13 +377,20 @@ public class PlaybackWireClient private constructor(
             val response = transport.get(
                 endpoint = plan.endpoint,
                 parameters = plan.parameters,
-                options = AuthenticatedEndpointRequestOptions(range = range?.render()),
+                options = AuthenticatedEndpointRequestOptions(
+                    range = range?.render(),
+                    contentLengthKind = if (plan.usesEstimatedLegacyContentLength() && range == null) {
+                        AuthenticatedEndpointContentLengthKind.Estimated
+                    } else {
+                        AuthenticatedEndpointContentLengthKind.Exact
+                    },
+                ),
             )
             val validation = PlaybackStreamValidator.validate(response, plan.expectedContainer)
             if (validation is PlaybackStreamValidationResult.Audio) {
                 return PlaybackLoadResult.Audio(
                     bytes = response.body,
-                    plan = plan,
+                    plan = if (range == null) plan.recording(validation.contentLength) else plan,
                     validation = validation,
                     requestTrace = response.requestTrace,
                     didReresolveAfterBadRequest = !allowBadRequestReresolution,
@@ -569,6 +593,11 @@ private fun RemotePlaybackWirePlan.isTranscoded(): Boolean = when (val decision 
     is PlaybackWireTranscodeDecision.LegacyHint ->
         decision.format != null || decision.maxBitRateKbps != null
 }
+
+internal fun RemotePlaybackWirePlan.usesEstimatedLegacyContentLength(): Boolean =
+    path == PlaybackDeliveryPath.Legacy &&
+        isTranscoded() &&
+        parameters["estimateContentLength"] == "true"
 
 private object SecurePlaybackAttemptIdSource : PlaybackAttemptIdSource {
     override fun nextAttemptId(): AttemptId = AttemptId(

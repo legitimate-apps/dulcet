@@ -33,10 +33,28 @@ public enum class PlaybackErrorResponseShape {
     UnexpectedSuccessfulPayload,
 }
 
+/**
+ * A server-declared response length. The variants deliberately expose differently named values so
+ * a caller must branch on exactness before using one as an integrity boundary.
+ */
+public sealed interface PlaybackContentLength {
+    public data class Exact(val byteCount: Long) : PlaybackContentLength {
+        init {
+            require(byteCount >= 0)
+        }
+    }
+
+    public data class Estimated(val estimatedByteCount: Long) : PlaybackContentLength {
+        init {
+            require(estimatedByteCount >= 0)
+        }
+    }
+}
+
 public sealed interface PlaybackStreamValidationResult {
     data class Audio(
         val container: AudioContainer,
-        val contentLength: Long?,
+        val contentLength: PlaybackContentLength?,
         val supportsByteRanges: Boolean,
     ) : PlaybackStreamValidationResult
 
@@ -116,6 +134,14 @@ internal object PlaybackStreamValidator {
             response.body.isEmpty() ||
             (requiresAudioSignature &&
                 (response.body.size < rule.minimumBytes || !rule.signatureMatches(response.body)))
+        ) {
+            return unexpectedSuccessfulPayload(response, DomainError.Protocol.UnexpectedBinary)
+        }
+        val declaredLength = response.headers.contentLength
+        if (
+            declaredLength is PlaybackContentLength.Exact &&
+            response.statusCode != PARTIAL_CONTENT &&
+            declaredLength.byteCount != response.body.size.toLong()
         ) {
             return unexpectedSuccessfulPayload(response, DomainError.Protocol.UnexpectedBinary)
         }

@@ -1324,11 +1324,19 @@ are hints, not a contract; the server may ignore them.
 
 **Path B also sends `estimateContentLength` whenever the plan is transcoded** — the lever revision 2
 missed. **OBSERVED:** `stream` takes `estimateContentLength`, which *"Sets Content-Length header for
-transcoded media."* Without it a legacy transcoded stream has no declared length, which is what makes
-it unseekable and what makes §14.5's "validated against the expected byte length" impossible for a
-transcoded download. Both §12.7 (seeking) and §14.5 (atomic promotion) quietly assumed that information
-existed; this is where it comes from. Record the returned length on the plan. `TranscodeDecision.LegacyHint` records that we
-are on this path so the UI never claims a negotiated result.
+transcoded media."* Without it a cold legacy transcoded stream has no declared length, so it is
+delivered chunked and cannot advertise a seekable resource size. Keep sending it.
+
+**OBSERVED 2026-08-28 by CONF-17 against Navidrome 0.63.2:** this value is usable only as an
+**estimate**, not an authoritative representation length. On a cold transcode cache, representative
+declared/body pairs were 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes: the
+header overshot the complete body by approximately 2.3–2.5%. Without the flag the same cold response
+had no `Content-Length` and completed chunked; after the transcode cache warmed, the declared length
+was exact. The plan therefore records the response as `PlaybackContentLength.Estimated`, a distinct
+type from `PlaybackContentLength.Exact`. EOF before an estimate is completion; EOF before an exact
+length is truncation. No validator, download promoter, or platform media loader may collapse those
+variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
+this path so the UI never claims a negotiated result.
 
 **`transcodeOffset` applies to Path B. OBSERVED 2026-08-28 by CONF-14a against Navidrome 0.63.2 with
 the pinned Linux ffmpeg 6.1.1:** the generated 31-second FLAC fixture transcoded to a 248,455-byte MP3
@@ -1774,9 +1782,13 @@ and reconciliation against a changed server item. The platform owns the **execut
   outstanding tasks, match them to rows, mark rows with no task as interrupted, and mark tasks with no
   row for cancellation. Duplicate delivery after relaunch is harmless because promotion is keyed on the
   destination path.
-- **Atomic promotion:** bytes land in a temp file; the file is validated with the §12.4 validator table
-  **and** against the expected byte length; only then is it atomically renamed into place and the row
-  marked complete. A crash between validation and rename leaves a temp file that reconciliation deletes.
+- **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
+  table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
+  before the file is atomically renamed and the row marked complete. An estimated length is never an
+  integrity boundary. For a cold legacy transcoded download, completion is the terminal response-body
+  end plus successful container/signature validation; the stored row records the observed file byte
+  count as exact only **after** the complete temp file closes. A crash between validation and rename
+  leaves a temp file that reconciliation deletes.
 - **Partial files** keep platform-supplied resume data; resume data older than 7 days, or rejected by
   the platform, causes a restart from zero rather than a stuck row.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
@@ -2563,7 +2575,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
 | CONF-16 | **drives the transcode concurrency limiter** until it rejects: asserts HTTP **429**, a `Retry-After` header, an envelope body, and that the client maps it to `Server.Busy` rather than a generic error (§18.12) |
-| CONF-17 | `estimateContentLength` on a transcoded legacy stream returns a usable `Content-Length` (§12.5) |
+| CONF-17 | `estimateContentLength` on a cold transcoded legacy stream returns a usable length only as an estimate: it overshoots the complete body and is non-authoritative (§12.5) |
 | CONF-43 | a fixed query set through `search3`, recording returned id sets, to measure local-vs-server matching divergence (§18.1) |
 | CONF-13 | `Range` support on raw and on transcoded streams |
 | CONF-14a | `transcodeOffset` seek on the **legacy** `stream` path returns audio at the requested offset |
@@ -3256,6 +3268,32 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 83 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
+representation lengths.
+
+1. OBSERVED against a cold Navidrome 0.63.2 transcode cache: `estimateContentLength=true` produced
+   declared/body pairs of 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes,
+   overshooting by approximately 2.3–2.5%; omitting the flag removed `Content-Length` and delivered
+   the complete body chunked; a warm cache made the declaration exact. CONF-17 now records the answer
+   as "yes, but only as an estimate."
+2. `PlaybackContentLength.Exact` and `.Estimated` are separate public variants with differently named
+   numeric members. Legacy transcode plans keep sending `estimateContentLength`, and a completed full
+   load returns an immutable plan carrying the observed estimate. Only the exact variant is enforced
+   against body size; an EOF after received audio bytes completes an estimated body.
+3. §14.5 no longer promotes a download by comparing its file to an estimate. A cold transcoded
+   download closes and validates its temp file by the binary validator, records the completed file's
+   observed size, then promotes atomically; an exact server length remains an additional integrity
+   requirement.
+4. The Apple exposure was reachable: the legacy plan's HTTP 200 `Content-Length` flowed through
+   `resourceTotalLength`, core validation, and `DulcetPlaybackContentInformation` into AVFoundation.
+   Core now classifies that declaration from the plan and publishes the completed body length for an
+   estimate; an exact mismatch is rejected. Every Objective-C entry point continues to catch Kotlin
+   failures and return a closed DTO.
+5. Unit controls accept an estimated 1,218,703-byte declaration for a completed 1,191,316-byte body
+   and reject the same mismatch when exact, including the Apple total-length calculation. CONF-14a
+   and CONF-17 use unique bitrate keys in a fresh disposable instance so the relevant requests cannot
+   accidentally measure a warmed transcode cache. `FEATURES.yml` status cells remain unchanged.
 
 **Revision 82 (2026-08-28)** — the declared playback and scrobble controls became executable and
 the defensive assumptions they existed to measure became bounded observations.
