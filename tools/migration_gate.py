@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Semantic protected-data migration gate for every released Dulcet schema fixture."""
+"""Protected-data migration gate for every released Dulcet schema fixture."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ PROTECTED_COLUMNS = {
 }
 
 
-class SemanticPreservationError(AssertionError):
+class MigrationGateError(AssertionError):
     pass
 
 
@@ -97,7 +97,7 @@ def numbered_paths(directory: Path, suffix: str) -> dict[int, Path]:
 def current_schema_version() -> int:
     snapshots = numbered_paths(SCHEMA_SNAPSHOTS, ".db")
     if not snapshots:
-        raise SemanticPreservationError("no numbered SQLDelight schema snapshots found")
+        raise MigrationGateError("no numbered SQLDelight schema snapshots found")
     return max(snapshots)
 
 
@@ -107,7 +107,7 @@ def current_cache_format_version() -> int:
     ).read_text()
     match = re.search(r"DULCET_CACHE_FORMAT_VERSION:\s*Long\s*=\s*(\d+)", source)
     if match is None:
-        raise SemanticPreservationError("cannot resolve current cache-format version")
+        raise MigrationGateError("cannot resolve current cache-format version")
     return int(match.group(1))
 
 
@@ -127,28 +127,28 @@ def validate_schema_name_contract(version: int) -> None:
         implemented = table_names(connection)
         missing = REQUIRED_IMPLEMENTED_TABLES - implemented
         if missing:
-            raise SemanticPreservationError(
+            raise MigrationGateError(
                 f"schema v{version} is missing implemented tables: {sorted(missing)}"
             )
         collision = reserved & implemented
         if collision:
-            raise SemanticPreservationError(
+            raise MigrationGateError(
                 f"implemented tables remain incorrectly reserved: {sorted(collision)}"
             )
         unaccounted = SCHEMA_INTENT_TABLES - implemented - reserved
         if unaccounted:
-            raise SemanticPreservationError(
+            raise MigrationGateError(
                 f"schema intent names are neither implemented nor reserved: {sorted(unaccounted)}"
             )
         for table in implemented:
             for column in connection.execute(f'PRAGMA table_info("{table}")'):
                 normalized = column[1].lower()
                 if "monotonic" in normalized:
-                    raise SemanticPreservationError(
+                    raise MigrationGateError(
                         f"{table}.{column[1]} persists a forbidden monotonic value"
                     )
                 if any(token in normalized for token in ("password", "credential", "secret", "salt")):
-                    raise SemanticPreservationError(
+                    raise MigrationGateError(
                         f"{table}.{column[1]} is a forbidden credential-bearing column"
                     )
 
@@ -179,7 +179,7 @@ def apply_released_migrations(
     for version in range(fixture_version, target_version):
         migration = migrations.get(version)
         if migration is None:
-            raise SemanticPreservationError(
+            raise MigrationGateError(
                 f"missing SQLDelight migration {version}.sqm for v{version} -> v{version + 1}"
             )
         connection.executescript(migration.read_text())
@@ -236,41 +236,51 @@ def reconcile_download_files(
     return enriched, errors
 
 
-def assert_fixture_semantics(
+def protected_state(
+    connection: sqlite3.Connection,
+    files: Path,
+) -> tuple[dict[str, list[dict[str, object]]], list[str]]:
+    state: dict[str, list[dict[str, object]]] = {}
+    errors: list[str] = []
+    for table in PROTECTED_COLUMNS:
+        try:
+            state[table] = canonical_rows(connection, table)
+        except sqlite3.DatabaseError as failure:
+            errors.append(f"{table}: cannot read protected rows: {failure}")
+            state[table] = []
+    downloads, file_errors = reconcile_download_files(state["download"], files)
+    state["download"] = downloads
+    errors.extend(file_errors)
+    return state, errors
+
+
+def assert_fixture_preserved(
     database: Path,
     files: Path,
-    expected_path: Path,
+    expected_state: dict[str, list[dict[str, object]]],
+    source_metadata: tuple[int, int, int],
     target_version: int,
 ) -> None:
-    expected = json.loads(expected_path.read_text())
     errors: list[str] = []
     with sqlite3.connect(database) as connection:
-        actual: dict[str, object] = {}
-        for table in PROTECTED_COLUMNS:
-            try:
-                actual[table] = canonical_rows(connection, table)
-            except sqlite3.DatabaseError as failure:
-                errors.append(f"{table}: cannot read protected rows: {failure}")
-                actual[table] = []
-        downloads, file_errors = reconcile_download_files(actual["download"], files)
-        actual["download"] = downloads
-        errors.extend(file_errors)
+        actual, state_errors = protected_state(connection, files)
+        errors.extend(state_errors)
         metadata = connection.execute(
             "SELECT schema_version, cache_format_version, committed_generation "
             "FROM schema_meta WHERE singleton_id = 1"
         ).fetchone()
         actual["schema_meta"] = list(metadata) if metadata is not None else None
     for table in PROTECTED_COLUMNS:
-        if actual[table] != expected[table]:
+        if actual[table] != expected_state[table]:
             errors.append(
-                f"{table}: semantic rows changed\n"
-                f"expected={json.dumps(expected[table], sort_keys=True)}\n"
+                f"{table}: protected rows changed\n"
+                f"expected={json.dumps(expected_state[table], sort_keys=True)}\n"
                 f"actual={json.dumps(actual[table], sort_keys=True)}"
             )
     expected_metadata = [
         target_version,
         current_cache_format_version(),
-        expected["schema_meta"]["committed_generation"],
+        source_metadata[2],
     ]
     if actual["schema_meta"] != expected_metadata:
         errors.append(
@@ -279,7 +289,7 @@ def assert_fixture_semantics(
             f"actual={json.dumps(actual['schema_meta'])}"
         )
     if errors:
-        raise SemanticPreservationError("\n".join(errors))
+        raise MigrationGateError("\n".join(errors))
 
 
 def migrate_and_assert_fixture(
@@ -294,28 +304,33 @@ def migrate_and_assert_fixture(
         files = work / "files"
         shutil.copy2(fixture / "database.db", database)
         shutil.copytree(fixture / "files", files)
-        expected_metadata = json.loads((fixture / "expected.json").read_text())["schema_meta"]
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
             source_metadata = connection.execute(
                 "SELECT schema_version, cache_format_version, committed_generation "
                 "FROM schema_meta WHERE singleton_id = 1"
             ).fetchone()
-            expected_source_metadata = (
-                expected_metadata["source_schema_version"],
-                expected_metadata["cache_format_version"],
-                expected_metadata["committed_generation"],
-            )
-            if source_metadata != expected_source_metadata:
-                raise SemanticPreservationError(
-                    f"fixture v{fixture_version} schema_meta does not match its manifest: "
-                    f"expected={expected_source_metadata} actual={source_metadata}"
+            if source_metadata is None or source_metadata[0] != fixture_version:
+                raise MigrationGateError(
+                    f"fixture v{fixture_version} schema_meta has the wrong source version: "
+                    f"actual={source_metadata}"
+                )
+            expected_state, fixture_errors = protected_state(connection, files)
+            if fixture_errors:
+                raise MigrationGateError(
+                    "invalid pre-migration fixture:\n" + "\n".join(fixture_errors)
                 )
             apply_released_migrations(connection, fixture_version, target_version)
             if destructive_sql is not None:
                 connection.executescript(destructive_sql)
             connection.commit()
-        assert_fixture_semantics(database, files, fixture / "expected.json", target_version)
+        assert_fixture_preserved(
+            database,
+            files,
+            expected_state,
+            source_metadata,
+            target_version,
+        )
 
 
 DESTRUCTIVE_SAME_NAME_MIGRATION = """
@@ -329,7 +344,7 @@ UPDATE resume_position SET position_milliseconds = 0;
 def prove_destructive_migration_is_rejected(fixture: Path, version: int) -> None:
     try:
         migrate_and_assert_fixture(version, fixture, version, DESTRUCTIVE_SAME_NAME_MIGRATION)
-    except SemanticPreservationError as failure:
+    except MigrationGateError as failure:
         message = str(failure)
         required_evidence = {
             "scrobble_outbox",
@@ -340,11 +355,11 @@ def prove_destructive_migration_is_rejected(fixture: Path, version: int) -> None
         }
         missing = {marker for marker in required_evidence if marker not in message}
         if missing:
-            raise SemanticPreservationError(
+            raise MigrationGateError(
                 f"negative migration failed for incomplete reasons; missing {sorted(missing)}\n{message}"
             ) from failure
         return
-    raise SemanticPreservationError(
+    raise MigrationGateError(
         "destructive same-name migration unexpectedly preserved protected semantics"
     )
 
@@ -355,7 +370,7 @@ def main() -> None:
     fixtures = fixture_versions()
     expected_versions = set(range(1, current + 1))
     if set(fixtures) != expected_versions:
-        raise SemanticPreservationError(
+        raise MigrationGateError(
             f"fixture versions differ from released schemas: "
             f"expected={sorted(expected_versions)} actual={sorted(fixtures)}"
         )
@@ -363,7 +378,7 @@ def main() -> None:
         migrate_and_assert_fixture(version, fixture, current)
     prove_destructive_migration_is_rejected(fixtures[current], current)
     print(
-        f"Migration semantics valid: {len(fixtures)} fixture database(s), "
+        f"Migration gate valid: {len(fixtures)} fixture database(s), "
         f"{len(PROTECTED_COLUMNS)} protected table comparisons per fixture, "
         "download file reconciliation, and 1 destructive same-name negative control"
     )
