@@ -46,6 +46,7 @@
 "player.thisDevice" = "This Device";
 "player.unknownAudioFormat" = "Audio";
 "player.playingOnOutput" = "Playing on %@";
+"player.playingFrom" = "Playing from %@";
 "player.progress" = "%1$@ of %2$@";
 "player.audioFormat" = "%1$@ · %2$@ kHz";
 "empty.title" = "Your music, wherever you listen";

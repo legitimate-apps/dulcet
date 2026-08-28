@@ -154,6 +154,12 @@ struct DulcetNowPlayingView: View {
             Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
                 .font(.caption)
                 .dulcetForeground(.secondaryTextOnWindow)
+
+            if let sourceDisplayName = player.sourceDisplayName {
+                Text(DulcetStrings.playingFrom(sourceDisplayName))
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+            }
         }
     }
 

@@ -96,6 +96,7 @@ public protocol DulcetPlaybackControlling: AnyObject {
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     )
     func configure(account: DulcetPlaybackAccount)
+    func restorePersistedQueue(with tracks: [DulcetTrack])
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent)
     func send(_ intent: DulcetPlaybackControlIntent)
     func disconnect()

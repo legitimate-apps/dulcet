@@ -239,6 +239,10 @@ enum DulcetStrings {
         formatted("player.playingOnOutput", "Playing on %@", outputName)
     }
 
+    static func playingFrom(_ sourceName: String) -> String {
+        formatted("player.playingFrom", "Playing from %@", sourceName)
+    }
+
     static func searchResultAccessibility(
         title: String,
         subtitle: String,

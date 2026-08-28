@@ -752,6 +752,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.activeLibraryOperation = nil
             switch outcome {
             case let .loaded(musicFolders, artists, albums):
+                self.playbackController?.restorePersistedQueue(with: albums.flatMap(\.tracks))
                 self.publish(
                     state: albums.isEmpty && artists.isEmpty
                         ? .emptyLibraryConnected
