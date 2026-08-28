@@ -68,6 +68,37 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
+    fun relaunchRestoresThePersistedCurrentEntryPausedWithItsSavedPosition() {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var originalIdentity = 0
+        val original = PlaybackQueueController(
+            queues = PersistentQueueStore(database),
+            resumePositions = resumePositions,
+            identities = PlaybackIdentitySource { prefix -> "$prefix:original:${originalIdentity++}" },
+        )
+        original.replaceAndStart(request(listOf("a", "b"), startIndex = 1))
+        resumePositions.save(ProviderItemId(SERVER.value, "b"), 41.seconds)
+        val restoredController = PlaybackQueueController(
+            queues = PersistentQueueStore(database),
+            resumePositions = resumePositions,
+            identities = PlaybackIdentitySource { prefix -> "$prefix:restored" },
+        )
+
+        val restored = restoredController.restoreCurrentPaused()
+        val directive = assertNotNull(restored.startDirective)
+
+        assertEquals("b", directive.itemId.rawId)
+        assertEquals(41.seconds, directive.resumePosition)
+        assertEquals(false, directive.shouldAutoPlay)
+        assertEquals(1, restored.snapshot.currentIndex)
+        assertNotNull(restored.snapshot.currentSession)
+        assertNull(restoredController.restoreCurrentPaused().startDirective)
+        driver.close()
+    }
+
+    @Test
     fun repeatOneNaturalCompletionStartsANewSessionForTheSameQueueEntry() {
         val fixture = fixture()
         val started = fixture.controller.replaceAndStart(request(listOf("a")))

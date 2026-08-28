@@ -41,6 +41,7 @@ class ApplePlaybackQueueFacadeTest {
         assertEquals("track-b", transition.startDirective?.rawId)
         assertEquals("session:2", transition.startDirective?.playbackSessionId)
         assertEquals("attempt:3", transition.startDirective?.attemptId)
+        assertEquals(true, transition.startDirective?.shouldAutoPlay)
         assertNotNull(transition.snapshot?.currentSession)
         driver.close()
     }
