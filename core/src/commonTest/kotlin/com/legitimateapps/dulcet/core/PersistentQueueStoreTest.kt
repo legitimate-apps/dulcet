@@ -132,6 +132,28 @@ class PersistentQueueStoreTest {
     }
 
     @Test
+    fun removalWhileShuffledPreservesTheOrderThatDisablingShuffleRestores() {
+        val driver = createTestDriver()
+        val store = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
+        val serverId = ServerId("server:remove-restore")
+        val original = listOf("a", "b", "c", "d", "e", "f")
+        store.replaceQueue(queueState(serverId, original, currentIndex = 0))
+        val shuffled = store.enableShuffle(serverId, Random(71))
+        val removed = shuffled.entries.last()
+        val expectedRestored = original - rawId(removed)
+        val remainingPlaybackOrder = shuffled.entries
+            .filterNot { it.queueEntryId == removed.queueEntryId }
+            .map(::rawId)
+        assertNotEquals(expectedRestored, remainingPlaybackOrder)
+
+        store.remove(serverId, removed.queueEntryId)
+        val restored = store.disableShuffle(serverId)
+
+        assertEquals(expectedRestored, restored.entries.map(::rawId))
+        driver.close()
+    }
+
+    @Test
     fun playNextWithoutCurrentAndNormalAppendBothUseTheEndOfShuffledOrder() {
         val driver = createTestDriver()
         val store = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
