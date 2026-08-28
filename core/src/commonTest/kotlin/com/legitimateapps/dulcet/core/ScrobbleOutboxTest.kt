@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet.core
 import app.cash.sqldelight.db.SqlDriver
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Duration
@@ -93,24 +94,64 @@ class ScrobbleOutboxTest {
     }
 
     @Test
-    fun productRetentionDropIsRecordedInDiagnosticsAndNeverSent() = runTest {
+    fun expiredEntryIsAttemptedBeforeProductRetentionDropsIt() = runTest {
         val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
         fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
         fixture.wallClock.advanceBy(31.days)
-        val transport = ScriptedTransport(ArrayDeque())
+        val transport = ScriptedTransport(ArrayDeque(listOf(errorResponse())))
         val worker = worker(fixture.outbox, transport, fixture.monotonic, fixture.diagnostics, fixture.wallClock)
 
         val result = worker.onForeground()
 
         assertEquals(1, result.retentionDropCount)
-        assertEquals(0, result.attemptedCount)
+        assertEquals(1, result.attemptedCount)
         assertEquals(0, fixture.outbox.count())
-        assertEquals(0, transport.parameters.size)
+        assertEquals(1, transport.parameters.size)
         val event = assertIs<ScrobbleOutboxDiagnosticEvent.ProductRetentionDropped>(
-            fixture.diagnostics.events.single(),
+            fixture.diagnostics.events.last(),
         )
         assertEquals(30.days, event.retentionLimit)
         assertEquals(EVENT.sessionStartWallClock, event.entry.sessionStartWallClock)
+        fixture.close()
+    }
+
+    @Test
+    fun retentionCleanupIsScopedToTheWorkersAccount() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        val otherServer = ServerId("server:other-outbox")
+        val otherEvent = RecordedPlaybackEvent.SubmittedPlay(
+            itemId = ProviderItemId(otherServer.value, RAW_ID),
+            sessionStartWallClock = EVENT.sessionStartWallClock,
+        )
+        fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
+        fixture.outbox.persistForAtLeastOnceDelivery(otherEvent)
+
+        val dropped = fixture.outbox.dropExpired(
+            serverId = SERVER_ID,
+            nowWallClock = PlaybackWallClockTime(CREATED_AT + 31.days.inWholeMilliseconds),
+            diagnosticSink = fixture.diagnostics,
+        )
+
+        assertEquals(1, dropped)
+        assertEquals(1, fixture.outbox.count())
+        assertEquals(listOf(otherEvent.sessionStartWallClock), fixture.outbox.pending(otherServer).map(ScrobbleOutboxEntry::sessionStartWallClock))
+        fixture.close()
+    }
+
+    @Test
+    fun retentionDiagnosticRunsOnlyAfterTheDeletionCommits() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
+        val diagnosticFailure = assertFailsWith<IllegalStateException> {
+            fixture.outbox.dropExpired(
+                serverId = SERVER_ID,
+                nowWallClock = PlaybackWallClockTime(CREATED_AT + 31.days.inWholeMilliseconds),
+                diagnosticSink = ScrobbleOutboxDiagnosticSink { throw IllegalStateException("sink failed") },
+            )
+        }
+
+        assertEquals("sink failed", diagnosticFailure.message)
+        assertEquals(0, fixture.outbox.count())
         fixture.close()
     }
 
@@ -154,6 +195,7 @@ class ScrobbleOutboxTest {
         fixture.outbox.persistForAtLeastOnceDelivery(oldSession)
 
         val dropped = fixture.outbox.dropExpired(
+            serverId = SERVER_ID,
             nowWallClock = PlaybackWallClockTime(CREATED_AT + 1.days.inWholeMilliseconds),
             diagnosticSink = fixture.diagnostics,
         )

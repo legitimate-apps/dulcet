@@ -87,24 +87,36 @@ internal class PersistentScrobbleOutbox(
             .executeAsList()
 
     fun dropExpired(
+        serverId: ServerId,
         nowWallClock: PlaybackWallClockTime,
         diagnosticSink: ScrobbleOutboxDiagnosticSink,
+        eligibleEntries: Collection<ScrobbleOutboxEntry>? = null,
     ): Int {
         val cutoff = nowWallClock.epochMilliseconds - OUTBOX_RETENTION.inWholeMilliseconds
-        val expired = database.scrobbleOutboxQueries.selectExpiredBefore(cutoff, ::mapEntry)
-            .executeAsList()
+        val expiredForServer = database.scrobbleOutboxQueries.selectExpiredBefore(
+            server_id = serverId.value,
+            created_at_wall_clock = cutoff,
+            mapper = ::mapEntry,
+        ).executeAsList()
+        val expired = if (eligibleEntries == null) {
+            expiredForServer
+        } else {
+            expiredForServer.filter { expiredEntry ->
+                eligibleEntries.any { eligible -> eligible.sameEventAs(expiredEntry) }
+            }
+        }
         if (expired.isEmpty()) return 0
         database.transaction {
-            expired.forEach { entry ->
-                delete(entry)
-                diagnosticSink.record(
-                    ScrobbleOutboxDiagnosticEvent.ProductRetentionDropped(
-                        entry = entry,
-                        droppedAtWallClock = nowWallClock,
-                        retentionLimit = OUTBOX_RETENTION,
-                    ),
-                )
-            }
+            expired.forEach(::delete)
+        }
+        expired.forEach { entry ->
+            diagnosticSink.record(
+                ScrobbleOutboxDiagnosticEvent.ProductRetentionDropped(
+                    entry = entry,
+                    droppedAtWallClock = nowWallClock,
+                    retentionLimit = OUTBOX_RETENTION,
+                ),
+            )
         }
         return expired.size
     }
@@ -148,6 +160,11 @@ internal class PersistentScrobbleOutbox(
     )
 }
 
+private fun ScrobbleOutboxEntry.sameEventAs(other: ScrobbleOutboxEntry): Boolean =
+    serverId == other.serverId &&
+        rawId == other.rawId &&
+        sessionStartWallClock == other.sessionStartWallClock
+
 /** Serial durable delivery entry point for platform foreground, reachability, and timer callbacks. */
 internal class ScrobbleOutboxDeliveryWorker(
     private val serverId: ServerId,
@@ -171,33 +188,32 @@ internal class ScrobbleOutboxDeliveryWorker(
 
     private suspend fun drain(trigger: ScrobbleOutboxTrigger): ScrobbleOutboxDeliveryResult =
         mutex.withLock {
-            val retentionDrops = outbox.dropExpired(
-                PlaybackWallClockTime(wallClock.nowEpochMilliseconds()),
-                diagnosticSink,
-            )
             val now = monotonicClock.now()
             val retryAt = nextRetryAt
             if (retryAt != null && now < retryAt) {
                 return@withLock ScrobbleOutboxDeliveryResult(
                     attemptedCount = 0,
                     deliveredCount = 0,
-                    retentionDropCount = retentionDrops,
+                    retentionDropCount = 0,
                     nextRetryAfter = retryAt - now,
                 )
             }
 
             var attempted = 0
             var delivered = 0
+            val attemptedEntries = mutableListOf<ScrobbleOutboxEntry>()
             outbox.pending(serverId).forEach { entry ->
                 attempted += 1
                 when (sender.send(ScrobbleEndpointRequest(entry.toSubmittedPlay()))) {
                     is ScrobbleSendResult.Sent -> {
+                        attemptedEntries += entry
                         outbox.delete(entry)
                         delivered += 1
                         nextRetryAt = null
                     }
                     is ScrobbleSendResult.Failed -> {
                         val failed = outbox.recordFailedAttempt(entry)
+                        attemptedEntries += failed
                         val delay = retryBackoff(failed.attemptCount)
                         nextRetryAt = monotonicClock.now() + delay
                         diagnosticSink.record(
@@ -206,6 +222,12 @@ internal class ScrobbleOutboxDeliveryWorker(
                                 trigger = trigger,
                                 nextRetryAfter = delay,
                             ),
+                        )
+                        val retentionDrops = outbox.dropExpired(
+                            serverId = serverId,
+                            nowWallClock = PlaybackWallClockTime(wallClock.nowEpochMilliseconds()),
+                            diagnosticSink = diagnosticSink,
+                            eligibleEntries = attemptedEntries,
                         )
                         return@withLock ScrobbleOutboxDeliveryResult(
                             attemptedCount = attempted,
@@ -216,6 +238,12 @@ internal class ScrobbleOutboxDeliveryWorker(
                     }
                 }
             }
+            val retentionDrops = outbox.dropExpired(
+                serverId = serverId,
+                nowWallClock = PlaybackWallClockTime(wallClock.nowEpochMilliseconds()),
+                diagnosticSink = diagnosticSink,
+                eligibleEntries = attemptedEntries,
+            )
             ScrobbleOutboxDeliveryResult(
                 attemptedCount = attempted,
                 deliveredCount = delivered,

@@ -36,8 +36,9 @@ SELECT
   created_at_wall_clock,
   attempt_count
 FROM scrobble_outbox
-WHERE created_at_wall_clock < ?
-ORDER BY created_at_wall_clock, server_id, raw_id;
+WHERE server_id = ?
+  AND created_at_wall_clock < ?
+ORDER BY created_at_wall_clock, raw_id, session_start_wall_clock;
 
 deleteEntry:
 DELETE FROM scrobble_outbox
