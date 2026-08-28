@@ -127,6 +127,7 @@ struct DulcetAccountConnectionView: View {
             Text(DulcetStrings.accountConnectTitle)
                 .font(.largeTitle.weight(.bold))
                 .lineLimit(nil)
+                .accessibilityIdentifier("dulcet.account-connect.title")
                 .accessibilityAddTraits(.isHeader)
             Text(DulcetStrings.accountConnectBody)
                 .font(.callout)

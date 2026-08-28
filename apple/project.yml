@@ -122,7 +122,8 @@ targets:
       - DulcetPlaybackIntegrationTests
       - DulcetAppleShared/DulcetCorePlayback.swift
       - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
-      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/realistic-tone.mp3
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
+        group: DulcetKitTests/Fixtures
         buildPhase: resources
     dependencies:
       - package: DulcetKit
@@ -167,7 +168,12 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - DulcetKit/Tests/DulcetKitTests
+      - path: DulcetKit/Tests/DulcetKitTests
+        excludes:
+          - Fixtures
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
     dependencies:
       - package: DulcetKit
     settings:
@@ -191,6 +197,17 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - DulcetiOSUITests
+    dependencies:
+      - target: DulcetiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.ui-tests
+        TEST_TARGET_NAME: DulcetiOS
   DulcetTV:
     type: application
     platform: tvOS
@@ -218,7 +235,12 @@ targets:
     type: bundle.unit-test
     platform: tvOS
     sources:
-      - DulcetKit/Tests/DulcetKitTests
+      - path: DulcetKit/Tests/DulcetKitTests
+        excludes:
+          - Fixtures
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
     dependencies:
       - package: DulcetKit
     settings:
@@ -250,6 +272,7 @@ schemes:
     test:
       targets:
         - DulcetKitIOSTests
+        - DulcetiOSUITests
   DulcetMac:
     build:
       targets:
@@ -262,6 +285,9 @@ schemes:
       environmentVariables:
         - variable: DULCET_CONFORMANCE_BASE_URL
           value: "$(DULCET_TEST_CONFORMANCE_BASE_URL)"
+          isEnabled: true
+        - variable: DULCET_CONFORMANCE_DISPOSABLE
+          value: "$(DULCET_TEST_CONFORMANCE_DISPOSABLE)"
           isEnabled: true
   DulcetMacRelease:
     build:

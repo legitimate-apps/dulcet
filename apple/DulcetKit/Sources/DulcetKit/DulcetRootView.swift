@@ -180,6 +180,7 @@ private struct DulcetSidebar: View {
         Label(title, systemImage: symbol)
             .tag(destination)
             .accessibilityLabel(title)
+            .accessibilityIdentifier("dulcet.sidebar.\(destination.rawValue)")
     }
 
     private var selection: Binding<DulcetSidebarDestination?> {

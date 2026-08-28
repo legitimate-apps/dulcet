@@ -260,7 +260,7 @@ jobs:
           if-no-files-found: warn
           compression-level: 0
           retention-days: 14
-      - name: Build iOS and iPadOS shell and test DulcetKit on iOS
+      - name: Build iOS shell and test DulcetKit on iPhone
         run: |
           set -o pipefail
           xcodebuild test \
@@ -276,6 +276,37 @@ jobs:
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-ios-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
+            DulcetKitIOSTests
+      - name: Launch iPadOS shell and prove regular-width account layout
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4),OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4),OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-swift-testing.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetKitIOSTests 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ipados-swift-testing.log"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-swift-testing.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
             DulcetKitIOSTests
       - name: Build DulcetTV and test DulcetKit on tvOS
         run: |
@@ -561,6 +592,8 @@ jobs:
             core-conformance/build/test-results/tvosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit"
       - name: Upload macosArm64 core-conformance JUnit results
         if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
