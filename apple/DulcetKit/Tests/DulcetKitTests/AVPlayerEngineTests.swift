@@ -76,7 +76,7 @@ struct AVPlayerEngineTests {
     #if os(macOS)
     @Test
     func loopbackHTTPServerMatchesNavidromeRangeSemantics() async throws {
-        let audio = try realisticMP3Fixture()
+        let audio = try navidromeReferenceMP3Fixture()
         #expect(audio.count > 7_000_000)
         let server = try LoopbackRangeHTTPServer(audio: audio)
         defer { server.stop() }
@@ -114,7 +114,7 @@ struct AVPlayerEngineTests {
 
     @Test
     func loopbackHTTPRangeStreamBecomesReadyAndProgresses() async throws {
-        let server = try LoopbackRangeHTTPServer(audio: realisticMP3Fixture())
+        let server = try LoopbackRangeHTTPServer(audio: navidromeReferenceMP3Fixture())
         defer { server.stop() }
         let resource = LoopbackHTTPPlaybackResource(url: server.url)
         let engine = DulcetAVPlayerEngine()
@@ -1026,9 +1026,9 @@ private func loopbackResponse(
     return (data, response)
 }
 
-private func realisticMP3Fixture() throws -> Data {
+private func navidromeReferenceMP3Fixture() throws -> Data {
     guard let url = Bundle.module.url(
-        forResource: "realistic-tone",
+        forResource: "navidrome-reference",
         withExtension: "mp3",
         subdirectory: "Fixtures"
     ) else {

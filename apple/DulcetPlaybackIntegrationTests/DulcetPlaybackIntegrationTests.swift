@@ -10,7 +10,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
     private var resolveOperation: (any ApplePlaybackWireOperation)?
 
     func testProductionCoreResourceBecomesReadyAndProgressesAgainstNavidromeRanges() async throws {
-        let audio = try realisticMP3Fixture()
+        let audio = try navidromeReferenceMP3Fixture()
         XCTAssertGreaterThan(audio.count, 7_000_000)
         let server = try ProductionPathLoopbackServer(audio: audio)
         defer { server.stop() }
@@ -75,6 +75,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         }
         let loaderSummary = loaderTrace.summary
         print("PRODUCTION LOADER LIFECYCLE TRACE \(loaderSummary)")
+        print("PRODUCTION LOADER REQUEST TRACE \(loaderTrace.requestDiagnostics)")
         XCTAssertGreaterThan(loaderSummary.started, 0)
         XCTAssertEqual(loaderSummary.failed, 0)
         XCTAssertEqual(loaderSummary.active, 0)
@@ -142,9 +143,9 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         }
     }
 
-    private func realisticMP3Fixture() throws -> Data {
+    private func navidromeReferenceMP3Fixture() throws -> Data {
         guard let url = Bundle(for: Self.self).url(
-            forResource: "realistic-tone",
+            forResource: "navidrome-reference",
             withExtension: "mp3"
         ) else {
             throw ProductionPathLoopbackError.missingFixture
@@ -212,6 +213,18 @@ private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
             cancelled: cancelled,
             failed: failed
         )
+    }
+
+    var requestDiagnostics: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return events.compactMap { event in
+            guard case let .started(
+                _, requestedOffset, requestedLength, requestsToEnd, requiresAudioSignature
+            ) = event else { return nil }
+            return "offset=\(requestedOffset) length=\(requestedLength) "
+                + "toEnd=\(requestsToEnd) signature=\(requiresAudioSignature)"
+        }
     }
 }
 

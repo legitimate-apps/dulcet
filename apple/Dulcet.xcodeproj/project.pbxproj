@@ -13,7 +13,7 @@
 		1020C76DCFB77685439CCC7B /* ArtworkCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5461D89B4D41DA84361FF49C /* ArtworkCacheTests.swift */; };
 		1144DE9D237F7517F9571B69 /* PlaybackResourceLoadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA2CF9278ECFE5438004376 /* PlaybackResourceLoadingTests.swift */; };
 		127D19FAA195A69D247E6A57 /* DulcetAppleProduction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0981D7D7493E2D1ED3C611B /* DulcetAppleProduction.swift */; };
-		12C34640958475F9F54534F7 /* realistic-tone.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 934A4A8CFE9893D65D3120E6 /* realistic-tone.mp3 */; };
+		12C34640958475F9F54534F7 /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 934A4A8CFE9893D65D3120E6 /* navidrome-reference.mp3 */; };
 		1D698E922A99003F2B2EE47F /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
 		20C40A8C5DC75C327A0E2CE8 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */; };
 		293F3C8BB79CC7DE1F60E765 /* DulcetKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D9945C6F39753DCB62BD2F /* DulcetKitTests.swift */; };
@@ -36,9 +36,9 @@
 		9EE4EBF8CBDD862FB476661D /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = CDEA56097F109D780F3EA786 /* DulcetKit */; };
 		A01C59387EEF3C8DCC9B6B1C /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		A6B6F543EC8622FB0ED972CE /* DulcetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */; };
-		B0068D08C7D724FEC88F6540 /* realistic-tone.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 934A4A8CFE9893D65D3120E6 /* realistic-tone.mp3 */; };
+		B0068D08C7D724FEC88F6540 /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 934A4A8CFE9893D65D3120E6 /* navidrome-reference.mp3 */; };
 		B0B390E74D55D9793E2B45EC /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
-		B2FC436A9F67CFCF3B362629 /* realistic-tone.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 934A4A8CFE9893D65D3120E6 /* realistic-tone.mp3 */; };
+		B2FC436A9F67CFCF3B362629 /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 934A4A8CFE9893D65D3120E6 /* navidrome-reference.mp3 */; };
 		B8C12710E54838C3D635DBDD /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
 		B981F86E8C0480ED0206769B /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		BAB4B7701A6C1A3099481FC7 /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = C3E4AFCE27D1BEC8BBC49180 /* DulcetKit */; };
@@ -96,7 +96,7 @@
 		708A2DD03E359D16B2324C1E /* DulcetMacAccountConnectAppTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetMacAccountConnectAppTest.swift; sourceTree = "<group>"; };
 		71CA14B4C301A9F99A563EF3 /* DulcetMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DulcetMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		90F869B5F737FF8CDAA6B182 /* DulcetTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		934A4A8CFE9893D65D3120E6 /* realistic-tone.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "realistic-tone.mp3"; sourceTree = "<group>"; };
+		934A4A8CFE9893D65D3120E6 /* navidrome-reference.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "navidrome-reference.mp3"; sourceTree = "<group>"; };
 		B0981D7D7493E2D1ED3C611B /* DulcetAppleProduction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetAppleProduction.swift; sourceTree = "<group>"; };
 		B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetTVApp.swift; sourceTree = "<group>"; };
 		B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
@@ -204,7 +204,7 @@
 		1FAAF8EC2AD9D63DB33E707A /* Fixtures */ = {
 			isa = PBXGroup;
 			children = (
-				934A4A8CFE9893D65D3120E6 /* realistic-tone.mp3 */,
+				934A4A8CFE9893D65D3120E6 /* navidrome-reference.mp3 */,
 			);
 			name = Fixtures;
 			path = DulcetKit/Tests/DulcetKitTests/Fixtures;
@@ -559,7 +559,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B0068D08C7D724FEC88F6540 /* realistic-tone.mp3 in Resources */,
+				B0068D08C7D724FEC88F6540 /* navidrome-reference.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -567,7 +567,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B2FC436A9F67CFCF3B362629 /* realistic-tone.mp3 in Resources */,
+				B2FC436A9F67CFCF3B362629 /* navidrome-reference.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -575,7 +575,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				12C34640958475F9F54534F7 /* realistic-tone.mp3 in Resources */,
+				12C34640958475F9F54534F7 /* navidrome-reference.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
