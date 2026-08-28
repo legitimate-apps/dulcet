@@ -6,6 +6,13 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
+**Revision:** 81 — the exact Navidrome reference asset exposed a continuation-range failure the
+generated MP3 fixture could not: a chunk beginning `0x3C` was classified as an XML envelope and
+rejected as malformed, so envelope detection now requires a recognizable `subsonic-response` root
+before malformed-envelope semantics apply; revision 80 made Apple progressive playback account for
+AVFoundation's initial two-byte request; revision 79 added the implemented queue ownership tables to
+the schema-intent registry; revision 78 made a restored credential present as a saved account awaiting an explicit
+
 **Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
 
 The schema-intent registry now includes the implemented queue ownership tables;
