@@ -20,6 +20,7 @@ import tempfile
 # states below were introduced.
 STATES = (
     "account-connect-idle",
+    "account-connect-empty",
     "account-connecting",
     "account-connected",
     "account-removing",
@@ -49,6 +50,7 @@ STATES = (
     "search-empty",
     "search-error",
     "error-tls-untrusted",
+    "error-tls-untrusted-populated-form",
     "offline-metadata-only",
 )
 APPEARANCES = ("light", "dark")

@@ -102,7 +102,7 @@ func fixtureRendersEveryDeclaredDistinctState() {
 
     #expect(snapshots.count == DulcetPresentationState.allCases.count)
     #expect(Set(snapshots.map(\.state)) == Set(DulcetPresentationState.allCases))
-    #expect(snapshots.filter(\.accountConnected).count == 19)
+    #expect(snapshots.filter(\.accountConnected).count == 20)
 }
 
 @Test @MainActor
@@ -175,6 +175,27 @@ func deterministicTLSFixtureCarriesPresentableSpecificFailure() {
     #expect(DulcetStrings.tlsRemedyBody.localizedCaseInsensitiveContains("operating-system"))
     #expect(DulcetLinks.certificateInstallationGuide.host == "support.apple.com")
     #expect(DulcetLinks.certificateInstallationGuide.path.contains("add-certificates-to-a-keychain"))
+
+    #expect(snapshot.accountConnection == .idle)
+    #expect(snapshot.accountForm == .empty)
+
+    let stableLinkControl = DulcetDeterministicFixture().snapshot(for: .accountErrorSecurity)
+    guard case let .failed(failure) = stableLinkControl.accountConnection else {
+        Issue.record("security account fixture did not carry the expected failed status")
+        return
+    }
+    #expect(failure.kind == .tlsUntrusted)
+
+    let populatedTLSControl = DulcetDeterministicFixture().snapshot(
+        for: .tlsUntrustedPopulatedForm
+    )
+    #expect(populatedTLSControl.connectivity == snapshot.connectivity)
+    #expect(populatedTLSControl.accountConnection == snapshot.accountConnection)
+    #expect(populatedTLSControl.accountForm != .empty)
+
+    let emptyNonTLSControl = DulcetDeterministicFixture().snapshot(for: .accountConnectEmpty)
+    #expect(emptyNonTLSControl.accountConnection == snapshot.accountConnection)
+    #expect(emptyNonTLSControl.accountForm == snapshot.accountForm)
 }
 
 @Test @MainActor

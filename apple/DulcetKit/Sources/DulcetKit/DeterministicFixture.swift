@@ -26,7 +26,7 @@ public struct DulcetDeterministicFixture {
         )
 
         switch state {
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
@@ -63,6 +63,8 @@ public struct DulcetDeterministicFixture {
             )
         case .tlsUntrusted:
             return base.snapshot()
+        case .tlsUntrustedPopulatedForm:
+            return base.snapshot(accountForm: Self.populatedAccountForm)
         case .offlineMetadataOnly:
             let offlineAlbums = library.map { album in
                 DulcetAlbum(
@@ -101,11 +103,12 @@ public struct DulcetDeterministicFixture {
             .nowPlaying
         case .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError:
             .search
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
-             .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted:
+             .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted,
+             .tlsUntrustedPopulatedForm:
             .settings
         }
     }
@@ -120,11 +123,11 @@ public struct DulcetDeterministicFixture {
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
             .connectionFailed(.account(Self.accountFailure(for: state)))
-        case .accountConnectIdle, .accountConnecting:
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting:
             .unavailable
         case .emptyLibraryNoAccount:
             .unavailable
-        case .tlsUntrusted:
+        case .tlsUntrusted, .tlsUntrustedPopulatedForm:
             .connectionFailed(.tlsUntrusted(Self.tlsFailure))
         case .offlineMetadataOnly:
             .offline(lastSyncedDescription: "Today at 14:28 UTC")
@@ -134,14 +137,9 @@ public struct DulcetDeterministicFixture {
     }
 
     private func accountSnapshot(for state: DulcetPresentationState) -> DulcetSnapshot {
-        let form = DulcetAccountConnectRequest(
-            serverURL: "https://music.example.invalid",
-            username: "listener",
-            password: "fixture-password",
-            allowLocalHTTP: false
-        )
+        let form = state == .accountConnectEmpty ? .empty : Self.populatedAccountForm
         let status: DulcetAccountConnectionStatus = switch state {
-        case .accountConnectIdle:
+        case .accountConnectIdle, .accountConnectEmpty:
             .idle
         case .accountConnecting:
             .connecting
@@ -160,7 +158,7 @@ public struct DulcetDeterministicFixture {
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
-             .tlsUntrusted, .offlineMetadataOnly:
+             .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
             .idle
         }
         let removal: DulcetAccountRemovalStatus = switch state {
@@ -352,7 +350,8 @@ private extension DulcetDeterministicFixture {
             searchQuery: String = "",
             searchResults: [DulcetSearchResult] = [],
             searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
-            searchFailure: DulcetSearchFailure? = nil
+            searchFailure: DulcetSearchFailure? = nil,
+            accountForm: DulcetAccountConnectRequest = .empty
         ) -> DulcetSnapshot {
             DulcetSnapshot(
                 state: state,
@@ -368,7 +367,8 @@ private extension DulcetDeterministicFixture {
                 searchResults: searchResults,
                 searchHasMoreKinds: searchHasMoreKinds,
                 searchFailure: searchFailure,
-                captureDate: DulcetDeterministicFixture.captureDate
+                captureDate: DulcetDeterministicFixture.captureDate,
+                accountForm: accountForm
             )
         }
     }
@@ -592,6 +592,13 @@ private extension DulcetDeterministicFixture {
         technicalDetail: "macOS stopped the connection because it could not establish an OS-trusted certificate chain."
     )
 
+    static let populatedAccountForm = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+
     static func accountFailure(
         for state: DulcetPresentationState
     ) -> DulcetAccountFailurePresentation {
@@ -660,13 +667,13 @@ private extension DulcetDeterministicFixture {
                 "Unlock the Keychain and try connecting again.",
                 nil
             )
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
-             .tlsUntrusted, .offlineMetadataOnly:
+             .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
             (
                 .transportUnreachable,
                 "Can’t reach the server",
