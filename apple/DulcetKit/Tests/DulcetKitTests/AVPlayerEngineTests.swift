@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import MediaPlayer
 import Testing
 @testable import DulcetKit
 
@@ -243,6 +244,136 @@ struct AVPlayerEngineTests {
         }
         _ = await execute(engine, .release(commandID: .init("release")))
     }
+
+    @Test
+    func nowPlayingIsNotPublishedAtPreparingAndBecomesSeekableOnlyAfterReady() async throws {
+        let mediaControls = RecordingSystemMediaControls()
+        let suspended = SuspendedPlaybackResource()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: mediaControls)
+        let playbackPlan = plan(resource: suspended, title: "Ordered metadata")
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        #expect(mediaControls.publications.isEmpty)
+
+        suspended.resume(with: makePCMWave(duration: 2))
+        try await waitUntil("Ready did not publish Now Playing") {
+            mediaControls.publications.count == 1
+        }
+        let state = try #require(mediaControls.publications.first)
+        #expect(state.metadata.title == "Ordered metadata")
+        #expect(state.seekability == .seekable)
+        #expect(state.sessionID == playbackPlan.playbackSessionID)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func replacementPublishesMetadataAfterTheBoundaryAndBeforePreparingTheNewAttempt() async throws {
+        let ordering = PlaybackSystemOrderingRecorder()
+        let mediaControls = RecordingSystemMediaControls(ordering: ordering)
+        let engine = DulcetAVPlayerEngine(systemMediaControls: mediaControls)
+        engine.setEventListener { ordering.append(.event($0)) }
+        let original = plan(session: "session", attempt: "original", title: "Original")
+        let replacement = plan(session: "session", attempt: "replacement", title: "Replacement")
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: original))
+        try await waitUntil("initial Ready did not publish metadata") {
+            mediaControls.publications.count == 1
+        }
+        ordering.reset()
+
+        _ = await execute(engine, .replaceCurrent(commandID: .init("replace"), plan: replacement))
+
+        let snapshot = ordering.snapshot
+        #expect(snapshot.count >= 3)
+        #expect(snapshot[0] == .event(.attemptReplaced(
+            oldAttemptID: original.attemptID,
+            newAttemptID: replacement.attemptID
+        )))
+        #expect(snapshot[1] == .metadata("Replacement"))
+        #expect(snapshot[2] == .event(.preparing(attemptID: replacement.attemptID)))
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func remoteCommandsRejectStaleSessionsAndRouteOnlyCurrentQueueAndFeedbackActions() async throws {
+        let mediaControls = RecordingSystemMediaControls()
+        let router = RecordingRemoteCommandRouter()
+        let capabilities = DulcetRemoteCommandCapabilities(
+            allowsNext: true,
+            allowsPrevious: true,
+            allowsRating: true,
+            allowsFavourite: true
+        )
+        let engine = DulcetAVPlayerEngine(
+            systemMediaControls: mediaControls,
+            remoteCommandRouter: router,
+            remoteCommandCapabilities: capabilities
+        )
+        let playbackPlan = plan(session: "current-session", attempt: "current-attempt")
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        try await waitUntil("Ready did not publish command availability") {
+            mediaControls.publications.last?.seekability == .seekable
+        }
+
+        #expect(!mediaControls.send(.play(sessionID: .init("stale-session"))))
+        #expect(mediaControls.send(.pause(sessionID: playbackPlan.playbackSessionID)))
+        #expect(mediaControls.send(.toggle(sessionID: playbackPlan.playbackSessionID)))
+        #expect(mediaControls.send(.seek(sessionID: playbackPlan.playbackSessionID, position: 0.5)))
+        #expect(mediaControls.send(.next(sessionID: playbackPlan.playbackSessionID)))
+        #expect(mediaControls.send(.previous(sessionID: playbackPlan.playbackSessionID)))
+        #expect(mediaControls.send(.rating(sessionID: playbackPlan.playbackSessionID, value: 4)))
+        #expect(mediaControls.send(.favourite(
+            sessionID: playbackPlan.playbackSessionID,
+            isFavourite: true
+        )))
+        #expect(router.commands == [
+            .next(sessionID: playbackPlan.playbackSessionID),
+            .previous(sessionID: playbackPlan.playbackSessionID),
+            .rating(sessionID: playbackPlan.playbackSessionID, value: 4),
+            .favourite(sessionID: playbackPlan.playbackSessionID, isFavourite: true),
+        ])
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func mediaPlayerCommandCenterExposesOnlyTheV1CommandSet() {
+        let controls = DulcetPlatformSystemMediaControls()
+        let center = MPRemoteCommandCenter.shared()
+        controls.publish(DulcetSystemNowPlayingState(
+            sessionID: .init("session"),
+            metadata: .init(title: "Fixture"),
+            duration: 60,
+            position: 10,
+            rate: 1,
+            isPlaying: true,
+            seekability: .seekable,
+            remoteCapabilities: .init(
+                allowsNext: true,
+                allowsPrevious: true,
+                allowsRating: true,
+                allowsFavourite: true
+            )
+        ))
+
+        #expect(center.playCommand.isEnabled)
+        #expect(center.pauseCommand.isEnabled)
+        #expect(center.togglePlayPauseCommand.isEnabled)
+        #expect(center.nextTrackCommand.isEnabled)
+        #expect(center.previousTrackCommand.isEnabled)
+        #expect(center.changePlaybackPositionCommand.isEnabled)
+        #expect(center.ratingCommand.isEnabled)
+        #expect(center.likeCommand.isEnabled)
+        #expect(!center.stopCommand.isEnabled)
+        #expect(!center.changePlaybackRateCommand.isEnabled)
+        #expect(!center.changeRepeatModeCommand.isEnabled)
+        #expect(!center.changeShuffleModeCommand.isEnabled)
+        #expect(!center.skipForwardCommand.isEnabled)
+        #expect(!center.skipBackwardCommand.isEnabled)
+        #expect(!center.seekForwardCommand.isEnabled)
+        #expect(!center.seekBackwardCommand.isEnabled)
+        #expect(!center.enableLanguageOptionCommand.isEnabled)
+        #expect(!center.disableLanguageOptionCommand.isEnabled)
+        controls.clear()
+    }
 }
 
 private func execute(
@@ -268,10 +399,13 @@ private func waitUntil(
 }
 
 private func plan(
-    resource: InMemoryPlaybackResource = InMemoryPlaybackResource(data: makePCMWave(duration: 2)),
+    resource: any DulcetPlaybackResourceLoading = InMemoryPlaybackResource(
+        data: makePCMWave(duration: 2)
+    ),
     deliveryProtocol: DulcetPlaybackDeliveryProtocol = .httpProgressive,
     session: String = "session",
-    attempt: String = "attempt"
+    attempt: String = "attempt",
+    title: String = "Playback fixture"
 ) -> DulcetPlaybackPlan {
     DulcetPlaybackPlan(
         playbackSessionID: .init(session),
@@ -279,8 +413,162 @@ private func plan(
         deliveryProtocol: deliveryProtocol,
         expectedContainer: .wav,
         resource: resource,
-        metadata: .init(title: "Playback fixture", artist: "Dulcet Tests")
+        metadata: .init(title: title, artist: "Dulcet Tests")
     )
+}
+
+private final class SuspendedPlaybackResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [(
+        DulcetPlaybackResourceLoadRequest,
+        @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    )] = []
+    private var data: Data?
+
+    var description: String { "SuspendedPlaybackResource(<redacted>)" }
+
+    func load(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        lock.lock()
+        if let data {
+            lock.unlock()
+            complete(request, from: data, completion: completion)
+        } else {
+            pending.append((request, completion))
+            lock.unlock()
+        }
+        return InMemoryPlaybackOperation()
+    }
+
+    func resume(with data: Data) {
+        lock.lock()
+        self.data = data
+        let pending = pending
+        self.pending.removeAll()
+        lock.unlock()
+        pending.forEach { request, completion in
+            complete(request, from: data, completion: completion)
+        }
+    }
+
+    private func complete(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        from data: Data,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) {
+        let start = min(Int(request.range.start), data.count)
+        let end = min(Int(request.range.endInclusive) + 1, data.count)
+        completion(.loaded(
+            data: start < end ? data.subdata(in: start..<end) : Data(),
+            contentInformation: .init(
+                contentLength: Int64(data.count),
+                supportsByteRanges: true
+            )
+        ))
+    }
+}
+
+private final class RecordingSystemMediaControls: DulcetSystemMediaControlling,
+    @unchecked Sendable {
+    private let lock = NSLock()
+    private let ordering: PlaybackSystemOrderingRecorder?
+    private var handler: (@Sendable (DulcetRemotePlaybackCommand) -> Bool)?
+    private var publicationStorage: [DulcetSystemNowPlayingState] = []
+    private var transportStorage: [(DulcetPlaybackSessionID, TimeInterval, Double, Bool)] = []
+
+    init(ordering: PlaybackSystemOrderingRecorder? = nil) {
+        self.ordering = ordering
+    }
+
+    var publications: [DulcetSystemNowPlayingState] {
+        lock.lock()
+        defer { lock.unlock() }
+        return publicationStorage
+    }
+
+    func setCommandHandler(
+        _ handler: (@Sendable (DulcetRemotePlaybackCommand) -> Bool)?
+    ) {
+        lock.lock()
+        self.handler = handler
+        lock.unlock()
+    }
+
+    func publish(_ state: DulcetSystemNowPlayingState) {
+        lock.lock()
+        publicationStorage.append(state)
+        lock.unlock()
+        ordering?.append(.metadata(state.metadata.title))
+    }
+
+    func updateTransport(
+        sessionID: DulcetPlaybackSessionID,
+        position: TimeInterval,
+        rate: Double,
+        isPlaying: Bool
+    ) {
+        lock.lock()
+        transportStorage.append((sessionID, position, rate, isPlaying))
+        lock.unlock()
+    }
+
+    func clear() {}
+
+    func send(_ command: DulcetRemotePlaybackCommand) -> Bool {
+        lock.lock()
+        let handler = handler
+        lock.unlock()
+        return handler?(command) ?? false
+    }
+}
+
+private final class RecordingRemoteCommandRouter: DulcetRemotePlaybackCommandRouting,
+    @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [DulcetRemotePlaybackCommand] = []
+
+    var commands: [DulcetRemotePlaybackCommand] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func handleRemotePlaybackCommand(_ command: DulcetRemotePlaybackCommand) -> Bool {
+        lock.lock()
+        storage.append(command)
+        lock.unlock()
+        return true
+    }
+}
+
+private enum PlaybackSystemOrderingEntry: Equatable, Sendable {
+    case event(DulcetPlaybackEvent)
+    case metadata(String)
+}
+
+private final class PlaybackSystemOrderingRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [PlaybackSystemOrderingEntry] = []
+
+    var snapshot: [PlaybackSystemOrderingEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ entry: PlaybackSystemOrderingEntry) {
+        lock.lock()
+        storage.append(entry)
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        storage.removeAll()
+        lock.unlock()
+    }
 }
 
 private final class InMemoryPlaybackResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
