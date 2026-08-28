@@ -42,7 +42,7 @@ public struct DulcetDeterministicFixture {
             return base.snapshot(selectedAlbum: Self.doubleLines)
         case .nowPlaying:
             return base.snapshot(nowPlaying: Self.nowPlaying)
-        case .nowPlayingUnavailable:
+        case .nowPlayingPreparing, .nowPlayingFailed, .nowPlayingUnavailable:
             return base.snapshot()
         case .searchIdle:
             return base.snapshot()
@@ -97,7 +97,7 @@ public struct DulcetDeterministicFixture {
              .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .offlineMetadataOnly:
             .library
-        case .nowPlaying, .nowPlayingUnavailable:
+        case .nowPlaying, .nowPlayingPreparing, .nowPlayingFailed, .nowPlayingUnavailable:
             .nowPlaying
         case .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError:
             .search
@@ -157,7 +157,8 @@ public struct DulcetDeterministicFixture {
              .accountErrorCapability, .accountErrorPersistence:
             .failed(Self.accountFailure(for: state))
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
+             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .offlineMetadataOnly:
             .idle
@@ -661,7 +662,8 @@ private extension DulcetDeterministicFixture {
         case .accountConnectIdle, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
+             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .offlineMetadataOnly:
             (

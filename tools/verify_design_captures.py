@@ -40,6 +40,8 @@ STATES = (
     "library-browse",
     "album-detail-multi-disc",
     "now-playing",
+    "now-playing-preparing",
+    "now-playing-failed",
     "now-playing-unavailable",
     "search-idle",
     "search-loading",

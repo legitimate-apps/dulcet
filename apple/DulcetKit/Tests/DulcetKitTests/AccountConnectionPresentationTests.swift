@@ -235,7 +235,11 @@ func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
 
     store.selectDestination(.nowPlaying)
     playback.publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
-    #expect(store.snapshot.state == .nowPlayingUnavailable)
+    #expect(store.snapshot.state == .nowPlayingPreparing)
+    #expect(store.snapshot.nowPlaying == nil)
+
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil))
+    #expect(store.snapshot.state == .nowPlayingFailed)
     #expect(store.snapshot.nowPlaying == nil)
 
     playback.publish(DulcetPlaybackPresentation(status: .ready, nowPlaying: nowPlaying))

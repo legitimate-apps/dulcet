@@ -55,8 +55,12 @@
 "library.error.security" = "A security or certificate check stopped the library request.";
 "library.error.protocol" = "The server returned a library response Dulcet could not read.";
 "library.error.generic" = "Check the server and network, then try again.";
-"player.unavailable.title" = "Nothing can play yet";
-"player.unavailable.body" = "Playback is a separate feature and has not been implemented in this build.";
+"player.preparing.title" = "Preparing playback…";
+"player.preparing.body" = "Dulcet is opening the selected track.";
+"player.failed.title" = "This track could not be played";
+"player.failed.body" = "Return to your library and choose another track.";
+"player.unavailable.title" = "Nothing is playing";
+"player.unavailable.body" = "Choose a track, album, or library playback action to begin.";
 "search.title" = "Search";
 "search.prompt" = "Artists, albums, and tracks";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";

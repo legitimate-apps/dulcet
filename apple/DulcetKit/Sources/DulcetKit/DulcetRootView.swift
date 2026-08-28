@@ -287,7 +287,18 @@ private struct DulcetStateSurface: View {
             )
         case .nowPlaying:
             if snapshot.state == .nowPlaying, let player = snapshot.nowPlaying {
-                DulcetNowPlayingView(player: player)
+                DulcetNowPlayingView(player: player) { intent in
+                    store.sendPlaybackControl(intent)
+                }
+            } else if snapshot.state == .nowPlayingPreparing {
+                DulcetPlaybackPreparingView()
+            } else if snapshot.state == .nowPlayingFailed {
+                DulcetUnavailableDestinationView(
+                    symbol: "exclamationmark.triangle",
+                    title: DulcetStrings.nowPlayingFailedTitle,
+                    message: DulcetStrings.nowPlayingFailedBody
+                )
+                .navigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             } else {
                 DulcetUnavailableDestinationView(
                     symbol: "waveform",

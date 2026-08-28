@@ -466,11 +466,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             case .nowPlaying:
                 cancelLibraryBrowse()
                 cancelSearchRequest()
-                publish(
-                    state: .nowPlayingUnavailable,
-                    destination: .nowPlaying,
-                    form: currentSnapshot.accountForm,
-                    status: currentSnapshot.accountConnection
+                receivePlaybackPresentation(
+                    playbackController?.currentPresentation ?? .unavailable,
+                    selectNowPlaying: true
                 )
             }
         case let .updateSearchQuery(query):
@@ -1065,9 +1063,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let destination = selectNowPlaying ? .nowPlaying : currentSnapshot.selectedDestination
         let state: DulcetPresentationState
         if destination == .nowPlaying {
-            state = presentation.status == .ready && presentation.nowPlaying != nil
-                ? .nowPlaying
-                : .nowPlayingUnavailable
+            state = switch presentation.status {
+            case .unavailable:
+                .nowPlayingUnavailable
+            case .preparing:
+                .nowPlayingPreparing
+            case .ready:
+                presentation.nowPlaying == nil ? .nowPlayingFailed : .nowPlaying
+            case .failed:
+                .nowPlayingFailed
+            }
         } else {
             state = currentSnapshot.state
         }
@@ -1178,7 +1183,8 @@ private extension DulcetPresentationState {
              .accountErrorCapability, .accountErrorPersistence:
             self
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
+             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .offlineMetadataOnly:
             .accountConnectIdle
