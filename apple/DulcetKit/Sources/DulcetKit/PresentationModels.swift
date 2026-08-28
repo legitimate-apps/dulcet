@@ -22,6 +22,8 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case libraryBrowse = "library-browse"
     case albumDetailMultiDisc = "album-detail-multi-disc"
     case nowPlaying = "now-playing"
+    case nowPlayingPreparing = "now-playing-preparing"
+    case nowPlayingFailed = "now-playing-failed"
     case nowPlayingUnavailable = "now-playing-unavailable"
     case searchIdle = "search-idle"
     case searchLoading = "search-loading"

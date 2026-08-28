@@ -1,9 +1,31 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+struct DulcetPlaybackPreparingView: View {
+    var body: some View {
+        VStack(spacing: DulcetSpacing.md) {
+            ProgressView()
+                .controlSize(.large)
+            Text(DulcetStrings.nowPlayingPreparingTitle)
+                .font(.title2.weight(.semibold))
+            Text(DulcetStrings.nowPlayingPreparingBody)
+                .font(.body)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+        }
+        .padding(DulcetSpacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+        .navigationTitle(DulcetStrings.nowPlaying)
+    }
+}
+
 struct DulcetNowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let player: DulcetNowPlaying
+    var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
 
     var body: some View {
         ZStack {
