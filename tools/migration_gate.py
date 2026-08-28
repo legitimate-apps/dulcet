@@ -197,6 +197,81 @@ def canonical_rows(connection: sqlite3.Connection, table: str) -> list[dict[str,
     return sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
 
 
+SQL_TOKEN = re.compile(
+    r"""'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^]]*\]|
+        --[^\n]*(?:\n|$)|/\*.*?\*/|<=|>=|<>|!=|==|\|\||
+        [A-Za-z_][A-Za-z0-9_$]*|(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?|\S""",
+    re.VERBOSE | re.DOTALL,
+)
+
+
+def normalized_sql(sql: str | None) -> str | None:
+    if sql is None:
+        return None
+    tokens: list[str] = []
+    for match in SQL_TOKEN.finditer(sql):
+        token = match.group(0)
+        if token.startswith(("--", "/*")) or token == ";":
+            continue
+        tokens.append(token if token.startswith("'") else token.lower())
+    return " ".join(tokens)
+
+
+def protected_schema(connection: sqlite3.Connection) -> dict[str, object]:
+    tables: dict[str, object] = {}
+    for table in PROTECTED_COLUMNS:
+        table_sql_row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        indexes: list[dict[str, object]] = []
+        for index_row in connection.execute(f'PRAGMA index_list("{table}")'):
+            index_name = index_row[1]
+            index_sql_row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (index_name,),
+            ).fetchone()
+            indexes.append(
+                {
+                    "name": index_name,
+                    "unique": index_row[2],
+                    "origin": index_row[3],
+                    "partial": index_row[4],
+                    "sql": normalized_sql(index_sql_row[0] if index_sql_row else None),
+                    "columns": [
+                        list(column)
+                        for column in connection.execute(
+                            f'PRAGMA index_xinfo("{index_name}")'
+                        )
+                    ],
+                }
+            )
+        tables[table] = {
+            "sql": normalized_sql(table_sql_row[0] if table_sql_row else None),
+            "columns": [
+                list(column)
+                for column in connection.execute(f'PRAGMA table_xinfo("{table}")')
+            ],
+            "foreign_keys": [
+                list(foreign_key)
+                for foreign_key in connection.execute(f'PRAGMA foreign_key_list("{table}")')
+            ],
+            "indexes": sorted(indexes, key=lambda index: str(index["name"])),
+        }
+    triggers = [
+        {
+            "name": name,
+            "table": table,
+            "sql": normalized_sql(sql),
+        }
+        for name, table, sql in connection.execute(
+            "SELECT name, tbl_name, sql FROM sqlite_master "
+            "WHERE type = 'trigger' ORDER BY name"
+        )
+    ]
+    return {"tables": tables, "triggers": triggers}
+
+
 def reconcile_download_files(
     downloads: list[dict[str, object]],
     files_root: Path,
@@ -258,6 +333,7 @@ def assert_fixture_preserved(
     database: Path,
     files: Path,
     expected_state: dict[str, list[dict[str, object]]],
+    expected_schema: dict[str, object],
     source_metadata: tuple[int, int, int],
     target_version: int,
 ) -> None:
@@ -265,6 +341,7 @@ def assert_fixture_preserved(
     with sqlite3.connect(database) as connection:
         actual, state_errors = protected_state(connection, files)
         errors.extend(state_errors)
+        actual_schema = protected_schema(connection)
         metadata = connection.execute(
             "SELECT schema_version, cache_format_version, committed_generation "
             "FROM schema_meta WHERE singleton_id = 1"
@@ -277,6 +354,12 @@ def assert_fixture_preserved(
                 f"expected={json.dumps(expected_state[table], sort_keys=True)}\n"
                 f"actual={json.dumps(actual[table], sort_keys=True)}"
             )
+    if actual_schema != expected_schema:
+        errors.append(
+            "protected schema or trigger definitions changed\n"
+            f"expected={json.dumps(expected_schema, sort_keys=True)}\n"
+            f"actual={json.dumps(actual_schema, sort_keys=True)}"
+        )
     expected_metadata = [
         target_version,
         current_cache_format_version(),
@@ -320,6 +403,7 @@ def migrate_and_assert_fixture(
                 raise MigrationGateError(
                     "invalid pre-migration fixture:\n" + "\n".join(fixture_errors)
                 )
+            expected_schema = protected_schema(connection)
             apply_released_migrations(connection, fixture_version, target_version)
             if destructive_sql is not None:
                 connection.executescript(destructive_sql)
@@ -328,6 +412,7 @@ def migrate_and_assert_fixture(
             database,
             files,
             expected_state,
+            expected_schema,
             source_metadata,
             target_version,
         )
@@ -361,7 +446,7 @@ def prove_destructive_migration_is_rejected(fixture: Path, version: int) -> None
             ) from failure
         return
     raise MigrationGateError(
-        "destructive same-name migration unexpectedly preserved protected semantics"
+        "destructive same-name migration unexpectedly preserved protected data"
     )
 
 
