@@ -3257,7 +3257,9 @@ two-byte request.
 3. Envelope detection now requires a recognizable `subsonic-response` root before it can classify a
    delimiter-led payload as a malformed envelope. Valid error envelopes are still detected on
    continuation ranges. The formerly-red production test now consumes the full file in 30 ranges
-   with zero failed or active loading requests. A server-side play-count increment in the DEV app is
+   with zero failed or active loading requests. Content information is published once for each of
+   the three AVFoundation loading requests, not once per HTTP chunk; a later chunk that disagrees
+   about the resource metadata fails closed. A server-side play-count increment in the DEV app is
    deliberately left to the operator's manual verification.
 
 **Revision 80 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
