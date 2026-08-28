@@ -17,6 +17,7 @@ SCHEMA_SNAPSHOTS = ROOT / "core/src/commonMain/sqldelight/databases"
 SQLDELIGHT_ROOT = ROOT / "core/src/commonMain/sqldelight"
 FIXTURES = ROOT / "tools/migration-fixtures"
 RESERVATIONS = FIXTURES / "reserved-tables.json"
+SHIPPING_FOREIGN_KEYS = 0
 
 SCHEMA_INTENT_TABLES = {
     "server_account",
@@ -388,7 +389,13 @@ def migrate_and_assert_fixture(
         shutil.copy2(fixture / "database.db", database)
         shutil.copytree(fixture / "files", files)
         with sqlite3.connect(database) as connection:
-            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(f"PRAGMA foreign_keys = {SHIPPING_FOREIGN_KEYS}")
+            actual_foreign_keys = connection.execute("PRAGMA foreign_keys").fetchone()
+            if actual_foreign_keys != (SHIPPING_FOREIGN_KEYS,):
+                raise MigrationGateError(
+                    "cannot configure the shipping foreign_keys pragma state: "
+                    f"expected={SHIPPING_FOREIGN_KEYS} actual={actual_foreign_keys}"
+                )
             source_metadata = connection.execute(
                 "SELECT schema_version, cache_format_version, committed_generation "
                 "FROM schema_meta WHERE singleton_id = 1"
