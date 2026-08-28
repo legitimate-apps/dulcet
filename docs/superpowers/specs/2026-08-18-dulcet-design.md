@@ -6,7 +6,8 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 78 — a restored credential now presents as a saved account awaiting an explicit
+**Revision:** 79 — the schema-intent registry now includes the implemented queue ownership tables;
+revision 78 made a restored credential present as a saved account awaiting an explicit
 reconnect rather than as no account at all, and every macOS destination owns its window title in
 every one of its states; revision 77 made artwork responses use unconditional XML/JSON-envelope-first
 validation and a positive image-signature table before bytes can cross into a platform cache;
@@ -1021,7 +1022,8 @@ playing from library A) is deferred and is not a v1 feature.
 ### 11.3 Core tables (schema intent)
 
 `server_account` · `artist` / `album` / `track` (with the generation columns of §16.3) · `credit` ·
-`playlist` / `playlist_entry` (explicit integer order) · `queue_entry` · `download` · `scrobble_outbox`
+`playlist` / `playlist_entry` (explicit integer order) · `queue_state` / `active_queue` / `queue_entry`
+· `download` · `scrobble_outbox`
 · `mutation_outbox` (§18.3) · `artwork_cache` · `resume_position` (§15.5) · `sync_checkpoint` ·
 `schema_meta` (SQLDelight schema version, cache-format version, `committed_generation`).
 
@@ -3212,6 +3214,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 79 (2026-08-27)** — the queue ownership tables joined the complete schema-name contract.
+
+1. §11.3 now names `queue_state` and `active_queue`, which were already implemented but absent from
+   the normative schema-intent list.
+2. `reserved-tables.json` now records every implemented table separately from names reserved for
+   future tables. The migration gate requires that implemented registry to equal the real schema
+   snapshot, so an existing table cannot be mislabeled as unpopulated merely to satisfy bookkeeping.
+3. The gate's column inspection remains a conservative naming lint: it rejects persisted column
+   names containing `monotonic` or credential-bearing tokens. Its function name now says so rather
+   than presenting the substring scan as a proof of clock behavior.
 
 **Revision 78 (2026-08-27)** — §13.6 specified the relaunch *policy* and left its *presentation*
 unspecified, so a configured account rendered as no account.

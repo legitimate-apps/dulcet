@@ -17,7 +17,19 @@ jobs:
   apple-ci:
     name: apple-ci
     runs-on: macos-26
-    timeout-minutes: 30
+    # 45, not 30. MEASURED 2026-08-27: this job took 25m27s on the run before the first database
+    # landed -- 4.5 minutes of headroom against a 30-minute cap. Adding SQLDelight code generation, a
+    # larger framework and the migration gate pushed it to 30m36s, and it was cancelled.
+    #
+    # A timeout cancellation reports as a failure at whatever step happened to be running at minute
+    # 30, which twice looked like "Assert Darwin conformance preconditions" failing and is not that
+    # at all. That is the expensive part: the job says the wrong thing about why it stopped, and the
+    # reader goes to debug a conformance assertion that never ran.
+    #
+    # The timeout exists as queue hygiene -- a hung job must not hold a capped macOS slot away from
+    # the run that replaced it -- so it stays bounded rather than being removed. It is set with real
+    # headroom so ordinary growth does not present as a conformance failure.
+    timeout-minutes: 45
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"

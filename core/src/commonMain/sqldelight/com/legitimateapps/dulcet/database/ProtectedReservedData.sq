@@ -1,0 +1,29 @@
+CREATE TABLE mutation_outbox (
+  server_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  value TEXT NOT NULL,
+  local_sequence INTEGER NOT NULL CHECK (local_sequence >= 0),
+  wall_clock INTEGER NOT NULL,
+  PRIMARY KEY (server_id, target_id, field),
+  UNIQUE (server_id, local_sequence)
+);
+
+CREATE TABLE download (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  transcode_profile TEXT NOT NULL,
+  download_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (
+    state IN ('queued', 'downloading', 'interrupted', 'complete', 'stale')
+  ),
+  file_relative_path TEXT NOT NULL,
+  expected_byte_length INTEGER,
+  file_size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (file_size_bytes >= 0),
+  platform_resume_data BLOB,
+  resume_data_created_at_wall_clock INTEGER,
+  PRIMARY KEY (server_id, raw_id, transcode_profile),
+  UNIQUE (download_id),
+  UNIQUE (file_relative_path),
+  CHECK (expected_byte_length IS NULL OR expected_byte_length >= 0)
+);

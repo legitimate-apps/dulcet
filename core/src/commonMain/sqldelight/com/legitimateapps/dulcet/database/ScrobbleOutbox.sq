@@ -1,0 +1,65 @@
+CREATE TABLE scrobble_outbox (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  session_start_wall_clock INTEGER NOT NULL,
+  created_at_wall_clock INTEGER NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  PRIMARY KEY (server_id, raw_id, session_start_wall_clock)
+);
+
+enqueue:
+INSERT OR IGNORE INTO scrobble_outbox(
+  server_id,
+  raw_id,
+  session_start_wall_clock,
+  created_at_wall_clock,
+  attempt_count
+)
+VALUES (?, ?, ?, ?, 0);
+
+selectPendingForServer:
+SELECT
+  server_id,
+  raw_id,
+  session_start_wall_clock,
+  created_at_wall_clock,
+  attempt_count
+FROM scrobble_outbox
+WHERE server_id = ?
+ORDER BY created_at_wall_clock, session_start_wall_clock, raw_id;
+
+selectExpiredBefore:
+SELECT
+  server_id,
+  raw_id,
+  session_start_wall_clock,
+  created_at_wall_clock,
+  attempt_count
+FROM scrobble_outbox
+WHERE server_id = ?
+  AND created_at_wall_clock < ?
+ORDER BY created_at_wall_clock, raw_id, session_start_wall_clock;
+
+deleteEntry:
+DELETE FROM scrobble_outbox
+WHERE server_id = ?
+  AND raw_id = ?
+  AND session_start_wall_clock = ?;
+
+recordFailedAttempt:
+UPDATE scrobble_outbox
+SET attempt_count = attempt_count + 1
+WHERE server_id = ?
+  AND raw_id = ?
+  AND session_start_wall_clock = ?;
+
+selectAttemptCount:
+SELECT attempt_count
+FROM scrobble_outbox
+WHERE server_id = ?
+  AND raw_id = ?
+  AND session_start_wall_clock = ?;
+
+countAll:
+SELECT count(*)
+FROM scrobble_outbox;

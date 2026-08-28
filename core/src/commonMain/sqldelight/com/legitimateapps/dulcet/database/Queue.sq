@@ -1,0 +1,111 @@
+CREATE TABLE queue_state (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  current_position INTEGER,
+  repeat_mode TEXT NOT NULL CHECK (repeat_mode IN ('off', 'all', 'one')),
+  shuffle_enabled INTEGER NOT NULL CHECK (shuffle_enabled IN (0, 1)),
+  CHECK (current_position IS NULL OR current_position >= 0)
+);
+
+CREATE TABLE active_queue (
+  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+  server_id TEXT NOT NULL,
+  FOREIGN KEY (server_id) REFERENCES queue_state(server_id) ON DELETE CASCADE
+);
+
+CREATE TABLE queue_entry (
+  server_id TEXT NOT NULL,
+  queue_entry_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  source_context_kind TEXT NOT NULL CHECK (
+    source_context_kind IN ('album', 'playlist', 'search', 'artist')
+  ),
+  source_context_raw_id TEXT,
+  source_context_display_name TEXT NOT NULL,
+  added_by TEXT NOT NULL CHECK (
+    added_by IN ('play_now', 'play_next', 'add_to_queue', 'autoplay')
+  ),
+  original_position INTEGER NOT NULL CHECK (original_position >= 0),
+  playback_position INTEGER NOT NULL CHECK (playback_position >= 0),
+  PRIMARY KEY (server_id, queue_entry_id),
+  UNIQUE (server_id, original_position),
+  UNIQUE (server_id, playback_position),
+  FOREIGN KEY (server_id) REFERENCES queue_state(server_id) ON DELETE CASCADE
+);
+
+insertQueueStateIfMissing:
+INSERT OR IGNORE INTO queue_state(
+  server_id,
+  current_position,
+  repeat_mode,
+  shuffle_enabled
+)
+VALUES (?, NULL, 'off', 0);
+
+updateQueueState:
+UPDATE queue_state
+SET current_position = ?, repeat_mode = ?, shuffle_enabled = ?
+WHERE server_id = ?;
+
+selectQueueState:
+SELECT current_position, repeat_mode, shuffle_enabled
+FROM queue_state
+WHERE server_id = ?;
+
+deleteQueueState:
+DELETE FROM queue_state
+WHERE server_id = ?;
+
+deleteQueueEntries:
+DELETE FROM queue_entry
+WHERE server_id = ?;
+
+insertQueueEntry:
+INSERT INTO queue_entry(
+  server_id,
+  queue_entry_id,
+  raw_id,
+  source_context_kind,
+  source_context_raw_id,
+  source_context_display_name,
+  added_by,
+  original_position,
+  playback_position
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectQueueEntriesByOriginalPosition:
+SELECT
+  queue_entry_id,
+  raw_id,
+  source_context_kind,
+  source_context_raw_id,
+  source_context_display_name,
+  added_by,
+  original_position,
+  playback_position
+FROM queue_entry
+WHERE server_id = ?
+ORDER BY original_position;
+
+selectQueueEntriesByPlaybackPosition:
+SELECT
+  queue_entry_id,
+  raw_id,
+  source_context_kind,
+  source_context_raw_id,
+  source_context_display_name,
+  added_by,
+  original_position,
+  playback_position
+FROM queue_entry
+WHERE server_id = ?
+ORDER BY playback_position;
+
+activateQueue:
+INSERT OR REPLACE INTO active_queue(singleton_id, server_id)
+VALUES (1, ?);
+
+selectActiveServerId:
+SELECT server_id
+FROM active_queue
+WHERE singleton_id = 1;

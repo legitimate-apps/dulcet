@@ -1,0 +1,35 @@
+CREATE TABLE schema_meta (
+  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+  schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+  cache_format_version INTEGER NOT NULL CHECK (cache_format_version > 0),
+  committed_generation INTEGER NOT NULL CHECK (committed_generation >= 0)
+);
+
+initialize:
+INSERT OR IGNORE INTO schema_meta(
+  singleton_id,
+  schema_version,
+  cache_format_version,
+  committed_generation
+)
+VALUES (1, ?, ?, 0);
+
+selectMetadata:
+SELECT schema_version, cache_format_version, committed_generation
+FROM schema_meta
+WHERE singleton_id = 1;
+
+updateSchemaVersion:
+UPDATE schema_meta
+SET schema_version = ?
+WHERE singleton_id = 1;
+
+updateCacheFormatVersion:
+UPDATE schema_meta
+SET cache_format_version = ?
+WHERE singleton_id = 1;
+
+updateCommittedGeneration:
+UPDATE schema_meta
+SET committed_generation = ?
+WHERE singleton_id = 1;
