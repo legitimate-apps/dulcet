@@ -37,6 +37,9 @@ class ApplePlaybackQueueFacadeTest {
 
         assertNull(transition.errorKind)
         assertEquals(listOf("track-a", "track-b"), transition.snapshot?.entries?.map { it.rawId })
+        assertEquals(listOf("Album A", "Album A"), transition.snapshot?.entries?.map {
+            it.sourceDisplayName
+        })
         assertEquals(1, transition.snapshot?.currentIndex)
         assertEquals("track-b", transition.startDirective?.rawId)
         assertEquals("session:2", transition.startDirective?.playbackSessionId)
