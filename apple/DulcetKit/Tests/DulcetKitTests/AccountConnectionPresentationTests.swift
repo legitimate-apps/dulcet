@@ -229,8 +229,19 @@ func playbackSurfaceIntentsReachTheSinglePlaybackControllerBoundary() throws {
     #expect(rowIntent.startIndex == 0)
     #expect(!rowIntent.shuffle)
 
-    store.sendPlaybackControl(.cycleRepeat)
-    #expect(playback.controlIntents == [.cycleRepeat])
+    let controls: [DulcetPlaybackControlIntent] = [
+        .play,
+        .pause,
+        .next,
+        .previous,
+        .seek(.seconds(42)),
+        .setShuffle(true),
+        .cycleRepeat,
+    ]
+    for control in controls {
+        store.sendPlaybackControl(control)
+    }
+    #expect(playback.controlIntents == controls)
 }
 
 @Test @MainActor
@@ -247,7 +258,7 @@ func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
         current: album.tracks[0],
         queue: album.tracks,
         elapsed: .zero,
-        isPlaying: false,
+        isPlaying: true,
         outputName: "Fixture output",
         volume: 1,
         audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1),
@@ -268,6 +279,10 @@ func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
     playback.publish(DulcetPlaybackPresentation(status: .ready, nowPlaying: nowPlaying))
     #expect(store.snapshot.state == .nowPlaying)
     #expect(store.snapshot.nowPlaying?.sessionID == DulcetPlaybackSessionID("session-ready"))
+
+    store.sendPlaybackControl(.pause)
+    #expect(playback.controlIntents == [.pause])
+    #expect(store.snapshot.nowPlaying?.isPlaying == true)
 }
 
 @Test @MainActor

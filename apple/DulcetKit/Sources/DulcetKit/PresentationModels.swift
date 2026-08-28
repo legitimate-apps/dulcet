@@ -530,6 +530,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let sessionID: DulcetPlaybackSessionID?
     public let current: DulcetTrack
     public let queue: [DulcetTrack]
+    public let currentIndex: Int
     public let elapsed: Duration
     public let isPlaying: Bool
     public let outputName: String
@@ -547,6 +548,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         sessionID: DulcetPlaybackSessionID? = nil,
         current: DulcetTrack,
         queue: [DulcetTrack],
+        currentIndex: Int = 0,
         elapsed: Duration,
         isPlaying: Bool,
         outputName: String,
@@ -563,6 +565,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.sessionID = sessionID
         self.current = current
         self.queue = queue
+        self.currentIndex = currentIndex
         self.elapsed = elapsed
         self.isPlaying = isPlaying
         self.outputName = outputName

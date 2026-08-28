@@ -31,10 +31,19 @@ enum DulcetStrings {
     static let pause = text("action.pause", "Pause")
     static let previous = text("action.previous", "Previous Track")
     static let next = text("action.next", "Next Track")
+    static let repeatMode = text("action.repeat", "Repeat Mode")
+    static let repeatOff = text("player.repeat.off", "Off")
+    static let repeatAll = text("player.repeat.all", "Repeat All")
+    static let repeatOne = text("player.repeat.one", "Repeat One")
+    static let controlOn = text("control.on", "On")
+    static let controlOff = text("control.off", "Off")
+    static let buffering = text("player.buffering", "Buffering…")
+    static let paused = text("player.paused", "Paused")
+    static let readyToPlay = text("player.ready", "Ready to play")
     static let favorite = text("action.favorite", "Favorite")
     static let unfavorite = text("action.unfavorite", "Remove Favorite")
     static let volume = text("action.volume", "Volume")
-    static let queue = text("player.queue", "Up Next")
+    static let queue = text("player.queue", "Queue")
     static let playingOn = text("player.playingOn", "Playing on")
     static let firstRunTitle = text("empty.title", "Your music, wherever you listen")
     static let firstRunBody = text("empty.body", "Connect an OpenSubsonic server to browse your library and listen with native controls.")
@@ -190,6 +199,10 @@ enum DulcetStrings {
 
     static func trackAccessibility(title: String, subtitle: String, duration: String) -> String {
         formatted("track.accessibility", "%1$@, %2$@, %3$@", title, subtitle, duration)
+    }
+
+    static func currentTrackAccessibility(_ track: String) -> String {
+        formatted("track.accessibility.current", "Current track, %@", track)
     }
 
     static func unavailableTrackAccessibility(

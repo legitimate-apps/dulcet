@@ -29,10 +29,19 @@
 "action.pause" = "Pause";
 "action.previous" = "Previous Track";
 "action.next" = "Next Track";
+"action.repeat" = "Repeat Mode";
+"player.repeat.off" = "Off";
+"player.repeat.all" = "Repeat All";
+"player.repeat.one" = "Repeat One";
+"control.on" = "On";
+"control.off" = "Off";
+"player.buffering" = "Buffering…";
+"player.paused" = "Paused";
+"player.ready" = "Ready to play";
 "action.favorite" = "Favorite";
 "action.unfavorite" = "Remove Favorite";
 "action.volume" = "Volume";
-"player.queue" = "Up Next";
+"player.queue" = "Queue";
 "player.playingOn" = "Playing on";
 "player.thisDevice" = "This Device";
 "player.unknownAudioFormat" = "Audio";
@@ -192,4 +201,5 @@
 "album.metadata" = "%1$@ · %2$@ · %3$@";
 "track.subtitle" = "%1$@ · %2$@";
 "track.accessibility" = "%1$@, %2$@, %3$@";
+"track.accessibility.current" = "Current track, %@";
 "track.accessibility.unavailable" = "%1$@, %2$@, %3$@, %4$@";
