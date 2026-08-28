@@ -4,10 +4,13 @@ import Foundation
 public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked Sendable {
     public static let sampleInterval: TimeInterval = 0.5
     public static let cadenceMaximum: TimeInterval = 2
+    public static let emptyQueueAudioSessionGracePeriod: TimeInterval = 10
 
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<UInt8>()
     private let player: AVQueuePlayer
+    private let audioSession: any DulcetAudioSessionManaging
+    private let audioSessionGracePeriod: TimeInterval
     private var listener: DulcetPlaybackEventHandler?
     private var current: PlayerItemContext?
     private var preloaded: PlayerItemContext?
@@ -16,9 +19,18 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var playerObservers: [NSKeyValueObservation] = []
     private var notificationObservers: [NSObjectProtocol] = []
     private var sampler: DispatchSourceTimer?
+    private var audioSessionGraceTimer: DispatchSourceTimer?
+    private var activeAudioSessionID: DulcetPlaybackSessionID?
+    private var interruptionWasPlaying = false
 
-    public init(player: AVQueuePlayer = AVQueuePlayer()) {
+    public init(
+        player: AVQueuePlayer = AVQueuePlayer(),
+        audioSession: any DulcetAudioSessionManaging = DulcetPlatformAudioSession(),
+        audioSessionGracePeriod: TimeInterval = DulcetAVPlayerEngine.emptyQueueAudioSessionGracePeriod
+    ) {
         self.player = player
+        self.audioSession = audioSession
+        self.audioSessionGracePeriod = max(0, audioSessionGracePeriod)
         self.queue = DispatchQueue(label: "com.legitimateapps.dulcet.playback-engine")
         superInitQueue()
     }
@@ -56,6 +68,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func superInitQueue() {
         queue.setSpecific(key: queueKey, value: 1)
         player.actionAtItemEnd = .advance
+        audioSession.setEventHandler { [weak self] event in
+            self?.enqueue { $0.handleAudioSessionEvent(event) }
+        }
         observePlayer()
         startSampler()
     }
@@ -73,10 +88,11 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         case let .prepare(commandID, plan):
             prepare(plan, replacing: false, commandID: commandID, completion: completion)
         case let .play(commandID):
-            guard current != nil else {
+            guard let current else {
                 completion(.rejected(commandID: commandID, reason: .invalidState))
                 return
             }
+            current.playRequested = true
             player.playImmediately(atRate: desiredRate)
             completion(.accepted(commandID: commandID))
         case let .pause(commandID):
@@ -152,6 +168,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             completion(.rejected(commandID: commandID, reason: .invalidState))
             return
         }
+        guard activateAudioSessionIfNeeded(for: plan, commandID: commandID, completion: completion) else {
+            return
+        }
         let wasPlaying = player.timeControlStatus == .playing
         let context = makeContext(plan: plan, resource: resource, isPreloaded: false)
         current?.invalidate()
@@ -163,6 +182,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
         emit(.preparing(attemptID: plan.attemptID))
         if wasPlaying {
+            context.playRequested = true
             player.playImmediately(atRate: desiredRate)
         }
         completion(.accepted(commandID: commandID))
@@ -246,6 +266,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         self.current = nil
         preloaded = nil
         player.removeAllItems()
+        deactivateAudioSessionImmediately()
     }
 
     private func releaseEngine() {
@@ -270,6 +291,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         notificationObservers.removeAll()
         sampler?.cancel()
         sampler = nil
+        audioSessionGraceTimer?.cancel()
+        audioSessionGraceTimer = nil
+        deactivateAudioSessionImmediately()
+        audioSession.setEventHandler(nil)
         released = true
     }
 
@@ -281,6 +306,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             playerObservers.forEach { $0.invalidate() }
             notificationObservers.forEach(NotificationCenter.default.removeObserver)
             sampler?.cancel()
+            audioSessionGraceTimer?.cancel()
+            audioSession.deactivate()
+            audioSession.setEventHandler(nil)
         }
     }
 
@@ -294,8 +322,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             attemptID: plan.attemptID,
             expectedContainer: plan.expectedContainer
         ) { [weak self] attemptID, error, refreshReason in
-            self?.queue.async {
-                self?.handleResourceFailure(
+            self?.enqueue {
+                $0.handleResourceFailure(
                     attemptID: attemptID,
                     error: error,
                     refreshReason: refreshReason
@@ -322,12 +350,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func observePlayer() {
         playerObservers.append(
             player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
-                self?.queue.async { self?.timeControlStatusChanged() }
+                self?.enqueue { $0.timeControlStatusChanged() }
             }
         )
         playerObservers.append(
             player.observe(\.currentItem, options: [.new]) { [weak self] _, _ in
-                self?.queue.async { self?.currentItemChanged() }
+                self?.enqueue { $0.currentItemChanged() }
             }
         )
     }
@@ -336,13 +364,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         context.observers.append(
             context.item.observe(\.status, options: [.initial, .new]) { [weak self, weak context] _, _ in
                 guard let context else { return }
-                self?.queue.async { self?.itemStatusChanged(context) }
+                self?.enqueue { $0.itemStatusChanged(context) }
             }
         )
         context.observers.append(
             context.item.observe(\.duration, options: [.new]) { [weak self, weak context] _, _ in
                 guard let context else { return }
-                self?.queue.async { self?.durationChanged(context) }
+                self?.enqueue { $0.durationChanged(context) }
             }
         )
         let center = NotificationCenter.default
@@ -353,7 +381,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 queue: nil
             ) { [weak self, weak context] _ in
                 guard let context else { return }
-                self?.queue.async { self?.itemEnded(context) }
+                self?.enqueue { $0.itemEnded(context) }
             }
         )
         notificationObservers.append(
@@ -363,7 +391,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 queue: nil
             ) { [weak self, weak context] _ in
                 guard let context else { return }
-                self?.queue.async { self?.itemFailed(context) }
+                self?.enqueue { $0.itemFailed(context) }
             }
         )
         notificationObservers.append(
@@ -373,7 +401,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 queue: nil
             ) { [weak self, weak context] _ in
                 guard let context else { return }
-                self?.queue.async { self?.beginBuffering(context) }
+                self?.enqueue { $0.beginBuffering(context) }
             }
         )
     }
@@ -419,6 +447,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 finalPosition: finiteSeconds(context.item.duration) ?? context.lastSampledPosition
             )
         )
+        if current === context, preloaded == nil {
+            scheduleAudioSessionDeactivationAfterGrace()
+        }
     }
 
     private func itemFailed(_ context: PlayerItemContext) {
@@ -491,6 +522,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         incoming.isPreloaded = false
         current = incoming
         preloaded = nil
+        activeAudioSessionID = incoming.plan.playbackSessionID
     }
 
     private func timeControlStatusChanged() {
@@ -544,6 +576,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func pause(context: PlayerItemContext) {
+        context.playRequested = false
         player.pause()
         if context.progressBegan && !context.pausedAfterProgress {
             context.pausedAfterProgress = true
@@ -566,6 +599,100 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         timer.setEventHandler { [weak self] in self?.samplePosition() }
         sampler = timer
         timer.resume()
+    }
+
+    private func activateAudioSessionIfNeeded(
+        for plan: DulcetPlaybackPlan,
+        commandID: DulcetPlaybackCommandID,
+        completion: @escaping DulcetPlaybackCommandCompletion
+    ) -> Bool {
+        audioSessionGraceTimer?.cancel()
+        audioSessionGraceTimer = nil
+        guard activeAudioSessionID != plan.playbackSessionID else { return true }
+        do {
+            try audioSession.activate()
+            activeAudioSessionID = plan.playbackSessionID
+            return true
+        } catch {
+            emit(.failedBeforeStart(attemptID: plan.attemptID, error: .engine))
+            completion(.rejected(commandID: commandID, reason: .failed(.engine)))
+            return false
+        }
+    }
+
+    private func scheduleAudioSessionDeactivationAfterGrace() {
+        audioSessionGraceTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + audioSessionGracePeriod)
+        timer.setEventHandler { [weak self, weak timer] in
+            guard let self, self.preloaded == nil, self.player.items().isEmpty else { return }
+            self.audioSession.deactivate()
+            self.activeAudioSessionID = nil
+            timer?.cancel()
+            self.audioSessionGraceTimer = nil
+        }
+        audioSessionGraceTimer = timer
+        timer.resume()
+    }
+
+    private func deactivateAudioSessionImmediately() {
+        audioSessionGraceTimer?.cancel()
+        audioSessionGraceTimer = nil
+        guard activeAudioSessionID != nil else { return }
+        audioSession.deactivate()
+        activeAudioSessionID = nil
+    }
+
+    private func handleAudioSessionEvent(_ event: DulcetAudioSessionEvent) {
+        guard let current else { return }
+        switch event {
+        case .interruptionBegan:
+            interruptionWasPlaying = current.playRequested || player.timeControlStatus == .playing
+            current.playRequested = false
+            current.pausedAfterProgress = current.progressBegan
+            player.pause()
+            emit(.interruptionBegan(attemptID: current.plan.attemptID, shouldResume: false))
+        case let .interruptionEnded(systemAllowsResume):
+            let shouldResume = systemAllowsResume && interruptionWasPlaying
+            interruptionWasPlaying = false
+            emit(.interruptionEnded(attemptID: current.plan.attemptID, shouldResume: shouldResume))
+            if shouldResume {
+                current.playRequested = true
+                if current.progressBegan {
+                    emit(.resumed(
+                        attemptID: current.plan.attemptID,
+                        position: currentPosition()
+                    ))
+                }
+                current.pausedAfterProgress = false
+                player.playImmediately(atRate: desiredRate)
+            }
+        case let .routeChanged(old, new, becomingNoisy):
+            let didPause = becomingNoisy &&
+                (current.playRequested || player.timeControlStatus == .playing)
+            if becomingNoisy {
+                current.playRequested = false
+                current.pausedAfterProgress = current.progressBegan
+                player.pause()
+            }
+            emit(.routeChanged(
+                attemptID: current.plan.attemptID,
+                old: old,
+                new: new,
+                didPause: didPause
+            ))
+        case .externalPlaybackBegan:
+            current.playRequested = false
+            player.pause()
+            emit(.interruptionBegan(attemptID: current.plan.attemptID, shouldResume: false))
+            emit(.engineTornDown(attemptID: current.plan.attemptID, reason: .systemReclaimed))
+            current.invalidate()
+            preloaded?.invalidate()
+            self.current = nil
+            preloaded = nil
+            player.removeAllItems()
+            deactivateAudioSessionImmediately()
+        }
     }
 
     private func samplePosition() {
@@ -645,6 +772,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         listener?(event)
     }
 
+    private func enqueue(_ operation: @escaping @Sendable (DulcetAVPlayerEngine) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            operation(self)
+        }
+    }
+
     private func performOnQueueSynchronously(_ work: () -> Void) {
         if DispatchQueue.getSpecific(key: queueKey) != nil {
             work()
@@ -661,6 +795,7 @@ private final class PlayerItemContext: @unchecked Sendable {
     var isPreloaded: Bool
     var observers: [NSKeyValueObservation] = []
     var readyEmitted = false
+    var playRequested = false
     var progressBegan = false
     var progressStartWallClock: Date?
     var buffering = false

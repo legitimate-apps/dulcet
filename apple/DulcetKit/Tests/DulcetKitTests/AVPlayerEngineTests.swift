@@ -132,6 +132,117 @@ struct AVPlayerEngineTests {
         #expect(snapshot.status == .preparing || snapshot.status == .ready)
         _ = await execute(engine, .release(commandID: .init("release")))
     }
+
+    @Test
+    func audioSessionActivatesOncePerSessionAndStopDeactivatesImmediately() async {
+        let audioSession = RecordingAudioSession()
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let original = plan(session: "same-session", attempt: "attempt-one")
+        let replacement = plan(session: "same-session", attempt: "attempt-two")
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: original))
+        _ = await execute(engine, .replaceCurrent(commandID: .init("replace"), plan: replacement))
+        #expect(audioSession.activationCount == 1)
+        #expect(audioSession.deactivationCount == 0)
+
+        _ = await execute(engine, .stop(commandID: .init("stop")))
+        #expect(audioSession.deactivationCount == 1)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func audioSessionActivationFailureIsClosedAndRejectsPreparation() async {
+        let audioSession = RecordingAudioSession(failsActivation: true)
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan()
+
+        let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+
+        #expect(outcome == .rejected(commandID: .init("prepare"), reason: .failed(.engine)))
+        #expect(events.snapshot == [
+            .failedBeforeStart(attemptID: playbackPlan.attemptID, error: .engine),
+        ])
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func interruptionsAndNoisyRoutesPauseWithExplicitResumptionPolicy() async throws {
+        let audioSession = RecordingAudioSession()
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        try await waitUntil("AVPlayer did not become ready") { events.containsReady(seekability: .seekable) }
+        _ = await execute(engine, .play(commandID: .init("play")))
+        try await waitUntil("playback did not progress before interruption") { events.containsProgressBegan }
+
+        audioSession.publish(.interruptionBegan)
+        try await waitUntil("interruption begin was not emitted") {
+            events.snapshot.contains { if case .interruptionBegan(_, false) = $0 { true } else { false } }
+        }
+        audioSession.publish(.interruptionEnded(systemAllowsResume: true))
+        try await waitUntil("eligible interruption did not resume") {
+            events.snapshot.contains { if case .interruptionEnded(_, true) = $0 { true } else { false } }
+        }
+        try await waitUntil("transport did not resume after the system-authorized interruption") {
+            events.snapshot.contains { if case .resumed = $0 { true } else { false } }
+        }
+        audioSession.publish(.routeChanged(old: .bluetooth, new: .builtIn, becomingNoisy: true))
+        try await waitUntil("becoming-noisy route did not pause") {
+            events.snapshot.contains {
+                if case .routeChanged(_, .bluetooth, .builtIn, true) = $0 { true } else { false }
+            }
+        }
+
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func externalPrimaryPlaybackFinalizesTheCurrentSession() async throws {
+        let audioSession = RecordingAudioSession()
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan()
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+
+        audioSession.publish(.externalPlaybackBegan)
+
+        try await waitUntil("external playback did not finalize the engine session") {
+            events.snapshot.contains(.engineTornDown(
+                attemptID: playbackPlan.attemptID,
+                reason: .systemReclaimed
+            ))
+        }
+        #expect(audioSession.deactivationCount == 1)
+        let playOutcome = await execute(engine, .play(commandID: .init("play-after-takeover")))
+        #expect(playOutcome == .rejected(commandID: .init("play-after-takeover"), reason: .invalidState))
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func anEmptyQueueDeactivatesAfterTheConfiguredGracePeriod() async throws {
+        let player = AVQueuePlayer()
+        let audioSession = RecordingAudioSession()
+        let engine = DulcetAVPlayerEngine(
+            player: player,
+            audioSession: audioSession,
+            audioSessionGracePeriod: 0.05
+        )
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        let item = try #require(player.currentItem)
+
+        NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: item)
+        player.removeAllItems()
+
+        try await waitUntil("empty queue did not deactivate after its grace period") {
+            audioSession.deactivationCount == 1
+        }
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
 }
 
 private func execute(
@@ -213,6 +324,56 @@ private final class InMemoryPlaybackResource: DulcetPlaybackResourceLoading, @un
 private final class InMemoryPlaybackOperation: DulcetPlaybackResourceLoadOperation,
     @unchecked Sendable {
     func cancel() {}
+}
+
+private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecked Sendable {
+    private let lock = NSLock()
+    private let failsActivation: Bool
+    private var handler: (@Sendable (DulcetAudioSessionEvent) -> Void)?
+    private var activations = 0
+    private var deactivations = 0
+
+    init(failsActivation: Bool = false) {
+        self.failsActivation = failsActivation
+    }
+
+    var activationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return activations
+    }
+
+    var deactivationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return deactivations
+    }
+
+    func setEventHandler(_ handler: (@Sendable (DulcetAudioSessionEvent) -> Void)?) {
+        lock.lock()
+        self.handler = handler
+        lock.unlock()
+    }
+
+    func activate() throws {
+        lock.lock()
+        activations += 1
+        lock.unlock()
+        if failsActivation { throw DulcetPlaybackFailure.engine }
+    }
+
+    func deactivate() {
+        lock.lock()
+        deactivations += 1
+        lock.unlock()
+    }
+
+    func publish(_ event: DulcetAudioSessionEvent) {
+        lock.lock()
+        let handler = handler
+        lock.unlock()
+        handler?(event)
+    }
 }
 
 private final class PlaybackEventRecorder: @unchecked Sendable {
