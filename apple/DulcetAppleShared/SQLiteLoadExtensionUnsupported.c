@@ -17,15 +17,24 @@
 
 #define DULCET_SQLITE_ERROR 1
 
+// default visibility + -export_dynamic on the app targets: the Kotlin framework resolves these in
+// the FLAT namespace from a separate image, so a definition that is merely present in the app is not
+// enough -- it has to be exported, or dyld aborts at load with
+// "symbol not found in flat namespace". That is how this failed the second time, after the
+// composition root started actually opening the database.
+__attribute__((visibility("default")))
 int sqlite3_enable_load_extension(void *db, int onoff);
+__attribute__((visibility("default")))
 int sqlite3_load_extension(void *db, const char *file, const char *proc, char **errmsg);
 
+__attribute__((visibility("default")))
 int sqlite3_enable_load_extension(void *db, int onoff) {
     (void)db;
     (void)onoff;
     return DULCET_SQLITE_ERROR;
 }
 
+__attribute__((visibility("default")))
 int sqlite3_load_extension(void *db, const char *file, const char *proc, char **errmsg) {
     (void)db;
     (void)file;
