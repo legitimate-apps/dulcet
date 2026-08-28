@@ -280,15 +280,6 @@ extension View {
     }
 
     @ViewBuilder
-    func dulcetPlaybackShortcut() -> some View {
-#if os(tvOS)
-        self
-#else
-        keyboardShortcut(.space, modifiers: [])
-#endif
-    }
-
-    @ViewBuilder
     func dulcetSecondaryActionStyle() -> some View {
 #if os(tvOS)
         buttonStyle(.borderedProminent)

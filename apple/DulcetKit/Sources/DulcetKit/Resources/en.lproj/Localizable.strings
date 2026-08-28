@@ -33,6 +33,12 @@
 "player.repeat.off" = "Off";
 "player.repeat.all" = "Repeat All";
 "player.repeat.one" = "Repeat One";
+"menu.playback" = "Playback";
+"menu.playback.shuffleOn" = "Turn Shuffle On";
+"menu.playback.shuffleOff" = "Turn Shuffle Off";
+"menu.playback.repeatValue" = "Repeat: %@";
+"menu.playback.seekForward15" = "Seek Forward 15 Seconds";
+"menu.playback.seekBackward15" = "Seek Backward 15 Seconds";
 "control.on" = "On";
 "control.off" = "Off";
 "player.buffering" = "Buffering…";

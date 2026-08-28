@@ -46,6 +46,9 @@ public class AppleSearchResultItemDto internal constructor(
     public val albumTitle: String?,
     public val year: Int?,
     public val durationMilliseconds: Long?,
+    public val discNumber: Int?,
+    public val trackNumber: Int?,
+    public val sourceContainer: String?,
     public val mediaSourceId: String?,
     public val artworkKey: String?,
 )
@@ -166,6 +169,9 @@ private fun SearchPage.toAppleDto(): AppleSearchPageDto = AppleSearchPageDto(
             albumTitle = result.albumTitle,
             year = result.year,
             durationMilliseconds = result.duration?.inWholeMilliseconds,
+            discNumber = result.discNumber,
+            trackNumber = result.trackNumber,
+            sourceContainer = result.sourceContainer?.name,
             mediaSourceId = result.mediaSourceId,
             artworkKey = result.artworkKey,
         )

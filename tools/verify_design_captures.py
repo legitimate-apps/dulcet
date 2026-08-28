@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,10 +15,10 @@ import tempfile
 
 # The source of truth is the Swift enum DulcetPresentationState in
 # apple/DulcetKit/Sources/DulcetKit/PresentationModels.swift, and this tuple mirrors it in the same
-# order so a drift is visible in a side-by-side read. Adding a case there without adding it here
-# fails this gate with an "unexpected" file set rather than a missing one, which reads like a
-# capture defect and is not — it is this list being stale. That is what happened when the library
-# states below were introduced.
+# order. A comment saying "keep these in sync" is not a check, and this drifted twice anyway: adding
+# a case there without adding it here fails with an "unexpected" file set rather than a missing one,
+# which reads like a capture defect and is not. assert_states_match_swift_enum below now enforces
+# the mirror directly, so the drift fails with its own cause named instead of as a capture symptom.
 STATES = (
     "account-connect-idle",
     "account-connect-empty",
@@ -40,6 +41,7 @@ STATES = (
     "library-error",
     "library-browse",
     "album-detail-multi-disc",
+    "artist-detail",
     "now-playing",
     "now-playing-preparing",
     "now-playing-failed",
@@ -53,6 +55,42 @@ STATES = (
     "error-tls-untrusted-populated-form",
     "offline-metadata-only",
 )
+PRESENTATION_STATE_SWIFT = Path(__file__).resolve().parent.parent / (
+    "apple/DulcetKit/Sources/DulcetKit/PresentationModels.swift"
+)
+
+
+def assert_states_match_swift_enum() -> None:
+    """Fail with the real cause when STATES and the Swift enum drift apart.
+
+    Reported as its own error rather than as an "unexpected file" mismatch, because that symptom
+    reads like capture non-determinism and has twice sent a reader looking for a flake that was not
+    there.
+    """
+    if not PRESENTATION_STATE_SWIFT.exists():
+        raise SystemExit(
+            f"cannot verify the presentation-state mirror: {PRESENTATION_STATE_SWIFT} is absent"
+        )
+    source = PRESENTATION_STATE_SWIFT.read_text()
+    enum_body = re.search(
+        r"enum DulcetPresentationState[^{]*\{(.*?)\n\}", source, re.S
+    )
+    if enum_body is None:
+        raise SystemExit(
+            "cannot verify the presentation-state mirror: DulcetPresentationState was not found "
+            f"in {PRESENTATION_STATE_SWIFT}"
+        )
+    swift_states = tuple(re.findall(r'case \w+ = "([a-z0-9-]+)"', enum_body.group(1)))
+    if swift_states != STATES:
+        missing = [state for state in swift_states if state not in STATES]
+        extra = [state for state in STATES if state not in swift_states]
+        raise SystemExit(
+            "STATES no longer mirrors DulcetPresentationState. "
+            f"in Swift but not STATES={missing}; in STATES but not Swift={extra}; "
+            f"order_matches={list(swift_states) == list(STATES)}"
+        )
+
+
 APPEARANCES = ("light", "dark")
 WIDTH = 1180
 HEIGHT = 760
@@ -408,6 +446,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     args = parser.parse_args()
+    assert_states_match_swift_enum()
     try:
         verify_capture_root(args.root)
     except CaptureVerificationError as error:

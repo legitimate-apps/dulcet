@@ -334,6 +334,11 @@ public enum DulcetSearchPageOutcome: Sendable {
     case cancelled
 }
 
+private enum DulcetLibrarySelection {
+    case album(DulcetProviderItemID)
+    case artist(DulcetProviderItemID)
+}
+
 @MainActor
 public protocol DulcetSearchOperation: AnyObject {
     func cancel()
@@ -375,6 +380,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
     private var searchLoadingMoreKind: DulcetSearchResultKind?
     private var searchFailure: DulcetSearchFailure?
+    private var libraryMusicFolders: [DulcetMusicFolder] = []
+    private var libraryArtists: [DulcetArtist] = []
+    private var libraryAlbums: [DulcetAlbum] = []
 
     static let defaultSearchDebounce: Duration = .milliseconds(250)
     private static let searchPageSize = 20
@@ -477,6 +485,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             loadMoreSearchResults(kind)
         case .retrySearch:
             startInitialSearch(debounce: false)
+        case let .activateSearchResult(id):
+            activateSearchResult(id)
         case let .selectAlbum(id):
             guard currentSnapshot.selectedDestination == .library,
                   let album = currentSnapshot.albums.first(where: { $0.id == id }) else { return }
@@ -619,6 +629,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         artists: [DulcetArtist] = [],
         albums: [DulcetAlbum] = [],
         selectedAlbum: DulcetAlbum? = nil,
+        selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
         nowPlaying: DulcetNowPlaying? = nil
     ) {
@@ -631,6 +642,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             artists: artists,
             albums: albums,
             selectedAlbum: selectedAlbum,
+            selectedArtist: selectedArtist,
             libraryFailure: libraryFailure,
             nowPlaying: nowPlaying,
             searchQuery: searchQuery,
@@ -652,6 +664,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         artists: [DulcetArtist] = [],
         albums: [DulcetAlbum] = [],
         selectedAlbum: DulcetAlbum? = nil,
+        selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
@@ -685,6 +698,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             looseTracks: [],
             recentlyAddedTracks: [],
             selectedAlbum: selectedAlbum,
+            selectedArtist: selectedArtist,
             nowPlaying: nowPlaying,
             searchQuery: searchQuery,
             searchResults: searchResults,
@@ -699,7 +713,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         )
     }
 
-    private func openLibrary() {
+    private func openLibrary(selecting selection: DulcetLibrarySelection? = nil) {
         cancelLibraryBrowse()
         guard case let .connected(account) = currentSnapshot.accountConnection else {
             if let savedServerName {
@@ -717,6 +731,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 form: currentSnapshot.accountForm,
                 status: currentSnapshot.accountConnection
             )
+            return
+        }
+        if let selection, presentLibrarySelection(selection) {
             return
         }
         guard let libraryBrowser else {
@@ -752,7 +769,23 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.activeLibraryOperation = nil
             switch outcome {
             case let .loaded(musicFolders, artists, albums):
+                self.libraryMusicFolders = musicFolders
+                self.libraryArtists = artists
+                self.libraryAlbums = albums
                 self.playbackController?.restorePersistedQueue(with: albums.flatMap(\.tracks))
+                if let selection {
+                    if self.presentLibrarySelection(selection) {
+                        return
+                    }
+                    self.publish(
+                        state: .libraryError,
+                        destination: .library,
+                        form: form,
+                        status: self.currentSnapshot.accountConnection,
+                        libraryFailure: DulcetLibraryFailure(kind: .protocol)
+                    )
+                    return
+                }
                 self.publish(
                     state: albums.isEmpty && artists.isEmpty
                         ? .emptyLibraryConnected
@@ -780,6 +813,36 @@ public final class DulcetAccountDataSource: DulcetDataSource {
            currentSnapshot.state == .libraryLoading {
             activeLibraryOperation = operation
         }
+    }
+
+    private func presentLibrarySelection(_ selection: DulcetLibrarySelection) -> Bool {
+        switch selection {
+        case let .album(id):
+            guard let album = libraryAlbums.first(where: { $0.id == id }) else { return false }
+            publish(
+                state: .albumDetailMultiDisc,
+                destination: .library,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection,
+                musicFolders: libraryMusicFolders,
+                artists: libraryArtists,
+                albums: libraryAlbums,
+                selectedAlbum: album
+            )
+        case let .artist(id):
+            guard let artist = libraryArtists.first(where: { $0.id == id }) else { return false }
+            publish(
+                state: .artistDetail,
+                destination: .library,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection,
+                musicFolders: libraryMusicFolders,
+                artists: libraryArtists,
+                albums: libraryAlbums,
+                selectedArtist: artist
+            )
+        }
+        return true
     }
 
     private func cancelLibraryBrowse() {
@@ -986,6 +1049,30 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
     }
 
+    private func activateSearchResult(_ id: DulcetProviderItemID) {
+        guard currentSnapshot.selectedDestination == .search,
+              let result = searchResults.first(where: { $0.id == id }) else { return }
+        switch result.kind {
+        case .track:
+            let tracks = searchResults.compactMap(\.playableTrack)
+            guard let startIndex = tracks.firstIndex(where: { $0.id == id }) else { return }
+            beginPlayback(DulcetPlaybackQueueIntent(
+                tracks: tracks,
+                sourceKind: .search,
+                sourceID: nil,
+                sourceDisplayName: DulcetStrings.search,
+                startIndex: startIndex,
+                shuffle: false
+            ))
+        case .album:
+            cancelSearchRequest()
+            openLibrary(selecting: .album(id))
+        case .artist:
+            cancelSearchRequest()
+            openLibrary(selecting: .artist(id))
+        }
+    }
+
     private func removeAccount() {
         guard case .connected = currentSnapshot.accountConnection else { return }
         let connectedStatus = currentSnapshot.accountConnection
@@ -1026,6 +1113,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalTask = nil
         providerInstanceID = nil
         playbackController?.disconnect()
+        libraryMusicFolders = []
+        libraryArtists = []
+        libraryAlbums = []
         searchQuery = ""
         searchResults = []
         searchHasMoreKinds = []
@@ -1187,7 +1277,8 @@ private extension DulcetPresentationState {
              .accountErrorCapability, .accountErrorPersistence:
             self
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .libraryBrowse, .albumDetailMultiDisc, .artistDetail,
+             .nowPlaying, .nowPlayingPreparing,
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:

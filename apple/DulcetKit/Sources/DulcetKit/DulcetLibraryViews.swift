@@ -646,6 +646,70 @@ struct DulcetAlbumDetailView: View {
     }
 }
 
+struct DulcetArtistDetailView: View {
+    let artist: DulcetArtist
+    let albums: [DulcetAlbum]
+    var onSelectAlbum: (DulcetAlbum) -> Void = { _ in }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                        Text(DulcetStrings.artist.uppercased())
+                            .font(.caption.weight(.semibold))
+                            .dulcetForeground(.secondaryTextOnWindow)
+                        Text(artist.name)
+                            .font(.largeTitle.weight(.bold))
+                            .lineLimit(nil)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(DulcetStrings.albumCount(albums.count))
+                            .font(.subheadline)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                    }
+
+                    if !albums.isEmpty {
+                        Text(DulcetStrings.albums)
+                            .font(.title2.weight(.semibold))
+                            .accessibilityAddTraits(.isHeader)
+                        LazyVGrid(
+                            columns: DulcetResponsiveGridLayout.columns(
+                                containerWidth: geometry.size.width,
+                                horizontalInsets: DulcetSpacing.xl * 2,
+                                minimumItemWidth: 180,
+                                spacing: DulcetSpacing.md,
+                                alignment: .top
+                            ),
+                            alignment: .leading,
+                            spacing: DulcetSpacing.md
+                        ) {
+                            ForEach(albums) { album in
+                                DulcetAlbumShelfItem(album: album) {
+                                    onSelectAlbum(album)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(DulcetSpacing.xl)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+        .navigationTitle(artist.name)
+    }
+}
+
+extension DulcetAlbum {
+    func belongs(to artist: DulcetArtist) -> Bool {
+        let credits = credits + tracks.flatMap(\.credits)
+        return credits.contains { credit in
+            credit.id == artist.id || (credit.id == nil && credit.name == artist.name)
+        }
+    }
+}
+
 struct DulcetOfflineLibraryView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let snapshot: DulcetSnapshot

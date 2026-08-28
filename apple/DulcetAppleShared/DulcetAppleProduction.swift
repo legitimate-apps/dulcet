@@ -236,7 +236,10 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
                 fallbackSeed: result.rawId,
                 providerInstanceID: result.providerInstanceId,
                 artworkKey: result.artworkKey
-            )
+            ),
+            discNumber: result.discNumber?.intValue,
+            trackNumber: result.trackNumber?.intValue,
+            sourceContainer: result.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:))
         )
     }
 

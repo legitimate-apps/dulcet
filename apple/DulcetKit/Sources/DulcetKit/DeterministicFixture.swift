@@ -40,6 +40,8 @@ public struct DulcetDeterministicFixture {
             return base.snapshot()
         case .albumDetailMultiDisc:
             return base.snapshot(selectedAlbum: Self.doubleLines)
+        case .artistDetail:
+            return base.snapshot(selectedArtist: Self.fixtureArtist)
         case .nowPlaying:
             return base.snapshot(nowPlaying: Self.nowPlaying)
         case .nowPlayingPreparing, .nowPlayingFailed, .nowPlayingUnavailable:
@@ -97,7 +99,7 @@ public struct DulcetDeterministicFixture {
         switch state {
         case .accountSavedDisconnected, .emptyLibraryNoAccount, .emptyLibraryConnected,
              .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .offlineMetadataOnly:
+             .libraryBrowse, .albumDetailMultiDisc, .artistDetail, .offlineMetadataOnly:
             .library
         case .nowPlaying, .nowPlayingPreparing, .nowPlayingFailed, .nowPlayingUnavailable:
             .nowPlaying
@@ -155,7 +157,8 @@ public struct DulcetDeterministicFixture {
              .accountErrorCapability, .accountErrorPersistence:
             .failed(Self.accountFailure(for: state))
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .libraryBrowse, .albumDetailMultiDisc, .artistDetail,
+             .nowPlaying, .nowPlayingPreparing,
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
@@ -245,7 +248,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
         case .loadMoreSearchResults, .retrySearch, .playLibrary, .playAlbum,
-             .activateTrack, .playbackControl:
+             .activateTrack, .activateSearchResult, .playbackControl:
             break
         case let .selectAlbum(id):
             if let album = currentSnapshot.albums.first(where: { $0.id == id }) {
@@ -279,6 +282,7 @@ private extension DulcetSnapshot {
             looseTracks: looseTracks,
             recentlyAddedTracks: recentlyAddedTracks,
             selectedAlbum: album,
+            selectedArtist: selectedArtist,
             captureDate: captureDate,
             accountForm: accountForm,
             accountConnection: accountConnection,
@@ -296,6 +300,7 @@ private extension DulcetSnapshot {
             looseTracks: looseTracks,
             recentlyAddedTracks: recentlyAddedTracks,
             selectedAlbum: selectedAlbum,
+            selectedArtist: selectedArtist,
             nowPlaying: nowPlaying,
             searchQuery: query,
             searchResults: searchResults,
@@ -319,6 +324,7 @@ private extension DulcetSnapshot {
             looseTracks: looseTracks,
             recentlyAddedTracks: recentlyAddedTracks,
             selectedAlbum: selectedAlbum,
+            selectedArtist: selectedArtist,
             nowPlaying: nowPlaying,
             searchQuery: searchQuery,
             searchResults: searchResults,
@@ -346,6 +352,7 @@ private extension DulcetDeterministicFixture {
         @MainActor
         func snapshot(
             selectedAlbum: DulcetAlbum? = nil,
+            selectedArtist: DulcetArtist? = nil,
             nowPlaying: DulcetNowPlaying? = nil,
             searchQuery: String = "",
             searchResults: [DulcetSearchResult] = [],
@@ -362,6 +369,7 @@ private extension DulcetDeterministicFixture {
                 looseTracks: looseTracks,
                 recentlyAddedTracks: recentlyAddedTracks,
                 selectedAlbum: selectedAlbum,
+                selectedArtist: selectedArtist,
                 nowPlaying: nowPlaying,
                 searchQuery: searchQuery,
                 searchResults: searchResults,
@@ -391,6 +399,14 @@ private extension DulcetDeterministicFixture {
     static let unicodeArtwork = DulcetArtwork(seed: "etude-tokyo", palette: .plumIce)
     static let severalArtistsArtwork = DulcetArtwork(seed: "several-artists", palette: .oceanMint)
     static let longTitleArtwork = DulcetArtwork(seed: "long-title", palette: .emberRose)
+    static let fixtureArtist = DulcetArtist(
+        id: DulcetProviderItemID(
+            providerInstanceID: "deterministic-fixture",
+            rawID: "artist-dulcet-fixtures"
+        ),
+        name: "Dulcet Fixtures",
+        mediaSourceID: nil
+    )
 
     static let doubleLines: DulcetAlbum = {
         let tracks = (1...2).flatMap { disc in
@@ -670,7 +686,8 @@ private extension DulcetDeterministicFixture {
         case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .libraryBrowse, .albumDetailMultiDisc, .artistDetail,
+             .nowPlaying, .nowPlayingPreparing,
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
