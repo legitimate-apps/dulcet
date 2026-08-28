@@ -28,6 +28,26 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
+    fun wholeLibraryQueueUsesANullSourceIdentity() {
+        val fixture = fixture()
+        val request = PlaybackQueueRequest(
+            items = listOf(PlaybackQueueItem(ProviderItemId(SERVER.value, "a"), 180.seconds)),
+            sourceContext = QueueSourceContext(
+                kind = QueueSourceKind.Library,
+                sourceId = null,
+                displayName = "Library",
+            ),
+            startIndex = 0,
+            shuffle = false,
+        )
+
+        val started = fixture.controller.replaceAndStart(request)
+
+        assertEquals("a", started.startDirective?.itemId?.rawId)
+        fixture.driver.close()
+    }
+
+    @Test
     fun rowActivationStartsTheNamedOriginalIndexAndNextUsesCoreCurrentIndex() {
         val fixture = fixture()
         val started = fixture.controller.replaceAndStart(

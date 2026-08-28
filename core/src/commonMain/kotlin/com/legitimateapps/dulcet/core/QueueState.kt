@@ -10,6 +10,7 @@ internal data class ServerId(val value: String) {
 }
 
 internal enum class QueueSourceKind(internal val storageValue: String) {
+    Library("library"),
     Album("album"),
     Playlist("playlist"),
     Search("search"),
@@ -23,7 +24,7 @@ internal data class QueueSourceContext(
 ) {
     init {
         require(displayName.isNotBlank())
-        if (kind == QueueSourceKind.Search) {
+        if (kind == QueueSourceKind.Search || kind == QueueSourceKind.Library) {
             require(sourceId == null)
         } else {
             requireNotNull(sourceId)

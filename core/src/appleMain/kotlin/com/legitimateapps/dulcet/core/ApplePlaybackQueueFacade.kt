@@ -640,6 +640,7 @@ private object ApplePlaybackWallClock : OutboxWallClock {
 }
 
 private fun String.toQueueSourceKind(): QueueSourceKind = when (this) {
+    "library" -> QueueSourceKind.Library
     "album" -> QueueSourceKind.Album
     "playlist" -> QueueSourceKind.Playlist
     "search" -> QueueSourceKind.Search
