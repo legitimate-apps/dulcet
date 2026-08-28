@@ -1,8 +1,6 @@
 package com.legitimateapps.dulcet.core
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.legitimateapps.dulcet.database.DulcetDatabase
-import java.nio.file.Files
+import app.cash.sqldelight.db.SqlDriver
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -12,31 +10,22 @@ import kotlin.time.Duration.Companion.seconds
 
 class ResumePositionTest {
     @Test
-    fun resumePositionSurvivesReopenAndIsScopedByOpaqueAccountAndItemIds() {
-        val file = Files.createTempFile("dulcet-resume-", ".db")
-        val url = "jdbc:sqlite:$file"
+    fun resumePositionSurvivesStoreRecreationAndIsScopedByOpaqueAccountAndItemIds() {
+        val driver = createTestDriver()
         val accountAItem = ProviderItemId("server:resume-a", "track:same-raw-id")
         val accountBItem = ProviderItemId("server:resume-b", "track:same-raw-id")
-        try {
-            val firstDriver = JdbcSqliteDriver(url)
-            DulcetDatabase.Schema.create(firstDriver)
-            val firstStore = PersistentResumePositionStore(
-                DulcetDatabaseStore.open(firstDriver).database,
-            )
-            firstStore.save(accountAItem, 41.seconds)
-            firstStore.save(accountBItem, 73.seconds)
-            firstDriver.close()
+        val firstStore = PersistentResumePositionStore(
+            DulcetDatabaseStore.open(driver).database,
+        )
+        firstStore.save(accountAItem, 41.seconds)
+        firstStore.save(accountBItem, 73.seconds)
 
-            val reopenedDriver = JdbcSqliteDriver(url)
-            val reopened = PersistentResumePositionStore(
-                DulcetDatabaseStore.open(reopenedDriver).database,
-            )
-            assertEquals(41.seconds, reopened.restore(accountAItem))
-            assertEquals(73.seconds, reopened.restore(accountBItem))
-            reopenedDriver.close()
-        } finally {
-            Files.deleteIfExists(file)
-        }
+        val reopened = PersistentResumePositionStore(
+            DulcetDatabaseStore.open(driver).database,
+        )
+        assertEquals(41.seconds, reopened.restore(accountAItem))
+        assertEquals(73.seconds, reopened.restore(accountBItem))
+        driver.close()
     }
 
     @Test
@@ -148,8 +137,7 @@ class ResumePositionTest {
     }
 
     private fun fixture(durationSeconds: Int): Fixture {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-        DulcetDatabase.Schema.create(driver)
+        val driver = createTestDriver()
         val store = PersistentResumePositionStore(DulcetDatabaseStore.open(driver).database)
         val recorded = mutableListOf<RecordedPlaybackEvent>()
         val handler = PlaybackCoreEffectHandler(PlaybackEventRecorder(recorded::add), store)
@@ -174,7 +162,7 @@ class ResumePositionTest {
         )
 
     private data class Fixture(
-        val driver: JdbcSqliteDriver,
+        val driver: SqlDriver,
         val machine: PlaybackCoreStateMachine,
         val store: PersistentResumePositionStore,
         val handler: PlaybackCoreEffectHandler,

@@ -1,8 +1,6 @@
 package com.legitimateapps.dulcet.core
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.legitimateapps.dulcet.database.DulcetDatabase
-import java.nio.file.Files
+import app.cash.sqldelight.db.SqlDriver
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -13,45 +11,36 @@ import kotlin.time.Duration.Companion.seconds
 
 class ScrobbleOutboxTest {
     @Test
-    fun sliceTwoSeamPersistsAcrossReopenBeforeDelivery() = runTest {
-        val file = Files.createTempFile("dulcet-outbox-", ".db")
-        val url = "jdbc:sqlite:$file"
-        try {
-            val firstDriver = JdbcSqliteDriver(url)
-            DulcetDatabase.Schema.create(firstDriver)
-            val firstOutbox = PersistentScrobbleOutbox(
-                DulcetDatabaseStore.open(firstDriver).database,
-                OutboxWallClock { CREATED_AT },
-            )
-            val preReopenTransport = ScriptedTransport(ArrayDeque())
-            val recorder = SubsonicPlaybackEventRecorder(
-                SERVER,
-                ScrobbleEndpointSender(preReopenTransport),
-                firstOutbox,
-            )
-            recorder.recordPlaybackEvent(EVENT)
-            assertEquals(0, preReopenTransport.parameters.size)
-            assertEquals(1, recorder.diagnostics.submittedPlayHandOffCount)
-            firstDriver.close()
+    fun sliceTwoSeamPersistsAcrossStoreRecreationBeforeDelivery() = runTest {
+        val driver = createTestDriver()
+        val firstOutbox = PersistentScrobbleOutbox(
+            DulcetDatabaseStore.open(driver).database,
+            OutboxWallClock { CREATED_AT },
+        )
+        val preReopenTransport = ScriptedTransport(ArrayDeque())
+        val recorder = SubsonicPlaybackEventRecorder(
+            SERVER,
+            ScrobbleEndpointSender(preReopenTransport),
+            firstOutbox,
+        )
+        recorder.recordPlaybackEvent(EVENT)
+        assertEquals(0, preReopenTransport.parameters.size)
+        assertEquals(1, recorder.diagnostics.submittedPlayHandOffCount)
 
-            val reopenedDriver = JdbcSqliteDriver(url)
-            val reopenedOutbox = PersistentScrobbleOutbox(
-                DulcetDatabaseStore.open(reopenedDriver).database,
-                OutboxWallClock { CREATED_AT },
-            )
-            val transport = ScriptedTransport(ArrayDeque(listOf(okResponse())))
-            val worker = worker(reopenedOutbox, transport)
+        val reopenedOutbox = PersistentScrobbleOutbox(
+            DulcetDatabaseStore.open(driver).database,
+            OutboxWallClock { CREATED_AT },
+        )
+        val transport = ScriptedTransport(ArrayDeque(listOf(okResponse())))
+        val worker = worker(reopenedOutbox, transport)
 
-            val result = worker.onForeground()
+        val result = worker.onForeground()
 
-            assertEquals(1, result.attemptedCount)
-            assertEquals(1, result.deliveredCount)
-            assertEquals(0, reopenedOutbox.count())
-            assertEquals(SESSION_START.toString(), transport.parameters.single()["time"])
-            reopenedDriver.close()
-        } finally {
-            Files.deleteIfExists(file)
-        }
+        assertEquals(1, result.attemptedCount)
+        assertEquals(1, result.deliveredCount)
+        assertEquals(0, reopenedOutbox.count())
+        assertEquals(SESSION_START.toString(), transport.parameters.single()["time"])
+        driver.close()
     }
 
     @Test
@@ -137,8 +126,7 @@ class ScrobbleOutboxTest {
     }
 
     private fun fixture(wallClock: MutableWallClock = MutableWallClock(CREATED_AT)): Fixture {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-        DulcetDatabase.Schema.create(driver)
+        val driver = createTestDriver()
         val outbox = PersistentScrobbleOutbox(DulcetDatabaseStore.open(driver).database, wallClock)
         return Fixture(
             driver,
@@ -198,7 +186,7 @@ class ScrobbleOutboxTest {
     }
 
     private data class Fixture(
-        val driver: JdbcSqliteDriver,
+        val driver: SqlDriver,
         val outbox: PersistentScrobbleOutbox,
         val wallClock: MutableWallClock,
         val monotonic: MutableMonotonicClock,

@@ -1,8 +1,5 @@
 package com.legitimateapps.dulcet.core
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.legitimateapps.dulcet.database.DulcetDatabase
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -12,39 +9,28 @@ import kotlin.random.Random
 
 class PersistentQueueStoreTest {
     @Test
-    fun queueStateSurvivesDatabaseReopenAndRemainsAccountScoped() {
-        val file = Files.createTempFile("dulcet-queue-", ".db")
-        val url = "jdbc:sqlite:$file"
-        try {
-            val firstDriver = JdbcSqliteDriver(url)
-            DulcetDatabase.Schema.create(firstDriver)
-            val firstDatabase = DulcetDatabaseStore.open(firstDriver).database
-            val firstStore = PersistentQueueStore(firstDatabase)
-            val accountA = ServerId("server:opaque-a")
-            val accountB = ServerId("server:opaque-b")
-            val queueA = queueState(accountA, listOf("track:a1", "track:a2"), currentIndex = 1)
-            val queueB = queueState(accountB, listOf("track:b1"), currentIndex = 0)
+    fun queueStateSurvivesStoreRecreationAndRemainsAccountScoped() {
+        val driver = createTestDriver()
+        val firstStore = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
+        val accountA = ServerId("server:opaque-a")
+        val accountB = ServerId("server:opaque-b")
+        val queueA = queueState(accountA, listOf("track:a1", "track:a2"), currentIndex = 1)
+        val queueB = queueState(accountB, listOf("track:b1"), currentIndex = 0)
 
-            firstStore.replaceQueue(queueA)
-            firstStore.replaceQueue(queueB)
-            firstStore.activate(accountA)
-            firstDriver.close()
+        firstStore.replaceQueue(queueA)
+        firstStore.replaceQueue(queueB)
+        firstStore.activate(accountA)
 
-            val reopenedDriver = JdbcSqliteDriver(url)
-            val reopenedStore = PersistentQueueStore(DulcetDatabaseStore.open(reopenedDriver).database)
-            assertEquals(queueA, reopenedStore.load(accountA))
-            assertEquals(queueB, reopenedStore.load(accountB))
-            assertEquals(accountA, reopenedStore.activeServerId())
-            reopenedDriver.close()
-        } finally {
-            Files.deleteIfExists(file)
-        }
+        val reopenedStore = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
+        assertEquals(queueA, reopenedStore.load(accountA))
+        assertEquals(queueB, reopenedStore.load(accountB))
+        assertEquals(accountA, reopenedStore.activeServerId())
+        driver.close()
     }
 
     @Test
     fun accountSwitchStopsThenFinalizesBeforeThePersistedQueueSwap() = runTest {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-        DulcetDatabase.Schema.create(driver)
+        val driver = createTestDriver()
         val store = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
         val accountA = ServerId("server:switch-a")
         val accountB = ServerId("server:switch-b")
@@ -90,48 +76,38 @@ class PersistentQueueStoreTest {
     }
 
     @Test
-    fun shuffledOrderAndPlayNextInsertionSurviveReopenThenDisableToExactOriginalOrder() {
-        val file = Files.createTempFile("dulcet-shuffle-", ".db")
-        val url = "jdbc:sqlite:$file"
+    fun shuffledOrderAndPlayNextInsertionSurviveStoreRecreationThenDisableToExactOriginalOrder() {
+        val driver = createTestDriver()
         val serverId = ServerId("server:shuffle")
-        try {
-            val firstDriver = JdbcSqliteDriver(url)
-            DulcetDatabase.Schema.create(firstDriver)
-            val firstStore = PersistentQueueStore(DulcetDatabaseStore.open(firstDriver).database)
-            val original = listOf("a", "b", "c", "d", "e")
-            firstStore.replaceQueue(queueState(serverId, original, currentIndex = 1))
+        val firstStore = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
+        val original = listOf("a", "b", "c", "d", "e")
+        firstStore.replaceQueue(queueState(serverId, original, currentIndex = 1))
 
-            val shuffled = firstStore.enableShuffle(serverId, Random(20260827))
-            assertEquals(listOf("a", "b"), shuffled.entries.take(2).map(::rawId))
-            assertNotEquals(original, shuffled.entries.map(::rawId))
-            val inserted = firstStore.insert(
-                serverId,
-                entry(serverId, "play-next", QueueAddedBy.PlayNext),
-                QueueInsertionMode.PlayNext,
-            )
-            assertEquals("b", rawId(inserted.entries[inserted.currentIndex!!]))
-            assertEquals("play-next", rawId(inserted.entries[inserted.currentIndex + 1]))
-            val persistedShuffledOrder = inserted.entries.map(::rawId)
-            firstDriver.close()
+        val shuffled = firstStore.enableShuffle(serverId, Random(20260827))
+        assertEquals(listOf("a", "b"), shuffled.entries.take(2).map(::rawId))
+        assertNotEquals(original, shuffled.entries.map(::rawId))
+        val inserted = firstStore.insert(
+            serverId,
+            entry(serverId, "play-next", QueueAddedBy.PlayNext),
+            QueueInsertionMode.PlayNext,
+        )
+        assertEquals("b", rawId(inserted.entries[inserted.currentIndex!!]))
+        assertEquals("play-next", rawId(inserted.entries[inserted.currentIndex + 1]))
+        val persistedShuffledOrder = inserted.entries.map(::rawId)
 
-            val reopenedDriver = JdbcSqliteDriver(url)
-            val reopenedStore = PersistentQueueStore(DulcetDatabaseStore.open(reopenedDriver).database)
-            assertEquals(persistedShuffledOrder, reopenedStore.load(serverId).entries.map(::rawId))
+        val reopenedStore = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
+        assertEquals(persistedShuffledOrder, reopenedStore.load(serverId).entries.map(::rawId))
 
-            val restored = reopenedStore.disableShuffle(serverId)
-            assertEquals(original + "play-next", restored.entries.map(::rawId))
-            assertEquals("b", rawId(restored.entries[restored.currentIndex!!]))
-            assertEquals(QueueShuffleState.Disabled, restored.shuffleState)
-            reopenedDriver.close()
-        } finally {
-            Files.deleteIfExists(file)
-        }
+        val restored = reopenedStore.disableShuffle(serverId)
+        assertEquals(original + "play-next", restored.entries.map(::rawId))
+        assertEquals("b", rawId(restored.entries[restored.currentIndex!!]))
+        assertEquals(QueueShuffleState.Disabled, restored.shuffleState)
+        driver.close()
     }
 
     @Test
     fun removalClosesBothPersistedPositionGapsWithoutReshufflingPlayedEntries() {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-        DulcetDatabase.Schema.create(driver)
+        val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
         val store = PersistentQueueStore(database)
         val serverId = ServerId("server:remove")
@@ -157,8 +133,7 @@ class PersistentQueueStoreTest {
 
     @Test
     fun playNextWithoutCurrentAndNormalAppendBothUseTheEndOfShuffledOrder() {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-        DulcetDatabase.Schema.create(driver)
+        val driver = createTestDriver()
         val store = PersistentQueueStore(DulcetDatabaseStore.open(driver).database)
         val serverId = ServerId("server:no-current")
         store.replaceQueue(queueState(serverId, listOf("a", "b", "c"), null))

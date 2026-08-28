@@ -51,6 +51,10 @@ SELECT current_position, repeat_mode, shuffle_enabled
 FROM queue_state
 WHERE server_id = ?;
 
+deleteQueueState:
+DELETE FROM queue_state
+WHERE server_id = ?;
+
 deleteQueueEntries:
 DELETE FROM queue_entry
 WHERE server_id = ?;
