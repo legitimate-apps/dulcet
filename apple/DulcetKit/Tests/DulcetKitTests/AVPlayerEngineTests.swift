@@ -83,7 +83,7 @@ struct AVPlayerEngineTests {
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
 
-        let playbackPlan = plan(resource: resource)
+        let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
         let prepare = await execute(
             engine,
             .prepare(commandID: .init("loopback-prepare"), plan: playbackPlan)
