@@ -411,6 +411,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                 sessionID: DulcetPlaybackSessionID(session.playbackSessionId),
                 current: current,
                 queue: queue,
+                currentIndex: index,
                 elapsed: .milliseconds(max(0, session.positionMilliseconds)),
                 isPlaying: didProgress && phase != .paused,
                 outputName: DulcetPlaybackStrings.thisDevice,

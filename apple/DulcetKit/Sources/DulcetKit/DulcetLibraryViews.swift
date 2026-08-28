@@ -414,38 +414,49 @@ struct DulcetTrackRow: View {
     let index: Int
     var offline = false
     var surface: DulcetTrackRowSurface = .window
-    var onActivate: () -> Void = {}
+    var isCurrent = false
+    var onActivate: (() -> Void)?
 
     @ViewBuilder
     var body: some View {
-        #if os(macOS)
-        rowContent
-            .contentShape(Rectangle())
-            .gesture(
-                TapGesture(count: 2)
-                    .exclusively(before: TapGesture(count: 1))
-                    .onEnded { _ in performActivation() }
-            )
-            .focusable(!offline)
-            .onKeyPress(keys: [.return, .space]) { _ in
-                performActivation()
-                return offline ? .ignored : .handled
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { performActivation() }
-            .dulcetForeground(surface.primaryPair)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
-        #else
-        Button(action: performActivation) {
+        if offline {
             rowContent
-        }
-        .disabled(offline)
-        .dulcetMediaButtonStyle()
-        .dulcetForeground(surface.primaryPair)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
+                .dulcetForeground(surface.primaryPair)
+                .accessibilityLabel(rowAccessibilityLabel)
+                .accessibilityHint(DulcetStrings.offlineUnavailable)
+        } else if onActivate == nil {
+            rowContent
+                .dulcetForeground(surface.primaryPair)
+                .accessibilityLabel(rowAccessibilityLabel)
+        } else {
+        #if os(macOS)
+            rowContent
+                .contentShape(Rectangle())
+                .gesture(
+                    TapGesture(count: 2)
+                        .exclusively(before: TapGesture(count: 1))
+                        .onEnded { _ in performActivation() }
+                )
+                .focusable()
+                .onKeyPress(keys: [.return, .space]) { _ in
+                    performActivation()
+                    return .handled
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { performActivation() }
+                .dulcetForeground(surface.primaryPair)
+                .accessibilityLabel(rowAccessibilityLabel)
+                .accessibilityHint(DulcetStrings.play)
+        #else
+            Button(action: performActivation) {
+                rowContent
+            }
+            .dulcetMediaButtonStyle()
+            .dulcetForeground(surface.primaryPair)
+            .accessibilityLabel(rowAccessibilityLabel)
+            .accessibilityHint(DulcetStrings.play)
         #endif
+        }
     }
 
     private var rowContent: some View {
@@ -454,6 +465,9 @@ struct DulcetTrackRow: View {
                     if offline {
                         Image(systemName: "cloud.slash")
                             .dulcetForeground(surface.offlinePair)
+                    } else if isCurrent {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .dulcetForeground(surface.primaryPair)
                     } else {
                         Text(String(index))
                             .font(.caption.monospacedDigit())
@@ -499,7 +513,7 @@ struct DulcetTrackRow: View {
     }
 
     private func performActivation() {
-        guard !offline else { return }
+        guard !offline, let onActivate else { return }
         onActivate()
     }
 
@@ -527,6 +541,10 @@ struct DulcetTrackRow: View {
             subtitle: trackSubtitle,
             duration: track.duration.dulcetDuration
         )
+    }
+
+    private var rowAccessibilityLabel: String {
+        isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
     }
 }
 
