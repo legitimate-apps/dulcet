@@ -54,6 +54,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 class PlaybackScrobbleConformanceTest {
@@ -72,7 +73,7 @@ class PlaybackScrobbleConformanceTest {
             assertTrue(wire.body.matchesAscii(0, "fLaC"), "CONF-11 FLAC signature is absent")
 
             val plan = requireLegacyPlan("CONF-11", song)
-            val loaded = assertIs<PlaybackLoadResult.Audio>(
+            val loaded = requireAudio(
                 playback.load(plan),
                 "CONF-11 production stream loader rejected the reference FLAC",
             )
@@ -147,7 +148,7 @@ class PlaybackScrobbleConformanceTest {
             assertTrue(transcoded.body.hasMp3Signature(), "CONF-13 transcoded MP3 signature absent")
 
             val plan = requireExtensionPlan("CONF-13", source)
-            val productionRange = assertIs<PlaybackLoadResult.Audio>(
+            val productionRange = requireAudio(
                 playback.load(plan, range = PlaybackByteRange(0, 63)),
                 "CONF-13 production loader rejected a ranged transcoded stream",
             )
@@ -168,11 +169,11 @@ class PlaybackScrobbleConformanceTest {
             assertEquals(31, source.durationSeconds, "CONF-14a boundary fixture duration drifted")
             requireTranscodingCapability("CONF-14a", source)
 
-            val full = assertIs<PlaybackLoadResult.Audio>(
+            val full = requireAudio(
                 playback.load(requireLegacyMp3Plan("CONF-14a", source, offsetSeconds = 0)),
                 "CONF-14a full legacy transcode failed after the capability precondition passed",
             )
-            val seeked = assertIs<PlaybackLoadResult.Audio>(
+            val seeked = requireAudio(
                 playback.load(requireLegacyMp3Plan("CONF-14a", source, offsetSeconds = SEEK_SECONDS)),
                 "CONF-14a legacy offset transcode failed after the capability precondition passed",
             )
@@ -216,17 +217,19 @@ class PlaybackScrobbleConformanceTest {
                 "CONF-14b reference server unexpectedly applied legacy timeOffset to Path A",
             )
 
-            val withoutOffset = assertIs<PlaybackLoadResult.Audio>(
+            val withoutOffset = requireAudio(
                 playback.load(requireExtensionPlan("CONF-14b", source)),
+                "CONF-14b baseline extension load failed after the capability precondition passed",
             )
             val legacyOffsetOnExtensionRequest = extensionRequest(source, legacyOffsetSeconds = 1)
-            val withIgnoredLegacyOffset = assertIs<PlaybackLoadResult.Audio>(
+            val withIgnoredLegacyOffset = requireAudio(
                 playback.load(
                     assertIs<PlaybackResolutionResult.Resolved>(
                         playback.resolve(legacyOffsetOnExtensionRequest),
                         "CONF-14b extension resolution failed after capability assertion",
                     ).plan,
                 ),
+                "CONF-14b extension load failed with a legacy offset present",
             )
             assertContentEquals(
                 withoutOffset.bytes,
@@ -259,7 +262,7 @@ class PlaybackScrobbleConformanceTest {
 
             val productionPlan = requireExtensionPlan("CONF-15", source)
             assertIs<PlaybackWireTranscodeDecision.Transcoded>(productionPlan.transcode)
-            val productionLoad = assertIs<PlaybackLoadResult.Audio>(
+            val productionLoad = requireAudio(
                 playback.load(productionPlan),
                 "CONF-15 production round-trip rejected the server-issued opaque parameters",
             )
@@ -504,6 +507,27 @@ class PlaybackScrobbleConformanceTest {
             "$label Content-Range did not preserve $requestedRange: ${response.contentRange}",
         )
         assertEquals("bytes", response.acceptRanges?.lowercase(), "$label Accept-Ranges")
+    }
+
+
+    /**
+     * `assertIs` reports only that the value was `Failed` rather than `Audio`, which discards the
+     * entire finding: a conformance failure IS the DomainError, the wire status and the response
+     * shape the server actually produced. OBSERVED 2026-08-28, a CONF-14a failure in core-ci said
+     * only "Expected value to be of type ...Audio, actual ...Failed", which named the symptom and
+     * nothing that could be acted on. Surface what the load actually returned.
+     */
+    private fun requireAudio(
+        result: PlaybackLoadResult,
+        message: String,
+    ): PlaybackLoadResult.Audio = when (result) {
+        is PlaybackLoadResult.Audio -> result
+        is PlaybackLoadResult.Failed -> fail(
+            "$message -- load returned Failed(error=${result.error}, " +
+                "presentationError=${result.presentationError}, shape=${result.shape}, " +
+                "path=${result.plan.path}, expectedContainer=${result.plan.expectedContainer})",
+        )
+        else -> fail("$message -- load returned ${result::class.simpleName}")
     }
 
     private fun record(message: String) {
