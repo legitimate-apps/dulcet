@@ -31,6 +31,10 @@ let package = Package(
             name: "DulcetShippingReferenceCapture",
             dependencies: ["DulcetKit"]
         ),
-        .testTarget(name: "DulcetKitTests", dependencies: ["DulcetKit"]),
+        .testTarget(
+            name: "DulcetKitTests",
+            dependencies: ["DulcetKit"],
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )
