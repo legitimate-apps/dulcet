@@ -1,10 +1,6 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.intOrNull
 
 internal enum class ArtworkSizeBucket(val pixels: Int) {
     Px96(96),
@@ -76,8 +72,8 @@ internal class ArtworkFetcher private constructor(
                     "size" to request.sizeBucket.pixels.toString(),
                 ),
             )
-            when (val envelope = response.body.inspectArtworkEnvelope()) {
-                is ArtworkEnvelopeInspection.Error -> {
+            when (val envelope = response.body.inspectSubsonicBinaryEnvelope()) {
+                is SubsonicBinaryEnvelopeInspection.Error -> {
                     if (envelope.code == ARTWORK_NOT_FOUND_ERROR_CODE) {
                         ArtworkFetchResult.Unavailable
                     } else {
@@ -90,10 +86,10 @@ internal class ArtworkFetcher private constructor(
                         )
                     }
                 }
-                ArtworkEnvelopeInspection.Malformed -> ArtworkFetchResult.Failed(
+                SubsonicBinaryEnvelopeInspection.Malformed -> ArtworkFetchResult.Failed(
                     DomainError.Protocol.MalformedEnvelope,
                 )
-                ArtworkEnvelopeInspection.NotEnvelope -> when {
+                SubsonicBinaryEnvelopeInspection.NotEnvelope -> when {
                     response.statusCode == 404 -> ArtworkFetchResult.Unavailable
                     response.statusCode !in 200..299 -> ArtworkFetchResult.Failed(
                         DomainError.Server.Unknown(response.statusCode),
@@ -154,13 +150,6 @@ private class KtorArtworkEndpointTransport(
 }
 
 private const val ARTWORK_NOT_FOUND_ERROR_CODE = 70
-private val ARTWORK_ERROR_JSON = Json { ignoreUnknownKeys = true }
-private val XML_SUBSONIC_ROOT = Regex(
-    """<(?:(?:[A-Za-z_][A-Za-z0-9_.-]*):)?subsonic-response\b""",
-)
-private val XML_ERROR_CODE = Regex(
-    """<(?:(?:[A-Za-z_][A-Za-z0-9_.-]*):)?error\b[^>]*\bcode\s*=\s*["'](-?\d+)["']""",
-)
 private val HEIF_ARTWORK_BRANDS = setOf(
     "avif",
     "avis",
@@ -171,58 +160,6 @@ private val HEIF_ARTWORK_BRANDS = setOf(
     "mif1",
     "msf1",
 )
-
-private sealed interface ArtworkEnvelopeInspection {
-    data object NotEnvelope : ArtworkEnvelopeInspection
-    data object Malformed : ArtworkEnvelopeInspection
-    data class Error(val code: Int) : ArtworkEnvelopeInspection
-}
-
-private fun ByteArray.inspectArtworkEnvelope(): ArtworkEnvelopeInspection {
-    val start = contentStartIndex()
-    if (start >= size) return ArtworkEnvelopeInspection.NotEnvelope
-    return when (this[start].toInt().toChar()) {
-        '{' -> inspectJsonArtworkEnvelope(start)
-        '<' -> inspectXmlArtworkEnvelope(start)
-        else -> ArtworkEnvelopeInspection.NotEnvelope
-    }
-}
-
-private fun ByteArray.inspectJsonArtworkEnvelope(start: Int): ArtworkEnvelopeInspection = try {
-    val root = ARTWORK_ERROR_JSON.parseToJsonElement(
-        copyOfRange(start, size).decodeToString(),
-    ) as? JsonObject ?: return ArtworkEnvelopeInspection.Malformed
-    val payload = root["subsonic-response"] as? JsonObject
-        ?: return ArtworkEnvelopeInspection.Malformed
-    val error = payload["error"] as? JsonObject
-        ?: return ArtworkEnvelopeInspection.Malformed
-    val code = (error["code"] as? JsonPrimitive)?.intOrNull
-        ?: return ArtworkEnvelopeInspection.Malformed
-    ArtworkEnvelopeInspection.Error(code)
-} catch (_: IllegalArgumentException) {
-    ArtworkEnvelopeInspection.Malformed
-}
-
-private fun ByteArray.inspectXmlArtworkEnvelope(start: Int): ArtworkEnvelopeInspection {
-    val xml = copyOfRange(start, size).decodeToString()
-    if (!XML_SUBSONIC_ROOT.containsMatchIn(xml)) return ArtworkEnvelopeInspection.Malformed
-    val code = XML_ERROR_CODE.find(xml)?.groupValues?.getOrNull(1)?.toIntOrNull()
-        ?: return ArtworkEnvelopeInspection.Malformed
-    return ArtworkEnvelopeInspection.Error(code)
-}
-
-private fun ByteArray.contentStartIndex(): Int {
-    var index = 0
-    while (index < size && this[index].isEnvelopeWhitespace()) index += 1
-    if (matchesBytes(index, 0xEF, 0xBB, 0xBF)) index += 3
-    while (index < size && this[index].isEnvelopeWhitespace()) index += 1
-    return index
-}
-
-private fun Byte.isEnvelopeWhitespace(): Boolean = when (toInt() and 0xFF) {
-    0x09, 0x0A, 0x0D, 0x20 -> true
-    else -> false
-}
 
 private fun ByteArray.hasRecognizedArtworkSignature(): Boolean =
     size >= 3 && matchesBytes(0, 0xFF, 0xD8, 0xFF) ||
@@ -243,13 +180,3 @@ private fun ByteArray.hasRecognizedHeifBrand(): Boolean {
     }
     return brand in HEIF_ARTWORK_BRANDS
 }
-
-private fun ByteArray.matchesAscii(offset: Int, value: String): Boolean =
-    value.indices.all { index ->
-        offset + index < size && this[offset + index].toInt() and 0xFF == value[index].code
-    }
-
-private fun ByteArray.matchesBytes(offset: Int, vararg expected: Int): Boolean =
-    expected.indices.all { index ->
-        offset + index < size && this[offset + index].toInt() and 0xFF == expected[index]
-    }

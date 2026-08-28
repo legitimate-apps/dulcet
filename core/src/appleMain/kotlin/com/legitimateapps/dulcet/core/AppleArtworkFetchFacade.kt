@@ -145,6 +145,7 @@ private fun DomainError.appleArtworkKind(): String = when (this) {
     is DomainError.Auth -> "authentication"
     is DomainError.Protocol -> "protocol"
     is DomainError.Server -> "server"
+    is DomainError.Playback -> "playback"
     is DomainError.Input.InvalidServerUrl -> "input"
     is DomainError.CapabilityUnsupported -> "capability"
 }

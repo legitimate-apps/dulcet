@@ -5,8 +5,12 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
 
 internal data class AuthenticatedEndpointCredentials(
     val normalizedBaseUrl: String,
@@ -21,10 +25,33 @@ internal data class AuthenticatedEndpointResponse(
     val statusCode: Int,
     val body: ByteArray,
     val redactedUrl: String,
+    val headers: AuthenticatedEndpointResponseHeaders,
+    val requestTrace: RequestTrace,
 )
 
+internal data class AuthenticatedEndpointResponseHeaders(
+    val contentType: String?,
+    val contentLength: Long?,
+    val retryAfter: String?,
+    val acceptRanges: String?,
+    val contentRange: String?,
+)
+
+internal data class AuthenticatedEndpointRequestOptions(
+    /** An already-rendered HTTP byte range, for example `bytes=0-65535`. */
+    val range: String? = null,
+) {
+    init {
+        require(range == null || BYTE_RANGE_PATTERN.matches(range))
+    }
+
+    private companion object {
+        val BYTE_RANGE_PATTERN = Regex("bytes=[0-9]+-(?:[0-9]+)?")
+    }
+}
+
 /**
- * The single authenticated GET implementation used by read-through OpenSubsonic endpoints.
+ * The single authenticated request implementation used by OpenSubsonic endpoints.
  * Authentication, redirect handling, local-HTTP policy, and query redaction therefore cannot drift
  * between browse, artwork, and later endpoint-specific clients.
  */
@@ -52,6 +79,29 @@ internal class AuthenticatedEndpointClient(
     suspend fun request(
         endpoint: String,
         parameters: Map<String, String>,
+        options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
+    ): AuthenticatedEndpointResponse = execute(
+        endpoint = endpoint,
+        parameters = parameters,
+        options = options,
+        jsonBody = null,
+    )
+
+    suspend fun postJson(
+        endpoint: String,
+        parameters: Map<String, String>,
+        jsonBody: String,
+        options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
+    ): AuthenticatedEndpointResponse {
+        require(jsonBody.isNotBlank())
+        return execute(endpoint, parameters, options, jsonBody)
+    }
+
+    private suspend fun execute(
+        endpoint: String,
+        parameters: Map<String, String>,
+        options: AuthenticatedEndpointRequestOptions,
+        jsonBody: String?,
     ): AuthenticatedEndpointResponse {
         val salt = saltSource.nextSalt()
         require(SALT_PATTERN.matches(salt)) {
@@ -71,9 +121,16 @@ internal class AuthenticatedEndpointClient(
         var redirects = 0
         while (true) {
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
-            val response = client.get(target.url) {
-                target.hostHeader?.let { header(HttpHeaders.Host, it) }
-                common.forEach { (key, value) -> parameter(key, value) }
+            val response = if (jsonBody == null) {
+                client.get(target.url) {
+                    applyRequestParts(target.hostHeader, common, options)
+                }
+            } else {
+                client.post(target.url) {
+                    applyRequestParts(target.hostHeader, common, options)
+                    contentType(ContentType.Application.Json)
+                    setBody(jsonBody)
+                }
             }
             val body = response.bodyAsBytes()
             val redactedUrl = traceRecorder.latestRedactedUrl()
@@ -82,6 +139,14 @@ internal class AuthenticatedEndpointClient(
                     statusCode = response.status.value,
                     body = body,
                     redactedUrl = redactedUrl,
+                    headers = AuthenticatedEndpointResponseHeaders(
+                        contentType = response.headers[HttpHeaders.ContentType],
+                        contentLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull(),
+                        retryAfter = response.headers[HttpHeaders.RetryAfter],
+                        acceptRanges = response.headers[HttpHeaders.AcceptRanges],
+                        contentRange = response.headers[HttpHeaders.ContentRange],
+                    ),
+                    requestTrace = traceRecorder.latestTrace(),
                 )
             }
             val location = response.headers[HttpHeaders.Location]
@@ -89,6 +154,14 @@ internal class AuthenticatedEndpointClient(
                     statusCode = response.status.value,
                     body = body,
                     redactedUrl = redactedUrl,
+                    headers = AuthenticatedEndpointResponseHeaders(
+                        contentType = response.headers[HttpHeaders.ContentType],
+                        contentLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull(),
+                        retryAfter = response.headers[HttpHeaders.RetryAfter],
+                        acceptRanges = response.headers[HttpHeaders.AcceptRanges],
+                        contentRange = response.headers[HttpHeaders.ContentRange],
+                    ),
+                    requestTrace = traceRecorder.latestTrace(),
                 )
             val nextUrl = resolveRedirectUrl(currentUrl, location)
                 ?: throw AuthenticatedEndpointFailure(
@@ -118,6 +191,16 @@ internal class AuthenticatedEndpointClient(
             currentUrl = nextUrl.withoutQuery()
             redirects += 1
         }
+    }
+
+    private fun io.ktor.client.request.HttpRequestBuilder.applyRequestParts(
+        hostHeader: String?,
+        parameters: Map<String, String>,
+        options: AuthenticatedEndpointRequestOptions,
+    ) {
+        hostHeader?.let { header(HttpHeaders.Host, it) }
+        parameters.forEach { (key, value) -> parameter(key, value) }
+        options.range?.let { header(HttpHeaders.Range, it) }
     }
 
     fun close() {

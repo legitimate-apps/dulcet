@@ -299,7 +299,7 @@ private fun requireValidMediaDuration(duration: Duration?) {
     require(duration == null || (!duration.isNegative() && duration.isFinite()))
 }
 
-internal sealed interface RecordedPlaybackEvent {
+public sealed interface RecordedPlaybackEvent {
     public val itemId: ProviderItemId
 
     public data class NowPlaying(override val itemId: ProviderItemId) : RecordedPlaybackEvent
@@ -311,6 +311,6 @@ internal sealed interface RecordedPlaybackEvent {
 }
 
 /** The provider seam consumes core policy effects; v1 has no alternate timeline-reporting path. */
-internal fun interface PlaybackEventRecorder {
+public fun interface PlaybackEventRecorder {
     public suspend fun recordPlaybackEvent(event: RecordedPlaybackEvent)
 }

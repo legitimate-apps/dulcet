@@ -153,7 +153,10 @@ private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentatio
     is DomainError.Security.TlsUntrusted -> applePresentation("tlsUntrusted")
     DomainError.Security.LocalExceptionViolated -> applePresentation("localNetworkPolicyRejected")
     is DomainError.Security.RedirectRejected -> applePresentation("redirectRejected")
-    DomainError.Protocol.MalformedEnvelope -> applePresentation("malformedEnvelope")
+    DomainError.Protocol.MalformedEnvelope,
+    is DomainError.Protocol.UnexpectedContentType,
+    DomainError.Protocol.UnexpectedBinary,
+    -> applePresentation("malformedEnvelope")
     is DomainError.Protocol.Incompatible -> applePresentation("incompatibleProtocol")
     DomainError.Protocol.NotASubsonicServer -> applePresentation("notASubsonicServer")
     is DomainError.Server.Busy -> applePresentation("knownServerError")
@@ -169,6 +172,7 @@ private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentatio
         targetHost = targetHost.value,
         invalidServerURLIsInternationalized = false,
     )
+    DomainError.Playback.NoPlayableSource -> applePresentation("knownServerError")
     is DomainError.CapabilityUnsupported -> applePresentation("capabilityUnsupported")
 }
 
@@ -187,7 +191,10 @@ private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) 
     is DomainError.Security.TlsUntrusted -> AppleAccountErrorKind.SecurityTlsUntrusted
     DomainError.Security.LocalExceptionViolated -> AppleAccountErrorKind.SecurityLocalExceptionViolated
     is DomainError.Security.RedirectRejected -> AppleAccountErrorKind.SecurityRedirectRejected
-    DomainError.Protocol.MalformedEnvelope -> AppleAccountErrorKind.ProtocolMalformedEnvelope
+    DomainError.Protocol.MalformedEnvelope,
+    is DomainError.Protocol.UnexpectedContentType,
+    DomainError.Protocol.UnexpectedBinary,
+    -> AppleAccountErrorKind.ProtocolMalformedEnvelope
     is DomainError.Protocol.Incompatible -> AppleAccountErrorKind.ProtocolIncompatible
     DomainError.Protocol.NotASubsonicServer -> AppleAccountErrorKind.ProtocolNotASubsonicServer
     is DomainError.Server.Busy -> AppleAccountErrorKind.ServerKnown
@@ -200,5 +207,6 @@ private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) 
         AppleAccountErrorKind.AuthUnsupportedAuthenticationChallenge
     is DomainError.Auth.CrossOriginRedirectRejected ->
         AppleAccountErrorKind.AuthCrossOriginRedirectRejected
+    DomainError.Playback.NoPlayableSource -> AppleAccountErrorKind.ServerKnown
     is DomainError.CapabilityUnsupported -> AppleAccountErrorKind.CapabilityUnsupported
 }
