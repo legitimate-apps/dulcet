@@ -83,3 +83,55 @@ for label, transcript in rejections.items():
         directory.cleanup()
 
 print("Swift Testing JUnit evidence mutations are rejected")
+
+# A host OSLog record written from another thread lands INSIDE a Swift Testing result line and
+# splits it across two physical lines. OBSERVED on apple-ci 2026-08-28 (job 98854146691): the run
+# reported `** TEST SUCCEEDED **` and 60/60 passed, and the guard saw 59 because one name was torn.
+# The parser must rejoin it -- and must NOT thereby start accepting a result that never arrived,
+# which is what the second control below pins down.
+TORN = """\
+◇ Test firstClaim() started.
+◇ Test secondClaim() started.
+✔ Test secondClaim() passed after 0.01 seconds.
+✔ Test firstCl2026-08-28 13:05:53.306820+0000 xctest[35549:96065] [player] <<<< FigFilePlayer >>>> signalled err=-12864 at <>:10127
+aim() passed after 0.02 seconds.
+✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.
+"""
+
+result, output, directory = invoke(TORN)
+try:
+    if result.returncode != 0 or not output.exists():
+        raise AssertionError(
+            f"a torn result line was not rejoined: returncode={result.returncode}, "
+            f"stdout={result.stdout!r}"
+        )
+    identities = {
+        element.get("name") for element in ET.parse(output).getroot().iter("testcase")
+    }
+    if identities != {"firstClaim", "secondClaim"}:
+        raise AssertionError(f"wrong identities after rejoining a torn line: {identities}")
+finally:
+    directory.cleanup()
+
+# ...and the rejoining must not resurrect a result that genuinely never arrived: same interleaved
+# noise, but `firstClaim` reports nothing at all.
+TORN_BUT_MISSING = """\
+◇ Test firstClaim() started.
+◇ Test secondClaim() started.
+2026-08-28 13:05:53.306820+0000 xctest[35549:96065] [player] <<<< FigFilePlayer >>>> signalled err=-12864 at <>:10127
+✔ Test secondClaim() passed after 0.01 seconds.
+✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.
+"""
+
+result, output, directory = invoke(TORN_BUT_MISSING)
+try:
+    if result.returncode == 0 or output.exists():
+        raise AssertionError(
+            "interleaved noise let a missing result pass: "
+            f"returncode={result.returncode}, stdout={result.stdout!r}"
+        )
+finally:
+    directory.cleanup()
+
+print("Swift Testing JUnit evidence survives interleaved host logging")
+

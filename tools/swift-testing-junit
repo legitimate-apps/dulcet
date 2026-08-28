@@ -10,6 +10,17 @@ import xml.etree.ElementTree as ET
 
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+# The test host writes OSLog to the same stream as Swift Testing, unbuffered, from other threads.
+# A line like this therefore lands *inside* a result line and splits it across two physical lines:
+#     ✔ Test progressBeginsOnly2026-08-28 13:05:53.306820+0000 xctest[35549:96065] [player] ...
+#     AfterMediaTimeAdvancesAndUsesMonotonicSamples() passed after 1.065 seconds.
+# Deleting the injected record *including its newline* rejoins the torn line exactly. This must not
+# become a way to tolerate a missing result: the count and uniqueness checks below still run, so a
+# test that truly never reported still fails the guard. OBSERVED tearing this way on apple-ci
+# 2026-08-28 once AVFoundation playback tests began emitting [player]/[AQ] chatter.
+INTERLEAVED_HOST_LOG = re.compile(
+    r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[+-]\d{4} \S+\[\d+:[0-9a-fx]+\][^\n]*\n?"
+)
 PASSED_TEST = re.compile(r"✔ Test ([A-Za-z_][A-Za-z0-9_]*)\(\) passed\b")
 PASSED_RUN = re.compile(r"✔ Test run with (\d+) tests? in \d+ suites? passed\b")
 
@@ -30,6 +41,7 @@ if not class_name or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", class_name):
 
 try:
     transcript = ANSI_ESCAPE.sub("", transcript_path.read_text())
+    transcript = INTERLEAVED_HOST_LOG.sub("", transcript)
 except OSError as error:
     fail(f"cannot read Swift Testing transcript: {error}")
 
