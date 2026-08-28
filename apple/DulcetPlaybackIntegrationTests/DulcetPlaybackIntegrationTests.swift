@@ -62,7 +62,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
 
         await fulfillment(of: [ready, progressing], timeout: 8, enforceOrder: true)
         let ranges = server.rangeHeaders
-        print("PRODUCTION PLAYBACK RANGE TRACE count=\(ranges.count) ranges=\(ranges.prefix(12))")
+        print("PRODUCTION PLAYBACK RANGE TRACE count=\(ranges.count) ranges=\(ranges)")
         XCTAssertFalse(ranges.isEmpty)
         XCTAssertTrue(ranges.allSatisfy { $0 != nil })
 
@@ -76,6 +76,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         let loaderSummary = loaderTrace.summary
         print("PRODUCTION LOADER LIFECYCLE TRACE \(loaderSummary)")
         print("PRODUCTION LOADER REQUEST TRACE \(loaderTrace.requestDiagnostics)")
+        print("PRODUCTION LOADER EVENT TRACE \(loaderTrace.eventDiagnostics)")
         XCTAssertGreaterThan(loaderSummary.started, 0)
         XCTAssertEqual(loaderSummary.failed, 0)
         XCTAssertEqual(loaderSummary.active, 0)
@@ -224,6 +225,27 @@ private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
             ) = event else { return nil }
             return "offset=\(requestedOffset) length=\(requestedLength) "
                 + "toEnd=\(requestsToEnd) signature=\(requiresAudioSignature)"
+        }
+    }
+
+    var eventDiagnostics: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return events.map { event in
+            switch event {
+            case let .started(requestID, offset, length, toEnd, signature):
+                "\(requestID):started \(offset)+\(length) toEnd=\(toEnd) signature=\(signature)"
+            case let .rangeRequested(requestID, range):
+                "\(requestID):range \(range.start)-\(range.endInclusive)"
+            case let .responded(requestID, byteCount):
+                "\(requestID):responded \(byteCount)"
+            case let .finished(requestID):
+                "\(requestID):finished"
+            case let .cancelled(requestID):
+                "\(requestID):cancelled"
+            case let .failed(requestID, failure):
+                "\(requestID):failed \(failure)"
+            }
         }
     }
 }
