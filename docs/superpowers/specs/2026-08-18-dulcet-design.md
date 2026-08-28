@@ -1240,9 +1240,20 @@ HLS again requires new evidence and a spec revision.
   inline validator rejected valid audio before `AVPlayerItem` could become ready. The loader therefore
   fetches up to one bounded validation chunk for a request that still needs its audio signature,
   validates those actual response bytes, and responds to AVFoundation with no more than the range it
-  requested. A loopback HTTP server serving a real MP3 with `Content-Type: audio/mpeg` and byte-range
-  support now drives `AVPlayer` through `Ready` to `PlaybackProgressBegan`; this also rules out the
-  response MIME type versus MP3 UTI as the cause of that failure.
+  requested. This was necessary but not sufficient: the original generated MP3 fixture reached
+  `Ready` and `PlaybackProgressBegan` while the reference asset still failed.
+
+  **OBSERVED 2026-08-28:** the exact 7,550,103-byte reference MP3 made the production seam fail at
+  range `bytes=3670016-3932159`. Its first byte is `0x3C` (`<`). Binary-envelope inspection previously
+  classified every payload beginning with `<` as XML and then called it malformed when no Subsonic
+  root existed. That turned a valid continuation chunk into `Protocol.MalformedEnvelope`, failed the
+  active AVFoundation loading request, and caused the repeated request behavior. Envelope inspection
+  remains unconditional and still detects valid and malformed Subsonic envelopes, but a JSON/XML
+  delimiter alone is no longer sufficient: the payload must contain the recognizable
+  `subsonic-response` root before malformed-envelope semantics apply. With that correction, the
+  production seam consumes all 30 exact ranges through byte 7,550,102 and terminates with two loading
+  requests finished, one AVFoundation cancellation, zero failed, and zero active. The real DEV-app
+  scrobble/play-count control remains operator verification and is not inferred from this test.
 - **Android:** a custom `DataSource.Factory` wrapping the HTTP client, giving the same visibility for
   substantially less work.
 - **Preflight is demoted to an optional, advisory fast-fail** used only where inline validation is
@@ -3225,16 +3236,35 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 80 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
-two-byte request.
+**Revision 81 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
+range failure that the generated MP3 fixture missed.
 
-1. A loopback HTTP/Range test reproduced the production stall with real MP3 bytes: the server served
-   the stream, but the item never became ready.
+1. The loopback server now serves the same 7,550,103-byte reference MP3 and exact 206/200 header
+   shapes as the measured Navidrome stream, including arbitrary ranges and the opening two-byte
+   probe. The package façade stayed green, but the production core-to-loader seam failed at
+   `bytes=3670016-3932159`, closing the false-green harness gap.
+2. OBSERVED root cause: byte 3,670,016 is `0x3C` (`<`). Generic binary-envelope detection treated
+   that single compressed-audio byte as XML and rejected the otherwise valid 256 KiB range as a
+   malformed Subsonic envelope. The loader finished one request, received one normal AVFoundation
+   cancellation, and failed the continuation request.
+3. Envelope detection now requires a recognizable `subsonic-response` root before it can classify a
+   delimiter-led payload as a malformed envelope. Valid error envelopes are still detected on
+   continuation ranges. The formerly-red production test now consumes the full file in 30 ranges
+   with zero failed or active loading requests. A server-side play-count increment in the DEV app is
+   deliberately left to the operator's manual verification.
+
+**Revision 80 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
+two-byte request; this was an intermediate defect, not the complete production root cause.
+
+1. A generated-MP3 loopback HTTP/Range test reproduced the initial two-byte validation rejection:
+   the server served the stream, but the item never became ready before the over-fetch correction.
 2. The observed first request was `bytes=0-1`; forwarding it unchanged made the core reject valid MP3
    as too short to contain its three-byte `ID3` signature.
 3. The loader now over-fetches one bounded validation chunk without over-responding to AVFoundation.
-   The same test reaches both `Ready` and `PlaybackProgressBegan` with `Content-Type: audio/mpeg`, so
-   the range/signature interaction—not MIME-versus-UTI disagreement—was the measured root cause.
+   The generated fixture reached both `Ready` and `PlaybackProgressBegan` with
+   `Content-Type: audio/mpeg`, ruling out MIME-versus-UTI disagreement for that fixture but not
+   reproducing the continuing reference-server loop. Revision 81 records the exact-asset reproduction
+   and the additional root cause.
 
 **Revision 79 (2026-08-27)** — the queue ownership tables joined the complete schema-name contract.
 
