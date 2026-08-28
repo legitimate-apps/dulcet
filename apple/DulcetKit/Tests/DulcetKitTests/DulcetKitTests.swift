@@ -102,7 +102,28 @@ func fixtureRendersEveryDeclaredDistinctState() {
 
     #expect(snapshots.count == DulcetPresentationState.allCases.count)
     #expect(Set(snapshots.map(\.state)) == Set(DulcetPresentationState.allCases))
-    #expect(snapshots.filter(\.accountConnected).count == 20)
+    // Naming the disconnected states rather than counting the connected ones. The count was
+    // hardcoded at 20 and broke the moment an unrelated state was added, which says nothing about
+    // whether account connectivity is modelled correctly -- only that the total moved. This set is
+    // the actual invariant: a fixture state reports no connected account exactly when it represents
+    // one, so adding a library or playback state leaves it untouched and changing what "connected"
+    // means fails it.
+    let disconnected = Set(snapshots.filter { !$0.accountConnected }.map(\.state))
+    #expect(disconnected == [
+        .accountConnectIdle,
+        .accountConnectEmpty,
+        .accountConnecting,
+        .accountSavedDisconnected,
+        .accountErrorInput,
+        .accountErrorTransport,
+        .accountErrorSecurity,
+        .accountErrorProtocol,
+        .accountErrorServer,
+        .accountErrorAuthentication,
+        .accountErrorCapability,
+        .accountErrorPersistence,
+        .emptyLibraryNoAccount,
+    ])
 }
 
 @Test @MainActor
