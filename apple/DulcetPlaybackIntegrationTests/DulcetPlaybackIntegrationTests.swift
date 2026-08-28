@@ -78,6 +78,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         print("PRODUCTION LOADER REQUEST TRACE \(loaderTrace.requestDiagnostics)")
         print("PRODUCTION LOADER EVENT TRACE \(loaderTrace.eventDiagnostics)")
         XCTAssertGreaterThan(loaderSummary.started, 0)
+        XCTAssertEqual(loaderSummary.contentInformationPublished, loaderSummary.started)
         XCTAssertEqual(loaderSummary.failed, 0)
         XCTAssertEqual(loaderSummary.active, 0)
     }
@@ -171,6 +172,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
 private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
     struct Summary: CustomStringConvertible {
         let started: Int
+        let contentInformationPublished: Int
         let finished: Int
         let cancelled: Int
         let failed: Int
@@ -178,7 +180,8 @@ private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
         var active: Int { started - finished - cancelled - failed }
 
         var description: String {
-            "started=\(started) finished=\(finished) cancelled=\(cancelled) "
+            "started=\(started) contentInformation=\(contentInformationPublished) "
+                + "finished=\(finished) cancelled=\(cancelled) "
                 + "failed=\(failed) active=\(active)"
         }
     }
@@ -196,12 +199,14 @@ private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var started = 0
+        var contentInformationPublished = 0
         var finished = 0
         var cancelled = 0
         var failed = 0
         for event in events {
             switch event {
             case .started: started += 1
+            case .contentInformationPublished: contentInformationPublished += 1
             case .finished: finished += 1
             case .cancelled: cancelled += 1
             case .failed: failed += 1
@@ -210,6 +215,7 @@ private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
         }
         return Summary(
             started: started,
+            contentInformationPublished: contentInformationPublished,
             finished: finished,
             cancelled: cancelled,
             failed: failed
@@ -237,6 +243,8 @@ private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
                 "\(requestID):started \(offset)+\(length) toEnd=\(toEnd) signature=\(signature)"
             case let .rangeRequested(requestID, range):
                 "\(requestID):range \(range.start)-\(range.endInclusive)"
+            case let .contentInformationPublished(requestID):
+                "\(requestID):contentInformation"
             case let .responded(requestID, byteCount):
                 "\(requestID):responded \(byteCount)"
             case let .finished(requestID):
