@@ -1,6 +1,13 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import platform.Foundation.NSUUID
+import platform.posix.time
+import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
 
@@ -72,6 +79,12 @@ public class ApplePlaybackQueueTransitionDto internal constructor(
     public val errorKind: String?,
 )
 
+public class ApplePlaybackDeliveryConfigurationOutcomeDto internal constructor(
+    public val configured: Boolean,
+    /** `input`, `persistence`, or null. */
+    public val errorKind: String?,
+)
+
 /**
  * Objective-C-compatible queue facade. Its owner serializes calls; every public operation closes
  * failures into [ApplePlaybackQueueTransitionDto] instead of allowing a Kotlin exception to cross.
@@ -80,24 +93,81 @@ public class ApplePlaybackQueueClient private constructor(
     compositionResult: ApplePlaybackQueueCompositionResult,
 ) {
     private val databaseStore: DulcetDatabaseStore?
+    private val database: com.legitimateapps.dulcet.database.DulcetDatabase?
     private val controller: PlaybackQueueController?
+    private val resumePositions: ResumePositionStore?
     private val initializationErrorKind: String?
     private val pendingEffects = ArrayDeque<PlaybackCoreEffect>()
+    private val deliveryScope = MainScope()
+    private val deliveryEvents = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
+    private var delivery: ApplePlaybackDeliveryComposition? = null
 
     init {
         databaseStore = compositionResult.composition?.databaseStore
+        database = compositionResult.composition?.database
         controller = compositionResult.composition?.controller
+        resumePositions = compositionResult.composition?.resumePositions
         initializationErrorKind = compositionResult.errorKind
+        deliveryScope.launch {
+            for (event in deliveryEvents) deliverNetworkEvent(event)
+        }
     }
 
     public constructor(databaseName: String) : this(openApplePlaybackQueue(databaseName))
 
     internal constructor(controller: PlaybackQueueController) : this(
         ApplePlaybackQueueCompositionResult(
-            composition = ApplePlaybackQueueComposition(null, controller),
+            composition = ApplePlaybackQueueComposition(null, null, controller, null),
             errorKind = null,
         ),
     )
+
+    internal constructor(
+        database: com.legitimateapps.dulcet.database.DulcetDatabase,
+        controller: PlaybackQueueController,
+        resumePositions: ResumePositionStore,
+    ) : this(
+        ApplePlaybackQueueCompositionResult(
+            composition = ApplePlaybackQueueComposition(
+                databaseStore = null,
+                database = database,
+                controller = controller,
+                resumePositions = resumePositions,
+            ),
+            errorKind = null,
+        ),
+    )
+
+    public fun configureDelivery(
+        account: PlaybackEndpointAccount,
+    ): ApplePlaybackDeliveryConfigurationOutcomeDto {
+        val database = database
+            ?: return ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
+        return try {
+            delivery?.sender?.close()
+            val sender = ScrobbleEndpointSender(account)
+            val outbox = PersistentScrobbleOutbox(database, ApplePlaybackWallClock)
+            val monotonicOrigin = TimeSource.Monotonic.markNow()
+            val worker = ScrobbleOutboxDeliveryWorker(
+                serverId = ServerId(account.providerInstanceId),
+                outbox = outbox,
+                sender = sender,
+                wallClock = ApplePlaybackWallClock,
+                monotonicClock = OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
+                diagnosticSink = ScrobbleOutboxDiagnosticSink { },
+            )
+            delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker)
+            val waiting = pendingEffects.toList()
+            pendingEffects.clear()
+            captureEffects(waiting)
+            deliveryScope.launch { worker.onForeground() }
+            ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
+        } catch (_: IllegalArgumentException) {
+            ApplePlaybackDeliveryConfigurationOutcomeDto(false, "input")
+        } catch (_: Throwable) {
+            ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
+        }
+    }
 
     public fun replaceAndStart(
         request: ApplePlaybackQueueRequestDto,
@@ -406,6 +476,10 @@ public class ApplePlaybackQueueClient private constructor(
 
     public fun close() {
         try {
+            deliveryEvents.close()
+            deliveryScope.cancel()
+            delivery?.sender?.close()
+            delivery = null
             databaseStore?.close()
         } catch (_: Throwable) {
             // Closing is best effort and exports no failure-bearing resource.
@@ -420,7 +494,7 @@ public class ApplePlaybackQueueClient private constructor(
             return ApplePlaybackQueueTransitionDto(null, null, initializationFailure)
         }
         return try {
-            operation().also { pendingEffects.addAll(it.effects) }.toAppleDto()
+            operation().also { captureEffects(it.effects) }.toAppleDto()
         } catch (_: IllegalArgumentException) {
             ApplePlaybackQueueTransitionDto(null, null, "input")
         } catch (_: Throwable) {
@@ -437,11 +511,72 @@ public class ApplePlaybackQueueClient private constructor(
     internal fun drainPendingEffects(): List<PlaybackCoreEffect> = buildList {
         while (pendingEffects.isNotEmpty()) add(pendingEffects.removeFirst())
     }
+
+    internal fun pendingSubmittedPlayCount(): Long = delivery?.outbox?.count() ?: 0
+
+    internal fun configurePersistenceOnlyDelivery(outbox: PersistentScrobbleOutbox) {
+        delivery = ApplePlaybackDeliveryComposition(null, outbox, null)
+        val waiting = pendingEffects.toList()
+        pendingEffects.clear()
+        captureEffects(waiting)
+    }
+
+    private fun captureEffects(effects: List<PlaybackCoreEffect>) {
+        effects.forEach { effect ->
+            when (effect) {
+                is PlaybackCoreEffect.RecordPlaybackEvent -> {
+                    val activeDelivery = delivery
+                    if (activeDelivery == null) {
+                        pendingEffects += effect
+                    } else {
+                        if (effect.event is RecordedPlaybackEvent.SubmittedPlay) {
+                            activeDelivery.outbox.persistSynchronously(effect.event)
+                        }
+                        check(deliveryEvents.trySend(effect.event).isSuccess)
+                    }
+                }
+                is PlaybackCoreEffect.PersistResumePosition -> {
+                    val store = resumePositions
+                    if (store == null) pendingEffects += effect
+                    else store.save(effect.itemId, effect.position)
+                }
+                is PlaybackCoreEffect.ClearResumePosition -> {
+                    val store = resumePositions
+                    if (store == null) pendingEffects += effect
+                    else store.clear(effect.itemId)
+                }
+                is PlaybackCoreEffect.AccumulatorDiagnostic -> Unit
+            }
+        }
+    }
+
+    private suspend fun deliverNetworkEvent(event: RecordedPlaybackEvent) {
+        val activeDelivery = delivery ?: run {
+            pendingEffects += PlaybackCoreEffect.RecordPlaybackEvent(event)
+            return
+        }
+        when (event) {
+            is RecordedPlaybackEvent.NowPlaying -> {
+                activeDelivery.sender?.send(ScrobbleEndpointRequest(event))
+            }
+            is RecordedPlaybackEvent.SubmittedPlay -> {
+                activeDelivery.worker?.onForeground()
+            }
+        }
+    }
 }
 
 private data class ApplePlaybackQueueComposition(
     val databaseStore: DulcetDatabaseStore?,
+    val database: com.legitimateapps.dulcet.database.DulcetDatabase?,
     val controller: PlaybackQueueController,
+    val resumePositions: ResumePositionStore?,
+)
+
+private data class ApplePlaybackDeliveryComposition(
+    val sender: ScrobbleEndpointSender?,
+    val outbox: PersistentScrobbleOutbox,
+    val worker: ScrobbleOutboxDeliveryWorker?,
 )
 
 private data class ApplePlaybackQueueCompositionResult(
@@ -453,16 +588,19 @@ private fun openApplePlaybackQueue(databaseName: String): ApplePlaybackQueueComp
     require(databaseName.isNotBlank())
     val databaseStore = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
     val database = databaseStore.database
+    val resumePositions = PersistentResumePositionStore(database)
     ApplePlaybackQueueCompositionResult(
         composition = ApplePlaybackQueueComposition(
             databaseStore = databaseStore,
+            database = database,
             controller = PlaybackQueueController(
                 queues = PersistentQueueStore(database),
-                resumePositions = PersistentResumePositionStore(database),
+                resumePositions = resumePositions,
                 identities = PlaybackIdentitySource { prefix ->
                     "$prefix:${NSUUID().UUIDString}"
                 },
             ),
+            resumePositions = resumePositions,
         ),
         errorKind = null,
     )
@@ -470,6 +608,12 @@ private fun openApplePlaybackQueue(databaseName: String): ApplePlaybackQueueComp
     ApplePlaybackQueueCompositionResult(null, "input")
 } catch (_: Throwable) {
     ApplePlaybackQueueCompositionResult(null, "persistence")
+}
+
+private object ApplePlaybackWallClock : OutboxWallClock {
+    @OptIn(ExperimentalForeignApi::class)
+    override fun nowEpochMilliseconds(): Long =
+        time(null) * 1_000L
 }
 
 private fun String.toQueueSourceKind(): QueueSourceKind = when (this) {
