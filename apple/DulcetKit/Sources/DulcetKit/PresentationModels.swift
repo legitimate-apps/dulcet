@@ -328,6 +328,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
     public let discNumber: Int?
     public let trackNumber: Int?
     public let duration: Duration
+    public let sourceContainer: DulcetAudioContainer?
     public let mediaSourceID: String?
     public let artwork: DulcetArtwork
     public let availability: DulcetMediaAvailability
@@ -341,6 +342,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
         duration: Duration,
+        sourceContainer: DulcetAudioContainer? = .mp3,
         mediaSourceID: String?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
@@ -353,6 +355,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         self.discNumber = discNumber
         self.trackNumber = trackNumber
         self.duration = duration
+        self.sourceContainer = sourceContainer
         self.mediaSourceID = mediaSourceID
         self.artwork = artwork
         self.availability = availability
