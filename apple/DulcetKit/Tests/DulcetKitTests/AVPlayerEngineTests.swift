@@ -75,8 +75,46 @@ struct AVPlayerEngineTests {
 
     #if os(macOS)
     @Test
+    func loopbackHTTPServerMatchesNavidromeRangeSemantics() async throws {
+        let audio = try realisticMP3Fixture()
+        #expect(audio.count > 7_000_000)
+        let server = try LoopbackRangeHTTPServer(audio: audio)
+        defer { server.stop() }
+
+        let twoByteProbe = try await loopbackResponse(from: server.url, range: "bytes=0-1")
+        #expect(twoByteProbe.response.statusCode == 206)
+        #expect(twoByteProbe.data.count == 2)
+        #expect(twoByteProbe.response.value(forHTTPHeaderField: "Content-Length") == "2")
+        #expect(
+            twoByteProbe.response.value(forHTTPHeaderField: "Content-Range") ==
+                "bytes 0-1/\(audio.count)"
+        )
+        #expect(twoByteProbe.response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes")
+        #expect(twoByteProbe.response.value(forHTTPHeaderField: "Content-Type") == "audio/mpeg")
+
+        let firstKilobyte = try await loopbackResponse(from: server.url, range: "bytes=0-1023")
+        #expect(firstKilobyte.response.statusCode == 206)
+        #expect(firstKilobyte.data.count == 1_024)
+        #expect(firstKilobyte.response.value(forHTTPHeaderField: "Content-Length") == "1024")
+        #expect(
+            firstKilobyte.response.value(forHTTPHeaderField: "Content-Range") ==
+                "bytes 0-1023/\(audio.count)"
+        )
+        #expect(firstKilobyte.response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes")
+
+        let complete = try await loopbackResponse(from: server.url, range: nil)
+        #expect(complete.response.statusCode == 200)
+        #expect(complete.data.count == audio.count)
+        #expect(
+            complete.response.value(forHTTPHeaderField: "Content-Length") == String(audio.count)
+        )
+        #expect(complete.response.value(forHTTPHeaderField: "Content-Range") == nil)
+        #expect(complete.response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes")
+    }
+
+    @Test
     func loopbackHTTPRangeStreamBecomesReadyAndProgresses() async throws {
-        let server = try LoopbackRangeHTTPServer(audio: makeMP3Tone())
+        let server = try LoopbackRangeHTTPServer(audio: realisticMP3Fixture())
         defer { server.stop() }
         let resource = LoopbackHTTPPlaybackResource(url: server.url)
         let engine = DulcetAVPlayerEngine()
@@ -967,6 +1005,36 @@ private final class LoopbackHTTPServerStartup: @unchecked Sendable {
 private enum LoopbackHTTPServerError: Error {
     case startupTimedOut
     case missingPort
+    case missingFixture
+}
+
+private func loopbackResponse(
+    from url: URL,
+    range: String?
+) async throws -> (data: Data, response: HTTPURLResponse) {
+    var request = URLRequest(url: url)
+    if let range {
+        request.setValue(range, forHTTPHeaderField: "Range")
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    configuration.urlCache = nil
+    let (data, response) = try await URLSession(configuration: configuration).data(for: request)
+    guard let response = response as? HTTPURLResponse else {
+        throw URLError(.badServerResponse)
+    }
+    return (data, response)
+}
+
+private func realisticMP3Fixture() throws -> Data {
+    guard let url = Bundle.module.url(
+        forResource: "realistic-tone",
+        withExtension: "mp3",
+        subdirectory: "Fixtures"
+    ) else {
+        throw LoopbackHTTPServerError.missingFixture
+    }
+    return try Data(contentsOf: url, options: .mappedIfSafe)
 }
 
 private final class LoopbackHTTPPlaybackResource: DulcetPlaybackResourceLoading,
