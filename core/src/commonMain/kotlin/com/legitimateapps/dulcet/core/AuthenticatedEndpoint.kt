@@ -6,12 +6,15 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.contentType
+import io.ktor.utils.io.readAvailable
 
 internal data class AuthenticatedEndpointCredentials(
     val normalizedBaseUrl: String,
@@ -32,15 +35,25 @@ internal data class AuthenticatedEndpointResponse(
 
 internal data class AuthenticatedEndpointResponseHeaders(
     val contentType: String?,
-    val contentLength: Long?,
+    val contentLength: PlaybackContentLength?,
     val retryAfter: String?,
     val acceptRanges: String?,
     val contentRange: String?,
 )
 
+private data class AuthenticatedEndpointHttpSnapshot(
+    val statusCode: Int,
+    val body: ByteArray,
+    val headers: AuthenticatedEndpointResponseHeaders,
+    val location: String?,
+)
+
 internal data class AuthenticatedEndpointRequestOptions(
     /** An already-rendered HTTP byte range, for example `bytes=0-65535`. */
     val range: String? = null,
+    /** How a successful full response's Content-Length must be interpreted. */
+    val contentLengthKind: AuthenticatedEndpointContentLengthKind =
+        AuthenticatedEndpointContentLengthKind.Exact,
 ) {
     init {
         require(range == null || BYTE_RANGE_PATTERN.matches(range))
@@ -51,6 +64,11 @@ internal data class AuthenticatedEndpointRequestOptions(
     }
 }
 
+internal enum class AuthenticatedEndpointContentLengthKind {
+    Exact,
+    Estimated,
+}
+
 /** Signed request material for a platform loader. Rendering is deliberately redacted. */
 internal data class AuthenticatedEndpointPreparedRequest(
     val url: String,
@@ -58,6 +76,15 @@ internal data class AuthenticatedEndpointPreparedRequest(
     val rangeHeader: String?,
 ) {
     override fun toString(): String = "AuthenticatedEndpointPreparedRequest(<redacted>)"
+}
+
+private fun Throwable.isPrematureEndOfHttpBody(): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current::class.simpleName == "EOFException") return true
+        current = current.cause
+    }
+    return false
 }
 
 /**
@@ -132,46 +159,53 @@ internal class AuthenticatedEndpointClient(
         var redirects = 0
         while (true) {
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
-            val response = if (jsonBody == null) {
-                client.get(target.url) {
+            val snapshot = if (
+                jsonBody == null &&
+                options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
+                options.range == null
+            ) {
+                client.prepareGet(target.url) {
                     applyRequestParts(target.hostHeader, common, options)
+                }.execute { response ->
+                    response.toSnapshot(
+                        body = if (response.status.value in 200..299) {
+                            response.bodyAsBytesAllowingEstimatedEnd()
+                        } else {
+                            response.bodyAsBytes()
+                        },
+                        options = options,
+                    )
                 }
             } else {
-                client.post(target.url) {
-                    applyRequestParts(target.hostHeader, common, options)
-                    contentType(ContentType.Application.Json)
-                    setBody(jsonBody)
+                val response = if (jsonBody == null) {
+                    client.get(target.url) {
+                        applyRequestParts(target.hostHeader, common, options)
+                    }
+                } else {
+                    client.post(target.url) {
+                        applyRequestParts(target.hostHeader, common, options)
+                        contentType(ContentType.Application.Json)
+                        setBody(jsonBody)
+                    }
                 }
+                response.toSnapshot(response.bodyAsBytes(), options)
             }
-            val body = response.bodyAsBytes()
             val redactedUrl = traceRecorder.latestRedactedUrl()
-            if (response.status.value !in REDIRECT_STATUS_CODES) {
+            if (snapshot.statusCode !in REDIRECT_STATUS_CODES) {
                 return AuthenticatedEndpointResponse(
-                    statusCode = response.status.value,
-                    body = body,
+                    statusCode = snapshot.statusCode,
+                    body = snapshot.body,
                     redactedUrl = redactedUrl,
-                    headers = AuthenticatedEndpointResponseHeaders(
-                        contentType = response.headers[HttpHeaders.ContentType],
-                        contentLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull(),
-                        retryAfter = response.headers[HttpHeaders.RetryAfter],
-                        acceptRanges = response.headers[HttpHeaders.AcceptRanges],
-                        contentRange = response.headers[HttpHeaders.ContentRange],
-                    ),
+                    headers = snapshot.headers,
                     requestTrace = traceRecorder.latestTrace(),
                 )
             }
-            val location = response.headers[HttpHeaders.Location]
+            val location = snapshot.location
                 ?: return AuthenticatedEndpointResponse(
-                    statusCode = response.status.value,
-                    body = body,
+                    statusCode = snapshot.statusCode,
+                    body = snapshot.body,
                     redactedUrl = redactedUrl,
-                    headers = AuthenticatedEndpointResponseHeaders(
-                        contentType = response.headers[HttpHeaders.ContentType],
-                        contentLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull(),
-                        retryAfter = response.headers[HttpHeaders.RetryAfter],
-                        acceptRanges = response.headers[HttpHeaders.AcceptRanges],
-                        contentRange = response.headers[HttpHeaders.ContentRange],
-                    ),
+                    headers = snapshot.headers,
                     requestTrace = traceRecorder.latestTrace(),
                 )
             val nextUrl = resolveRedirectUrl(currentUrl, location)
@@ -201,6 +235,71 @@ internal class AuthenticatedEndpointClient(
             }
             currentUrl = nextUrl.withoutQuery()
             redirects += 1
+        }
+    }
+
+    private fun io.ktor.client.statement.HttpResponse.toSnapshot(
+        body: ByteArray,
+        options: AuthenticatedEndpointRequestOptions,
+    ) = AuthenticatedEndpointHttpSnapshot(
+        statusCode = status.value,
+        body = body,
+        headers = AuthenticatedEndpointResponseHeaders(
+            contentType = headers[HttpHeaders.ContentType],
+            contentLength = playbackContentLength(options),
+            retryAfter = headers[HttpHeaders.RetryAfter],
+            acceptRanges = headers[HttpHeaders.AcceptRanges],
+            contentRange = headers[HttpHeaders.ContentRange],
+        ),
+        location = headers[HttpHeaders.Location],
+    )
+
+    private fun io.ktor.client.statement.HttpResponse.playbackContentLength(
+        options: AuthenticatedEndpointRequestOptions,
+    ): PlaybackContentLength? = headers[HttpHeaders.ContentLength]
+        ?.toLongOrNull()
+        ?.takeIf { it >= 0 }
+        ?.let { byteCount ->
+            if (
+                options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
+                options.range == null &&
+                status.value in 200..299
+            ) {
+                PlaybackContentLength.Estimated(byteCount)
+            } else {
+                PlaybackContentLength.Exact(byteCount)
+            }
+        }
+
+    /**
+     * Ktor correctly reports an exact Content-Length mismatch as EOF. Navidrome's
+     * estimateContentLength contract is different: all bytes already received are the complete
+     * representation even when the estimate overshoots. Read incrementally so those bytes survive
+     * the terminal EOF; every other transport failure still propagates.
+     */
+    private suspend fun io.ktor.client.statement.HttpResponse.bodyAsBytesAllowingEstimatedEnd(): ByteArray {
+        val channel = bodyAsChannel()
+        val chunks = mutableListOf<ByteArray>()
+        var total = 0
+        val scratch = ByteArray(16 * 1024)
+        while (true) {
+            val count = try {
+                channel.readAvailable(scratch, 0, scratch.size)
+            } catch (failure: Throwable) {
+                if (total > 0 && failure.isPrematureEndOfHttpBody()) break
+                throw failure
+            }
+            if (count < 0) break
+            if (count == 0) continue
+            chunks += scratch.copyOf(count)
+            total += count
+        }
+        return ByteArray(total).also { result ->
+            var offset = 0
+            chunks.forEach { chunk ->
+                chunk.copyInto(result, destinationOffset = offset)
+                offset += chunk.size
+            }
         }
     }
 

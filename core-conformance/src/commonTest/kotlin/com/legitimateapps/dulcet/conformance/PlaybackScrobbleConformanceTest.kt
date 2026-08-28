@@ -7,6 +7,7 @@ import com.legitimateapps.dulcet.core.DirectPlayAudioProfile
 import com.legitimateapps.dulcet.core.LegacyPlaybackPreference
 import com.legitimateapps.dulcet.core.LogSink
 import com.legitimateapps.dulcet.core.PlaybackByteRange
+import com.legitimateapps.dulcet.core.PlaybackContentLength
 import com.legitimateapps.dulcet.core.PlaybackDeliveryPath
 import com.legitimateapps.dulcet.core.PlaybackDeviceProfile
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
@@ -169,18 +170,46 @@ class PlaybackScrobbleConformanceTest {
             assertEquals(31, source.durationSeconds, "CONF-14a boundary fixture duration drifted")
             requireTranscodingCapability("CONF-14a", source)
 
+            // Distinct bitrates make both cache keys cold in the disposable instance. Reusing one
+            // item/bitrate can silently turn the second observation into Navidrome's warm path.
             val full = requireAudio(
-                playback.load(requireLegacyMp3Plan("CONF-14a", source, offsetSeconds = 0)),
+                playback.load(
+                    requireLegacyMp3Plan(
+                        "CONF-14a",
+                        source,
+                        offsetSeconds = 0,
+                        maxBitRateKbps = FULL_BITRATE_KBPS,
+                    ),
+                ),
                 "CONF-14a full legacy transcode failed after the capability precondition passed",
             )
             val seeked = requireAudio(
-                playback.load(requireLegacyMp3Plan("CONF-14a", source, offsetSeconds = SEEK_SECONDS)),
+                playback.load(
+                    requireLegacyMp3Plan(
+                        "CONF-14a",
+                        source,
+                        offsetSeconds = SEEK_SECONDS,
+                        maxBitRateKbps = SEEK_BITRATE_KBPS,
+                    ),
+                ),
                 "CONF-14a legacy offset transcode failed after the capability precondition passed",
+            )
+            val fullEstimate = assertIs<PlaybackContentLength.Estimated>(full.plan.contentLength)
+            val seekEstimate = assertIs<PlaybackContentLength.Estimated>(seeked.plan.contentLength)
+            assertTrue(
+                fullEstimate.estimatedByteCount > full.bytes.size,
+                "CONF-14a cold full transcode did not expose the pinned estimate overshoot",
+            )
+            assertTrue(
+                seekEstimate.estimatedByteCount > seeked.bytes.size,
+                "CONF-14a cold offset transcode did not expose the pinned estimate overshoot",
             )
             assertTrue(full.bytes.hasMp3Signature())
             assertTrue(seeked.bytes.hasMp3Signature())
             assertTrue(seeked.bytes.size < full.bytes.size, "CONF-14a offset did not shorten the audio")
-            val observedRemainingRatio = seeked.bytes.size.toDouble() / full.bytes.size
+            val observedRemainingRatio =
+                seeked.bytes.size.toDouble() / full.bytes.size *
+                    FULL_BITRATE_KBPS / SEEK_BITRATE_KBPS
             val expectedRemainingRatio =
                 (source.durationSeconds - SEEK_SECONDS).toDouble() / source.durationSeconds
             assertTrue(
@@ -192,7 +221,42 @@ class PlaybackScrobbleConformanceTest {
             record(
                 "CONF-14a OBSERVED requested_offset_seconds=$SEEK_SECONDS " +
                     "source_duration_seconds=${source.durationSeconds} full_bytes=${full.bytes.size} " +
-                    "offset_bytes=${seeked.bytes.size} remaining_ratio=$observedRemainingRatio",
+                    "full_estimate=${fullEstimate.estimatedByteCount} " +
+                    "offset_bytes=${seeked.bytes.size} offset_estimate=${seekEstimate.estimatedByteCount} " +
+                    "full_bitrate_kbps=$FULL_BITRATE_KBPS offset_bitrate_kbps=$SEEK_BITRATE_KBPS " +
+                    "bitrate_normalized_remaining_ratio=$observedRemainingRatio",
+            )
+        }
+    }
+
+    @Test
+    fun conf17LegacyTranscodeContentLengthIsUsableOnlyAsAnEstimate() = runTest {
+        withFixture {
+            val source = requireSong("CONF-17", HEALTH_PROBE_TITLE)
+            requireTranscodingCapability("CONF-17", source)
+
+            // 73 kbps is unique in this suite, so this request cannot inherit a warmed transcode.
+            val audio = requireAudio(
+                playback.load(
+                    requireLegacyMp3Plan(
+                        "CONF-17",
+                        source,
+                        offsetSeconds = 0,
+                        maxBitRateKbps = CONF_17_COLD_BITRATE_KBPS,
+                    ),
+                ),
+                "CONF-17 cold legacy transcode did not complete with an estimated length",
+            )
+            val estimate = assertIs<PlaybackContentLength.Estimated>(audio.plan.contentLength)
+            assertTrue(audio.bytes.hasMp3Signature())
+            assertTrue(
+                estimate.estimatedByteCount > audio.bytes.size,
+                "CONF-17 expected the pinned cold-cache estimate to overshoot the complete body",
+            )
+            record(
+                "CONF-17 OBSERVED content_length_kind=estimate " +
+                    "estimated_bytes=${estimate.estimatedByteCount} body_bytes=${audio.bytes.size} " +
+                    "authoritative=false cache=cold bitrate_kbps=$CONF_17_COLD_BITRATE_KBPS",
             )
         }
     }
@@ -435,10 +499,11 @@ class PlaybackScrobbleConformanceTest {
         confId: String,
         song: SeedSong,
         offsetSeconds: Int,
+        maxBitRateKbps: Int = FULL_BITRATE_KBPS,
     ) = assertIs<PlaybackResolutionResult.Resolved>(
         playback.resolve(
             legacyRequest(song).copy(
-                legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 64),
+                legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, maxBitRateKbps),
                 legacyTimeOffset = offsetSeconds.seconds,
             ),
         ),
@@ -540,6 +605,9 @@ class PlaybackScrobbleConformanceTest {
         const val THIRTY_ONE_SECOND_TITLE = "Thirty One Seconds"
         const val MISSING_OPAQUE_ID = "missing:opaque:CONF-12:not-an-integer"
         const val SEEK_SECONDS = 15
+        const val FULL_BITRATE_KBPS = 64
+        const val SEEK_BITRATE_KBPS = 96
+        const val CONF_17_COLD_BITRATE_KBPS = 73
         const val OFFSET_RATIO_TOLERANCE = 0.03
         const val CONF_22_SESSION_TIME = 1_788_220_000_001
         const val CONF_23_REPEATED_SESSION_TIME = 1_788_230_000_001
