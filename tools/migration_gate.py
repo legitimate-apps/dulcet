@@ -507,23 +507,110 @@ NEGATIVE_CONTROLS = (
         """,
         ("protected schema or trigger definitions changed",),
     ),
+    (
+        "predicate_deletes",
+        """
+        DELETE FROM scrobble_outbox WHERE attempt_count = 0;
+        DELETE FROM mutation_outbox WHERE field = 'favorite';
+        DELETE FROM download WHERE state IN ('queued', 'stale');
+        DELETE FROM resume_position WHERE position_milliseconds < 1000;
+        """,
+        tuple(f"{table}: protected rows changed" for table in PROTECTED_COLUMNS),
+    ),
+    (
+        "download_resume_data_nulled",
+        """
+        UPDATE download
+        SET platform_resume_data = NULL,
+            resume_data_created_at_wall_clock = NULL;
+        """,
+        ("download: protected rows changed",),
+    ),
+    (
+        "position_units_reinterpreted",
+        """
+        UPDATE resume_position
+        SET position_milliseconds = position_milliseconds / 1000;
+        """,
+        ("resume_position: protected rows changed",),
+    ),
+    (
+        "session_wall_clock_failed_conversion",
+        """
+        UPDATE scrobble_outbox
+        SET session_start_wall_clock =
+          CAST('invalid-' || session_start_wall_clock AS INTEGER) + rowid;
+        """,
+        ("scrobble_outbox: protected rows changed",),
+    ),
+    (
+        "forged_golden_values",
+        """
+        UPDATE resume_position SET position_milliseconds = 0;
+        UPDATE scrobble_outbox SET attempt_count = 0;
+        """,
+        (
+            "scrobble_outbox: protected rows changed",
+            "resume_position: protected rows changed",
+        ),
+    ),
 )
+
+
+def write_forged_expected_file(fixture: Path, version: int, sql: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-forged-golden-") as temp:
+        shadow_database = Path(temp) / "database.db"
+        shutil.copy2(fixture / "database.db", shadow_database)
+        with sqlite3.connect(shadow_database) as connection:
+            connection.executescript(sql)
+            forged_state, errors = protected_state(connection, fixture / "files")
+            if errors:
+                raise MigrationGateError(
+                    "cannot build forged expected file:\n" + "\n".join(errors)
+                )
+            metadata = connection.execute(
+                "SELECT schema_version, cache_format_version, committed_generation "
+                "FROM schema_meta WHERE singleton_id = 1"
+            ).fetchone()
+    if metadata is None:
+        raise MigrationGateError("cannot build forged expected file without schema_meta")
+    forged_state["schema_meta"] = {
+        "source_schema_version": version,
+        "cache_format_version": metadata[1],
+        "committed_generation": metadata[2],
+    }
+    (fixture / "expected.json").write_text(
+        json.dumps(forged_state, indent=2, sort_keys=True) + "\n"
+    )
 
 
 def prove_destructive_migrations_are_rejected(fixture: Path, version: int) -> None:
     for name, sql, required_evidence in NEGATIVE_CONTROLS:
+        temporary_fixture = None
         try:
-            migrate_and_assert_fixture(version, fixture, version, sql)
-        except MigrationGateError as failure:
-            message = str(failure)
-            missing = {marker for marker in required_evidence if marker not in message}
-            if missing:
-                raise MigrationGateError(
-                    f"negative control {name} failed for incomplete reasons; "
-                    f"missing {sorted(missing)}\n{message}"
-                ) from failure
-            continue
-        raise MigrationGateError(f"negative control {name} was unexpectedly accepted")
+            control_fixture = fixture
+            if name == "forged_golden_values":
+                temporary_fixture = tempfile.TemporaryDirectory(
+                    prefix="dulcet-forged-fixture-"
+                )
+                control_fixture = Path(temporary_fixture.name) / fixture.name
+                shutil.copytree(fixture, control_fixture)
+                write_forged_expected_file(control_fixture, version, sql)
+            try:
+                migrate_and_assert_fixture(version, control_fixture, version, sql)
+            except MigrationGateError as failure:
+                message = str(failure)
+                missing = {marker for marker in required_evidence if marker not in message}
+                if missing:
+                    raise MigrationGateError(
+                        f"negative control {name} failed for incomplete reasons; "
+                        f"missing {sorted(missing)}\n{message}"
+                    ) from failure
+                continue
+            raise MigrationGateError(f"negative control {name} was unexpectedly accepted")
+        finally:
+            if temporary_fixture is not None:
+                temporary_fixture.cleanup()
 
 
 def main() -> None:
