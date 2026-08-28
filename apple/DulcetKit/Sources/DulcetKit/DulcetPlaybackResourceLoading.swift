@@ -200,11 +200,18 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                         completion(.failed(error: .transport, refreshReason: nil))
                         return
                     }
+                    guard http.statusCode != 206 || Self.resourceTotalLength(in: http) != nil else {
+                        completion(.failed(
+                            error: .protocolViolation,
+                            refreshReason: .validationFailed
+                        ))
+                        return
+                    }
                     let body = data ?? Data()
                     let response = DulcetPlaybackHTTPResponse(
                         statusCode: http.statusCode,
                         contentType: http.value(forHTTPHeaderField: "Content-Type"),
-                        contentLength: Self.integerHeader("Content-Length", in: http),
+                        contentLength: Self.resourceTotalLength(in: http),
                         retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
                         acceptRanges: http.value(forHTTPHeaderField: "Accept-Ranges"),
                         contentRange: http.value(forHTTPHeaderField: "Content-Range"),
@@ -237,6 +244,23 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
 
     private static func integerHeader(_ name: String, in response: HTTPURLResponse) -> Int64? {
         response.value(forHTTPHeaderField: name).flatMap(Int64.init)
+    }
+
+    private static func resourceTotalLength(in response: HTTPURLResponse) -> Int64? {
+        switch response.statusCode {
+        case 206:
+            guard let contentRange = response.value(forHTTPHeaderField: "Content-Range"),
+                  let separator = contentRange.lastIndex(of: "/"),
+                  let total = Int64(contentRange[contentRange.index(after: separator)...]),
+                  total > 0 else {
+                return nil
+            }
+            return total
+        case 200:
+            return integerHeader("Content-Length", in: response)
+        default:
+            return nil
+        }
     }
 
     private static func closedFailure(for error: Error?) -> DulcetPlaybackFailure {
