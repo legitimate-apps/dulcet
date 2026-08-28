@@ -525,6 +525,7 @@ public struct DulcetSearchFailure: Sendable, Hashable {
 }
 
 public struct DulcetNowPlaying: Sendable, Hashable {
+    public let sessionID: DulcetPlaybackSessionID?
     public let current: DulcetTrack
     public let queue: [DulcetTrack]
     public let elapsed: Duration
@@ -532,16 +533,32 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let outputName: String
     public let volume: Double
     public let audioFormat: DulcetAudioFormat
+    public let phase: DulcetPlaybackPresentationPhase
+    public let seekability: DulcetPlaybackSeekability
+    public let progressBegan: Bool
+    public let repeatMode: DulcetRepeatMode
+    public let shuffleEnabled: Bool
+    public let canGoNext: Bool
+    public let canGoPrevious: Bool
 
     public init(
+        sessionID: DulcetPlaybackSessionID? = nil,
         current: DulcetTrack,
         queue: [DulcetTrack],
         elapsed: Duration,
         isPlaying: Bool,
         outputName: String,
         volume: Double,
-        audioFormat: DulcetAudioFormat
+        audioFormat: DulcetAudioFormat,
+        phase: DulcetPlaybackPresentationPhase = .progressing,
+        seekability: DulcetPlaybackSeekability = .seekable,
+        progressBegan: Bool = true,
+        repeatMode: DulcetRepeatMode = .off,
+        shuffleEnabled: Bool = false,
+        canGoNext: Bool = true,
+        canGoPrevious: Bool = true
     ) {
+        self.sessionID = sessionID
         self.current = current
         self.queue = queue
         self.elapsed = elapsed
@@ -549,8 +566,28 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.outputName = outputName
         self.volume = volume
         self.audioFormat = audioFormat
+        self.phase = phase
+        self.seekability = seekability
+        self.progressBegan = progressBegan
+        self.repeatMode = repeatMode
+        self.shuffleEnabled = shuffleEnabled
+        self.canGoNext = canGoNext
+        self.canGoPrevious = canGoPrevious
     }
 
+}
+
+public enum DulcetPlaybackPresentationPhase: String, Sendable, Hashable {
+    case ready
+    case progressing
+    case buffering
+    case paused
+}
+
+public enum DulcetRepeatMode: String, Sendable, Hashable {
+    case off
+    case all
+    case one
 }
 
 public enum DulcetLibraryFailureKind: String, Sendable, Hashable {

@@ -154,7 +154,7 @@ public enum DulcetPlaybackCommandOutcome: Equatable, Sendable {
     }
 }
 
-public enum DulcetPlaybackSeekability: Equatable, Sendable {
+public enum DulcetPlaybackSeekability: Equatable, Hashable, Sendable {
     case seekable
     case notSeekable
     case unknown

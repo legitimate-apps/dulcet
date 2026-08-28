@@ -303,7 +303,7 @@ struct AVPlayerEngineTests {
     }
 
     @Test
-    func remoteCommandsRejectStaleSessionsAndRouteOnlyCurrentQueueAndFeedbackActions() async throws {
+    func remoteCommandsRejectStaleSessionsAndRouteEveryCurrentCommand() async throws {
         let mediaControls = RecordingSystemMediaControls()
         let router = RecordingRemoteCommandRouter()
         let capabilities = DulcetRemoteCommandCapabilities(
@@ -335,6 +335,9 @@ struct AVPlayerEngineTests {
             isFavourite: true
         )))
         #expect(router.commands == [
+            .pause(sessionID: playbackPlan.playbackSessionID),
+            .toggle(sessionID: playbackPlan.playbackSessionID),
+            .seek(sessionID: playbackPlan.playbackSessionID, position: 0.5),
             .next(sessionID: playbackPlan.playbackSessionID),
             .previous(sessionID: playbackPlan.playbackSessionID),
             .rating(sessionID: playbackPlan.playbackSessionID, value: 4),

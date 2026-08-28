@@ -293,6 +293,19 @@ enum DulcetStrings {
     }
 }
 
+public enum DulcetPlaybackStrings {
+    public static let thisDevice = String(
+        localized: "player.thisDevice",
+        defaultValue: "This Device",
+        bundle: .module
+    )
+    public static let unknownAudioFormat = String(
+        localized: "player.unknownAudioFormat",
+        defaultValue: "Audio",
+        bundle: .module
+    )
+}
+
 enum DulcetLinks {
     static let certificateInstallationGuide = URL(
         string: "https://support.apple.com/guide/keychain-access/add-certificates-to-a-keychain-kyca2431/mac"

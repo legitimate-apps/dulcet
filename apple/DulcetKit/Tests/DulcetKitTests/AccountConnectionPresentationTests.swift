@@ -164,6 +164,86 @@ func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
 }
 
 @Test @MainActor
+func playbackSurfaceIntentsReachTheSinglePlaybackControllerBoundary() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    #expect(playback.configuredProviderInstanceID == "provider-instance-fixture")
+
+    store.selectDestination(.library)
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+
+    store.playLibrary(shuffle: true)
+    let libraryIntent = try #require(playback.queueIntents.last)
+    #expect(libraryIntent.sourceKind == .library)
+    #expect(libraryIntent.sourceID == nil)
+    #expect(libraryIntent.tracks.map(\.id) == album.tracks.map(\.id))
+    #expect(libraryIntent.startIndex == nil)
+    #expect(libraryIntent.shuffle)
+
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    let rowIntent = try #require(playback.queueIntents.last)
+    #expect(rowIntent.sourceKind == .album)
+    #expect(rowIntent.sourceID == album.id)
+    #expect(rowIntent.startIndex == 0)
+    #expect(!rowIntent.shuffle)
+
+    store.sendPlaybackControl(.cycleRepeat)
+    #expect(playback.controlIntents == [.cycleRepeat])
+}
+
+@Test @MainActor
+func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
+    let playback = ControlledPlaybackController()
+    let source = DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    )
+    let store = DulcetPresentationStore(source: source)
+    let album = fixtureLibraryAlbum()
+    let nowPlaying = DulcetNowPlaying(
+        sessionID: DulcetPlaybackSessionID("session-ready"),
+        current: album.tracks[0],
+        queue: album.tracks,
+        elapsed: .zero,
+        isPlaying: false,
+        outputName: "Fixture output",
+        volume: 1,
+        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1),
+        phase: .ready,
+        seekability: .seekable,
+        progressBegan: false
+    )
+
+    store.selectDestination(.nowPlaying)
+    playback.publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
+    #expect(store.snapshot.state == .nowPlayingUnavailable)
+    #expect(store.snapshot.nowPlaying == nil)
+
+    playback.publish(DulcetPlaybackPresentation(status: .ready, nowPlaying: nowPlaying))
+    #expect(store.snapshot.state == .nowPlaying)
+    #expect(store.snapshot.nowPlaying?.sessionID == DulcetPlaybackSessionID("session-ready"))
+}
+
+@Test @MainActor
 func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(DulcetAccountDataSource.defaultSearchDebounce == .milliseconds(250))
     let connector = ControlledAccountConnector()
@@ -821,6 +901,45 @@ private final class ControlledArtworkOperation: DulcetArtworkFetchOperation {
 
     func cancel() {
         cancelCount += 1
+    }
+}
+
+@MainActor
+private final class ControlledPlaybackController: DulcetPlaybackControlling {
+    private var handler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
+    private(set) var configuredProviderInstanceID: String?
+    private(set) var queueIntents: [DulcetPlaybackQueueIntent] = []
+    private(set) var controlIntents: [DulcetPlaybackControlIntent] = []
+    private(set) var disconnectCount = 0
+    private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
+
+    func setPresentationHandler(
+        _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
+    ) {
+        self.handler = handler
+    }
+
+    func configure(account: DulcetPlaybackAccount) {
+        configuredProviderInstanceID = account.providerInstanceID
+    }
+
+    func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
+        queueIntents.append(intent)
+        publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
+    }
+
+    func send(_ intent: DulcetPlaybackControlIntent) {
+        controlIntents.append(intent)
+    }
+
+    func disconnect() {
+        disconnectCount += 1
+        publish(.unavailable)
+    }
+
+    func publish(_ presentation: DulcetPlaybackPresentation) {
+        currentPresentation = presentation
+        handler?(presentation)
     }
 }
 
