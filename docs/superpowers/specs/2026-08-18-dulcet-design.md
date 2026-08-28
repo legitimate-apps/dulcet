@@ -3256,8 +3256,14 @@ range failure that the generated MP3 fixture missed.
    continuation ranges. The formerly-red production test now consumes the full file in 30 ranges
    with zero failed or active loading requests. Content information is published once for each of
    the three AVFoundation loading requests, not once per HTTP chunk; a later chunk that disagrees
-   about the resource metadata fails closed. A server-side play-count increment in the DEV app is
-   deliberately left to the operator's manual verification.
+   about the resource metadata fails closed.
+4. OBSERVED 2026-08-28 on the macOS DEV app against the local disposable reference server, driven
+   with real pointer input: `Fluffing a Duck` (1:07, threshold 33.5 s) went `playCount` 4 -> 5,
+   `getNowPlaying` listed it under client `Dulcet` while it played, and the count stayed at 4 for
+   the `submission=false` now-playing report. The queue then advanced to the next item and opened a
+   new now-playing entry. This is a manual operator-grade observation on one machine, not a CI
+   control; CONF-11 through CONF-15 and CONF-22/CONF-23 remain unimplemented, so `playback.stream`
+   and `playback.scrobble` stay `planned` in `FEATURES.yml`.
 
 **Revision 80 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
 two-byte request; this was an intermediate defect, not the complete production root cause.
