@@ -50,6 +50,11 @@ internal sealed interface ScrobbleOutboxDiagnosticEvent {
         val trigger: ScrobbleOutboxTrigger,
         val nextRetryAfter: Duration,
     ) : ScrobbleOutboxDiagnosticEvent
+
+    data class FutureTimestampClamped(
+        val entry: ScrobbleOutboxEntry,
+        val submittedAtWallClock: PlaybackWallClockTime,
+    ) : ScrobbleOutboxDiagnosticEvent
 }
 
 internal fun interface ScrobbleOutboxDiagnosticSink {
@@ -204,7 +209,22 @@ internal class ScrobbleOutboxDeliveryWorker(
             val attemptedEntries = mutableListOf<ScrobbleOutboxEntry>()
             outbox.pending(serverId).forEach { entry ->
                 attempted += 1
-                when (sender.send(ScrobbleEndpointRequest(entry.toSubmittedPlay()))) {
+                val submittedAt = PlaybackWallClockTime(wallClock.nowEpochMilliseconds())
+                val event = if (entry.sessionStartWallClock.epochMilliseconds > submittedAt.epochMilliseconds) {
+                    diagnosticSink.record(
+                        ScrobbleOutboxDiagnosticEvent.FutureTimestampClamped(
+                            entry = entry,
+                            submittedAtWallClock = submittedAt,
+                        ),
+                    )
+                    RecordedPlaybackEvent.SubmittedPlay(
+                        itemId = ProviderItemId(entry.serverId.value, entry.rawId),
+                        sessionStartWallClock = submittedAt,
+                    )
+                } else {
+                    entry.toSubmittedPlay()
+                }
+                when (sender.send(ScrobbleEndpointRequest(event))) {
                     is ScrobbleSendResult.Sent -> {
                         attemptedEntries += entry
                         outbox.delete(entry)

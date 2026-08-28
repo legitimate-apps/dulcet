@@ -156,6 +156,39 @@ class ScrobbleOutboxTest {
     }
 
     @Test
+    fun futureSessionTimestampSurvivesStoreRecreationThenIsClampedAndFlaggedOnDelivery() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        val futureEvent = RecordedPlaybackEvent.SubmittedPlay(
+            itemId = EVENT.itemId,
+            sessionStartWallClock = PlaybackWallClockTime(CREATED_AT + 1.days.inWholeMilliseconds),
+        )
+        fixture.outbox.persistForAtLeastOnceDelivery(futureEvent)
+        val reopenedOutbox = PersistentScrobbleOutbox(
+            DulcetDatabaseStore.open(fixture.driver).database,
+            fixture.wallClock,
+        )
+        val transport = ScriptedTransport(ArrayDeque(listOf(okResponse())))
+        val worker = worker(
+            reopenedOutbox,
+            transport,
+            fixture.monotonic,
+            fixture.diagnostics,
+            fixture.wallClock,
+        )
+
+        val result = worker.onForeground()
+
+        assertEquals(1, result.deliveredCount)
+        assertEquals(CREATED_AT.toString(), transport.parameters.single()["time"])
+        val diagnostic = assertIs<ScrobbleOutboxDiagnosticEvent.FutureTimestampClamped>(
+            fixture.diagnostics.events.single(),
+        )
+        assertEquals(futureEvent.sessionStartWallClock, diagnostic.entry.sessionStartWallClock)
+        assertEquals(PlaybackWallClockTime(CREATED_AT), diagnostic.submittedAtWallClock)
+        fixture.close()
+    }
+
+    @Test
     fun localUniquenessKeyCreatesOneRowWithoutClaimingNetworkIdempotence() = runTest {
         val fixture = fixture()
 
