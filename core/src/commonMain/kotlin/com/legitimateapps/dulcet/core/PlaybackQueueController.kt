@@ -37,6 +37,7 @@ internal data class PlaybackQueueStartDirective(
     val itemId: ProviderItemId,
     val duration: Duration?,
     val resumePosition: Duration?,
+    val shouldAutoPlay: Boolean,
 )
 
 internal data class PlaybackQueueEntrySnapshot(
@@ -124,6 +125,21 @@ internal class PlaybackQueueController(
 
     fun previousForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
         if (acceptsCommand(playbackSessionId)) moveBy(-1) else emptyTransition()
+
+    fun restoreCurrentPaused(): PlaybackQueueTransition {
+        if (playback.currentSession != null) return emptyTransition()
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val entry = state.currentIndex?.let(state.entries::get) ?: return emptyTransition()
+        val start = newStart(entry)
+        val transition = playback.startPlaying(start)
+        check(transition is PlaybackTransitionResult.Applied)
+        return PlaybackQueueTransition(
+            snapshot(),
+            start.directive(entry, shouldAutoPlay = false),
+            transition.effects,
+        )
+    }
 
     fun acceptsCommand(
         playbackSessionId: PlaybackSessionId,
@@ -270,13 +286,17 @@ internal class PlaybackQueueController(
         initialDuration = knownDurations[entry.queueEntryId],
     )
 
-    private fun PlaybackSessionStart.directive(entry: QueueEntry) = PlaybackQueueStartDirective(
+    private fun PlaybackSessionStart.directive(
+        entry: QueueEntry,
+        shouldAutoPlay: Boolean = true,
+    ) = PlaybackQueueStartDirective(
         queueEntryId = queueEntryId,
         playbackSessionId = playbackSessionId,
         attemptId = attemptId,
         itemId = itemId,
         duration = initialDuration,
         resumePosition = resumePositions.restore(entry.providerItemId),
+        shouldAutoPlay = shouldAutoPlay,
     )
 
     private fun nextQueueEntryId(): QueueEntryId =

@@ -70,6 +70,7 @@ public class ApplePlaybackStartDirectiveDto internal constructor(
     public val durationMilliseconds: Long,
     /** Negative means no saved position. */
     public val resumePositionMilliseconds: Long,
+    public val shouldAutoPlay: Boolean,
 )
 
 public class ApplePlaybackQueueTransitionDto internal constructor(
@@ -218,6 +219,10 @@ public class ApplePlaybackQueueClient private constructor(
         runClosed {
             controllerOrThrow().previousForSession(PlaybackSessionId(playbackSessionId))
         }
+
+    public fun restoreCurrentPaused(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().restoreCurrentPaused()
+    }
 
     public fun acceptsCommand(
         playbackSessionId: String,
@@ -724,6 +729,7 @@ private fun PlaybackQueueTransition.toAppleDto() = ApplePlaybackQueueTransitionD
             rawId = directive.itemId.rawId,
             durationMilliseconds = directive.duration?.inWholeMilliseconds ?: -1,
             resumePositionMilliseconds = directive.resumePosition?.inWholeMilliseconds ?: -1,
+            shouldAutoPlay = directive.shouldAutoPlay,
         )
     },
     errorKind = null,
