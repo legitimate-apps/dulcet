@@ -118,7 +118,7 @@ public enum DulcetPlaybackCommand: Sendable {
 }
 
 /// Closed, content-free adapter failures. Raw AVFoundation errors and URLs never cross this type.
-public enum DulcetPlaybackFailure: Equatable, Sendable {
+public enum DulcetPlaybackFailure: Error, Equatable, Sendable {
     case authentication
     case forbidden
     case serverBusy(retryAfter: TimeInterval?)
