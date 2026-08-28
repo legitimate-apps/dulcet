@@ -178,9 +178,11 @@ They are deliberately not reproduced in this repository.**
 4. **Binary `/rest` endpoints return an error envelope on failure.** `/rest/stream` and
    `/rest/getCoverArt` both require unconditional, ordered validation: detect XML or JSON envelopes
    first (skip whitespace and BOM), then require a positive endpoint-specific signature. "Not an
-   envelope" is never sufficient. For audio, get the offsets right — `ftyp` is at **offset 4**, WAV
-   needs `RIFF` at 0 **and** `WAVE` at 8, MP3 sync is a **mask** not a string, and an ID3 tag can precede
-   FLAC. Downloads use the audio table; artwork uses its image-signature table.
+   envelope" is never sufficient. A leading `{` or `<` is only an envelope candidate; require a
+   recognizable Subsonic root before classifying it as a malformed envelope, because those byte
+   values occur naturally inside ranged binary media. For audio, get the offsets right — `ftyp` is
+   at **offset 4**, WAV needs `RIFF` at 0 **and** `WAVE` at 8, MP3 sync is a **mask** not a string, and
+   an ID3 tag can precede FLAC. Downloads use the audio table; artwork uses its image-signature table.
 5. **Do not validate with a preflight and call it proof.** The engine makes a *second* request. Inline
    validation via `AVAssetResourceLoaderDelegate` / a custom `DataSource.Factory` is the mechanism
    (spec §12.4). This is real Phase-1 Apple work — see OQ-10.
