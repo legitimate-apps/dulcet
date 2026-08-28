@@ -121,11 +121,17 @@ def table_names(connection: sqlite3.Connection) -> set[str]:
     }
 
 
-def validate_schema_name_contract(version: int) -> None:
+def validate_schema_and_forbidden_column_name_contract(version: int) -> None:
     reservation_document = json.loads(RESERVATIONS.read_text())
     reserved = set(reservation_document["reserved_unpopulated_table_names"])
+    declared_implemented = set(reservation_document["implemented_table_names"])
     with sqlite3.connect(SCHEMA_SNAPSHOTS / f"{version}.db") as connection:
         implemented = table_names(connection)
+        if declared_implemented != implemented:
+            raise MigrationGateError(
+                "implemented table registry differs from the schema snapshot: "
+                f"declared={sorted(declared_implemented)} actual={sorted(implemented)}"
+            )
         missing = REQUIRED_IMPLEMENTED_TABLES - implemented
         if missing:
             raise MigrationGateError(
@@ -646,7 +652,7 @@ def prove_destructive_migrations_are_rejected(fixture: Path, version: int) -> No
 
 def main() -> None:
     current = current_schema_version()
-    validate_schema_name_contract(current)
+    validate_schema_and_forbidden_column_name_contract(current)
     fixtures = fixture_versions()
     expected_versions = set(range(1, current + 1))
     if set(fixtures) != expected_versions:

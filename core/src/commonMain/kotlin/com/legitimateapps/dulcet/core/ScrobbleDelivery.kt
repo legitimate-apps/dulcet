@@ -70,7 +70,7 @@ public class ScrobbleEndpointSender private constructor(
     }
 }
 
-/** The single hand-off for submitted plays; production uses [PersistentScrobbleOutbox]. */
+/** Submitted-play persistence seam; no production composition root is wired yet. */
 internal fun interface SubmittedPlayOutboxSink {
     suspend fun persistForAtLeastOnceDelivery(event: RecordedPlaybackEvent.SubmittedPlay)
 }

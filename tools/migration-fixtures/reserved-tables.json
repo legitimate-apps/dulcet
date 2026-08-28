@@ -1,5 +1,15 @@
 {
   "schema_intent_version": 1,
+  "implemented_table_names": [
+    "active_queue",
+    "download",
+    "mutation_outbox",
+    "queue_entry",
+    "queue_state",
+    "resume_position",
+    "schema_meta",
+    "scrobble_outbox"
+  ],
   "reserved_unpopulated_table_names": [
     "album",
     "artist",
