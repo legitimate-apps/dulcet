@@ -43,6 +43,7 @@ internal data class PlaybackQueueStartDirective(
 internal data class PlaybackQueueEntrySnapshot(
     val queueEntryId: QueueEntryId,
     val itemId: ProviderItemId,
+    val sourceDisplayName: String,
 )
 
 internal data class PlaybackQueueSnapshot(
@@ -303,7 +304,13 @@ internal class PlaybackQueueController(
         QueueEntryId(identities.next("queue-entry"))
 
     private fun QueueState.snapshot() = PlaybackQueueSnapshot(
-        entries = entries.map { PlaybackQueueEntrySnapshot(it.queueEntryId, it.providerItemId) },
+        entries = entries.map {
+            PlaybackQueueEntrySnapshot(
+                it.queueEntryId,
+                it.providerItemId,
+                it.sourceContext.displayName,
+            )
+        },
         currentIndex = currentIndex,
         repeatMode = repeatMode,
         shuffleState = shuffleState,

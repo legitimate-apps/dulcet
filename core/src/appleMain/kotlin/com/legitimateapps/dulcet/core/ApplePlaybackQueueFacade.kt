@@ -33,6 +33,7 @@ public class ApplePlaybackQueueEntryDto internal constructor(
     public val queueEntryId: String,
     public val providerInstanceId: String,
     public val rawId: String,
+    public val sourceDisplayName: String,
 )
 
 public class ApplePlaybackCoreSessionDto internal constructor(
@@ -741,6 +742,7 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
             queueEntryId = entry.queueEntryId.value,
             providerInstanceId = entry.itemId.providerInstanceId,
             rawId = entry.itemId.rawId,
+            sourceDisplayName = entry.sourceDisplayName,
         )
     },
     currentIndex = currentIndex ?: -1,
