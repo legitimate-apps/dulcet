@@ -14,6 +14,7 @@ internal data class DulcetSchemaMetadata(
 
 internal class DulcetDatabaseStore private constructor(
     internal val database: DulcetDatabase,
+    private val driver: SqlDriver,
 ) {
     internal fun metadata(): DulcetSchemaMetadata =
         database.schemaMetaQueries.selectMetadata { schemaVersion, cacheFormatVersion, generation ->
@@ -25,6 +26,10 @@ internal class DulcetDatabaseStore private constructor(
         database.schemaMetaQueries.updateCommittedGeneration(generation)
     }
 
+    internal fun close() {
+        driver.close()
+    }
+
     internal companion object {
         fun open(driver: SqlDriver): DulcetDatabaseStore {
             check(DulcetDatabase.Schema.version == DULCET_SCHEMA_VERSION)
@@ -33,7 +38,7 @@ internal class DulcetDatabaseStore private constructor(
                 schema_version = DULCET_SCHEMA_VERSION,
                 cache_format_version = DULCET_CACHE_FORMAT_VERSION,
             )
-            val store = DulcetDatabaseStore(database)
+            val store = DulcetDatabaseStore(database, driver)
             check(store.metadata().schemaVersion == DulcetDatabase.Schema.version)
             return store
         }
