@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertNotEquals
 import kotlin.time.Duration.Companion.seconds
 
 class ApplePlaybackQueueFacadeTest {
@@ -71,4 +72,75 @@ class ApplePlaybackQueueFacadeTest {
         assertNull(transition.snapshot)
         driver.close()
     }
+
+    @Test
+    fun engineEventsDriveAuthoritativeReadyProgressAndRepeatSnapshots() {
+        val fixture = fixture()
+        fixture.client.replaceAndStart(queueRequest())
+        fixture.client.cycleRepeatMode()
+        fixture.client.cycleRepeatMode()
+
+        val ready = fixture.client.recordReady("attempt:2", 180_000, "seekable")
+        assertEquals("Ready", ready.snapshot?.currentSession?.phase)
+        assertEquals("Seekable", ready.snapshot?.currentSession?.seekability)
+
+        val progressing = fixture.client.recordPlaybackProgressBegan(
+            "attempt:2",
+            1_788_000_000_000,
+            1_000,
+        )
+        assertEquals("Progressing", progressing.snapshot?.currentSession?.phase)
+        assertEquals(1_000, progressing.snapshot?.currentSession?.positionMilliseconds)
+
+        val repeated = fixture.client.recordEndedNaturally("attempt:2", 180_000)
+        assertEquals("track-a", repeated.startDirective?.rawId)
+        assertNotEquals("session:1", repeated.startDirective?.playbackSessionId)
+        assertNotEquals("attempt:2", repeated.startDirective?.attemptId)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun staleAttemptEventCannotReplaceTheCurrentCoreSnapshot() {
+        val fixture = fixture()
+        fixture.client.replaceAndStart(queueRequest(rawIds = listOf("track-a", "track-b")))
+        val advanced = fixture.client.next()
+        val currentAttempt = advanced.startDirective?.attemptId
+
+        val stale = fixture.client.recordReady("attempt:3", 180_000, "seekable")
+
+        assertEquals(currentAttempt, stale.snapshot?.currentSession?.attemptId)
+        assertEquals("Created", stale.snapshot?.currentSession?.phase)
+        fixture.driver.close()
+    }
+
+    private fun fixture(): FacadeFixture {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        var identity = 0
+        return FacadeFixture(
+            driver,
+            ApplePlaybackQueueClient(
+                PlaybackQueueController(
+                    queues = PersistentQueueStore(database),
+                    resumePositions = PersistentResumePositionStore(database),
+                    identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+                ),
+            ),
+        )
+    }
+
+    private fun queueRequest(rawIds: List<String> = listOf("track-a")) =
+        ApplePlaybackQueueRequestDto(
+            items = rawIds.map { ApplePlaybackQueueItemDto("server", it, 180_000) },
+            sourceKind = "album",
+            sourceRawId = "album-a",
+            sourceDisplayName = "Album A",
+            startIndex = 0,
+            shuffle = false,
+        )
+
+    private data class FacadeFixture(
+        val driver: app.cash.sqldelight.db.SqlDriver,
+        val client: ApplePlaybackQueueClient,
+    )
 }
