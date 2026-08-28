@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 81 — the exact Navidrome reference asset exposed a continuation-range failure the
+**Revision:** 82 — the pinned playback/scrobble controls measured both stream paths, legacy and
+extension offsets, exact opaque-parameter forwarding, and reference-server scrobble side effects;
+revision 81 exposed the exact Navidrome reference asset continuation-range failure the
 generated MP3 fixture could not: a chunk beginning `0x3C` was classified as an XML envelope and
 rejected as malformed, so envelope detection now requires a recognizable `subsonic-response` root
 before malformed-envelope semantics apply; revision 80 made Apple progressive playback account for
@@ -1177,9 +1179,11 @@ queries the engine for position.
 **OBSERVED** (https://www.subsonic.org/pages/api.jsp and
 https://opensubsonic.netlify.app/docs/endpoints/stream/): `stream` "returns binary data on success, or
 an XML document on error (in which case the HTTP content type will start with `text/xml`)." With
-`f=json`, compatible implementations may return a **JSON** envelope instead. **ASSUMED (defensive):**
-that such an error arrives with HTTP 200 is the compatibility-defensive assumption we design for; the
-reference server's actual status codes are measured by CONF-12 and only then become OBSERVED.
+`f=json`, compatible implementations may return a **JSON** envelope instead. **OBSERVED 2026-08-28
+by CONF-12 against Navidrome 0.63.2:** a bad id on legacy `stream` returned a JSON Subsonic error
+envelope at **HTTP 200**, while the corresponding bad-id `getTranscodeStream` request returned
+**HTTP 404**, `Content-Type: text/plain`, and the bare body `Not Found`. The compatibility-defensive
+HTTP-200 envelope path is therefore measured for the reference server rather than merely assumed.
 
 **HTTP 200 is not proof of audio, and content type alone is not proof either** — real servers and
 reverse proxies mislabel responses.
@@ -1331,9 +1335,21 @@ transcoded download. Both §12.7 (seeking) and §14.5 (atomic promotion) quietly
 existed; this is where it comes from. Record the returned length on the plan. `TranscodeDecision.LegacyHint` records that we
 are on this path so the UI never claims a negotiated result.
 
-**`transcodeOffset` applies to Path B.** **OBSERVED** for the extension name and version only; the
-precise offset behavior on Path A is **ASSUMED** and is measured by **CONF-14b** before any Path-A seek
-code is written. Do not assume `timeOffset` carries over.
+**`transcodeOffset` applies to Path B. OBSERVED 2026-08-28 by CONF-14a against Navidrome 0.63.2 with
+the pinned Linux ffmpeg 6.1.1:** the generated 31-second FLAC fixture transcoded to a 248,455-byte MP3
+at offset zero and a 128,501-byte MP3 at `timeOffset=15`; both passed the MP3 signature validator and
+the remaining-byte ratio was 0.5172 versus the expected remaining-duration ratio 16/31.
+
+**Path A has no offset parameter. OBSERVED 2026-08-28 by CONF-14b against the same reference
+environment:** adding legacy `timeOffset=1` to `getTranscodeStream` was ignored and returned a
+byte-identical 49,090-byte response to the no-offset request. The production extension resolver also
+returned byte-identical audio when its input carried a legacy offset. Path-A seek code must not be
+written until the extension defines a real offset mechanism; `timeOffset` does not carry over.
+
+**OBSERVED 2026-08-28 by CONF-15 against the same reference environment:** a POSTed `ClientInfo`
+returned `canTranscode=true` and a 241-character opaque `transcodeParams`; forwarding that exact
+string, without parsing or rebuilding it, returned HTTP 200 MP3 audio. A mutation that appended one
+suffix before production forwarding made the conformance control fail.
 
 **Path selection is per item, recorded on the plan, and visible in diagnostics.** A user preference
 ("prefer original quality on Wi-Fi, cap at 192 kbps on cellular") feeds the `ClientInfo` bitrate limit
@@ -1881,8 +1897,9 @@ otherwise and was wrong. The honest statement:
 
 > **Delivery is at-least-once.** Dulcet prefers a possible duplicate play to a lost one. Exactly-once
 > is unavailable without a server idempotency guarantee, which the protocol does not define.
-> **CONF-23** measures what the reference server does with a repeated `scrobble` carrying the same
-> `time`; the result is recorded per server in `docs/COMPATIBILITY.md`, never assumed globally.
+> **OBSERVED 2026-08-28 by CONF-23 against Navidrome 0.63.2:** repeated `scrobble` calls carrying the
+> same item and `time` were not deduplicated; relative play counts were 0, 1, then 2. This result is
+> recorded per server in `docs/COMPATIBILITY.md` and is not generalized to other servers.
 
 Entries older than **30 days are dropped** — a **product retention decision**, not a server fact.
 Dropping one loses user-authored play history, so it is surfaced in diagnostics rather than done
@@ -3246,6 +3263,39 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 83 (2026-08-28)** — the declared playback and scrobble controls became executable and
+the defensive assumptions they existed to measure became bounded observations.
+
+1. Eight common conformance tests now exercise CONF-11, CONF-12, CONF-13, CONF-14a, CONF-14b,
+   CONF-15, CONF-22, and CONF-23 through production playback/scrobble clients plus a redacted
+   test-only REST observation seam. Every transcode-dependent control first requires the
+   `transcoding` v1 extension and an actual `canTranscode=true` decision; absence fails rather than
+   skips. Every request uses a fresh 16-byte CSPRNG salt and exact credential canaries prove that
+   neither production logs nor the observation seam render the query string.
+2. OBSERVED against Navidrome 0.63.2 and pinned Linux ffmpeg 6.1.1: valid FLAC stream status/type/
+   signature was `200`, `audio/flac`, `fLaC`; bad legacy stream was an envelope at HTTP 200; bad
+   extension stream was bare `text/plain` at HTTP 404; raw and transcoded `bytes=0-63` requests both
+   returned HTTP 206 with matching content ranges; `ClientInfo` POST produced `canTranscode=true`
+   and a 241-character opaque parameter that streamed unchanged.
+3. OBSERVED in that environment: the 31-second legacy transcode was 248,455 bytes at offset zero and
+   128,501 bytes at `timeOffset=15`. Path A exposes no offset parameter; an extra legacy
+   `timeOffset=1` was ignored and the two 49,090-byte extension responses were byte-identical.
+4. OBSERVED server write semantics: `submission=false` left relative play count unchanged at 0,
+   `submission=true` advanced it to 1, and two identical-time submitted calls advanced another
+   fixture from 0 to 1 to 2. Navidrome therefore does not deduplicate the server half of an
+   at-least-once retry.
+5. Three production mutations proved the controls can fail: misclassifying the legacy envelope made
+   CONF-12 observe `BareHttpError` instead of `EnvelopeAtSuccess`; appending a suffix to the opaque
+   parameter made CONF-15 receive `Failed` instead of audio; encoding now-playing as
+   `submission=true` made CONF-22 observe an unexpected play-count increment. Each mutation was
+   restored before the final run.
+6. A mandatory `DULCET_CONFORMANCE_DISPOSABLE=true` marker now accompanies the loopback base URL on
+   JVM, macOS, iOS-simulator, and tvOS-simulator runs. The loopback port is configurable so a fresh
+   instance can coexist with another local service without weakening the disposable-only gate.
+   `FEATURES.yml` status cells remain unchanged pending a merge-backed CI run identity.
+
+**Revision 84 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
 
 **Revision 82 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
 range failure that the generated MP3 fixture missed.
