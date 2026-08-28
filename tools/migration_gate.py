@@ -425,36 +425,105 @@ def migrate_and_assert_fixture(
         )
 
 
-DESTRUCTIVE_SAME_NAME_MIGRATION = """
-UPDATE scrobble_outbox SET session_start_wall_clock = session_start_wall_clock + 1;
-UPDATE mutation_outbox SET value = 'destroyed-by-negative-control';
-UPDATE download
-SET file_relative_path = 'downloads/missing-after-migration-' || download_id || '.bin';
-UPDATE resume_position SET position_milliseconds = 0;
-"""
+NEGATIVE_CONTROLS = (
+    (
+        "trigger_change",
+        """
+        CREATE TRIGGER delete_scrobbles_after_resume_insert
+        AFTER INSERT ON resume_position
+        BEGIN
+          DELETE FROM scrobble_outbox;
+        END;
+        """,
+        ("protected schema or trigger definitions changed",),
+    ),
+    (
+        "scrobble_session_key_collapse",
+        """
+        ALTER TABLE scrobble_outbox RENAME TO scrobble_outbox_before_key_collapse;
+        CREATE TABLE scrobble_outbox (
+          server_id TEXT NOT NULL,
+          raw_id TEXT NOT NULL,
+          session_start_wall_clock INTEGER NOT NULL,
+          created_at_wall_clock INTEGER NOT NULL,
+          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+          PRIMARY KEY (server_id, raw_id)
+        );
+        INSERT OR IGNORE INTO scrobble_outbox
+        SELECT * FROM scrobble_outbox_before_key_collapse;
+        DROP TABLE scrobble_outbox_before_key_collapse;
+        """,
+        (
+            "scrobble_outbox: protected rows changed",
+            "protected schema or trigger definitions changed",
+        ),
+    ),
+    (
+        "download_profile_key_collapse",
+        """
+        ALTER TABLE download RENAME TO download_before_key_collapse;
+        CREATE TABLE download (
+          server_id TEXT NOT NULL,
+          raw_id TEXT NOT NULL,
+          transcode_profile TEXT NOT NULL,
+          download_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (
+            state IN ('queued', 'downloading', 'interrupted', 'complete', 'stale')
+          ),
+          file_relative_path TEXT NOT NULL,
+          expected_byte_length INTEGER,
+          file_size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (file_size_bytes >= 0),
+          platform_resume_data BLOB,
+          resume_data_created_at_wall_clock INTEGER,
+          PRIMARY KEY (server_id, raw_id),
+          UNIQUE (download_id),
+          UNIQUE (file_relative_path),
+          CHECK (expected_byte_length IS NULL OR expected_byte_length >= 0)
+        );
+        INSERT OR IGNORE INTO download
+        SELECT * FROM download_before_key_collapse;
+        DROP TABLE download_before_key_collapse;
+        """,
+        (
+            "download: protected rows changed",
+            "protected schema or trigger definitions changed",
+        ),
+    ),
+    (
+        "mutation_constraints_stripped",
+        """
+        ALTER TABLE mutation_outbox RENAME TO mutation_outbox_before_constraints_stripped;
+        CREATE TABLE mutation_outbox (
+          server_id TEXT,
+          target_id TEXT,
+          field TEXT,
+          value TEXT,
+          local_sequence INTEGER,
+          wall_clock INTEGER
+        );
+        INSERT INTO mutation_outbox
+        SELECT * FROM mutation_outbox_before_constraints_stripped;
+        DROP TABLE mutation_outbox_before_constraints_stripped;
+        """,
+        ("protected schema or trigger definitions changed",),
+    ),
+)
 
 
-def prove_destructive_migration_is_rejected(fixture: Path, version: int) -> None:
-    try:
-        migrate_and_assert_fixture(version, fixture, version, DESTRUCTIVE_SAME_NAME_MIGRATION)
-    except MigrationGateError as failure:
-        message = str(failure)
-        required_evidence = {
-            "scrobble_outbox",
-            "mutation_outbox",
-            "download",
-            "resume_position",
-            "missing download file",
-        }
-        missing = {marker for marker in required_evidence if marker not in message}
-        if missing:
-            raise MigrationGateError(
-                f"negative migration failed for incomplete reasons; missing {sorted(missing)}\n{message}"
-            ) from failure
-        return
-    raise MigrationGateError(
-        "destructive same-name migration unexpectedly preserved protected data"
-    )
+def prove_destructive_migrations_are_rejected(fixture: Path, version: int) -> None:
+    for name, sql, required_evidence in NEGATIVE_CONTROLS:
+        try:
+            migrate_and_assert_fixture(version, fixture, version, sql)
+        except MigrationGateError as failure:
+            message = str(failure)
+            missing = {marker for marker in required_evidence if marker not in message}
+            if missing:
+                raise MigrationGateError(
+                    f"negative control {name} failed for incomplete reasons; "
+                    f"missing {sorted(missing)}\n{message}"
+                ) from failure
+            continue
+        raise MigrationGateError(f"negative control {name} was unexpectedly accepted")
 
 
 def main() -> None:
@@ -469,11 +538,12 @@ def main() -> None:
         )
     for version, fixture in sorted(fixtures.items()):
         migrate_and_assert_fixture(version, fixture, current)
-    prove_destructive_migration_is_rejected(fixtures[current], current)
+    prove_destructive_migrations_are_rejected(fixtures[1], 1)
     print(
         f"Migration gate valid: {len(fixtures)} fixture database(s), "
         f"{len(PROTECTED_COLUMNS)} protected table comparisons per fixture, "
-        "download file reconciliation, and 1 destructive same-name negative control"
+        f"download file reconciliation, and {len(NEGATIVE_CONTROLS)} explicit destructive "
+        "negative controls"
     )
 
 
