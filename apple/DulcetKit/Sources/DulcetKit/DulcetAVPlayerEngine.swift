@@ -25,6 +25,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var audioSessionGraceTimer: DispatchSourceTimer?
     private var activeAudioSessionID: DulcetPlaybackSessionID?
     private var interruptionWasPlaying = false
+    private var resourceLoaderTraceHandler:
+        (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?
 
     public init(
         player: AVQueuePlayer = AVQueuePlayer(),
@@ -79,6 +81,14 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     ) {
         performOnQueueSynchronously { [self] in
             remoteCommandRouter = router
+        }
+    }
+
+    func setResourceLoaderTraceHandlerForTesting(
+        _ handler: (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?
+    ) {
+        performOnQueueSynchronously { [self] in
+            resourceLoaderTraceHandler = handler
         }
     }
 
@@ -386,7 +396,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         let loader = DulcetAVAssetResourceLoaderDelegate(
             resource: resource,
             attemptID: plan.attemptID,
-            expectedContainer: plan.expectedContainer
+            expectedContainer: plan.expectedContainer,
+            traceHandler: resourceLoaderTraceHandler
         ) { [weak self] attemptID, error, refreshReason in
             self?.enqueue {
                 $0.handleResourceFailure(

@@ -3,6 +3,7 @@ import DulcetKit
 import Foundation
 import Network
 import XCTest
+@testable import DulcetKit
 
 @MainActor
 final class DulcetPlaybackIntegrationTests: XCTestCase {
@@ -33,6 +34,8 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
             )
         )
         let engine = DulcetAVPlayerEngine()
+        let loaderTrace = PlaybackLoaderTraceRecorder()
+        engine.setResourceLoaderTraceHandlerForTesting { loaderTrace.append($0) }
         let ready = expectation(description: "production resource reached Ready")
         let progressing = expectation(description: "production resource advanced media time")
         engine.setEventListener { event in
@@ -67,6 +70,14 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
             engine,
             .release(commandID: .init("production-loopback-release"))
         )
+        try await waitUntil(timeout: 2) {
+            loaderTrace.summary.active == 0
+        }
+        let loaderSummary = loaderTrace.summary
+        print("PRODUCTION LOADER LIFECYCLE TRACE \(loaderSummary)")
+        XCTAssertGreaterThan(loaderSummary.started, 0)
+        XCTAssertEqual(loaderSummary.failed, 0)
+        XCTAssertEqual(loaderSummary.active, 0)
     }
 
     private func resolvePlan(client: ApplePlaybackWireClient) async throws -> AppleRemotePlaybackPlanDto {
@@ -139,6 +150,68 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
             throw ProductionPathLoopbackError.missingFixture
         }
         return try Data(contentsOf: url, options: .mappedIfSafe)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        condition: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else {
+                throw ProductionPathLoopbackError.lifecycleTimedOut
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+}
+
+private final class PlaybackLoaderTraceRecorder: @unchecked Sendable {
+    struct Summary: CustomStringConvertible {
+        let started: Int
+        let finished: Int
+        let cancelled: Int
+        let failed: Int
+
+        var active: Int { started - finished - cancelled - failed }
+
+        var description: String {
+            "started=\(started) finished=\(finished) cancelled=\(cancelled) "
+                + "failed=\(failed) active=\(active)"
+        }
+    }
+
+    private let lock = NSLock()
+    private var events: [DulcetPlaybackResourceLoaderTraceEvent] = []
+
+    func append(_ event: DulcetPlaybackResourceLoaderTraceEvent) {
+        lock.lock()
+        events.append(event)
+        lock.unlock()
+    }
+
+    var summary: Summary {
+        lock.lock()
+        defer { lock.unlock() }
+        var started = 0
+        var finished = 0
+        var cancelled = 0
+        var failed = 0
+        for event in events {
+            switch event {
+            case .started: started += 1
+            case .finished: finished += 1
+            case .cancelled: cancelled += 1
+            case .failed: failed += 1
+            case .rangeRequested, .responded: break
+            }
+        }
+        return Summary(
+            started: started,
+            finished: finished,
+            cancelled: cancelled,
+            failed: failed
+        )
     }
 }
 
@@ -309,6 +382,7 @@ private final class ProductionPathLoopbackStartup: @unchecked Sendable {
 }
 
 private enum ProductionPathLoopbackError: Error {
+    case lifecycleTimedOut
     case missingFixture
     case missingPort
     case resolveFailed

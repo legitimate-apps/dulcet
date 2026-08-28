@@ -394,6 +394,21 @@ private final class CompositePlaybackLoadOperation: DulcetPlaybackResourceLoadOp
 }
 
 /// Translates AVFoundation range requests into bounded, validated resource loads.
+enum DulcetPlaybackResourceLoaderTraceEvent: Sendable {
+    case started(
+        requestID: Int,
+        requestedOffset: Int64,
+        requestedLength: Int64,
+        requestsToEnd: Bool,
+        requiresAudioSignature: Bool
+    )
+    case rangeRequested(requestID: Int, range: DulcetPlaybackByteRange)
+    case responded(requestID: Int, byteCount: Int)
+    case finished(requestID: Int)
+    case cancelled(requestID: Int)
+    case failed(requestID: Int, failure: DulcetPlaybackFailure)
+}
+
 public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate,
     @unchecked Sendable {
     public static let scheme = "dulcet-stream"
@@ -402,6 +417,7 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
     private let resource: any DulcetPlaybackResourceLoading
     private let attemptID: DulcetPlaybackAttemptID
     private let expectedContainer: DulcetAudioContainer
+    private let traceHandler: (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?
     private let failureHandler: @Sendable (
         DulcetPlaybackAttemptID,
         DulcetPlaybackFailure,
@@ -430,6 +446,26 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         self.resource = resource
         self.attemptID = attemptID
         self.expectedContainer = expectedContainer
+        self.traceHandler = nil
+        self.failureHandler = failureHandler
+        super.init()
+    }
+
+    init(
+        resource: any DulcetPlaybackResourceLoading,
+        attemptID: DulcetPlaybackAttemptID,
+        expectedContainer: DulcetAudioContainer,
+        traceHandler: (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?,
+        failureHandler: @escaping @Sendable (
+            DulcetPlaybackAttemptID,
+            DulcetPlaybackFailure,
+            DulcetPlaybackSourceRefreshReason?
+        ) -> Void
+    ) {
+        self.resource = resource
+        self.attemptID = attemptID
+        self.expectedContainer = expectedContainer
+        self.traceHandler = traceHandler
         self.failureHandler = failureHandler
         super.init()
     }
@@ -460,6 +496,13 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
             requiresAudioSignature: requestedOffset == 0
         )
         setContext(context, for: loadingRequest)
+        traceHandler?(.started(
+            requestID: context.requestID,
+            requestedOffset: requestedOffset,
+            requestedLength: requestedLength,
+            requestsToEnd: dataRequest.requestsAllDataToEndOfResource,
+            requiresAudioSignature: requestedOffset == 0
+        ))
         loadNextChunk(context)
         return true
     }
@@ -468,7 +511,9 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         _ resourceLoader: AVAssetResourceLoader,
         didCancel loadingRequest: AVAssetResourceLoadingRequest
     ) {
-        removeContext(for: loadingRequest)?.cancel()
+        guard let context = removeContext(for: loadingRequest) else { return }
+        context.cancel()
+        traceHandler?(.cancelled(requestID: context.requestID))
     }
 
     private func loadNextChunk(_ context: LoadingContext) {
@@ -494,6 +539,7 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
             start: context.nextOffset,
             endInclusive: endInclusive
         )
+        traceHandler?(.rangeRequested(requestID: context.requestID, range: range))
         let operation = resource.load(
             DulcetPlaybackResourceLoadRequest(
                 range: range,
@@ -503,8 +549,11 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
             guard let self, let context, !context.isCancelled else { return }
             switch outcome {
             case .cancelled:
-                _ = self.removeContext(for: context.loadingRequest)
+                let removed = self.removeContext(for: context.loadingRequest)
                 context.cancel()
+                if removed != nil {
+                    self.traceHandler?(.cancelled(requestID: context.requestID))
+                }
             case let .failed(error, refreshReason):
                 self.finish(context.loadingRequest, failure: error, refreshReason: refreshReason)
             case let .loaded(data, information):
@@ -526,6 +575,10 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
                     )
                 let responseData = data.prefix(responseLength)
                 context.loadingRequest.dataRequest?.respond(with: responseData)
+                self.traceHandler?(.responded(
+                    requestID: context.requestID,
+                    byteCount: responseData.count
+                ))
                 context.nextOffset += Int64(responseData.count)
                 context.requiresAudioSignature = false
                 if context.nextOffset >= information.contentLength ||
@@ -553,8 +606,9 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
     }
 
     private func complete(_ context: LoadingContext) {
-        _ = removeContext(for: context.loadingRequest)
+        guard removeContext(for: context.loadingRequest) != nil else { return }
         context.loadingRequest.finishLoading()
+        traceHandler?(.finished(requestID: context.requestID))
     }
 
     private func finish(
@@ -562,9 +616,13 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         failure: DulcetPlaybackFailure,
         refreshReason: DulcetPlaybackSourceRefreshReason?
     ) {
-        removeContext(for: loadingRequest)?.cancel()
+        let context = removeContext(for: loadingRequest)
+        context?.cancel()
         failureHandler(attemptID, failure, refreshReason)
         loadingRequest.finishLoading(with: failure.resourceLoaderError)
+        if let context {
+            traceHandler?(.failed(requestID: context.requestID, failure: failure))
+        }
     }
 
     private func setContext(
@@ -587,6 +645,7 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
 
 private final class LoadingContext: @unchecked Sendable {
     let loadingRequest: AVAssetResourceLoadingRequest
+    let requestID: Int
     let requestedEndExclusive: Int64
     let requestsToEnd: Bool
     var nextOffset: Int64
@@ -605,6 +664,7 @@ private final class LoadingContext: @unchecked Sendable {
         requiresAudioSignature: Bool
     ) {
         self.loadingRequest = loadingRequest
+        self.requestID = Int(bitPattern: ObjectIdentifier(loadingRequest))
         self.nextOffset = nextOffset
         self.requestedEndExclusive = requestedEndExclusive
         self.requestsToEnd = requestsToEnd
