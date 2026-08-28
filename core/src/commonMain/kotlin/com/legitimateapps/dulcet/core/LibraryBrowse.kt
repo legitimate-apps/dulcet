@@ -207,11 +207,11 @@ internal class LibraryBrowser private constructor(
     }
 }
 
-private interface AutoCloseableLibraryTransport {
+internal interface AutoCloseableLibraryTransport {
     fun close()
 }
 
-private class KtorLibraryEndpointTransport(
+internal class KtorLibraryEndpointTransport(
     request: LibraryBrowseRequest,
     saltSource: SaltSource?,
     logSink: LogSink?,
@@ -249,9 +249,9 @@ private fun LibraryBrowseRequest.endpointCredentials() = AuthenticatedEndpointCr
     allowLocalHttp = allowLocalHttp,
 )
 
-private class LibraryRequestFailure(val error: DomainError) : Exception()
+internal class LibraryRequestFailure(val error: DomainError) : Exception()
 
-private suspend fun LibraryEndpointTransport.checkedRequest(
+internal suspend fun LibraryEndpointTransport.checkedRequest(
     endpoint: String,
     parameters: Map<String, String> = emptyMap(),
 ): String {
@@ -269,11 +269,11 @@ private suspend fun LibraryEndpointTransport.checkedRequest(
     return response.body
 }
 
-private data class LibraryEnvelope(val status: String, val payload: JsonObject)
+internal data class LibraryEnvelope(val status: String, val payload: JsonObject)
 
-private val LIBRARY_JSON = Json { ignoreUnknownKeys = true }
+internal val LIBRARY_JSON = Json { ignoreUnknownKeys = true }
 
-private fun parseLibraryEnvelope(body: String): LibraryEnvelope? = try {
+internal fun parseLibraryEnvelope(body: String): LibraryEnvelope? = try {
     val root = LIBRARY_JSON.parseToJsonElement(body) as? JsonObject ?: return null
     val payload = root["subsonic-response"] as? JsonObject ?: return null
     LibraryEnvelope(payload.string("status") ?: return null, payload)
@@ -281,7 +281,7 @@ private fun parseLibraryEnvelope(body: String): LibraryEnvelope? = try {
     null
 }
 
-private fun parseMusicFolders(providerInstanceId: String, body: String): List<LibraryMusicFolder> {
+internal fun parseMusicFolders(providerInstanceId: String, body: String): List<LibraryMusicFolder> {
     val payload = parseLibraryEnvelope(body)?.payload
         ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
     val container = payload["musicFolders"] as? JsonObject
@@ -295,7 +295,7 @@ private fun parseMusicFolders(providerInstanceId: String, body: String): List<Li
     }
 }
 
-private fun parseArtists(providerInstanceId: String, body: String): List<LibraryArtist> {
+internal fun parseArtists(providerInstanceId: String, body: String): List<LibraryArtist> {
     val payload = parseLibraryEnvelope(body)?.payload
         ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
     val container = payload["artists"] as? JsonObject ?: malformed()
@@ -312,7 +312,7 @@ private fun parseArtists(providerInstanceId: String, body: String): List<Library
     }.distinctBy { it.id.rawId }
 }
 
-private data class AlbumSummary(
+internal data class AlbumSummary(
     val id: ProviderItemId,
     val title: String,
     val credits: List<Credit>,
@@ -322,7 +322,7 @@ private data class AlbumSummary(
     val artworkKey: String?,
 )
 
-private fun parseAlbumList(providerInstanceId: String, body: String): List<AlbumSummary> {
+internal fun parseAlbumList(providerInstanceId: String, body: String): List<AlbumSummary> {
     val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
     val list = payload["albumList2"] as? JsonObject ?: malformed()
     return list.arrayOrEmpty("album").map { element ->
@@ -339,7 +339,7 @@ private fun parseAlbumList(providerInstanceId: String, body: String): List<Album
     }
 }
 
-private fun parseAlbum(
+internal fun parseAlbum(
     providerInstanceId: String,
     summary: AlbumSummary,
     body: String,
