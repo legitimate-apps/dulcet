@@ -2,6 +2,7 @@ import Foundation
 
 public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendable {
     case accountConnectIdle = "account-connect-idle"
+    case accountConnectEmpty = "account-connect-empty"
     case accountConnecting = "account-connecting"
     case accountConnected = "account-connected"
     case accountRemoving = "account-removing"
@@ -31,6 +32,7 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case searchEmpty = "search-empty"
     case searchError = "search-error"
     case tlsUntrusted = "error-tls-untrusted"
+    case tlsUntrustedPopulatedForm = "error-tls-untrusted-populated-form"
     case offlineMetadataOnly = "offline-metadata-only"
 
     public var id: String { rawValue }

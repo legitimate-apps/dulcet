@@ -1180,7 +1180,7 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
 private extension DulcetPresentationState {
     var accountStateOrIdle: DulcetPresentationState {
         switch self {
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
@@ -1190,7 +1190,7 @@ private extension DulcetPresentationState {
              .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
-             .tlsUntrusted, .offlineMetadataOnly:
+             .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
             .accountConnectIdle
         }
     }
