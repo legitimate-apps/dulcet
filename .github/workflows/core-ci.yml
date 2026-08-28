@@ -145,6 +145,20 @@ jobs:
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:jvmTest
 
+      # A conformance failure is a measurement disagreeing with the reference server, so the JUnit
+      # XML is the evidence -- it carries the assertion message with the observed values. apple-ci
+      # already uploads its three native equivalents; core-ci uploaded nothing, so a JVM conformance
+      # failure could only be guessed at from the console. OBSERVED 2026-08-28 on a CONF-14a
+      # failure. `always()` is the point: this artifact matters most when the step failed.
+      - name: Upload jvm core-conformance JUnit results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-jvm-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/jvmTest
+          if-no-files-found: warn
+          retention-days: 7
+
   core-ci:
     name: core-ci
     if: ${{ always() }}
