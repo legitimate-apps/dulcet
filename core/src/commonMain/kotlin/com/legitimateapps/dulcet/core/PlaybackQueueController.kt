@@ -119,6 +119,21 @@ internal class PlaybackQueueController(
 
     fun previous(): PlaybackQueueTransition = moveBy(-1)
 
+    fun nextForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
+        if (acceptsCommand(playbackSessionId)) moveBy(1) else emptyTransition()
+
+    fun previousForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
+        if (acceptsCommand(playbackSessionId)) moveBy(-1) else emptyTransition()
+
+    fun acceptsCommand(
+        playbackSessionId: PlaybackSessionId,
+        requiresSeekable: Boolean = false,
+    ): Boolean {
+        val session = playback.currentSession ?: return false
+        return session.playbackSessionId == playbackSessionId &&
+            (!requiresSeekable || session.currentAttempt.seekability == PlaybackSeekability.Seekable)
+    }
+
     fun setShuffle(enabled: Boolean): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = if (enabled) {

@@ -114,6 +114,28 @@ class ApplePlaybackQueueFacadeTest {
     }
 
     @Test
+    fun facadeRejectsStaleSessionAndDefersSeekabilityToReady() {
+        val fixture = fixture()
+        val started = fixture.client.replaceAndStart(
+            queueRequest(rawIds = listOf("track-a", "track-b")),
+        )
+        val firstSession = assertNotNull(started.startDirective?.playbackSessionId)
+        val firstAttempt = assertNotNull(started.startDirective?.attemptId)
+
+        assertEquals(false, fixture.client.acceptsCommand(firstSession, true))
+        fixture.client.recordReady(firstAttempt, 180_000, "seekable")
+        assertEquals(true, fixture.client.acceptsCommand(firstSession, true))
+
+        val second = fixture.client.nextForSession(firstSession)
+        val secondSession = assertNotNull(second.startDirective?.playbackSessionId)
+        val stale = fixture.client.previousForSession(firstSession)
+        assertNull(stale.startDirective)
+        assertEquals(secondSession, stale.snapshot?.currentSession?.playbackSessionId)
+        assertEquals(false, fixture.client.acceptsCommand(firstSession, false))
+        fixture.driver.close()
+    }
+
+    @Test
     fun submittedPlayIsPersistedBeforeEventIngestionReturns() {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
