@@ -125,6 +125,45 @@ class ScrobbleOutboxTest {
         fixture.close()
     }
 
+    @Test
+    fun localUniquenessKeyKeepsDifferentSessionsOfTheSameTrack() = runTest {
+        val fixture = fixture()
+        val laterSession = RecordedPlaybackEvent.SubmittedPlay(
+            itemId = EVENT.itemId,
+            sessionStartWallClock = PlaybackWallClockTime(SESSION_START + 1_000),
+        )
+
+        fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
+        fixture.outbox.persistForAtLeastOnceDelivery(laterSession)
+
+        assertEquals(2, fixture.outbox.count())
+        assertEquals(
+            listOf(EVENT.sessionStartWallClock, laterSession.sessionStartWallClock),
+            fixture.outbox.pending(SERVER_ID).map(ScrobbleOutboxEntry::sessionStartWallClock),
+        )
+        fixture.close()
+    }
+
+    @Test
+    fun retentionAgeStartsWhenEntryIsCreatedNotWhenPlaybackSessionStarted() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        val oldSession = RecordedPlaybackEvent.SubmittedPlay(
+            itemId = EVENT.itemId,
+            sessionStartWallClock = PlaybackWallClockTime(CREATED_AT - 31.days.inWholeMilliseconds),
+        )
+        fixture.outbox.persistForAtLeastOnceDelivery(oldSession)
+
+        val dropped = fixture.outbox.dropExpired(
+            nowWallClock = PlaybackWallClockTime(CREATED_AT + 1.days.inWholeMilliseconds),
+            diagnosticSink = fixture.diagnostics,
+        )
+
+        assertEquals(0, dropped)
+        assertEquals(1, fixture.outbox.count())
+        assertEquals(emptyList(), fixture.diagnostics.events)
+        fixture.close()
+    }
+
     private fun fixture(wallClock: MutableWallClock = MutableWallClock(CREATED_AT)): Fixture {
         val driver = createTestDriver()
         val outbox = PersistentScrobbleOutbox(DulcetDatabaseStore.open(driver).database, wallClock)
