@@ -49,4 +49,20 @@ for fixture, expected in (
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+# The test host writes OSLog to this same stream from other threads, so a record can land inside an
+# XCTest line and tear it in two. OBSERVED doing exactly that to a Swift Testing transcript on
+# apple-ci 2026-08-28. The guard must still see the torn record -- and must not let that tolerance
+# resurrect a record that never arrived, which the second fixture pins down.
+torn = invoke("torn-by-host-log.log")
+if torn.returncode != 0:
+    raise AssertionError(f"a torn terminal record was not rejoined: {torn.stdout}")
+
+absent = invoke("torn-but-absent.log")
+if absent.returncode == 0 or "observed 0" not in absent.stdout:
+    raise AssertionError(
+        "interleaved host logging let a missing record pass: "
+        f"returncode={absent.returncode}, output={absent.stdout!r}"
+    )
+
 print("xcode test execution guard rejects zero, wrong, skipped, failed, and duplicate controls")
+print("xcode test execution guard survives interleaved host logging")

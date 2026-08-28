@@ -26,6 +26,18 @@ try:
 except OSError as error:
     fail(f"cannot read {log_path}: {error}")
 
+# The test host writes OSLog to this same stream, unbuffered, from other threads, so a record can
+# land inside an XCTest line and split it across two physical lines. Deleting the injected record
+# including its newline rejoins the torn line. This is preventive here -- the tearing was OBSERVED
+# 2026-08-28 in the Swift Testing transcript (see tools/swift-testing-junit), and this parser reads
+# the same kind of stream for app-hosted tests, where such logging is most likely. It cannot mask a
+# missing record: the identity and one-clean-summary checks below are unchanged.
+log = re.sub(
+    r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[+-]\d{4} \S+\[\d+:[0-9a-fx]+\][^\n]*\n?",
+    "",
+    log,
+)
+
 record_pattern = re.compile(
     r"Test Case '-\[(?P<class>\S+) (?P<method>[^\]]+)\]' "
     r"(?P<status>passed|failed|skipped)(?:\s|\.)"

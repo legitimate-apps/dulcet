@@ -1,0 +1,7 @@
+Test Suite 'Selected tests' started.
+Test Case '-[DulcetMacTests.DulcetMacAccountConnectAppTest connectSuccessCrossesLiveKotlin2026-08-28 13:05:53.306820+0000 xctest[35549:96065] [player] <<<< FigFilePlayer >>>> signalled err=-12864 at <>:10127
+FacadeIntoPersistenceFailureState]' passed (0.742 seconds).
+Test Suite 'DulcetMacAccountConnectAppTest' passed.
+Executed 1 test, with 0 failures (0 unexpected) in 0.742 seconds
+Test Suite 'Selected tests' passed.
+Executed 1 test, with 0 failures (0 unexpected) in 0.742 seconds
