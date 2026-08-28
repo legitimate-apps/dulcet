@@ -140,6 +140,7 @@ jobs:
             --ffmpeg-command-json "[\"docker\",\"exec\",\"$container\",\"$(tools/conformance-env/read-pin ffmpeg.linux.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:jvmTest

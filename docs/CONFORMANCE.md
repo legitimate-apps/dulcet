@@ -20,14 +20,14 @@ the detailed assertion.
 | CONF-10a | an unentitled Apple caller gets a typed data-protection-Keychain entitlement failure without an active-account pointer or legacy-Keychain fallback |
 | CONF-10b | Apple explicit reconnect after persisted-credential prefill |
 | CONF-10c | Darwin 407 proxy-auth challenge rejects ambient credentials |
-| CONF-11 | successful stream signature validation |
-| CONF-12 | legacy stream error-envelope detection |
-| CONF-13 | ranged stream behavior |
-| CONF-14a | server-offset transcode seek |
-| CONF-14b | legacy transcode offset |
-| CONF-15 | OpenSubsonic transcode decision and stream |
-| CONF-22 | progressing-media-time scrobble threshold |
-| CONF-23 | at-least-once scrobble outbox |
+| CONF-11 | successful stream content type and signature validation |
+| CONF-12 | legacy-stream and extension-stream error status and shape |
+| CONF-13 | raw and transcoded ranged-stream behavior |
+| CONF-14a | legacy `transcodeOffset` seek |
+| CONF-14b | `transcoding` extension offset behavior |
+| CONF-15 | POST transcode decision and opaque-parameter stream round-trip |
+| CONF-22 | `submission=false` versus `submission=true` play-count behavior |
+| CONF-23 | repeated same-time scrobble deduplication behavior |
 | CONF-31 | generation-pinned reads |
 | CONF-32 | atomic sync-generation commit |
 | CONF-33 | bounded stability witness |

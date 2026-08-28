@@ -450,6 +450,7 @@ jobs:
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
@@ -470,9 +471,11 @@ jobs:
             dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
           xcrun simctl boot "$conformance_sim"
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
@@ -487,9 +490,11 @@ jobs:
             com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p)"
           xcrun simctl boot "$tvos_conformance_sim"
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             ./gradlew --no-daemon :core-conformance:tvosSimulatorArm64Test \
