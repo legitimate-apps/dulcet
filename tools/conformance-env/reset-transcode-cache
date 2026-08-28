@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Clear a stopped disposable loopback Navidrome's transcode cache."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import shutil
+import socket
+import sys
+
+
+TOOLS = Path(__file__).resolve().parent
+MARKER = ".dulcet-conformance-root"
+LOOPBACK_BASE_URL = "http://127.0.0.1:4533"
+
+
+def require_disposable_loopback() -> None:
+    if os.environ.get("DULCET_CONFORMANCE_DISPOSABLE") != "true":
+        raise RuntimeError("cache reset requires DULCET_CONFORMANCE_DISPOSABLE=true")
+    observed_url = os.environ.get("DULCET_CONFORMANCE_BASE_URL")
+    if observed_url != LOOPBACK_BASE_URL:
+        raise RuntimeError(
+            "cache reset is restricted to the disposable loopback instance, "
+            f"observed: {observed_url}"
+        )
+
+
+def resolve_transcode_cache(root_value: str) -> tuple[Path, Path]:
+    root = Path(root_value).expanduser().resolve()
+    if root in {Path("/"), Path.home().resolve(), TOOLS.parent.parent.resolve()}:
+        raise RuntimeError(f"refusing unsafe conformance root: {root}")
+    marker = root / MARKER
+    if not root.is_dir() or not marker.is_file() or marker.read_text() != "isolated-root\n":
+        raise RuntimeError(f"not a declared disposable conformance root: {root}")
+    cache = (root / "cache").resolve()
+    transcode_cache = (cache / "transcoding").resolve()
+    if (
+        cache.parent != root
+        or cache.name != "cache"
+        or transcode_cache.parent != cache
+        or transcode_cache.name != "transcoding"
+    ):
+        raise RuntimeError(f"refusing unsafe disposable cache reset: {transcode_cache}")
+    if not transcode_cache.is_dir():
+        raise RuntimeError(f"live transcode cache directory is absent: {transcode_cache}")
+    return root, transcode_cache
+
+
+def clear_transcode_entries(transcode_cache: Path) -> None:
+    for entry in transcode_cache.iterdir():
+        if entry.name == ".nd-migrated":
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
+def require_server_stopped() -> None:
+    try:
+        connection = socket.create_connection(("127.0.0.1", 4533), timeout=0.25)
+    except OSError:
+        return
+    connection.close()
+    raise RuntimeError(
+        "Navidrome is still reachable on 127.0.0.1:4533; stop the disposable process "
+        "before clearing its live cache"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", required=True)
+    args = parser.parse_args()
+
+    try:
+        require_disposable_loopback()
+        root, transcode_cache = resolve_transcode_cache(args.root)
+        require_server_stopped()
+        clear_transcode_entries(transcode_cache)
+        print(f"TRANSCODE CACHE CLEARED server_stopped=true root={root}")
+        return 0
+    except (OSError, RuntimeError) as error:
+        print(f"transcode cache reset error: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

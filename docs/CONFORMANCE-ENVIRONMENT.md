@@ -61,14 +61,21 @@ tools/conformance-env/linux-local down
 
 `up` is cold by default: it stops the named disposable container, deletes only the marker-guarded
 `data` and `cache` directories, then starts and health-checks the pinned image. The generated music
-corpus is retained, so a subsequent cold start does not rebuild 313 fixtures. To clear a warmed
-Navidrome database and transcode cache while the environment is in use, run:
+corpus is retained, so a subsequent cold start does not rebuild 313 fixtures. To clear only a warmed
+transcode cache and restart the same disposable container against its retained database and corpus,
+run:
 
 ```bash
 tools/conformance-env/linux-local reset
 ```
 
-The fixed cache observation can be run twice around that reset without changing its request:
+Navidrome 0.63.2's cache manager remains bound to its initialized cache while the process is live, so
+deleting entries underneath that process does not reset it reliably. `reset` therefore stops only the
+disposable server, clears `cache/transcoding`, starts the same container again, and then runs one
+fixed 128 kbps transcode. Navidrome's own `Streaming file` record must report `cached=false`; failure
+to observe that cold state fails the reset. The probe bitrate is deliberately disjoint from the 64,
+73, and 96 kbps cold-cache controls in the suite. A fixed cache observation can also be run twice
+without changing its request:
 
 ```bash
 tools/conformance-env/linux-local probe-cache  # first run reports cached=false
@@ -77,6 +84,20 @@ tools/conformance-env/linux-local probe-cache  # second run reports cached=true
 
 `probe-cache` reads Navidrome's own `Streaming file` record and requires `transcoding=true`; it does
 not infer cache behavior from client timing.
+
+For the same three-platform order used by `apple-ci`, lease or otherwise create dedicated iOS and
+tvOS simulators, boot them, and pass their UDIDs to the shared local lifecycle:
+
+```bash
+tools/conformance-env/linux-local run-apple \
+  --ios-simulator-udid "$IOS_SIMULATOR_UDID" \
+  --tvos-simulator-udid "$TVOS_SIMULATOR_UDID"
+```
+
+The command runs macOS, iOS simulator, and tvOS simulator sequentially against one local instance
+root. Before each Gradle invocation it uses the same marker-guarded stop, cache clear, server restart,
+and fail-closed `cached=false` observation as CI. Simulator child processes receive the same
+disposable loopback environment as the host process.
 
 `run` supplies the same variables as CI: `TZ=UTC`, the exact loopback Navidrome, redirect, and
 untrusted-TLS URLs, and `DULCET_CONFORMANCE_DISPOSABLE=true`. The common conformance suite requires
@@ -141,7 +162,9 @@ to both the job log and the GitHub Actions job summary.
 The Linux preconditions and `:core-conformance:jvmTest` are job `conformance-env-linux` in
 `.github/workflows/core-ci.yml`. The required `core-ci` context is a final fail-closed aggregator: it
 runs even after an upstream failure or skip and passes only when both `core-build` and
-`conformance-env-linux` report `success`. The Darwin preconditions and
-`:core-conformance:macosArm64Test` are a serial tail of the sole `apple-ci` job in
-`.github/workflows/apple-ci.yml`; they do not allocate a second hosted-macOS job. Both workflows use
-standard hosted runners, explicit job timeouts, and cancel-in-progress concurrency.
+`conformance-env-linux` report `success`. The Darwin preconditions and the macOS, iOS simulator, and
+tvOS simulator native conformance tasks are a serial tail of the sole `apple-ci` job in
+`.github/workflows/apple-ci.yml`; they do not allocate a second hosted-macOS job. That tail restarts
+the Darwin server against the same root after clearing its stopped transcode cache, then requires an
+observed `cached=false` record before every platform task. Both workflows use standard hosted
+runners, explicit job timeouts, and cancel-in-progress concurrency.

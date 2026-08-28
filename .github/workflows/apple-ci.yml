@@ -367,6 +367,8 @@ jobs:
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
         run: |
           set -o pipefail
           openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
@@ -393,6 +395,20 @@ jobs:
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
+          restart_navidrome_cold() {
+            kill "$navidrome_pid"
+            wait "$navidrome_pid" 2>/dev/null || true
+            tools/conformance-env/reset-transcode-cache --root "$ROOT"
+            "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" >> "$ROOT/logs/navidrome.log" 2>&1 &
+            navidrome_pid=$!
+            for _ in {1..100}; do
+              if curl --fail --silent http://127.0.0.1:4533/app/ >/dev/null; then break; fi
+              sleep 0.1
+            done
+            curl --fail --silent http://127.0.0.1:4533/app/ >/dev/null
+            tools/conformance-env/observe-transcode-cache \
+              --log-file "$ROOT/logs/navidrome.log" --expect-cached false
+          }
           for _ in {1..20}; do
             if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
               curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null && \
@@ -469,6 +485,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
+          restart_navidrome_cold
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
@@ -491,6 +508,7 @@ jobs:
           conformance_sim="$(xcrun simctl create \
             dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
           xcrun simctl boot "$conformance_sim"
+          restart_navidrome_cold
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
@@ -512,6 +530,7 @@ jobs:
             dulcet-tvos-conformance \
             com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p)"
           xcrun simctl boot "$tvos_conformance_sim"
+          restart_navidrome_cold
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \

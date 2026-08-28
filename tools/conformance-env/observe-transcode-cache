@@ -8,9 +8,11 @@ import hashlib
 import http.client
 import json
 import os
+from pathlib import Path
 import re
 import secrets
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 
@@ -54,9 +56,24 @@ def docker_logs(container: str) -> list[str]:
     return result.stdout.splitlines()
 
 
+def file_logs(path: str) -> list[str]:
+    try:
+        return Path(path).read_text(errors="replace").splitlines()
+    except OSError as error:
+        raise RuntimeError(f"cannot read disposable Navidrome log {path}: {error}") from error
+
+
+def streaming_logs(*, container: str | None, log_file: str | None) -> list[str]:
+    lines = docker_logs(container) if container is not None else file_logs(log_file or "")
+    return [line for line in lines if STREAM_LOG in line]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--container", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--container")
+    source.add_argument("--log-file")
+    parser.add_argument("--expect-cached", choices=("true", "false"))
     args = parser.parse_args()
     if os.environ.get("DULCET_CONFORMANCE_DISPOSABLE") != "true":
         raise SystemExit("cache observation requires DULCET_CONFORMANCE_DISPOSABLE=true")
@@ -64,16 +81,22 @@ def main() -> None:
     if base_url != "http://127.0.0.1:4533":
         raise SystemExit(f"cache observation is restricted to disposable loopback, observed: {base_url}")
 
-    before = [line for line in docker_logs(args.container) if STREAM_LOG in line]
+    before = streaming_logs(container=args.container, log_file=args.log_file)
     search_url = subsonic_url(
         base_url,
         "search3",
         {"query": "Dulcet Health Probe", "songCount": "10"},
     )
-    with urllib.request.urlopen(search_url, timeout=10) as response:
-        document = json.load(response)
-    songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
-    song = next((value for value in songs if value.get("title") == "Dulcet Health Probe"), None)
+    search_deadline = time.monotonic() + 5
+    song = None
+    while time.monotonic() < search_deadline:
+        with urllib.request.urlopen(search_url, timeout=10) as response:
+            document = json.load(response)
+        songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
+        song = next((value for value in songs if value.get("title") == "Dulcet Health Probe"), None)
+        if song is not None:
+            break
+        time.sleep(0.05)
     if not song or not isinstance(song.get("id"), str):
         raise SystemExit("known transcode cache probe is absent from the disposable corpus")
 
@@ -98,8 +121,14 @@ def main() -> None:
     if not payload:
         raise SystemExit("fixed transcode cache probe returned no audio bytes")
 
-    after = [line for line in docker_logs(args.container) if STREAM_LOG in line]
-    new_lines = after[len(before) :]
+    deadline = time.monotonic() + 5
+    new_lines: list[str] = []
+    while time.monotonic() < deadline:
+        after = streaming_logs(container=args.container, log_file=args.log_file)
+        new_lines = after[len(before) :]
+        if new_lines:
+            break
+        time.sleep(0.05)
     if len(new_lines) != 1:
         raise SystemExit(
             f"expected one new Navidrome streaming observation, found {len(new_lines)}: {new_lines}"
@@ -111,11 +140,17 @@ def main() -> None:
         raise SystemExit(f"Navidrome streaming observation is incomplete: {line}")
     if transcoding.group(1) != "true":
         raise SystemExit(f"fixed cache probe did not exercise transcoding: {line}")
-    print(
+    observation = (
         "TRANSCODE CACHE OBSERVATION "
         f"cached={cached.group(1)} transcoding=true bytes={len(payload)} "
         f"incomplete_read={str(incomplete_read).lower()} song=Dulcet-Health-Probe"
     )
+    print(observation)
+    if args.expect_cached is not None and cached.group(1) != args.expect_cached:
+        raise SystemExit(
+            "transcode cache observation disagreed with the required state: "
+            f"expected cached={args.expect_cached}, observed cached={cached.group(1)}"
+        )
 
 
 if __name__ == "__main__":
