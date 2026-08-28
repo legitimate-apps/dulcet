@@ -529,6 +529,7 @@ private extension DulcetDeterministicFixture {
             longTitleAlbum.tracks[0],
             doubleLines.tracks[0],
         ],
+        sourceDisplayName: unicodeAlbum.title,
         elapsed: .seconds(142),
         isPlaying: true,
         outputName: "Studio Display",

@@ -11,9 +11,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     private var account: PlaybackEndpointAccount?
     private var catalog: [DulcetProviderItemID: DulcetTrack] = [:]
     private var progressingSessions: Set<String> = []
+    private var restoredPausedSessions: Set<String> = []
     private var presentationHandler:
         (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private var activeDirectiveIdentity: String?
+    private var pendingStarts: [String: PendingStart] = [:]
     private lazy var remoteBridge = DulcetCoreRemoteCommandBridge { [weak self] command in
         self?.handleRemoteCommand(command) == true
     }
@@ -44,6 +46,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         resolveOperation?.cancel()
         resolveOperation = nil
         wireClient?.close()
+        catalog = [:]
+        progressingSessions = []
+        restoredPausedSessions = []
+        pendingStarts = [:]
+        activeDirectiveIdentity = nil
         let coreAccount = PlaybackEndpointAccount(
             providerInstanceId: presentationAccount.providerInstanceID,
             normalizedBaseUrl: presentationAccount.normalizedServerURL,
@@ -86,6 +93,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         }
         publishPreparing()
         start(transition.startDirective)
+    }
+
+    func restorePersistedQueue(with tracks: [DulcetTrack]) {
+        guard account != nil, !tracks.isEmpty else { return }
+        catalog.merge(
+            Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) }),
+            uniquingKeysWith: { _, latest in latest }
+        )
+        start(queueClient.restoreCurrentPaused().startDirective)
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
@@ -135,7 +151,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         account = nil
         catalog = [:]
         progressingSessions = []
+        restoredPausedSessions = []
         activeDirectiveIdentity = nil
+        pendingStarts = [:]
         execute(.stop(commandID: commandID("disconnect")))
         currentPresentation = .unavailable
         presentationHandler?(currentPresentation)
@@ -161,6 +179,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         }
         resolveOperation?.cancel()
         activeDirectiveIdentity = directive.attemptId
+        pendingStarts[directive.attemptId] = PendingStart(
+            shouldAutoPlay: directive.shouldAutoPlay,
+            resumePositionMilliseconds: directive.resumePositionMilliseconds
+        )
+        if !directive.shouldAutoPlay {
+            restoredPausedSessions.insert(directive.playbackSessionId)
+        }
         publishPreparing()
         let request = PlaybackResolveRequest(
             playbackSessionId: PlaybackSessionId(value: directive.playbackSessionId),
@@ -198,17 +223,18 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                     )
                 )
                 self.execute(.stop(commandID: self.commandID("replace"))) { [weak self] _ in
-                    self?.prepareAndPlay(plan)
+                    self?.prepare(plan)
                 }
             }
         }
     }
 
-    private func prepareAndPlay(_ plan: DulcetPlaybackPlan) {
+    private func prepare(_ plan: DulcetPlaybackPlan) {
         execute(.prepare(commandID: commandID("prepare"), plan: plan)) { [weak self] outcome in
-            guard case .accepted = outcome else { return }
-            self?.execute(.play(commandID: self?.commandID("autoplay")
-                ?? DulcetPlaybackCommandID("autoplay-fallback")))
+            guard case .accepted = outcome else {
+                self?.pendingStarts[plan.attemptID.rawValue] = nil
+                return
+            }
         }
     }
 
@@ -228,11 +254,34 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
            let session = transition.snapshot?.currentSession,
            session.attemptId == attemptID.rawValue {
             progressingSessions.insert(session.playbackSessionId)
+            restoredPausedSessions.remove(session.playbackSessionId)
         }
         publish(transition)
+        if case let .ready(attemptID, _, seekability) = event {
+            completePendingStart(attemptID: attemptID, seekability: seekability)
+        }
         if let directive = transition.startDirective {
             start(directive)
         }
+    }
+
+    private func completePendingStart(
+        attemptID: DulcetPlaybackAttemptID,
+        seekability: DulcetPlaybackSeekability
+    ) {
+        guard let pending = pendingStarts.removeValue(forKey: attemptID.rawValue) else { return }
+        let finish: @MainActor () -> Void = { [weak self] in
+            guard pending.shouldAutoPlay, let self else { return }
+            self.execute(.play(commandID: self.commandID("autoplay")))
+        }
+        guard pending.resumePositionMilliseconds > 0, seekability == .seekable else {
+            finish()
+            return
+        }
+        execute(.seek(
+            commandID: commandID("restore-position"),
+            position: TimeInterval(pending.resumePositionMilliseconds) / 1_000
+        )) { _ in finish() }
     }
 
     private func record(_ event: DulcetPlaybackEvent) -> ApplePlaybackQueueTransitionDto {
@@ -400,7 +449,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         case "Progressing": .progressing
         case "Buffering": .buffering
         case "Paused": .paused
-        default: .ready
+        default: restoredPausedSessions.contains(session.playbackSessionId) ? .paused : .ready
         }
         let repeatMode = DulcetRepeatMode(rawValue: snapshot.repeatMode) ?? .off
         let index = Int(snapshot.currentIndex)
@@ -412,6 +461,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                 current: current,
                 queue: queue,
                 currentIndex: index,
+                sourceDisplayName: snapshot.entries.indices.contains(index)
+                    ? snapshot.entries[index].sourceDisplayName
+                    : nil,
                 elapsed: .milliseconds(max(0, session.positionMilliseconds)),
                 isPlaying: didProgress && phase != .paused,
                 outputName: DulcetPlaybackStrings.thisDevice,
@@ -525,6 +577,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             ),
         ]
     )
+}
+
+private struct PendingStart {
+    let shouldAutoPlay: Bool
+    let resumePositionMilliseconds: Int64
 }
 
 private final class DulcetCoreRemoteCommandBridge: DulcetRemotePlaybackCommandRouting,

@@ -188,6 +188,7 @@ func playbackSurfaceIntentsReachTheSinglePlaybackControllerBoundary() throws {
     store.selectDestination(.library)
     let album = fixtureLibraryAlbum()
     libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(playback.restoredCatalogs.last?.map(\.id) == album.tracks.map(\.id))
 
     store.playLibrary(shuffle: true)
     let libraryIntent = try #require(playback.queueIntents.last)
@@ -952,6 +953,7 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
     private(set) var configuredProviderInstanceID: String?
     private(set) var queueIntents: [DulcetPlaybackQueueIntent] = []
     private(set) var controlIntents: [DulcetPlaybackControlIntent] = []
+    private(set) var restoredCatalogs: [[DulcetTrack]] = []
     private(set) var disconnectCount = 0
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
 
@@ -968,6 +970,10 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
         queueIntents.append(intent)
         publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
+    }
+
+    func restorePersistedQueue(with tracks: [DulcetTrack]) {
+        restoredCatalogs.append(tracks)
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
