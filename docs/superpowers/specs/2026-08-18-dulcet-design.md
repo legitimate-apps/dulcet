@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 82 — the pinned playback/scrobble controls measured both stream paths, legacy and
+**Revision:** 83 — a legacy transcode's `estimateContentLength` is now carried as an estimate rather
+than an exact byte count, which is what made a cold transcode cache fail every transcoded load;
+revision 82's pinned playback/scrobble controls measured both stream paths, legacy and
 extension offsets, exact opaque-parameter forwarding, and reference-server scrobble side effects;
 revision 81 exposed the exact Navidrome reference asset continuation-range failure the
 generated MP3 fixture could not: a chunk beginning `0x3C` was classified as an XML envelope and
