@@ -24,7 +24,7 @@ class SearchTest {
                     """{"subsonic-response":{"status":"ok","searchResult3":{
                         "artist":[{"id":7,"name":"Atlas Artist","coverArt":70}],
                         "album":[{"id":"album:8","name":"Atlas Album","artist":"Atlas Artist","artistId":7,"year":2024,"duration":121,"coverArt":"art:8"}],
-                        "song":[{"id":9,"title":"Atlas Track","artist":"Atlas Artist","artistId":7,"album":"Atlas Album","year":2024,"duration":61,"coverArt":90}]
+                        "song":[{"id":9,"title":"Atlas Track","artist":"Atlas Artist","artistId":7,"album":"Atlas Album","year":2024,"duration":61,"discNumber":2,"track":4,"suffix":"flac","coverArt":90}]
                     }}}""".trimIndent(),
                 )
             },
@@ -48,6 +48,9 @@ class SearchTest {
         val track = page.results.first()
         assertEquals(SearchResultType.Track, track.type)
         assertEquals(61.seconds, track.duration)
+        assertEquals(2, track.discNumber)
+        assertEquals(4, track.trackNumber)
+        assertEquals(AudioContainer.Flac, track.sourceContainer)
         assertNull(track.mediaSourceId)
         assertEquals("90", track.artworkKey)
         assertEquals(

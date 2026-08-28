@@ -365,6 +365,87 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(store.snapshot.state == .nowPlayingUnavailable)
 }
 
+@Test @MainActor
+func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent() async throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let search = ControlledServerSearch()
+    let playback = ControlledPlaybackController()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        serverSearch: search,
+        playbackController: playback,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+
+    let album = fixtureLibraryAlbum()
+    let artistID = try #require(album.credits.first?.id)
+    let artist = DulcetArtist(id: artistID, name: "Opaque Artist", mediaSourceID: nil)
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [artist], albums: [album]))
+
+    store.selectDestination(.search)
+    store.searchQuery = "opaque"
+    await settleSearchTask(until: { search.requests.count == 1 })
+    let firstTrack = searchResult(id: "track:search-one", title: "Opaque One")
+    let secondTrack = searchResult(id: "track:search-two", title: "Opaque Two")
+    let missingDurationTrack = searchResult(
+        id: "track:missing-duration",
+        title: "Missing Duration",
+        duration: nil
+    )
+    let albumResult = searchResult(
+        id: album.id.rawID,
+        title: album.title,
+        kind: .album,
+        duration: album.duration
+    )
+    let artistResult = searchResult(
+        id: artist.id.rawID,
+        title: artist.name,
+        kind: .artist,
+        duration: nil
+    )
+    search.complete(at: 0, .loaded(searchPage(results: [
+        firstTrack,
+        secondTrack,
+        missingDurationTrack,
+        albumResult,
+        artistResult,
+    ])))
+
+    store.activateSearchResult(missingDurationTrack.id)
+    #expect(playback.queueIntents.isEmpty)
+
+    store.activateSearchResult(secondTrack.id)
+    let queueIntent = try #require(playback.queueIntents.last)
+    #expect(queueIntent.sourceKind == .search)
+    #expect(queueIntent.sourceID == nil)
+    #expect(queueIntent.tracks.map(\.id) == [firstTrack.id, secondTrack.id])
+    #expect(queueIntent.startIndex == 1)
+
+    store.selectDestination(.search)
+    store.activateSearchResult(albumResult.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+
+    store.selectDestination(.search)
+    store.activateSearchResult(artistResult.id)
+    #expect(store.snapshot.state == .artistDetail)
+    #expect(store.snapshot.selectedArtist == artist)
+}
+
 @Test
 func credentialBearingSearchRequestCannotPrintCredentials() {
     let request = DulcetSearchPageRequest(
@@ -1042,18 +1123,27 @@ private func settleSearchTask() async {
 }
 
 @MainActor
-private func searchResult(id: String, title: String) -> DulcetSearchResult {
+private func searchResult(
+    id: String,
+    title: String,
+    kind: DulcetSearchResultKind = .track,
+    duration: Duration? = .seconds(61)
+) -> DulcetSearchResult {
     DulcetSearchResult(
         id: DulcetProviderItemID(
             providerInstanceID: "provider-instance-fixture",
             rawID: id
         ),
         title: title,
-        kind: .track,
-        credits: [DulcetCredit(role: .artist, name: "Fixture Artist", id: nil)],
+        kind: kind,
+        credits: kind == .artist ? [] : [DulcetCredit(
+            role: kind == .album ? .albumArtist : .artist,
+            name: "Fixture Artist",
+            id: nil
+        )],
         albumTitle: "Fixture Album",
         year: 2026,
-        duration: .seconds(61),
+        duration: duration,
         mediaSourceID: nil,
         artwork: DulcetArtwork(seed: id, palette: .indigoCoral)
     )
@@ -1066,9 +1156,9 @@ private func searchPage(
 ) -> DulcetSearchPage {
     DulcetSearchPage(
         results: results,
-        artistResultCount: 0,
-        albumResultCount: 0,
-        trackResultCount: results.count,
+        artistResultCount: results.count { $0.kind == .artist },
+        albumResultCount: results.count { $0.kind == .album },
+        trackResultCount: results.count { $0.kind == .track },
         artistHasMore: false,
         albumHasMore: false,
         trackHasMore: trackHasMore

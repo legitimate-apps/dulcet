@@ -283,7 +283,8 @@ private struct DulcetStateSurface: View {
                 snapshot: snapshot,
                 searchQuery: $store.searchQuery,
                 onLoadMore: store.loadMoreSearchResults,
-                onRetry: store.retrySearch
+                onRetry: store.retrySearch,
+                onActivateResult: store.activateSearchResult
             )
         case .nowPlaying:
             if snapshot.state == .nowPlaying, let player = snapshot.nowPlaying {
@@ -354,6 +355,17 @@ private struct DulcetStateSurface: View {
                     onActivateTrack: { track in
                         store.activateTrack(albumID: album.id, trackID: track.id)
                     }
+                )
+            } else {
+                DulcetEmptyLibraryView(connected: true)
+                    .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+            }
+        case .artistDetail:
+            if let artist = snapshot.selectedArtist {
+                DulcetArtistDetailView(
+                    artist: artist,
+                    albums: snapshot.albums.filter { $0.belongs(to: artist) },
+                    onSelectAlbum: { album in store.selectAlbum(album.id) }
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)

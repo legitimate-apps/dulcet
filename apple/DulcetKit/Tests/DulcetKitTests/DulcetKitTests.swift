@@ -303,6 +303,8 @@ func everyPresentationStatePublishesItsDestinationWindowTitle() async {
 
         let expectedTitle = if state == .albumDetailMultiDisc {
             store.snapshot.selectedAlbum?.title ?? DulcetSidebarDestination.library.windowTitle
+        } else if state == .artistDetail {
+            store.snapshot.selectedArtist?.name ?? DulcetSidebarDestination.library.windowTitle
         } else {
             store.snapshot.selectedDestination.windowTitle
         }

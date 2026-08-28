@@ -24,6 +24,9 @@ internal data class SearchResultItem(
     val albumTitle: String?,
     val year: Int?,
     val duration: Duration?,
+    val discNumber: Int?,
+    val trackNumber: Int?,
+    val sourceContainer: AudioContainer?,
     val mediaSourceId: String?,
     val artworkKey: String?,
 )
@@ -229,6 +232,9 @@ private fun parseResults(
             albumTitle = null,
             year = null,
             duration = null,
+            discNumber = null,
+            trackNumber = null,
+            sourceContainer = null,
             mediaSourceId = null,
             artworkKey = artist.searchOptionalOpaqueId("coverArt"),
         )
@@ -243,6 +249,9 @@ private fun parseResults(
             albumTitle = null,
             year = album.searchInt("year"),
             duration = album.searchDuration(),
+            discNumber = null,
+            trackNumber = null,
+            sourceContainer = null,
             mediaSourceId = null,
             artworkKey = album.searchOptionalOpaqueId("coverArt"),
         )
@@ -257,6 +266,9 @@ private fun parseResults(
             albumTitle = track.searchString("album"),
             year = track.searchInt("year"),
             duration = track.searchDuration(),
+            discNumber = track.searchInt("discNumber"),
+            trackNumber = track.searchInt("track"),
+            sourceContainer = track.searchAudioContainer(),
             mediaSourceId = null,
             artworkKey = track.searchOptionalOpaqueId("coverArt"),
         )
@@ -334,6 +346,28 @@ private fun JsonObject.searchDuration(): Duration? = when (val seconds = searchI
     null -> null
     in 0..Int.MAX_VALUE -> seconds.seconds
     else -> searchMalformed()
+}
+
+private fun JsonObject.searchAudioContainer(): AudioContainer? {
+    searchString("suffix")?.lowercase()?.let { suffix ->
+        when (suffix) {
+            "mp3" -> return AudioContainer.Mp3
+            "mp4", "m4a" -> return AudioContainer.Mp4
+            "wav", "wave" -> return AudioContainer.Wav
+            "flac" -> return AudioContainer.Flac
+            "ogg", "oga", "opus" -> return AudioContainer.Ogg
+            "aac", "adts" -> return AudioContainer.AdtsAac
+        }
+    }
+    return when (searchString("contentType")?.substringBefore(';')?.trim()?.lowercase()) {
+        "audio/mpeg", "audio/mp3" -> AudioContainer.Mp3
+        "audio/mp4", "audio/x-m4a", "audio/m4a" -> AudioContainer.Mp4
+        "audio/wav", "audio/wave", "audio/x-wav" -> AudioContainer.Wav
+        "audio/flac", "audio/x-flac" -> AudioContainer.Flac
+        "audio/ogg", "application/ogg" -> AudioContainer.Ogg
+        "audio/aac", "audio/aacp" -> AudioContainer.AdtsAac
+        else -> null
+    }
 }
 
 private fun JsonObject.searchArrayOrEmpty(name: String): JsonArray = when (val value = get(name)) {

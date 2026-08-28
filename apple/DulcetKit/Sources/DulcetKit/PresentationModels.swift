@@ -22,6 +22,7 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case libraryError = "library-error"
     case libraryBrowse = "library-browse"
     case albumDetailMultiDisc = "album-detail-multi-disc"
+    case artistDetail = "artist-detail"
     case nowPlaying = "now-playing"
     case nowPlayingPreparing = "now-playing-preparing"
     case nowPlayingFailed = "now-playing-failed"
@@ -475,6 +476,9 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
     public let albumTitle: String?
     public let year: Int?
     public let duration: Duration?
+    public let discNumber: Int?
+    public let trackNumber: Int?
+    public let sourceContainer: DulcetAudioContainer?
     public let mediaSourceID: String?
     public let artwork: DulcetArtwork
 
@@ -487,7 +491,10 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
         year: Int?,
         duration: Duration?,
         mediaSourceID: String?,
-        artwork: DulcetArtwork
+        artwork: DulcetArtwork,
+        discNumber: Int? = nil,
+        trackNumber: Int? = nil,
+        sourceContainer: DulcetAudioContainer? = nil
     ) {
         self.id = id
         self.title = title
@@ -496,6 +503,9 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
         self.albumTitle = albumTitle
         self.year = year
         self.duration = duration
+        self.discNumber = discNumber
+        self.trackNumber = trackNumber
+        self.sourceContainer = sourceContainer
         self.mediaSourceID = mediaSourceID
         self.artwork = artwork
     }
@@ -505,6 +515,22 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
         return [creditNames, albumTitle]
             .compactMap { value in value?.isEmpty == false ? value : nil }
             .joined(separator: " · ")
+    }
+
+    public var playableTrack: DulcetTrack? {
+        guard kind == .track, let duration else { return nil }
+        return DulcetTrack(
+            id: id,
+            title: title,
+            credits: credits,
+            albumTitle: albumTitle,
+            discNumber: discNumber,
+            trackNumber: trackNumber,
+            duration: duration,
+            sourceContainer: sourceContainer,
+            mediaSourceID: mediaSourceID,
+            artwork: artwork
+        )
     }
 }
 
@@ -654,6 +680,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let looseTracks: [DulcetTrack]
     public let recentlyAddedTracks: [DulcetTrack]
     public let selectedAlbum: DulcetAlbum?
+    public let selectedArtist: DulcetArtist?
     public let nowPlaying: DulcetNowPlaying?
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
@@ -677,6 +704,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         looseTracks: [DulcetTrack],
         recentlyAddedTracks: [DulcetTrack],
         selectedAlbum: DulcetAlbum? = nil,
+        selectedArtist: DulcetArtist? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
@@ -699,6 +727,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.looseTracks = looseTracks
         self.recentlyAddedTracks = recentlyAddedTracks
         self.selectedAlbum = selectedAlbum
+        self.selectedArtist = selectedArtist
         self.nowPlaying = nowPlaying
         self.searchQuery = searchQuery
         self.searchResults = searchResults

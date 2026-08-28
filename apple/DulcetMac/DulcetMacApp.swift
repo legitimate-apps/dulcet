@@ -10,6 +10,9 @@ struct DulcetMacApp: App {
             DulcetMacProduction.makeRootView(store: presentation)
         }
         .defaultSize(width: 1180, height: 760)
+        .commands {
+            DulcetPlaybackCommands(store: presentation)
+        }
     }
 }
 

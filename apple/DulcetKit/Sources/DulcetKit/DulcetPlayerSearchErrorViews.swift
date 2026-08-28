@@ -111,7 +111,6 @@ struct DulcetNowPlayingView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .font(.title2)
-                    .dulcetPlaybackShortcut()
                     .accessibilityLabel(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play)
                 Button {
                     onControl(.next)
@@ -285,6 +284,7 @@ struct DulcetSearchView: View {
     @Binding var searchQuery: String
     let onLoadMore: (DulcetSearchResultKind) -> Void
     let onRetry: () -> Void
+    let onActivateResult: (DulcetSearchResult.ID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -399,6 +399,13 @@ struct DulcetSearchView: View {
             }
 #if os(macOS)
             .alternatingRowBackgrounds(.disabled)
+            .contextMenu(forSelectionType: DulcetSearchResult.ID.self) { _ in
+                EmptyView()
+            } primaryAction: { selection in
+                guard let id = selection.first else { return }
+                selectedResultID = id
+                onActivateResult(id)
+            }
 #endif
 #endif
 

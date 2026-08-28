@@ -5,6 +5,7 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case updateSearchQuery(String)
     case loadMoreSearchResults(DulcetSearchResultKind)
     case retrySearch
+    case activateSearchResult(DulcetProviderItemID)
     case selectAlbum(DulcetProviderItemID)
     case playLibrary(shuffle: Bool)
     case playAlbum(DulcetProviderItemID, shuffle: Bool)
@@ -116,6 +117,10 @@ public final class DulcetPresentationStore {
 
     public func retrySearch() {
         source.send(.retrySearch)
+    }
+
+    public func activateSearchResult(_ id: DulcetProviderItemID) {
+        source.send(.activateSearchResult(id))
     }
 
     @discardableResult

@@ -35,6 +35,21 @@ enum DulcetStrings {
     static let repeatOff = text("player.repeat.off", "Off")
     static let repeatAll = text("player.repeat.all", "Repeat All")
     static let repeatOne = text("player.repeat.one", "Repeat One")
+    static let playbackMenu = text("menu.playback", "Playback")
+    static let turnShuffleOn = text("menu.playback.shuffleOn", "Turn Shuffle On")
+    static let turnShuffleOff = text("menu.playback.shuffleOff", "Turn Shuffle Off")
+    static let seekForward15Seconds = text(
+        "menu.playback.seekForward15",
+        "Seek Forward 15 Seconds"
+    )
+    static let seekBackward15Seconds = text(
+        "menu.playback.seekBackward15",
+        "Seek Backward 15 Seconds"
+    )
+
+    static func repeatMenuValue(_ value: String) -> String {
+        formatted("menu.playback.repeatValue", "Repeat: %@", value)
+    }
     static let controlOn = text("control.on", "On")
     static let controlOff = text("control.off", "Off")
     static let buffering = text("player.buffering", "Buffering…")

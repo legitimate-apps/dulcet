@@ -3294,7 +3294,36 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 85 (2026-08-28)** — the estimated-body completion rule was platform-specific, and a
+**Revision 86 (2026-08-28)** — macOS search activation and keyboard playback now enter through the
+same presentation intent boundary as their pointer-driven library and transport counterparts.
+
+1. A macOS search table primary action now sends one `activateSearchResult` presentation action for
+   both double-click and Return. Track activation constructs a search-sourced queue from the ranked,
+   playable results; album activation opens album detail; artist activation opens artist detail.
+   Search DTOs now carry the duration, disc/track, and container metadata required to construct the
+   same authoritative track model used by library playback.
+2. Search results remain metadata-first: a track without server-supplied duration is visible but is
+   not admitted to the playback queue, and an album or artist omitted by the subsequent complete
+   library read cannot open detail. `FEATURES.yml` names both limits without changing its planned
+   status or using this narrower behavior as promotion evidence.
+3. The macOS app owns Space once, in a Playback command menu. Play/Pause, Next, Previous, Shuffle,
+   Repeat, and ±15-second seek all resolve to `playbackControl` presentation intents. Enablement and
+   action payloads derive exclusively from the latest `DulcetNowPlaying`: no current item disables
+   every command, next/previous use core flags, and seek requires authoritative seekability. System
+   remote-command handling remains a separate, unchanged platform adapter.
+4. The direct key equivalents follow Music conventions: Space for Play/Pause, Left/Right for
+   Previous/Next, and Option-Command-Left/Right for backward/forward seek. Shuffle and Repeat remain
+   keyboard-accessible through the Playback menu but have no invented direct equivalents.
+5. OBSERVED against the local disposable server in the freshly built DEV app: `variatio` returned
+   17 results; double-click started the first ranked result and Return started a separately selected
+   result, both with `Playing from Search`. The menu changed from fully disabled before playback to
+   core-derived live availability afterward; Space toggled pause/play and Right advanced the queue.
+   Two restored mutations proved the tests go red if the no-current guard permanently enables all
+   commands or if Next resolves to Previous.
+
+**Revision 85 (2026-08-28)** — the declared playback and scrobble controls became executable and
+
+**Revision 84 (2026-08-28)** — the estimated-body completion rule was platform-specific, and a
 Foundation delegate could terminate the process.
 
 1. OBSERVED: CIO surfaces an estimate-overshooting body as a terminal `EOFException`, while the
@@ -3315,7 +3344,7 @@ Foundation delegate could terminate the process.
 4. The local conformance lifecycle now starts and guards the forward-proxy fixture that `apple-ci`
    uses, so a local run exercises the same surface rather than a subset of it.
 
-**Revision 84 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
+**Revision 83 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
 representation lengths.
 
 1. OBSERVED against a cold Navidrome 0.63.2 transcode cache: `estimateContentLength=true` produced
@@ -3340,37 +3369,6 @@ representation lengths.
    and reject the same mismatch when exact, including the Apple total-length calculation. CONF-14a
    and CONF-17 use unique bitrate keys in a fresh disposable instance so the relevant requests cannot
    accidentally measure a warmed transcode cache. `FEATURES.yml` status cells remain unchanged.
-
-**Revision 83 (2026-08-28)** — the declared playback and scrobble controls became executable and
-the defensive assumptions they existed to measure became bounded observations.
-
-1. Eight common conformance tests now exercise CONF-11, CONF-12, CONF-13, CONF-14a, CONF-14b,
-   CONF-15, CONF-22, and CONF-23 through production playback/scrobble clients plus a redacted
-   test-only REST observation seam. Every transcode-dependent control first requires the
-   `transcoding` v1 extension and an actual `canTranscode=true` decision; absence fails rather than
-   skips. Every request uses a fresh 16-byte CSPRNG salt and exact credential canaries prove that
-   neither production logs nor the observation seam render the query string.
-2. OBSERVED against Navidrome 0.63.2 and pinned Linux ffmpeg 6.1.1: valid FLAC stream status/type/
-   signature was `200`, `audio/flac`, `fLaC`; bad legacy stream was an envelope at HTTP 200; bad
-   extension stream was bare `text/plain` at HTTP 404; raw and transcoded `bytes=0-63` requests both
-   returned HTTP 206 with matching content ranges; `ClientInfo` POST produced `canTranscode=true`
-   and a 241-character opaque parameter that streamed unchanged.
-3. OBSERVED in that environment: the 31-second legacy transcode was 248,455 bytes at offset zero and
-   128,501 bytes at `timeOffset=15`. Path A exposes no offset parameter; an extra legacy
-   `timeOffset=1` was ignored and the two 49,090-byte extension responses were byte-identical.
-4. OBSERVED server write semantics: `submission=false` left relative play count unchanged at 0,
-   `submission=true` advanced it to 1, and two identical-time submitted calls advanced another
-   fixture from 0 to 1 to 2. Navidrome therefore does not deduplicate the server half of an
-   at-least-once retry.
-5. Three production mutations proved the controls can fail: misclassifying the legacy envelope made
-   CONF-12 observe `BareHttpError` instead of `EnvelopeAtSuccess`; appending a suffix to the opaque
-   parameter made CONF-15 receive `Failed` instead of audio; encoding now-playing as
-   `submission=true` made CONF-22 observe an unexpected play-count increment. Each mutation was
-   restored before the final run.
-6. A mandatory `DULCET_CONFORMANCE_DISPOSABLE=true` marker now accompanies the loopback base URL on
-   JVM, macOS, iOS-simulator, and tvOS-simulator runs. The loopback port is configurable so a fresh
-   instance can coexist with another local service without weakening the disposable-only gate.
-   `FEATURES.yml` status cells remain unchanged pending a merge-backed CI run identity.
 
 **Revision 82 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
 range failure that the generated MP3 fixture missed.
