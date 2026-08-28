@@ -27,6 +27,7 @@ targets:
       - DulcetAppleShared
     dependencies:
       - package: DulcetKit
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
@@ -50,6 +51,7 @@ targets:
       - DulcetAppleShared
     dependencies:
       - package: DulcetKit
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet
@@ -119,6 +121,7 @@ targets:
       - DulcetAppleShared
     dependencies:
       - package: DulcetKit
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
@@ -169,6 +172,7 @@ targets:
       - DulcetAppleShared
     dependencies:
       - package: DulcetKit
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
