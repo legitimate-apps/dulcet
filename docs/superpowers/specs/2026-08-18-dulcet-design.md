@@ -8,16 +8,19 @@ default-branch controls satisfy the Phase 0 exit criteria in §25.
 **Date:** 2026-08-18
 **Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
 
-A legacy transcode's `estimateContentLength` is now carried as an estimate rather
-than an exact byte count, which is what made a cold transcode cache fail every transcoded load;
-revision 82's pinned playback/scrobble controls measured both stream paths, legacy and
-extension offsets, exact opaque-parameter forwarding, and reference-server scrobble side effects;
-revision 81 exposed the exact Navidrome reference asset continuation-range failure the
-generated MP3 fixture could not: a chunk beginning `0x3C` was classified as an XML envelope and
-rejected as malformed, so envelope detection now requires a recognizable `subsonic-response` root
-before malformed-envelope semantics apply; revision 80 made Apple progressive playback account for
-AVFoundation's initial two-byte request; revision 79 added the implemented queue ownership tables to
-the schema-intent registry; revision 78 made a restored credential present as a saved account awaiting an explicit
+macOS search results and keyboard playback now enter through the same presentation intent boundary
+as their pointer-driven counterparts; a legacy transcode's `estimateContentLength` is carried as an
+estimate rather than an exact byte count, which is what made a cold transcode cache fail every
+transcoded load; the estimated-body completion rule was made platform-specific after Darwin and CIO
+were found to signal it differently, and a Foundation delegate that could terminate the process was
+closed; the pinned playback/scrobble controls measured both stream paths, legacy and extension
+offsets, exact opaque-parameter forwarding, and reference-server scrobble side effects; the exact
+Navidrome reference asset exposed a continuation-range failure the generated MP3 fixture could not,
+so envelope detection now requires a recognizable `subsonic-response` root before malformed-envelope
+semantics apply; Apple progressive playback accounts for AVFoundation's initial two-byte request; CI
+evidence became structured and its disposable Linux environment locally reproducible; the
+schema-intent registry gained the implemented queue ownership tables;
+revision 78 made a restored credential present as a saved account awaiting an explicit
 
 **Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
 
@@ -3294,7 +3297,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 86 (2026-08-28)** — macOS search activation and keyboard playback now enter through the
+**Revision 85 (2026-08-28)** — macOS search activation and keyboard playback now enter through the
 same presentation intent boundary as their pointer-driven library and transport counterparts.
 
 1. A macOS search table primary action now sends one `activateSearchResult` presentation action for
@@ -3320,8 +3323,6 @@ same presentation intent boundary as their pointer-driven library and transport 
    core-derived live availability afterward; Space toggled pause/play and Right advanced the queue.
    Two restored mutations proved the tests go red if the no-current guard permanently enables all
    commands or if Next resolves to Previous.
-
-**Revision 85 (2026-08-28)** — the declared playback and scrobble controls became executable and
 
 **Revision 84 (2026-08-28)** — the estimated-body completion rule was platform-specific, and a
 Foundation delegate could terminate the process.
