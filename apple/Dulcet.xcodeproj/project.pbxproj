@@ -207,7 +207,7 @@
 				934A4A8CFE9893D65D3120E6 /* navidrome-reference.mp3 */,
 			);
 			name = Fixtures;
-			path = DulcetKit/Tests/DulcetKitTests/Fixtures;
+			path = Fixtures;
 			sourceTree = "<group>";
 		};
 		520A66276B25517E8844D850 /* DulcetMacTests */ = {
@@ -251,7 +251,6 @@
 				520A66276B25517E8844D850 /* DulcetMacTests */,
 				F26BE7082DE6E5C96AEDDC41 /* DulcetPlaybackIntegrationTests */,
 				C4EBD9B8094B6C71B1AA0E93 /* DulcetTV */,
-				1FAAF8EC2AD9D63DB33E707A /* Fixtures */,
 				1F4CEF14957BC5BEA94552B7 /* Packages */,
 				C62ECDE241728BC055CFB0FB /* Frameworks */,
 				EF09A798EC470842969DB215 /* Products */,
