@@ -175,6 +175,18 @@ class PlaybackStreamValidationTest {
         )
         assertEquals(AudioContainer.Mp3, continuation.container)
 
+        val delimiterAlignedAudio = assertIs<PlaybackStreamValidationResult.Audio>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = bytes(0x3C, 0xD8, 0xDD, 0x6D),
+                    contentType = "audio/mpeg",
+                ),
+                AudioContainer.Mp3,
+                requiresAudioSignature = false,
+            ),
+        )
+        assertEquals(AudioContainer.Mp3, delimiterAlignedAudio.container)
+
         val envelope = assertIs<PlaybackStreamValidationResult.Failure>(
             PlaybackStreamValidator.validate(
                 response(
@@ -189,6 +201,18 @@ class PlaybackStreamValidationTest {
         )
         assertEquals(PlaybackErrorResponseShape.EnvelopeAtSuccess, envelope.shape)
         assertEquals(DomainError.Auth.InvalidCredentials, envelope.error)
+
+        val malformedEnvelope = assertIs<PlaybackStreamValidationResult.Failure>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = ascii("""<subsonic-response status="failed"/>"""),
+                    contentType = "audio/mpeg",
+                ),
+                AudioContainer.Mp3,
+                requiresAudioSignature = false,
+            ),
+        )
+        assertEquals(PlaybackErrorResponseShape.MalformedEnvelope, malformedEnvelope.shape)
     }
 
     private fun response(

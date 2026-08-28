@@ -27,16 +27,16 @@ private fun ByteArray.inspectJsonSubsonicBinaryEnvelope(
 ): SubsonicBinaryEnvelopeInspection = try {
     val root = BINARY_ENVELOPE_JSON.parseToJsonElement(
         copyOfRange(start, size).decodeToString(),
-    ) as? JsonObject ?: return SubsonicBinaryEnvelopeInspection.Malformed
+    ) as? JsonObject ?: return SubsonicBinaryEnvelopeInspection.NotEnvelope
     val payload = root["subsonic-response"] as? JsonObject
-        ?: return SubsonicBinaryEnvelopeInspection.Malformed
+        ?: return SubsonicBinaryEnvelopeInspection.NotEnvelope
     val error = payload["error"] as? JsonObject
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     val code = (error["code"] as? JsonPrimitive)?.intOrNull
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     SubsonicBinaryEnvelopeInspection.Error(code)
 } catch (_: IllegalArgumentException) {
-    SubsonicBinaryEnvelopeInspection.Malformed
+    SubsonicBinaryEnvelopeInspection.NotEnvelope
 }
 
 private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
@@ -44,7 +44,7 @@ private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
 ): SubsonicBinaryEnvelopeInspection {
     val xml = copyOfRange(start, size).decodeToString()
     if (!XML_SUBSONIC_RESPONSE_ROOT.containsMatchIn(xml)) {
-        return SubsonicBinaryEnvelopeInspection.Malformed
+        return SubsonicBinaryEnvelopeInspection.NotEnvelope
     }
     val code = XML_SUBSONIC_ERROR_CODE.find(xml)?.groupValues?.getOrNull(1)?.toIntOrNull()
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
