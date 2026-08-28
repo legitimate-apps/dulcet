@@ -4,6 +4,10 @@ import MediaPlayer
 import Testing
 @testable import DulcetKit
 
+#if os(macOS)
+import CoreAudio
+#endif
+
 @Suite(.serialized)
 struct AVPlayerEngineTests {
     @Test
@@ -460,6 +464,30 @@ struct AVPlayerEngineTests {
         #expect(!surfaced.contains(tokenCanary))
         #expect(!surfaced.contains("?"))
     }
+
+    #if os(macOS)
+    @Test
+    func macCoreAudioRoutesClassifyNoisyDisconnectsWithoutTreatingHDMIAsAnInterruption() {
+        #expect(DulcetMacAudioRouteClassifier.kind(
+            transportType: kAudioDeviceTransportTypeBuiltIn
+        ) == .builtIn)
+        #expect(DulcetMacAudioRouteClassifier.kind(
+            transportType: kAudioDeviceTransportTypeUSB
+        ) == .wired)
+        #expect(DulcetMacAudioRouteClassifier.kind(
+            transportType: kAudioDeviceTransportTypeBluetooth
+        ) == .bluetooth)
+        #expect(DulcetMacAudioRouteClassifier.kind(
+            transportType: kAudioDeviceTransportTypeHDMI
+        ) == .hdmi)
+        #expect(DulcetMacAudioRouteClassifier.kind(
+            transportType: kAudioDeviceTransportTypeAirPlay
+        ) == .remote)
+        #expect(DulcetMacAudioRouteClassifier.becomingNoisy(old: .wired, new: .builtIn))
+        #expect(DulcetMacAudioRouteClassifier.becomingNoisy(old: .bluetooth, new: .builtIn))
+        #expect(!DulcetMacAudioRouteClassifier.becomingNoisy(old: .hdmi, new: .builtIn))
+    }
+    #endif
 }
 
 private func execute(
