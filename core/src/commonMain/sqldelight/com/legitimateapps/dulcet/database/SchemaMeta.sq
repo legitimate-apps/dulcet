@@ -19,6 +19,16 @@ SELECT schema_version, cache_format_version, committed_generation
 FROM schema_meta
 WHERE singleton_id = 1;
 
+updateSchemaVersion:
+UPDATE schema_meta
+SET schema_version = ?
+WHERE singleton_id = 1;
+
+updateCacheFormatVersion:
+UPDATE schema_meta
+SET cache_format_version = ?
+WHERE singleton_id = 1;
+
 updateCommittedGeneration:
 UPDATE schema_meta
 SET committed_generation = ?

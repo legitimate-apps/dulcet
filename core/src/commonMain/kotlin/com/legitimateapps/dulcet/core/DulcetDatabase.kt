@@ -26,6 +26,22 @@ internal class DulcetDatabaseStore private constructor(
         database.schemaMetaQueries.updateCommittedGeneration(generation)
     }
 
+    internal fun reconcileVersions(schemaVersion: Long, cacheFormatVersion: Long) {
+        val current = metadata()
+        check(current.schemaVersion <= schemaVersion) {
+            "Dulcet database schema is newer than this build"
+        }
+        check(current.cacheFormatVersion <= cacheFormatVersion) {
+            "Dulcet cache format is newer than this build"
+        }
+        if (current.schemaVersion < schemaVersion) {
+            database.schemaMetaQueries.updateSchemaVersion(schemaVersion)
+        }
+        if (current.cacheFormatVersion < cacheFormatVersion) {
+            database.schemaMetaQueries.updateCacheFormatVersion(cacheFormatVersion)
+        }
+    }
+
     internal fun close() {
         driver.close()
     }
@@ -39,7 +55,12 @@ internal class DulcetDatabaseStore private constructor(
                 cache_format_version = DULCET_CACHE_FORMAT_VERSION,
             )
             val store = DulcetDatabaseStore(database, driver)
+            store.reconcileVersions(
+                schemaVersion = DulcetDatabase.Schema.version,
+                cacheFormatVersion = DULCET_CACHE_FORMAT_VERSION,
+            )
             check(store.metadata().schemaVersion == DulcetDatabase.Schema.version)
+            check(store.metadata().cacheFormatVersion == DULCET_CACHE_FORMAT_VERSION)
             return store
         }
     }

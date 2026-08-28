@@ -54,4 +54,18 @@ class DulcetDatabaseTest {
         assertNull(database.queueQueries.selectActiveServerId().executeAsOneOrNull())
         driver.close()
     }
+
+    @Test
+    fun cacheFormatVersionHasAnExplicitForwardOnlyUpdatePath() {
+        val driver = createTestDriver()
+        val store = DulcetDatabaseStore.open(driver)
+
+        store.reconcileVersions(
+            schemaVersion = DULCET_SCHEMA_VERSION,
+            cacheFormatVersion = DULCET_CACHE_FORMAT_VERSION + 1,
+        )
+
+        assertEquals(DULCET_CACHE_FORMAT_VERSION + 1, store.metadata().cacheFormatVersion)
+        driver.close()
+    }
 }

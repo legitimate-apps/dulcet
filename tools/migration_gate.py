@@ -17,7 +17,7 @@ SCHEMA_SNAPSHOTS = ROOT / "core/src/commonMain/sqldelight/databases"
 SQLDELIGHT_ROOT = ROOT / "core/src/commonMain/sqldelight"
 FIXTURES = ROOT / "tools/migration-fixtures"
 RESERVATIONS = FIXTURES / "reserved-tables.json"
-SHIPPING_FOREIGN_KEYS = 0
+SHIPPING_FOREIGN_KEYS = 1
 
 SCHEMA_INTENT_TABLES = {
     "server_account",
@@ -186,6 +186,18 @@ def apply_released_migrations(
         connection.executescript(migration.read_text())
 
 
+def reconcile_runtime_metadata(
+    connection: sqlite3.Connection,
+    target_schema_version: int,
+    target_cache_format_version: int,
+) -> None:
+    connection.execute(
+        "UPDATE schema_meta SET schema_version = ?, cache_format_version = ? "
+        "WHERE singleton_id = 1",
+        (target_schema_version, target_cache_format_version),
+    )
+
+
 def canonical_rows(connection: sqlite3.Connection, table: str) -> list[dict[str, object]]:
     columns = PROTECTED_COLUMNS[table]
     selected = ", ".join(f'"{column}"' for column in columns)
@@ -337,6 +349,7 @@ def assert_fixture_preserved(
     expected_schema: dict[str, object],
     source_metadata: tuple[int, int, int],
     target_version: int,
+    target_cache_format_version: int,
 ) -> None:
     errors: list[str] = []
     with sqlite3.connect(database) as connection:
@@ -363,7 +376,7 @@ def assert_fixture_preserved(
         )
     expected_metadata = [
         target_version,
-        current_cache_format_version(),
+        target_cache_format_version,
         source_metadata[2],
     ]
     if actual["schema_meta"] != expected_metadata:
@@ -381,7 +394,10 @@ def migrate_and_assert_fixture(
     fixture: Path,
     target_version: int,
     destructive_sql: str | None = None,
+    target_cache_format_version: int | None = None,
 ) -> None:
+    if target_cache_format_version is None:
+        target_cache_format_version = current_cache_format_version()
     with tempfile.TemporaryDirectory(prefix=f"dulcet-migration-v{fixture_version}-") as temp:
         work = Path(temp)
         database = work / "database.db"
@@ -412,6 +428,11 @@ def migrate_and_assert_fixture(
                 )
             expected_schema = protected_schema(connection)
             apply_released_migrations(connection, fixture_version, target_version)
+            reconcile_runtime_metadata(
+                connection,
+                target_version,
+                target_cache_format_version,
+            )
             if destructive_sql is not None:
                 connection.executescript(destructive_sql)
             connection.commit()
@@ -422,7 +443,17 @@ def migrate_and_assert_fixture(
             expected_schema,
             source_metadata,
             target_version,
+            target_cache_format_version,
         )
+
+
+def prove_cache_format_bump_is_legal(fixture: Path, version: int) -> None:
+    migrate_and_assert_fixture(
+        fixture_version=version,
+        fixture=fixture,
+        target_version=version,
+        target_cache_format_version=current_cache_format_version() + 1,
+    )
 
 
 NEGATIVE_CONTROLS = (
@@ -625,6 +656,7 @@ def main() -> None:
         )
     for version, fixture in sorted(fixtures.items()):
         migrate_and_assert_fixture(version, fixture, current)
+    prove_cache_format_bump_is_legal(fixtures[current], current)
     prove_destructive_migrations_are_rejected(fixtures[1], 1)
     print(
         f"Migration gate valid: {len(fixtures)} fixture database(s), "
