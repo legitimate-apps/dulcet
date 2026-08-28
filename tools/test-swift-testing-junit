@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation controls for Swift Testing-to-JUnit evidence conversion."""
+"""Mutation controls for xcresult-backed Swift Testing JUnit evidence."""
 
+from __future__ import annotations
+
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -9,41 +13,107 @@ import xml.etree.ElementTree as ET
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-PASSING = """\
-◇ Test firstClaim() started.
-◇ Test secondClaim() started.
-✔ Test secondClaim() passed after 0.01 seconds.
-✔ Test firstClaim() passed after 0.02 seconds.
-✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.
-"""
+TOOL = REPOSITORY / "tools/swift-testing-junit"
 
 
-def invoke(transcript: str) -> tuple[subprocess.CompletedProcess[str], Path, tempfile.TemporaryDirectory[str]]:
+def test_case(name: str, *, identifier: str | None = None, result: str | None = "Passed") -> dict:
+    node = {
+        "nodeType": "Test Case",
+        "name": f"{name}()",
+        "nodeIdentifier": identifier or f"DulcetKitTests/{name}()",
+        "durationInSeconds": 0.01,
+    }
+    if result is not None:
+        node["result"] = result
+    return node
+
+
+def tests_document(cases: list[dict]) -> dict:
+    return {
+        "devices": [],
+        "testPlanConfigurations": [],
+        "testNodes": [
+            {
+                "nodeType": "Unit test bundle",
+                "name": "DulcetKitTests",
+                "children": [
+                    {
+                        "nodeType": "Test Suite",
+                        "name": "DulcetKitTests",
+                        "children": cases,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def result_counts(document: dict) -> dict[str, int]:
+    results: list[str] = []
+
+    def visit(node: object) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("nodeType") == "Test Case" and isinstance(node.get("result"), str):
+            results.append(node["result"])
+        for child in node.get("children", []):
+            visit(child)
+
+    for node in document.get("testNodes", []):
+        visit(node)
+    return {
+        "totalTestCount": len(results),
+        "passedTests": results.count("Passed"),
+        "failedTests": results.count("Failed") + results.count("unknown"),
+        "skippedTests": results.count("Skipped"),
+        "expectedFailures": results.count("Expected Failure"),
+    }
+
+
+def invoke(
+    document: dict,
+    *,
+    summary: dict | None = None,
+) -> tuple[subprocess.CompletedProcess[str], Path, tempfile.TemporaryDirectory[str]]:
     directory = tempfile.TemporaryDirectory(prefix="dulcet-swift-junit-")
     root = Path(directory.name)
-    log = root / "swift-testing.log"
+    bundle = root / "tests.xcresult"
+    bundle.mkdir()
+    fixture = root / "xcresult-tests.json"
+    fixture.write_text(json.dumps(document))
+    summary_fixture = root / "xcresult-summary.json"
+    summary_fixture.write_text(json.dumps(summary or result_counts(document)))
+    shim = root / "xcrun"
+    shim.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, sys\n"
+        "expected = ['xcresulttool', 'get', 'test-results']\n"
+        "assert sys.argv[1:4] == expected, sys.argv\n"
+        "key = 'DULCET_XCRESULT_TESTS' if sys.argv[4] == 'tests' else 'DULCET_XCRESULT_SUMMARY'\n"
+        "print(pathlib.Path(os.environ[key]).read_text())\n"
+    )
+    shim.chmod(0o755)
     output = root / "TEST-DulcetKitTests.xml"
-    log.write_text(transcript)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{root}{os.pathsep}{environment['PATH']}"
+    environment["DULCET_XCRESULT_TESTS"] = str(fixture)
+    environment["DULCET_XCRESULT_SUMMARY"] = str(summary_fixture)
     result = subprocess.run(
-        [
-            sys.executable,
-            str(REPOSITORY / "tools/swift-testing-junit"),
-            str(log),
-            str(output),
-            "DulcetKitTests",
-        ],
+        [sys.executable, str(TOOL), str(bundle), str(output), "DulcetKitTests"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
+        env=environment,
     )
     return result, output, directory
 
 
-result, output, directory = invoke(PASSING)
+passing_document = tests_document([test_case("firstClaim"), test_case("secondClaim")])
+result, output, directory = invoke(passing_document)
 try:
     if result.returncode != 0:
-        raise AssertionError(f"passing Swift transcript rejected: {result.stdout}")
+        raise AssertionError(f"passing xcresult rejected: {result.stdout}")
     identities = {
         (case.get("classname"), case.get("name"))
         for case in ET.parse(output).getroot().iter("testcase")
@@ -58,22 +128,27 @@ finally:
     directory.cleanup()
 
 rejections = {
-    "missing passed-test line": PASSING.replace(
-        "✔ Test firstClaim() passed after 0.02 seconds.\n",
-        "",
+    "run summary alone": {
+        "title": "All tests",
+        "result": "Passed",
+        "totalTestCount": 2,
+        "passedTests": 2,
+    },
+    "missing individual result": tests_document(
+        [test_case("firstClaim", result=None), test_case("secondClaim")]
     ),
-    "duplicate passed-test line": PASSING.replace(
-        "✔ Test firstClaim() passed after 0.02 seconds.\n",
-        "✔ Test firstClaim() passed after 0.02 seconds.\n"
-        "✔ Test firstClaim() passed after 0.03 seconds.\n",
+    "duplicate individual identity": tests_document(
+        [
+            test_case("firstClaim", identifier="same/test"),
+            test_case("secondClaim", identifier="same/test"),
+        ]
     ),
-    "failed run summary": PASSING.replace(
-        "✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.",
-        "✘ Test run with 2 tests in 0 suites failed after 0.02 seconds.",
+    "failed individual result": tests_document(
+        [test_case("firstClaim"), test_case("secondClaim", result="Failed")]
     ),
 }
-for label, transcript in rejections.items():
-    result, output, directory = invoke(transcript)
+for label, document in rejections.items():
+    result, output, directory = invoke(document)
     try:
         if result.returncode == 0 or output.exists():
             raise AssertionError(
@@ -82,4 +157,29 @@ for label, transcript in rejections.items():
     finally:
         directory.cleanup()
 
-print("Swift Testing JUnit evidence mutations are rejected")
+missing_case_document = tests_document([test_case("firstClaim")])
+result, output, directory = invoke(
+    missing_case_document,
+    summary={
+        "totalTestCount": 2,
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "expectedFailures": 0,
+    },
+)
+try:
+    if result.returncode == 0 or output.exists() or "totalTestCount=2, individual=1" not in result.stdout:
+        raise AssertionError(f"entirely absent individual result was accepted: {result.stdout!r}")
+finally:
+    directory.cleanup()
+
+fixture_root = REPOSITORY / "tools/fixtures/swift-testing-junit"
+for fixture in ("passing.log", "torn-passing.log", "torn-host-lookalike.log"):
+    if not (fixture_root / fixture).is_file():
+        raise AssertionError(f"retained Swift Testing transcript fixture is missing: {fixture}")
+
+print(
+    "xcresult Swift Testing JUnit mutations reject summary-only, missing, absent, duplicate, and failed "
+    "individual results; transcript regression fixtures retained"
+)

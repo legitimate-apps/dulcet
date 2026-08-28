@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Convert a successful Swift Testing console transcript into JUnit evidence."""
+"""Convert individual Swift Testing results in an xcresult bundle into JUnit evidence."""
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
 import sys
-import xml.etree.ElementTree as ET
+from pathlib import Path
 
-
-ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-PASSED_TEST = re.compile(r"✔ Test ([A-Za-z_][A-Za-z0-9_]*)\(\) passed\b")
-PASSED_RUN = re.compile(r"✔ Test run with (\d+) tests? in \d+ suites? passed\b")
+from xcresult_test_evidence import EvidenceError, read_xcresult, write_junit
 
 
 def fail(message: str) -> None:
@@ -20,44 +16,17 @@ def fail(message: str) -> None:
 
 
 if len(sys.argv) != 4:
-    fail("usage: swift-testing-junit <transcript> <output.xml> <class-name>")
+    fail("usage: swift-testing-junit <bundle.xcresult> <output.xml> <class-name>")
 
-transcript_path = Path(sys.argv[1])
+bundle_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
 class_name = sys.argv[3]
 if not class_name or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", class_name):
     fail(f"invalid JUnit class name: {class_name!r}")
 
 try:
-    transcript = ANSI_ESCAPE.sub("", transcript_path.read_text())
-except OSError as error:
-    fail(f"cannot read Swift Testing transcript: {error}")
-
-summaries = PASSED_RUN.findall(transcript)
-if len(summaries) != 1:
-    fail(f"expected one successful Swift Testing run summary, found {len(summaries)}")
-
-tests = PASSED_TEST.findall(transcript)
-if len(tests) != len(set(tests)):
-    fail("Swift Testing transcript contains duplicate passed-test identities")
-expected_count = int(summaries[0])
-if len(tests) != expected_count:
-    fail(
-        "Swift Testing passed-test lines do not match its successful run summary: "
-        f"summary={expected_count}, observed={len(tests)}"
-    )
-
-suite = ET.Element(
-    "testsuite",
-    name=class_name,
-    tests=str(len(tests)),
-    failures="0",
-    errors="0",
-    skipped="0",
-)
-for name in sorted(tests):
-    ET.SubElement(suite, "testcase", classname=class_name, name=name)
-
-output_path.parent.mkdir(parents=True, exist_ok=True)
-ET.ElementTree(suite).write(output_path, encoding="utf-8", xml_declaration=True)
-print(f"Swift Testing JUnit evidence written: class={class_name} tests={len(tests)}")
+    cases = read_xcresult(bundle_path)
+    write_junit(cases, output_path, class_name)
+except EvidenceError as error:
+    fail(str(error))
+print(f"Swift Testing JUnit evidence written: class={class_name} tests={len(cases)}")

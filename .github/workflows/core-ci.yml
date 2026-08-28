@@ -75,73 +75,16 @@ jobs:
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
-      - name: Generate deterministic corpus with the pinned image ffmpeg
+      - name: Start the shared cold Linux environment and run conformance
         env:
           ROOT: ${{ steps.root.outputs.path }}
         run: |
-          image="$(tools/conformance-env/read-pin navidrome.linux.image)"
-          tools/seed-corpus --output "$ROOT/music" --runtime docker --image "$image"
-          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = "$(tools/conformance-env/read-pin navidrome.linux.architecture)"
-      - name: Render complete Navidrome configuration
-        env:
-          ROOT: ${{ steps.root.outputs.path }}
-        run: >-
-          tools/conformance-env/render-config
-          --output "$ROOT/config/navidrome.toml"
-          --music-folder /music
-          --data-folder /data
-          --cache-folder /cache
-          --address 0.0.0.0
-          --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.linux.path)"
-      - name: Start pinned Linux Navidrome and assert preconditions
-        env:
-          ROOT: ${{ steps.root.outputs.path }}
-        run: |
-          image="$(tools/conformance-env/read-pin navidrome.linux.image)"
-          container="dulcet-conformance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
-            -config tools/conformance-env/untrusted-tls-openssl.cnf \
-            -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
           cleanup() {
-            kill "$redirect_pid" >/dev/null 2>&1 || true
-            wait "$redirect_pid" 2>/dev/null || true
-            kill "$tls_pid" >/dev/null 2>&1 || true
-            wait "$tls_pid" 2>/dev/null || true
-            docker logs "$container" 2>&1 | tail -200 || true
-            docker stop --time 5 "$container" >/dev/null 2>&1 || true
+            tools/conformance-env/linux-local --root "$ROOT" down || true
           }
           trap cleanup EXIT
-          python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
-          redirect_pid=$!
-          python3 tools/conformance-env/untrusted-tls-server --port 4542 \
-            --certificate "$ROOT/untrusted-tls.crt" --key "$ROOT/untrusted-tls.key" &
-          tls_pid=$!
-          for attempt in {1..20}; do
-            if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
-              curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null; then break; fi
-            sleep 0.1
-          done
-          curl --fail --silent http://127.0.0.1:4540/health >/dev/null
-          curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null
-          docker run --detach --name "$container" --platform linux/amd64 \
-            --user "$(id -u):$(id -g)" \
-            --publish 127.0.0.1:4533:4533 \
-            --env ND_CONFIGFILE=/config/navidrome.toml --env TZ=UTC \
-            --volume "$ROOT/config/navidrome.toml:/config/navidrome.toml:ro" \
-            --volume "$ROOT/music:/music:ro" \
-            --volume "$ROOT/data:/data" \
-            --volume "$ROOT/cache:/cache" \
-            "$image"
-          tools/conformance-env/health-check \
-            --base-url http://127.0.0.1:4533 \
-            --runtime linux/amd64 \
-            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
-            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.linux.version)" \
-            --ffmpeg-command-json "[\"docker\",\"exec\",\"$container\",\"$(tools/conformance-env/read-pin ffmpeg.linux.path)\"]" \
-            --corpus-manifest "$ROOT/music/corpus-manifest.json"
-          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-            DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
-            DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+          tools/conformance-env/linux-local --root "$ROOT" up
+          tools/conformance-env/linux-local --root "$ROOT" run -- \
             ./gradlew --no-daemon :core-conformance:jvmTest
 
   core-ci:

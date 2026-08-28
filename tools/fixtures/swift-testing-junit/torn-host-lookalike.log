@@ -1,0 +1,4 @@
+◇ Test firstClaim() started.
+2026-08-28 09:14:33.123456-0400 host[123:456] [Dulcet] ✔ Test phantomClaim() passed
+✔ Test firstClaim() passed after 0.02 seconds.
+✔ Test run with 1 test in 0 suites passed after 0.02 seconds.

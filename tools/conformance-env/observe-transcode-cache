@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Issue one fixed transcode request and report Navidrome's cache decision from its own log."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import http.client
+import json
+import os
+import re
+import secrets
+import subprocess
+import urllib.parse
+import urllib.request
+
+
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+CLIENT = "dulcet-cache-observation"
+SUBSONIC_VERSION = "1.16.1"
+STREAM_LOG = 'msg="Streaming file"'
+
+
+def subsonic_url(base_url: str, endpoint: str, parameters: dict[str, str]) -> str:
+    salt = secrets.token_hex(8)
+    token = hashlib.md5(
+        (ADMIN_PASSWORD + salt).encode(), usedforsecurity=False
+    ).hexdigest()
+    query = urllib.parse.urlencode(
+        {
+            "u": ADMIN_USER,
+            "t": token,
+            "s": salt,
+            "v": SUBSONIC_VERSION,
+            "c": CLIENT,
+            "f": "json",
+            **parameters,
+        }
+    )
+    return f"{base_url}/rest/{endpoint}.view?{query}"
+
+
+def docker_logs(container: str) -> list[str]:
+    result = subprocess.run(
+        ["docker", "logs", container],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"cannot read disposable container logs: {result.stdout.strip()}")
+    return result.stdout.splitlines()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--container", required=True)
+    args = parser.parse_args()
+    if os.environ.get("DULCET_CONFORMANCE_DISPOSABLE") != "true":
+        raise SystemExit("cache observation requires DULCET_CONFORMANCE_DISPOSABLE=true")
+    base_url = os.environ.get("DULCET_CONFORMANCE_BASE_URL")
+    if base_url != "http://127.0.0.1:4533":
+        raise SystemExit(f"cache observation is restricted to disposable loopback, observed: {base_url}")
+
+    before = [line for line in docker_logs(args.container) if STREAM_LOG in line]
+    search_url = subsonic_url(
+        base_url,
+        "search3",
+        {"query": "Dulcet Health Probe", "songCount": "10"},
+    )
+    with urllib.request.urlopen(search_url, timeout=10) as response:
+        document = json.load(response)
+    songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
+    song = next((value for value in songs if value.get("title") == "Dulcet Health Probe"), None)
+    if not song or not isinstance(song.get("id"), str):
+        raise SystemExit("known transcode cache probe is absent from the disposable corpus")
+
+    stream_url = subsonic_url(
+        base_url,
+        "stream",
+        {
+            "id": song["id"],
+            "format": "mp3",
+            "maxBitRate": "128",
+            "timeOffset": "1",
+            "estimateContentLength": "true",
+        },
+    )
+    incomplete_read = False
+    try:
+        with urllib.request.urlopen(stream_url, timeout=30) as response:
+            payload = response.read()
+    except http.client.IncompleteRead as error:
+        payload = error.partial
+        incomplete_read = True
+    if not payload:
+        raise SystemExit("fixed transcode cache probe returned no audio bytes")
+
+    after = [line for line in docker_logs(args.container) if STREAM_LOG in line]
+    new_lines = after[len(before) :]
+    if len(new_lines) != 1:
+        raise SystemExit(
+            f"expected one new Navidrome streaming observation, found {len(new_lines)}: {new_lines}"
+        )
+    line = new_lines[0]
+    cached = re.search(r"\bcached=(true|false)\b", line)
+    transcoding = re.search(r"\btranscoding=(true|false)\b", line)
+    if cached is None or transcoding is None:
+        raise SystemExit(f"Navidrome streaming observation is incomplete: {line}")
+    if transcoding.group(1) != "true":
+        raise SystemExit(f"fixed cache probe did not exercise transcoding: {line}")
+    print(
+        "TRANSCODE CACHE OBSERVATION "
+        f"cached={cached.group(1)} transcoding=true bytes={len(payload)} "
+        f"incomplete_read={str(incomplete_read).lower()} song=Dulcet-Health-Probe"
+    )
+
+
+if __name__ == "__main__":
+    main()
