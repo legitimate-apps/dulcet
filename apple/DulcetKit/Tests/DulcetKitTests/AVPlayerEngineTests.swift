@@ -374,6 +374,92 @@ struct AVPlayerEngineTests {
         #expect(!center.disableLanguageOptionCommand.isEnabled)
         controls.clear()
     }
+
+    @Test
+    func allTenCommandsProduceExactlyOneCorrelatedOutcome() async throws {
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let current = plan(session: "session", attempt: "first")
+        let replacement = plan(session: "session", attempt: "second")
+        let next = plan(session: "next-session", attempt: "next")
+
+        #expect(await execute(engine, .prepare(commandID: .init("prepare"), plan: current))
+            == .accepted(commandID: .init("prepare")))
+        try await waitUntil("command fixture did not become ready") {
+            events.containsReady(seekability: .seekable)
+        }
+        #expect(await execute(engine, .play(commandID: .init("play")))
+            == .accepted(commandID: .init("play")))
+        #expect(await execute(engine, .pause(commandID: .init("pause")))
+            == .completed(commandID: .init("pause"), result: .withoutData))
+        #expect(await execute(engine, .seek(commandID: .init("seek"), position: 0.25))
+            == .completed(commandID: .init("seek"), result: .withoutData))
+        #expect(await execute(engine, .setVolume(commandID: .init("volume"), volume: 0.5))
+            == .completed(commandID: .init("volume"), result: .withoutData))
+        #expect(await execute(engine, .setRate(commandID: .init("rate"), rate: 1.25))
+            == .completed(commandID: .init("rate"), result: .withoutData))
+        #expect(await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
+            == .accepted(commandID: .init("preload")))
+        #expect(await execute(engine, .replaceCurrent(commandID: .init("replace"), plan: replacement))
+            == .accepted(commandID: .init("replace")))
+        #expect(await execute(engine, .stop(commandID: .init("stop")))
+            == .completed(commandID: .init("stop"), result: .withoutData))
+        #expect(await execute(engine, .release(commandID: .init("release")))
+            == .completed(commandID: .init("release"), result: .withoutData))
+        #expect(await execute(engine, .play(commandID: .init("after-release")))
+            == .rejected(commandID: .init("after-release"), reason: .engineReleased))
+    }
+
+    @Test
+    func sourceExpiryRequestsCoreRefreshWithoutAnAdapterRetry() async throws {
+        let resource = FailingPlaybackResource(
+            error: .authentication,
+            refreshReason: .unauthorized
+        )
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(resource: resource)
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+
+        try await waitUntil("401 did not request a source refresh") {
+            events.snapshot.contains(.sourceRefreshRequired(
+                attemptID: playbackPlan.attemptID,
+                reason: .unauthorized
+            ))
+        }
+        #expect(resource.requestCount == 1)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func credentialBearingFoundationErrorsCollapseToClosedFailures() {
+        let usernameCanary = "foundation-user-canary"
+        let tokenCanary = "foundation-token-canary"
+        let url = URL(
+            string: "https://source.invalid/audio?u=\(usernameCanary)&t=\(tokenCanary)"
+        )!
+        let error = NSError(
+            domain: NSURLErrorDomain,
+            code: URLError.secureConnectionFailed.rawValue,
+            userInfo: [
+                NSURLErrorFailingURLErrorKey: url,
+                NSURLErrorFailingURLStringErrorKey: url.absoluteString,
+            ]
+        )
+
+        let avFailure = DulcetApplePlaybackErrorSanitizer.avFoundationFailure(error)
+        let sessionFailure = DulcetApplePlaybackErrorSanitizer.urlSessionFailure(error)
+
+        #expect(avFailure == .tlsUntrusted)
+        #expect(sessionFailure == .tlsUntrusted)
+        let surfaced = String(reflecting: [avFailure, sessionFailure])
+        #expect(!surfaced.contains(usernameCanary))
+        #expect(!surfaced.contains(tokenCanary))
+        #expect(!surfaced.contains("?"))
+    }
 }
 
 private func execute(
@@ -467,6 +553,37 @@ private final class SuspendedPlaybackResource: DulcetPlaybackResourceLoading, @u
                 supportsByteRanges: true
             )
         ))
+    }
+}
+
+private final class FailingPlaybackResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
+    private let error: DulcetPlaybackFailure
+    private let refreshReason: DulcetPlaybackSourceRefreshReason?
+    private let lock = NSLock()
+    private var requests = 0
+
+    init(error: DulcetPlaybackFailure, refreshReason: DulcetPlaybackSourceRefreshReason?) {
+        self.error = error
+        self.refreshReason = refreshReason
+    }
+
+    var description: String { "FailingPlaybackResource(<redacted>)" }
+
+    var requestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    func load(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        lock.lock()
+        requests += 1
+        lock.unlock()
+        completion(.failed(error: error, refreshReason: refreshReason))
+        return InMemoryPlaybackOperation()
     }
 }
 

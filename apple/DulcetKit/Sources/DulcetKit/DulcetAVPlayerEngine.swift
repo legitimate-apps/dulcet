@@ -895,18 +895,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func closedFailure(for error: Error?) -> DulcetPlaybackFailure {
-        guard let nsError = error as NSError? else { return .engine }
-        if nsError.domain == NSURLErrorDomain {
-            switch URLError.Code(rawValue: nsError.code) {
-            case .serverCertificateHasBadDate, .serverCertificateUntrusted,
-                 .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
-                 .secureConnectionFailed:
-                return .tlsUntrusted
-            default:
-                return .transport
-            }
-        }
-        return .engine
+        DulcetApplePlaybackErrorSanitizer.avFoundationFailure(error)
     }
 
     private func context(for attemptID: DulcetPlaybackAttemptID) -> PlayerItemContext? {

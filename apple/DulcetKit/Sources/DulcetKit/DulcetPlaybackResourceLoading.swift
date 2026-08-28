@@ -240,16 +240,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     }
 
     private static func closedFailure(for error: Error?) -> DulcetPlaybackFailure {
-        guard let code = (error as? URLError)?.code else { return .transport }
-        switch code {
-        case .serverCertificateHasBadDate, .serverCertificateUntrusted,
-             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
-             .clientCertificateRejected, .clientCertificateRequired,
-             .secureConnectionFailed:
-            return .tlsUntrusted
-        default:
-            return .transport
-        }
+        DulcetApplePlaybackErrorSanitizer.urlSessionFailure(error)
     }
 
     private func redirectCount(taskIdentifier: Int) -> Int {
@@ -639,5 +630,33 @@ private extension DulcetPlaybackFailure {
         case .engine: 9
         }
         return NSError(domain: "com.legitimateapps.dulcet.playback", code: code)
+    }
+}
+
+/// The only conversion point for URL-bearing Foundation errors. Raw errors are never returned.
+enum DulcetApplePlaybackErrorSanitizer {
+    static func avFoundationFailure(_ error: Error?) -> DulcetPlaybackFailure {
+        guard let nsError = error as NSError? else { return .engine }
+        guard nsError.domain == NSURLErrorDomain else { return .engine }
+        return urlFailureCode(nsError.code)
+    }
+
+    static func urlSessionFailure(_ error: Error?) -> DulcetPlaybackFailure {
+        guard let nsError = error as NSError?, nsError.domain == NSURLErrorDomain else {
+            return .transport
+        }
+        return urlFailureCode(nsError.code)
+    }
+
+    private static func urlFailureCode(_ rawCode: Int) -> DulcetPlaybackFailure {
+        switch URLError.Code(rawValue: rawCode) {
+        case .serverCertificateHasBadDate, .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+             .clientCertificateRejected, .clientCertificateRequired,
+             .secureConnectionFailed:
+            return .tlsUntrusted
+        default:
+            return .transport
+        }
     }
 }
