@@ -20,6 +20,7 @@ import tempfile
 # states below were introduced.
 STATES = (
     "account-connect-idle",
+    "account-connect-empty",
     "account-connecting",
     "account-connected",
     "account-removing",
@@ -40,6 +41,8 @@ STATES = (
     "library-browse",
     "album-detail-multi-disc",
     "now-playing",
+    "now-playing-preparing",
+    "now-playing-failed",
     "now-playing-unavailable",
     "search-idle",
     "search-loading",
@@ -47,6 +50,7 @@ STATES = (
     "search-empty",
     "search-error",
     "error-tls-untrusted",
+    "error-tls-untrusted-populated-form",
     "offline-metadata-only",
 )
 APPEARANCES = ("light", "dark")

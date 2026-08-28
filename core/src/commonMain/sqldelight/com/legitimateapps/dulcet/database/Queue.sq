@@ -17,7 +17,7 @@ CREATE TABLE queue_entry (
   queue_entry_id TEXT NOT NULL,
   raw_id TEXT NOT NULL,
   source_context_kind TEXT NOT NULL CHECK (
-    source_context_kind IN ('album', 'playlist', 'search', 'artist')
+    source_context_kind IN ('library', 'album', 'playlist', 'search', 'artist')
   ),
   source_context_raw_id TEXT,
   source_context_display_name TEXT NOT NULL,

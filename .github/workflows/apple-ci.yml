@@ -91,9 +91,15 @@ jobs:
         run: |
           set -o pipefail
           cd apple/DulcetKit
+          # -parallel-testing-enabled NO restores the serial execution `swift test` gave us before
+          # the move to result bundles. xcodebuild parallelises by default, and these suites drive
+          # real AVFoundation: under contention a readiness wait that normally settles in ~4s
+          # exceeded its 20s timeout while unrelated instant tests took 6s. The iOS and tvOS
+          # invocations below already pass this flag; the macOS package was the one that did not.
           xcodebuild test \
             -scheme DulcetKit-Package \
             -destination 'platform=macOS' \
+            -parallel-testing-enabled NO \
             -derivedDataPath "$RUNNER_TEMP/DulcetKitDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-swift-testing.xcresult" 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-swift-testing.log"
@@ -361,6 +367,8 @@ jobs:
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
         run: |
           set -o pipefail
           openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
@@ -387,6 +395,20 @@ jobs:
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
+          restart_navidrome_cold() {
+            kill "$navidrome_pid"
+            wait "$navidrome_pid" 2>/dev/null || true
+            tools/conformance-env/reset-transcode-cache --root "$ROOT"
+            "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" >> "$ROOT/logs/navidrome.log" 2>&1 &
+            navidrome_pid=$!
+            for _ in {1..100}; do
+              if curl --fail --silent http://127.0.0.1:4533/app/ >/dev/null; then break; fi
+              sleep 0.1
+            done
+            curl --fail --silent http://127.0.0.1:4533/app/ >/dev/null
+            tools/conformance-env/observe-transcode-cache \
+              --log-file "$ROOT/logs/navidrome.log" --expect-cached false
+          }
           for _ in {1..20}; do
             if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
               curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null && \
@@ -412,6 +434,7 @@ jobs:
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
+              -parallel-testing-enabled NO \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
@@ -462,7 +485,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
+          restart_navidrome_cold
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
@@ -483,11 +508,14 @@ jobs:
           conformance_sim="$(xcrun simctl create \
             dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
           xcrun simctl boot "$conformance_sim"
+          restart_navidrome_cold
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
@@ -502,11 +530,14 @@ jobs:
             dulcet-tvos-conformance \
             com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p)"
           xcrun simctl boot "$tvos_conformance_sim"
+          restart_navidrome_cold
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \

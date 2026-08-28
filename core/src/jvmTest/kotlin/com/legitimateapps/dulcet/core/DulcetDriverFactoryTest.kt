@@ -26,7 +26,7 @@ class DulcetDriverFactoryTest {
             first.close()
 
             val reopened = DulcetDriverFactory(path.toString()).openDulcetDatabase()
-            assertEquals(1, reopened.metadata().schemaVersion)
+            assertEquals(DULCET_SCHEMA_VERSION, reopened.metadata().schemaVersion)
             assertEquals(73, reopened.metadata().committedGeneration)
             reopened.close()
         } finally {

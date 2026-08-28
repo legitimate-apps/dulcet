@@ -12,7 +12,7 @@ class DulcetDatabaseTest {
         val first = DulcetDatabaseStore.open(driver)
         assertEquals(
             DulcetSchemaMetadata(
-                schemaVersion = 1,
+                schemaVersion = DULCET_SCHEMA_VERSION,
                 cacheFormatVersion = 1,
                 committedGeneration = 0,
             ),

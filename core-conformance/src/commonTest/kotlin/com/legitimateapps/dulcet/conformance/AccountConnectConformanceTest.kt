@@ -619,6 +619,8 @@ class AccountConnectConformanceTest {
 
     @Test
     fun localHttpRequiresExplicitConsent() = runTest {
+        val disposableBaseUrl = conformanceBaseUrl()
+        val disposablePort = disposableBaseUrl.substringAfterLast(':')
         val result = fixture().connect(allowLocalHttp = false)
         val error = assertIs<AccountConnectionResult.Failed>(
             result,
@@ -631,9 +633,9 @@ class AccountConnectConformanceTest {
         assertTrue(consented.allowsLocalHttp)
 
         val schemeLess = assertIs<AccountConnectionResult.Connected>(
-            fixture().connect(serverUrl = "127.0.0.1:4533"),
+            fixture().connect(serverUrl = disposableBaseUrl.removePrefix("http://")),
         ).account
-        assertEquals("http://127.0.0.1:4533", schemeLess.normalizedBaseUrl)
+        assertEquals(disposableBaseUrl, schemeLess.normalizedBaseUrl)
 
         val localName = assertIs<AccountConnectionResult.Connected>(
             fixture(
@@ -641,14 +643,14 @@ class AccountConnectConformanceTest {
                     assertEquals("library.local", host)
                     listOf("127.0.0.1")
                 },
-            ).connect(serverUrl = "http://library.local:4533"),
+            ).connect(serverUrl = "http://library.local:$disposablePort"),
         ).account
         assertTrue(localName.requests.all { "127.0.0.1" in it.redactedUrl })
         assertTrue(localName.requests.none { "library.local" in it.redactedUrl })
 
         val mixedResolution = fixture(
             hostResolver = HostResolver { listOf("127.0.0.1", "203.0.113.10") },
-        ).connect(serverUrl = "http://library.local:4533")
+        ).connect(serverUrl = "http://library.local:$disposablePort")
         assertIs<DomainError.Security.LocalExceptionViolated>(
             assertIs<AccountConnectionResult.Failed>(mixedResolution).error,
         )
@@ -659,7 +661,7 @@ class AccountConnectConformanceTest {
                 resolutionCount += 1
                 if (resolutionCount == 1) listOf("127.0.0.1") else listOf("203.0.113.10")
             },
-        ).connect(serverUrl = "http://library.local:4533")
+        ).connect(serverUrl = "http://library.local:$disposablePort")
         assertEquals(2, resolutionCount)
         assertIs<DomainError.Security.LocalExceptionViolated>(
             assertIs<AccountConnectionResult.Failed>(rebound).error,
@@ -1058,15 +1060,7 @@ class AccountConnectConformanceTest {
         }
     }
 
-    private fun conformanceBaseUrl(): String =
-        requiredEnvironment("DULCET_CONFORMANCE_BASE_URL").also { baseUrl ->
-            check(requiredEnvironment("DULCET_CONFORMANCE_DISPOSABLE") == "true") {
-                "conformance suite requires an explicitly declared disposable instance"
-            }
-            check(baseUrl == "http://127.0.0.1:4533") {
-                "conformance suite is restricted to the disposable loopback server, observed: $baseUrl"
-            }
-        }
+    private fun conformanceBaseUrl(): String = disposableConformanceBaseUrl()
 
     private fun redirectConformanceRoot(): String =
         requiredEnvironment("DULCET_REDIRECT_CONFORMANCE_ROOT").also { root ->

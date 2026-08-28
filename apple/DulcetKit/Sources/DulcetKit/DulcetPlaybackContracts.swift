@@ -38,7 +38,7 @@ public enum DulcetPlaybackDeliveryProtocol: Sendable {
     case hls
 }
 
-public enum DulcetAudioContainer: Sendable {
+public enum DulcetAudioContainer: Sendable, Hashable {
     case mp3
     case mp4
     case wav
@@ -154,7 +154,7 @@ public enum DulcetPlaybackCommandOutcome: Equatable, Sendable {
     }
 }
 
-public enum DulcetPlaybackSeekability: Equatable, Sendable {
+public enum DulcetPlaybackSeekability: Equatable, Hashable, Sendable {
     case seekable
     case notSeekable
     case unknown

@@ -26,7 +26,7 @@ public struct DulcetDeterministicFixture {
         )
 
         switch state {
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
@@ -42,7 +42,7 @@ public struct DulcetDeterministicFixture {
             return base.snapshot(selectedAlbum: Self.doubleLines)
         case .nowPlaying:
             return base.snapshot(nowPlaying: Self.nowPlaying)
-        case .nowPlayingUnavailable:
+        case .nowPlayingPreparing, .nowPlayingFailed, .nowPlayingUnavailable:
             return base.snapshot()
         case .searchIdle:
             return base.snapshot()
@@ -63,6 +63,8 @@ public struct DulcetDeterministicFixture {
             )
         case .tlsUntrusted:
             return base.snapshot()
+        case .tlsUntrustedPopulatedForm:
+            return base.snapshot(accountForm: Self.populatedAccountForm)
         case .offlineMetadataOnly:
             let offlineAlbums = library.map { album in
                 DulcetAlbum(
@@ -97,15 +99,16 @@ public struct DulcetDeterministicFixture {
              .libraryLoading, .libraryError,
              .libraryBrowse, .albumDetailMultiDisc, .offlineMetadataOnly:
             .library
-        case .nowPlaying, .nowPlayingUnavailable:
+        case .nowPlaying, .nowPlayingPreparing, .nowPlayingFailed, .nowPlayingUnavailable:
             .nowPlaying
         case .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError:
             .search
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
-             .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted:
+             .accountErrorCapability, .accountErrorPersistence, .tlsUntrusted,
+             .tlsUntrustedPopulatedForm:
             .settings
         }
     }
@@ -120,11 +123,11 @@ public struct DulcetDeterministicFixture {
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
             .connectionFailed(.account(Self.accountFailure(for: state)))
-        case .accountConnectIdle, .accountConnecting:
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting:
             .unavailable
         case .emptyLibraryNoAccount:
             .unavailable
-        case .tlsUntrusted:
+        case .tlsUntrusted, .tlsUntrustedPopulatedForm:
             .connectionFailed(.tlsUntrusted(Self.tlsFailure))
         case .offlineMetadataOnly:
             .offline(lastSyncedDescription: "Today at 14:28 UTC")
@@ -134,14 +137,9 @@ public struct DulcetDeterministicFixture {
     }
 
     private func accountSnapshot(for state: DulcetPresentationState) -> DulcetSnapshot {
-        let form = DulcetAccountConnectRequest(
-            serverURL: "https://music.example.invalid",
-            username: "listener",
-            password: "fixture-password",
-            allowLocalHTTP: false
-        )
+        let form = state == .accountConnectEmpty ? .empty : Self.populatedAccountForm
         let status: DulcetAccountConnectionStatus = switch state {
-        case .accountConnectIdle:
+        case .accountConnectIdle, .accountConnectEmpty:
             .idle
         case .accountConnecting:
             .connecting
@@ -157,9 +155,10 @@ public struct DulcetDeterministicFixture {
              .accountErrorCapability, .accountErrorPersistence:
             .failed(Self.accountFailure(for: state))
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
+             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
-             .tlsUntrusted, .offlineMetadataOnly:
+             .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
             .idle
         }
         let removal: DulcetAccountRemovalStatus = switch state {
@@ -245,7 +244,8 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
-        case .loadMoreSearchResults, .retrySearch:
+        case .loadMoreSearchResults, .retrySearch, .playLibrary, .playAlbum,
+             .activateTrack, .playbackControl:
             break
         case let .selectAlbum(id):
             if let album = currentSnapshot.albums.first(where: { $0.id == id }) {
@@ -350,7 +350,8 @@ private extension DulcetDeterministicFixture {
             searchQuery: String = "",
             searchResults: [DulcetSearchResult] = [],
             searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
-            searchFailure: DulcetSearchFailure? = nil
+            searchFailure: DulcetSearchFailure? = nil,
+            accountForm: DulcetAccountConnectRequest = .empty
         ) -> DulcetSnapshot {
             DulcetSnapshot(
                 state: state,
@@ -366,7 +367,8 @@ private extension DulcetDeterministicFixture {
                 searchResults: searchResults,
                 searchHasMoreKinds: searchHasMoreKinds,
                 searchFailure: searchFailure,
-                captureDate: DulcetDeterministicFixture.captureDate
+                captureDate: DulcetDeterministicFixture.captureDate,
+                accountForm: accountForm
             )
         }
     }
@@ -527,6 +529,7 @@ private extension DulcetDeterministicFixture {
             longTitleAlbum.tracks[0],
             doubleLines.tracks[0],
         ],
+        sourceDisplayName: unicodeAlbum.title,
         elapsed: .seconds(142),
         isPlaying: true,
         outputName: "Studio Display",
@@ -587,6 +590,13 @@ private extension DulcetDeterministicFixture {
         serverName: "Listening Room",
         reason: "The certificate expired on 14 August 2026.",
         technicalDetail: "macOS stopped the connection because it could not establish an OS-trusted certificate chain."
+    )
+
+    static let populatedAccountForm = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
     )
 
     static func accountFailure(
@@ -657,12 +667,13 @@ private extension DulcetDeterministicFixture {
                 "Unlock the Keychain and try connecting again.",
                 nil
             )
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
+             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
-             .tlsUntrusted, .offlineMetadataOnly:
+             .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
             (
                 .transportUnreachable,
                 "Can’t reach the server",

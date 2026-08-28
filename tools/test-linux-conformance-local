@@ -9,7 +9,10 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools/conformance-env/linux-local"
+RESET_TOOL = ROOT / "tools/conformance-env/reset-transcode-cache"
+OBSERVE_TOOL = ROOT / "tools/conformance-env/observe-transcode-cache"
 WORKFLOW = ROOT / ".github/workflows/core-ci.yml"
+APPLE_WORKFLOW = ROOT / ".github/workflows/apple-ci.yml"
 
 
 environment = subprocess.run(
@@ -59,6 +62,10 @@ for required_source in (
     'binding != expected_binding',
     'REPOSITORY / "tools/seed-corpus"',
     'TOOLS / "health-check"',
+    'TOOLS / "reset-transcode-cache"',
+    '":core-conformance:macosArm64Test"',
+    '":core-conformance:iosSimulatorArm64Test"',
+    '":core-conformance:tvosSimulatorArm64Test"',
 ):
     if required_source not in source:
         raise AssertionError(f"shared lifecycle source is missing {required_source!r}")
@@ -71,7 +78,34 @@ if "tools/conformance-env/linux-local --root \"$ROOT\" run --" not in workflow:
 if "deluan/navidrome@sha256:" in workflow or "/usr/bin/ffmpeg" in workflow:
     raise AssertionError("core-ci duplicates a conformance pin outside tools/conformance-env")
 
+reset_source = RESET_TOOL.read_text()
+for required_source in (
+    'DULCET_CONFORMANCE_DISPOSABLE") != "true"',
+    'observed_url != LOOPBACK_BASE_URL',
+    'marker.read_text() != "isolated-root\\n"',
+    'clear_transcode_entries(transcode_cache)',
+    'require_server_stopped()',
+):
+    if required_source not in reset_source:
+        raise AssertionError(f"cache reset source is missing {required_source!r}")
+
+observe_source = OBSERVE_TOOL.read_text()
+for required_source in ('source.add_argument("--log-file")', 'choices=("true", "false")'):
+    if required_source not in observe_source:
+        raise AssertionError(f"cache observation source is missing {required_source!r}")
+
+apple_workflow = APPLE_WORKFLOW.read_text()
+if apple_workflow.count("          restart_navidrome_cold\n") != 3:
+    raise AssertionError("apple-ci must restart and observe cold exactly once before each native run")
+for required_workflow in (
+    'tools/conformance-env/reset-transcode-cache --root "$ROOT"',
+    '--log-file "$ROOT/logs/navidrome.log" --expect-cached false',
+):
+    if required_workflow not in apple_workflow:
+        raise AssertionError(f"apple-ci cold restart is missing {required_workflow!r}")
+
 print(
-    "Linux conformance lifecycle rejects an unmarked root, preserves its sentinel, exports the "
-    "loopback disposable contract, and shares every pin/corpus/health source with core-ci"
+    "The conformance lifecycle rejects an unmarked root, preserves its sentinel, exports the "
+    "loopback disposable contract, shares every pin/corpus/health source with core-ci, and makes "
+    "all three apple-ci and local native runs reset then require an observed cold transcode"
 )

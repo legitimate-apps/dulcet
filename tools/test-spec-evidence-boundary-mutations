@@ -132,10 +132,20 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-exceeds-") as dire
     materialize(root)
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    marker = "**Revision 79 ("
-    if marker not in spec:
-        raise AssertionError("revision exceeds fixture is missing")
-    spec_path.write_text(spec.replace(marker, "**Revision 81 (", 1))
+    # The declaration derives from the FIRST record, so "exceeds the declaration" means a LATER
+    # record numbering higher than that first one. Both numbers are computed from the document
+    # rather than written here: this mutation used to hardcode 79 -> 81, which silently stopped
+    # exceeding anything the moment 81 became a real revision, and then failed with "duplicate"
+    # and "missing 79" instead of the error it exists to prove. A control whose arithmetic goes
+    # stale as the document grows is one that will eventually pass while proving nothing.
+    records = re.findall(r"\*\*Revision (\d+) \(", spec)
+    if len(records) < 2:
+        raise AssertionError("revision exceeds fixture needs at least two records")
+    highest = int(records[0])
+    last_marker = f"**Revision {records[-1]} ("
+    spec_path.write_text(
+        spec.replace(last_marker, f"**Revision {highest + 1} (", 1)
+    )
     result = invoke(root)
     expected = "exceeds its derived declaration"
     if result.returncode == 0 or expected not in result.stdout:

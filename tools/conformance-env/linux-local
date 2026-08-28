@@ -145,6 +145,7 @@ def stop_auxiliary(root: Path) -> None:
     for name, expected in (
         ("redirect.pid", "redirect-server"),
         ("tls.pid", "untrusted-tls-server"),
+        ("proxy.pid", "redirect-server"),
     ):
         path = root / "logs" / name
         if not path.is_file():
@@ -188,27 +189,33 @@ def clear_directory(root: Path, name: str) -> None:
 
 
 def require_available_loopback_ports() -> None:
-    occupied: list[int] = []
-    reservations: list[socket.socket] = []
-    try:
-        for port in (4533, 4540, 4541, 4542):
-            reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                reservation.bind(("127.0.0.1", port))
-            except OSError:
+    deadline = time.monotonic() + 5
+    while True:
+        occupied: list[int] = []
+        reservations: list[socket.socket] = []
+        try:
+            for port in (4533, 4540, 4541, 4542, 4543):
+                reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    reservation.bind(("127.0.0.1", port))
+                except OSError:
+                    reservation.close()
+                    occupied.append(port)
+                else:
+                    reservations.append(reservation)
+        finally:
+            for reservation in reservations:
                 reservation.close()
-                occupied.append(port)
-            else:
-                reservations.append(reservation)
-    finally:
-        for reservation in reservations:
-            reservation.close()
-    if occupied:
-        ports = ", ".join(str(port) for port in occupied)
-        raise RuntimeError(
-            f"required loopback port(s) already in use: {ports}; "
-            "refusing to replace or attach to another service"
-        )
+        if not occupied:
+            return
+        if time.monotonic() >= deadline:
+            ports = ", ".join(str(port) for port in occupied)
+            raise RuntimeError(
+                f"required loopback port(s) already in use: {ports}; "
+                "refusing to replace or attach to another service"
+            )
+        time.sleep(0.1)
 
 
 def ensure_corpus(root: Path, image: str) -> None:
@@ -303,6 +310,20 @@ def start_auxiliary(root: Path) -> None:
         start_new_session=True,
     )
     (logs / "tls.pid").write_text(f"{tls.pid}\n")
+    proxy_log = (logs / "proxy.log").open("ab")
+    proxy = subprocess.Popen(
+        [
+            sys.executable,
+            str(TOOLS / "redirect-server"),
+            "--port",
+            "4543",
+            "--forward-proxy-auth",
+        ],
+        stdout=proxy_log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    (logs / "proxy.pid").write_text(f"{proxy.pid}\n")
 
 
 def wait_for_url(url: str, *, insecure: bool = False) -> None:
@@ -400,6 +421,7 @@ def up(root: Path) -> None:
         start_auxiliary(root)
         wait_for_url("http://127.0.0.1:4540/health")
         wait_for_url("https://127.0.0.1:4542/health", insecure=True)
+        wait_for_url("http://127.0.0.1:4543/health")
         start_container(root, image, name)
         health_check(root, name)
     except Exception:
@@ -444,15 +466,81 @@ def print_environment() -> None:
         print(f"export {key}={value}")
 
 
-def observe_transcode_cache(root: Path) -> int:
+def observe_transcode_cache(root: Path, *, expected_cached: bool | None = None) -> int:
     require_root(root)
     name = container_name(root)
     require_running_container(name)
+    command = [str(TOOLS / "observe-transcode-cache"), "--container", name]
+    if expected_cached is not None:
+        command.extend(("--expect-cached", str(expected_cached).lower()))
     return subprocess.run(
-        [str(TOOLS / "observe-transcode-cache"), "--container", name],
+        command,
         env={**os.environ, **conformance_environment()},
         check=False,
     ).returncode
+
+
+def reset_transcode_cache(root: Path) -> int:
+    require_root(root)
+    name = container_name(root)
+    require_running_container(name)
+    subprocess.run(
+        ["docker", "stop", "--timeout", "5", name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    cleared = subprocess.run(
+        [str(TOOLS / "reset-transcode-cache"), "--root", str(root)],
+        env={**os.environ, **conformance_environment()},
+        check=False,
+    )
+    if cleared.returncode != 0:
+        return cleared.returncode
+    run(["docker", "start", name])
+    wait_for_url("http://127.0.0.1:4533/app/")
+    return observe_transcode_cache(root, expected_cached=False)
+
+
+def run_apple_conformance(root: Path, ios_simulator_udid: str, tvos_simulator_udid: str) -> int:
+    require_root(root)
+    name = container_name(root)
+    require_running_container(name)
+    environment = {**os.environ, **conformance_environment()}
+    for key, value in conformance_environment().items():
+        if key.startswith("DULCET_"):
+            environment[f"SIMCTL_CHILD_{key}"] = value
+
+    runs = (
+        ("macosArm64", [":core-conformance:macosArm64Test"]),
+        (
+            "iosSimulatorArm64",
+            [
+                ":core-conformance:iosSimulatorArm64Test",
+                f"-Pdulcet.iosSimulatorUdid={ios_simulator_udid}",
+            ],
+        ),
+        (
+            "tvosSimulatorArm64",
+            [
+                ":core-conformance:tvosSimulatorArm64Test",
+                f"-Pdulcet.tvosSimulatorUdid={tvos_simulator_udid}",
+            ],
+        ),
+    )
+    for platform, arguments in runs:
+        print(f"resetting transcode cache before {platform}", flush=True)
+        if reset_transcode_cache(root) != 0:
+            return 1
+        result = subprocess.run(
+            [str(REPOSITORY / "gradlew"), "--no-daemon", *arguments],
+            cwd=REPOSITORY,
+            env=environment,
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+    return 0
 
 
 def main() -> int:
@@ -460,7 +548,10 @@ def main() -> int:
     parser.add_argument("--root", help=f"disposable root (default: {DEFAULT_ROOT})")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("up", help="start from cold data/cache, reusing the generated corpus")
-    subparsers.add_parser("reset", help="reset to cold without regenerating the corpus")
+    subparsers.add_parser(
+        "reset",
+        help="reset only the live transcode cache and prove the fixed probe reports cached=false",
+    )
     subparsers.add_parser("down", help="stop the declared disposable instance")
     subparsers.add_parser("env", help="print the exact conformance environment")
     subparsers.add_parser(
@@ -469,11 +560,19 @@ def main() -> int:
     )
     run_parser = subparsers.add_parser("run", help="run a command with the exact conformance environment")
     run_parser.add_argument("test_command", nargs=argparse.REMAINDER)
+    apple_parser = subparsers.add_parser(
+        "run-apple",
+        help="run macOS, iOS simulator, and tvOS simulator conformance cold against one instance",
+    )
+    apple_parser.add_argument("--ios-simulator-udid", required=True)
+    apple_parser.add_argument("--tvos-simulator-udid", required=True)
     args = parser.parse_args()
     root = resolve_root(args.root)
     try:
-        if args.command in {"up", "reset"}:
+        if args.command == "up":
             up(root)
+        elif args.command == "reset":
+            return reset_transcode_cache(root)
         elif args.command == "down":
             down(root)
         elif args.command == "env":
@@ -485,6 +584,12 @@ def main() -> int:
             if command[:1] == ["--"]:
                 command = command[1:]
             return run_test_command(root, command)
+        elif args.command == "run-apple":
+            return run_apple_conformance(
+                root,
+                args.ios_simulator_udid,
+                args.tvos_simulator_udid,
+            )
     except (OSError, RuntimeError) as error:
         print(f"linux conformance environment error: {error}", file=sys.stderr)
         return 1

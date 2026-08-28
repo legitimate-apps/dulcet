@@ -9,6 +9,39 @@ import kotlin.time.Duration.Companion.seconds
 
 class PlaybackWireLoadingTest {
     @Test
+    fun legacyTranscodeCarriesReturnedLengthAsEstimatedOnTheLoadedPlan() = runTest {
+        val body = "ID3\u0004complete cold transcode".encodeToByteArray()
+        val estimate = body.size.toLong() + 23_398
+        val transport = QueueTransport(
+            gets = ArrayDeque(
+                listOf(
+                    response(
+                        statusCode = 200,
+                        body = body,
+                        contentType = "audio/mpeg",
+                        contentLength = PlaybackContentLength.Estimated(estimate),
+                    ),
+                ),
+            ),
+        )
+        val client = PlaybackWireClient(ACCOUNT, transport)
+        val plan = resolved(
+            client,
+            resolveRequest(FIRST_ATTEMPT).copy(supportsTranscodingExtension = false),
+        )
+
+        val loaded = assertIs<PlaybackLoadResult.Audio>(client.load(plan))
+
+        assertEquals(null, plan.contentLength)
+        assertEquals(PlaybackContentLength.Estimated(estimate), loaded.plan.contentLength)
+        assertEquals(PlaybackContentLength.Estimated(estimate), loaded.validation.contentLength)
+        assertEquals(
+            AuthenticatedEndpointContentLengthKind.Estimated,
+            transport.requests.single().options.contentLengthKind,
+        )
+    }
+
+    @Test
     fun pathABadRequestReresolvesExactlyOnceWithANewAttemptInTheSameSession() = runTest {
         val transport = QueueTransport(
             posts = ArrayDeque(
@@ -256,13 +289,14 @@ class PlaybackWireLoadingTest {
         contentType: String,
         retryAfter: String? = null,
         contentRange: String? = null,
+        contentLength: PlaybackContentLength? = PlaybackContentLength.Exact(body.size.toLong()),
     ): AuthenticatedEndpointResponse = AuthenticatedEndpointResponse(
         statusCode = statusCode,
         body = body,
         redactedUrl = "https://music.invalid:443/rest/wire.view?<redacted>",
         headers = AuthenticatedEndpointResponseHeaders(
             contentType = contentType,
-            contentLength = body.size.toLong(),
+            contentLength = contentLength,
             retryAfter = retryAfter,
             acceptRanges = null,
             contentRange = contentRange,

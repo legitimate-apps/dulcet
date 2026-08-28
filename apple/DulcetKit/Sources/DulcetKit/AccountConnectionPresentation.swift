@@ -355,6 +355,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let libraryBrowser: (any DulcetLibraryBrowsing)?
     private let artworkFetcher: (any DulcetArtworkFetching)?
     private let serverSearch: (any DulcetServerSearching)?
+    private let playbackController: (any DulcetPlaybackControlling)?
     private let searchDebounce: Duration
     private let providerInstanceIDFactory: @MainActor () -> String
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
@@ -386,6 +387,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryBrowser: (any DulcetLibraryBrowsing)? = nil,
         artworkFetcher: (any DulcetArtworkFetching)? = nil,
         serverSearch: (any DulcetServerSearching)? = nil,
+        playbackController: (any DulcetPlaybackControlling)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty,
         searchDebounce: Duration = .milliseconds(250),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
@@ -395,6 +397,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         self.libraryBrowser = libraryBrowser
         self.artworkFetcher = artworkFetcher
         self.serverSearch = serverSearch
+        self.playbackController = playbackController
         self.searchDebounce = searchDebounce
         self.providerInstanceIDFactory = providerInstanceIDFactory
         do {
@@ -425,6 +428,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 form: initialRequest,
                 status: .failed(failure)
             )
+        }
+        playbackController?.setPresentationHandler { [weak self] presentation in
+            self?.receivePlaybackPresentation(presentation)
         }
     }
 
@@ -460,11 +466,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             case .nowPlaying:
                 cancelLibraryBrowse()
                 cancelSearchRequest()
-                publish(
-                    state: .nowPlayingUnavailable,
-                    destination: .nowPlaying,
-                    form: currentSnapshot.accountForm,
-                    status: currentSnapshot.accountConnection
+                receivePlaybackPresentation(
+                    playbackController?.currentPresentation ?? .unavailable,
+                    selectNowPlaying: true
                 )
             }
         case let .updateSearchQuery(query):
@@ -481,8 +485,46 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 destination: .library,
                 form: currentSnapshot.accountForm,
                 status: currentSnapshot.accountConnection,
+                musicFolders: currentSnapshot.musicFolders,
+                artists: currentSnapshot.artists,
+                albums: currentSnapshot.albums,
                 selectedAlbum: album
             )
+        case let .playLibrary(shuffle):
+            let tracks = currentSnapshot.albums.flatMap(\.tracks) + currentSnapshot.looseTracks
+            guard !tracks.isEmpty else { return }
+            beginPlayback(DulcetPlaybackQueueIntent(
+                tracks: tracks,
+                sourceKind: .library,
+                sourceID: nil,
+                sourceDisplayName: DulcetStrings.library,
+                startIndex: shuffle ? nil : 0,
+                shuffle: shuffle
+            ))
+        case let .playAlbum(id, shuffle):
+            guard let album = currentSnapshot.albums.first(where: { $0.id == id }),
+                  !album.tracks.isEmpty else { return }
+            beginPlayback(DulcetPlaybackQueueIntent(
+                tracks: album.tracks,
+                sourceKind: .album,
+                sourceID: album.id,
+                sourceDisplayName: album.title,
+                startIndex: shuffle ? nil : 0,
+                shuffle: shuffle
+            ))
+        case let .activateTrack(albumID, trackID):
+            guard let album = currentSnapshot.albums.first(where: { $0.id == albumID }),
+                  let index = album.tracks.firstIndex(where: { $0.id == trackID }) else { return }
+            beginPlayback(DulcetPlaybackQueueIntent(
+                tracks: album.tracks,
+                sourceKind: .album,
+                sourceID: album.id,
+                sourceDisplayName: album.title,
+                startIndex: index,
+                shuffle: false
+            ))
+        case let .playbackControl(intent):
+            playbackController?.send(intent)
         case let .submitAccountConnection(request):
             submit(request)
         case .cancelAccountConnection:
@@ -527,6 +569,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                         self.savedServerName = account.serverName
                     }
                     self.providerInstanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
+                    self.configurePlayback(account: account, request: request)
                     self.publish(
                         state: .accountConnected,
                         destination: .settings,
@@ -576,7 +619,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         artists: [DulcetArtist] = [],
         albums: [DulcetAlbum] = [],
         selectedAlbum: DulcetAlbum? = nil,
-        libraryFailure: DulcetLibraryFailure? = nil
+        libraryFailure: DulcetLibraryFailure? = nil,
+        nowPlaying: DulcetNowPlaying? = nil
     ) {
         currentSnapshot = Self.snapshot(
             state: state,
@@ -588,6 +632,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             albums: albums,
             selectedAlbum: selectedAlbum,
             libraryFailure: libraryFailure,
+            nowPlaying: nowPlaying,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,
@@ -608,6 +653,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         albums: [DulcetAlbum] = [],
         selectedAlbum: DulcetAlbum? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
+        nowPlaying: DulcetNowPlaying? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -639,6 +685,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             looseTracks: [],
             recentlyAddedTracks: [],
             selectedAlbum: selectedAlbum,
+            nowPlaying: nowPlaying,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,
@@ -705,6 +752,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.activeLibraryOperation = nil
             switch outcome {
             case let .loaded(musicFolders, artists, albums):
+                self.playbackController?.restorePersistedQueue(with: albums.flatMap(\.tracks))
                 self.publish(
                     state: albums.isEmpty && artists.isEmpty
                         ? .emptyLibraryConnected
@@ -977,6 +1025,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func finishAccountRemoval() {
         accountRemovalTask = nil
         providerInstanceID = nil
+        playbackController?.disconnect()
         searchQuery = ""
         searchResults = []
         searchHasMoreKinds = []
@@ -988,6 +1037,60 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             destination: .settings,
             form: .empty,
             status: .idle
+        )
+    }
+
+    private func configurePlayback(
+        account: DulcetConnectedAccountSummary,
+        request: DulcetAccountConnectRequest
+    ) {
+        guard let providerInstanceID else { return }
+        playbackController?.configure(account: DulcetPlaybackAccount(
+            providerInstanceID: providerInstanceID,
+            normalizedServerURL: account.normalizedServerURL,
+            username: request.username,
+            password: request.password,
+            allowLocalHTTP: request.allowLocalHTTP
+        ))
+    }
+
+    private func beginPlayback(_ intent: DulcetPlaybackQueueIntent) {
+        guard let playbackController else { return }
+        playbackController.replaceQueueAndPlay(intent)
+        receivePlaybackPresentation(playbackController.currentPresentation, selectNowPlaying: true)
+    }
+
+    private func receivePlaybackPresentation(
+        _ presentation: DulcetPlaybackPresentation,
+        selectNowPlaying: Bool = false
+    ) {
+        let destination = selectNowPlaying ? .nowPlaying : currentSnapshot.selectedDestination
+        let state: DulcetPresentationState
+        if destination == .nowPlaying {
+            state = switch presentation.status {
+            case .unavailable:
+                .nowPlayingUnavailable
+            case .preparing:
+                .nowPlayingPreparing
+            case .ready:
+                presentation.nowPlaying == nil ? .nowPlayingFailed : .nowPlaying
+            case .failed:
+                .nowPlayingFailed
+            }
+        } else {
+            state = currentSnapshot.state
+        }
+        publish(
+            state: state,
+            destination: destination,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection,
+            musicFolders: currentSnapshot.musicFolders,
+            artists: currentSnapshot.artists,
+            albums: currentSnapshot.albums,
+            selectedAlbum: currentSnapshot.selectedAlbum,
+            libraryFailure: currentSnapshot.libraryFailure,
+            nowPlaying: presentation.status == .ready ? presentation.nowPlaying : nil
         )
     }
 
@@ -1077,16 +1180,17 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
 private extension DulcetPresentationState {
     var accountStateOrIdle: DulcetPresentationState {
         switch self {
-        case .accountConnectIdle, .accountConnecting, .accountConnected,
+        case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
              .accountErrorInput, .accountErrorTransport, .accountErrorSecurity,
              .accountErrorProtocol, .accountErrorServer, .accountErrorAuthentication,
              .accountErrorCapability, .accountErrorPersistence:
             self
         case .emptyLibraryNoAccount, .emptyLibraryConnected, .libraryLoading, .libraryError,
-             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingUnavailable,
+             .libraryBrowse, .albumDetailMultiDisc, .nowPlaying, .nowPlayingPreparing,
+             .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
-             .tlsUntrusted, .offlineMetadataOnly:
+             .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
             .accountConnectIdle
         }
     }

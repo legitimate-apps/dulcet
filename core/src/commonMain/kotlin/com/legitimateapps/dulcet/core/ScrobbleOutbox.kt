@@ -79,6 +79,11 @@ internal class PersistentScrobbleOutbox(
     private val wallClock: OutboxWallClock,
 ) : SubmittedPlayOutboxSink {
     override suspend fun persistForAtLeastOnceDelivery(event: RecordedPlaybackEvent.SubmittedPlay) {
+        persistSynchronously(event)
+    }
+
+    /** The app boundary uses this before returning from an engine-event ingestion call. */
+    fun persistSynchronously(event: RecordedPlaybackEvent.SubmittedPlay) {
         database.scrobbleOutboxQueries.enqueue(
             server_id = event.itemId.providerInstanceId,
             raw_id = event.itemId.rawId,

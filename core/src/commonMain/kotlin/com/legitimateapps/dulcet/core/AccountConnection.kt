@@ -402,7 +402,7 @@ public class AccountConnector private constructor(
         saltSource = saltSource,
         logSink = logSink,
         hostResolver = hostResolver,
-        clientTransport = AccountClientTransport.Default,
+        clientTransport = AccountClientTransport.Default(),
     )
 
     internal constructor(
@@ -453,7 +453,15 @@ public class AccountConnector private constructor(
                 } catch (_: CancellationException) {
                     return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
                 } catch (failure: Throwable) {
-                    AccountConnectionResult.Failed(mapAccountConnectionFailure(failure))
+                    val unsupportedChallenge =
+                        clientTransport.challengeTracker.consumeUnsupported()
+                    AccountConnectionResult.Failed(
+                        if (unsupportedChallenge) {
+                            DomainError.Auth.UnsupportedAuthenticationChallenge
+                        } else {
+                            mapAccountConnectionFailure(failure)
+                        },
+                    )
                 }
                 lastResult = result
                 val mayTryLocalHttp = index < normalized.candidates.lastIndex &&
@@ -787,8 +795,6 @@ internal fun mapAccountConnectionFailure(failure: Throwable): DomainError = when
     failure is HttpRequestTimeoutException ||
         failure is ConnectTimeoutException ||
         failure is SocketTimeoutException -> DomainError.Transport.Timeout
-    isUnsupportedAuthenticationChallenge(failure) ->
-        DomainError.Auth.UnsupportedAuthenticationChallenge
     else -> tlsTrustFailureOrNull(failure)?.let {
         DomainError.Security.TlsUntrusted(it)
     } ?: DomainError.Transport.Unreachable
@@ -809,8 +815,18 @@ internal data class AccountForwardProxy(
 )
 
 internal sealed interface AccountClientTransport {
-    data object Default : AccountClientTransport
-    data class ForwardProxy(val proxy: AccountForwardProxy) : AccountClientTransport
+    val challengeTracker: UnsupportedAuthenticationChallengeTracker
+
+    class Default(
+        override val challengeTracker: UnsupportedAuthenticationChallengeTracker =
+            UnsupportedAuthenticationChallengeTracker(),
+    ) : AccountClientTransport
+
+    data class ForwardProxy(
+        val proxy: AccountForwardProxy,
+        override val challengeTracker: UnsupportedAuthenticationChallengeTracker =
+            UnsupportedAuthenticationChallengeTracker(),
+    ) : AccountClientTransport
 }
 
 internal val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {

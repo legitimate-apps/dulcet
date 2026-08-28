@@ -30,6 +30,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
@@ -54,6 +55,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet
@@ -113,6 +115,30 @@ targets:
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  DulcetPlaybackIntegrationTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - DulcetPlaybackIntegrationTests
+      - DulcetAppleShared/DulcetCorePlayback.swift
+      - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/realistic-tone.mp3
+        buildPhase: resources
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.playback-integration-tests
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
   DulcetiOS:
     type: application
     platform: iOS
@@ -124,6 +150,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -175,6 +202,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
         PRODUCT_NAME: Dulcet DEV
     preBuildScripts:
@@ -206,6 +234,13 @@ targets:
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
 schemes:
+  DulcetPlaybackIntegration:
+    build:
+      targets:
+        DulcetPlaybackIntegrationTests: [test]
+    test:
+      targets:
+        - DulcetPlaybackIntegrationTests
   DulcetiOS:
     build:
       targets:
@@ -223,6 +258,7 @@ schemes:
     test:
       targets:
         - DulcetMacTests
+        - DulcetPlaybackIntegrationTests
       environmentVariables:
         - variable: DULCET_CONFORMANCE_BASE_URL
           value: "$(DULCET_TEST_CONFORMANCE_BASE_URL)"

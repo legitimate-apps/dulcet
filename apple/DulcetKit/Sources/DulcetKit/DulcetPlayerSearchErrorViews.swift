@@ -1,9 +1,32 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+struct DulcetPlaybackPreparingView: View {
+    var body: some View {
+        VStack(spacing: DulcetSpacing.md) {
+            ProgressView()
+                .controlSize(.large)
+            Text(DulcetStrings.nowPlayingPreparingTitle)
+                .font(.title2.weight(.semibold))
+            Text(DulcetStrings.nowPlayingPreparingBody)
+                .font(.body)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+        }
+        .padding(DulcetSpacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+        .navigationTitle(DulcetStrings.nowPlaying)
+    }
+}
+
 struct DulcetNowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var scrubPosition: Double?
     let player: DulcetNowPlaying
+    var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
 
     var body: some View {
         ZStack {
@@ -58,66 +81,69 @@ struct DulcetNowPlayingView: View {
                 }
             }
 
-            VStack(spacing: DulcetSpacing.xs) {
-                playbackProgressIndicator
-                .accessibilityLabel(DulcetStrings.nowPlaying)
-                .accessibilityValue(DulcetStrings.playbackProgress(
-                    elapsed: player.elapsed.dulcetDuration,
-                    duration: player.current.duration.dulcetDuration
-                ))
-
-                HStack {
-                    Text(player.elapsed.dulcetDuration)
-                    Spacer()
-                    Text(player.current.duration.dulcetDuration)
-                }
-                .font(.caption.monospacedDigit())
-                .dulcetForeground(.secondaryTextOnWindow)
-            }
+            playbackProgress
 
             HStack(spacing: DulcetSpacing.lg) {
-                Button(action: {}) {
-                    Image(systemName: "shuffle")
+                Button {
+                    onControl(.setShuffle(!player.shuffleEnabled))
+                } label: {
+                    Image(systemName: player.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
                 }
                     .dulcetMediaButtonStyle()
                     .accessibilityLabel(DulcetStrings.shuffle)
-                Button(action: {}) {
+                    .accessibilityValue(player.shuffleEnabled
+                        ? DulcetStrings.controlOn : DulcetStrings.controlOff)
+                Button {
+                    onControl(.previous)
+                } label: {
                     Image(systemName: "backward.fill")
                 }
                     .dulcetMediaButtonStyle()
                     .font(.title2)
                     .accessibilityLabel(DulcetStrings.previous)
-                Button(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: player.isPlaying ? "pause.fill" : "play.fill") {}
+                    .disabled(!player.canGoPrevious)
+                Button(
+                    player.isPlaying ? DulcetStrings.pause : DulcetStrings.play,
+                    systemImage: player.isPlaying ? "pause.fill" : "play.fill"
+                ) {
+                    onControl(player.isPlaying ? .pause : .play)
+                }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .font(.title2)
                     .dulcetPlaybackShortcut()
                     .accessibilityLabel(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play)
-                Button(action: {}) {
+                Button {
+                    onControl(.next)
+                } label: {
                     Image(systemName: "forward.fill")
                 }
                     .dulcetMediaButtonStyle()
                     .font(.title2)
                     .accessibilityLabel(DulcetStrings.next)
-                Button(action: {}) {
-                    Image(systemName: player.current.isFavorite ? "heart.fill" : "heart")
+                    .disabled(!player.canGoNext)
+                Button {
+                    onControl(.cycleRepeat)
+                } label: {
+                    Image(systemName: repeatSymbol)
                 }
                     .dulcetMediaButtonStyle()
-                    .accessibilityLabel(player.current.isFavorite ? DulcetStrings.unfavorite : DulcetStrings.favorite)
+                    .accessibilityLabel(DulcetStrings.repeatMode)
+                    .accessibilityValue(repeatAccessibilityValue)
             }
 
-            HStack(spacing: DulcetSpacing.sm) {
-                Image(systemName: "speaker.wave.2")
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .accessibilityHidden(true)
-                volumeIndicator
-                    .frame(maxWidth: 180)
-                    .accessibilityLabel(DulcetStrings.volume)
-                    .accessibilityValue(DulcetStrings.volumeValue(player.volume))
+            if player.audioFormat.sampleRateKilohertz > 0 {
                 Text(DulcetStrings.audioFormat(
-                    codec: player.audioFormat.codec,
-                    sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
-                ))
+                        codec: player.audioFormat.codec,
+                        sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
+                    ))
+                    .font(.caption.monospaced())
+                    .dulcetForeground(.secondaryTextOnRegularMaterial)
+                    .padding(.horizontal, DulcetSpacing.xs)
+                    .padding(.vertical, DulcetSpacing.xxs)
+                    .background(.regularMaterial, in: Capsule())
+            } else {
+                Text(player.audioFormat.codec)
                     .font(.caption.monospaced())
                     .dulcetForeground(.secondaryTextOnRegularMaterial)
                     .padding(.horizontal, DulcetSpacing.xs)
@@ -128,44 +154,106 @@ struct DulcetNowPlayingView: View {
             Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
                 .font(.caption)
                 .dulcetForeground(.secondaryTextOnWindow)
+
+            if let sourceDisplayName = player.sourceDisplayName {
+                Text(DulcetStrings.playingFrom(sourceDisplayName))
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+            }
+        }
+    }
+
+    private var playbackProgress: some View {
+        VStack(spacing: DulcetSpacing.xs) {
+            if player.progressBegan {
+                playbackProgressIndicator
+                    .accessibilityLabel(DulcetStrings.nowPlaying)
+                    .accessibilityValue(DulcetStrings.playbackProgress(
+                        elapsed: displayedElapsed.dulcetDuration,
+                        duration: player.current.duration.dulcetDuration
+                    ))
+
+                HStack {
+                    Text(displayedElapsed.dulcetDuration)
+                    Spacer()
+                    Text(player.current.duration.dulcetDuration)
+                }
+                .font(.caption.monospacedDigit())
+                .dulcetForeground(.secondaryTextOnWindow)
+            } else {
+                Text(playbackPhaseLabel)
+                    .font(.subheadline)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .accessibilityLabel(playbackPhaseLabel)
+            }
         }
     }
 
     @ViewBuilder
     private var playbackProgressIndicator: some View {
 #if os(tvOS)
-        ProgressView(
-            value: player.elapsed.dulcetSeconds,
-            total: player.current.duration.dulcetSeconds
-        )
+        ProgressView(value: displayedSeconds, total: durationSeconds)
 #else
-        Slider(
-            value: .constant(player.elapsed.dulcetSeconds),
-            in: 0...player.current.duration.dulcetSeconds
-        )
+        if player.seekability == .seekable {
+            Slider(
+                value: Binding(
+                    get: { displayedSeconds },
+                    set: { scrubPosition = $0 }
+                ),
+                in: 0...durationSeconds,
+                onEditingChanged: { editing in
+                    guard !editing, let seconds = scrubPosition else { return }
+                    scrubPosition = nil
+                    onControl(.seek(.milliseconds(Int64((seconds * 1_000).rounded()))))
+                }
+            )
+        } else {
+            ProgressView(value: displayedSeconds, total: durationSeconds)
+        }
 #endif
     }
 
-    @ViewBuilder
-    private var volumeIndicator: some View {
-#if os(tvOS)
-        ProgressView(value: player.volume, total: 1)
-#else
-        Slider(value: .constant(player.volume), in: 0...1)
-#endif
+    private var displayedSeconds: Double {
+        min(max(0, scrubPosition ?? player.elapsed.dulcetSeconds), durationSeconds)
+    }
+
+    private var displayedElapsed: Duration {
+        .milliseconds(Int64((displayedSeconds * 1_000).rounded()))
+    }
+
+    private var durationSeconds: Double {
+        max(1, player.current.duration.dulcetSeconds)
+    }
+
+    private var playbackPhaseLabel: String {
+        switch player.phase {
+        case .buffering: DulcetStrings.buffering
+        case .paused: DulcetStrings.paused
+        case .ready, .progressing: DulcetStrings.readyToPlay
+        }
+    }
+
+    private var repeatSymbol: String {
+        switch player.repeatMode {
+        case .off: "repeat"
+        case .all: "repeat.circle.fill"
+        case .one: "repeat.1"
+        }
+    }
+
+    private var repeatAccessibilityValue: String {
+        switch player.repeatMode {
+        case .off: DulcetStrings.repeatOff
+        case .all: DulcetStrings.repeatAll
+        case .one: DulcetStrings.repeatOne
+        }
     }
 
     private var queuePanel: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-            HStack {
-                Text(DulcetStrings.queue)
-                    .font(.title2.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                Button(DulcetStrings.more, systemImage: "ellipsis.circle") {}
-                    .dulcetMediaButtonStyle()
-                    .accessibilityLabel(DulcetStrings.more)
-            }
+            Text(DulcetStrings.queue)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
 
             VStack(spacing: 0) {
                 ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
@@ -173,7 +261,8 @@ struct DulcetNowPlayingView: View {
                         track: track,
                         showAlbum: true,
                         index: index + 1,
-                        surface: .regularMaterial
+                        surface: .regularMaterial,
+                        isCurrent: index == player.currentIndex
                     )
                     if track.id != player.queue.last?.id {
                         Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)

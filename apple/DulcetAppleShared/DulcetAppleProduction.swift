@@ -13,7 +13,8 @@ enum DulcetAppleProduction {
                 credentialStore: DulcetKeychainCredentialStore(),
                 libraryBrowser: DulcetCoreLibraryBrowser(),
                 artworkFetcher: DulcetCoreArtworkFetcher(),
-                serverSearch: DulcetCoreServerSearch()
+                serverSearch: DulcetCoreServerSearch(),
+                playbackController: DulcetCorePlaybackController()
             )
         )
     }
@@ -103,6 +104,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing {
                     discNumber: track.discNumber?.intValue,
                     trackNumber: track.trackNumber?.intValue,
                     duration: .milliseconds(track.durationMilliseconds),
+                    sourceContainer: track.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
                     mediaSourceID: track.mediaSourceId,
                     artwork: artwork(
                         fallbackSeed: track.rawId,
@@ -141,6 +143,20 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing {
                 DulcetArtworkReference(serverID: providerInstanceID, artworkKey: $0)
             }
         )
+    }
+}
+
+private extension DulcetAudioContainer {
+    init?(coreName: String) {
+        switch coreName {
+        case "Mp3": self = .mp3
+        case "Mp4": self = .mp4
+        case "Wav": self = .wav
+        case "Flac": self = .flac
+        case "Ogg": self = .ogg
+        case "AdtsAac": self = .adtsAAC
+        default: return nil
+        }
     }
 }
 

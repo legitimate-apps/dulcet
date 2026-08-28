@@ -169,7 +169,15 @@ struct DulcetAccountConnectionView: View {
                         .focused($focusedControl, equals: .password)
                 }
                 GridRow {
-                    Color.clear.frame(width: 1, height: 1)
+                    // This cell only occupies the label column; it has no text, so under the grid's
+                    // .leadingFirstTextBaseline guide there is no first text baseline to align to and
+                    // one has to be synthesised for the row. gridCellAnchor switches this cell to
+                    // anchor-based alignment, which is documented to take it out of the alignment-guide
+                    // strategy entirely, so the row's geometry no longer depends on resolving a
+                    // baseline that does not exist.
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .gridCellAnchor(.topLeading)
                     Toggle(
                         DulcetStrings.allowLocalHTTP,
                         isOn: $store.accountAllowLocalHTTP

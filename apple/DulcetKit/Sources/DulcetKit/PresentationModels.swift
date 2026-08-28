@@ -2,6 +2,7 @@ import Foundation
 
 public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendable {
     case accountConnectIdle = "account-connect-idle"
+    case accountConnectEmpty = "account-connect-empty"
     case accountConnecting = "account-connecting"
     case accountConnected = "account-connected"
     case accountRemoving = "account-removing"
@@ -22,6 +23,8 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case libraryBrowse = "library-browse"
     case albumDetailMultiDisc = "album-detail-multi-disc"
     case nowPlaying = "now-playing"
+    case nowPlayingPreparing = "now-playing-preparing"
+    case nowPlayingFailed = "now-playing-failed"
     case nowPlayingUnavailable = "now-playing-unavailable"
     case searchIdle = "search-idle"
     case searchLoading = "search-loading"
@@ -29,6 +32,7 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
     case searchEmpty = "search-empty"
     case searchError = "search-error"
     case tlsUntrusted = "error-tls-untrusted"
+    case tlsUntrustedPopulatedForm = "error-tls-untrusted-populated-form"
     case offlineMetadataOnly = "offline-metadata-only"
 
     public var id: String { rawValue }
@@ -328,6 +332,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
     public let discNumber: Int?
     public let trackNumber: Int?
     public let duration: Duration
+    public let sourceContainer: DulcetAudioContainer?
     public let mediaSourceID: String?
     public let artwork: DulcetArtwork
     public let availability: DulcetMediaAvailability
@@ -341,6 +346,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
         duration: Duration,
+        sourceContainer: DulcetAudioContainer? = .mp3,
         mediaSourceID: String?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
@@ -353,6 +359,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         self.discNumber = discNumber
         self.trackNumber = trackNumber
         self.duration = duration
+        self.sourceContainer = sourceContainer
         self.mediaSourceID = mediaSourceID
         self.artwork = artwork
         self.availability = availability
@@ -522,32 +529,75 @@ public struct DulcetSearchFailure: Sendable, Hashable {
 }
 
 public struct DulcetNowPlaying: Sendable, Hashable {
+    public let sessionID: DulcetPlaybackSessionID?
     public let current: DulcetTrack
     public let queue: [DulcetTrack]
+    public let currentIndex: Int
+    public let sourceDisplayName: String?
     public let elapsed: Duration
     public let isPlaying: Bool
     public let outputName: String
     public let volume: Double
     public let audioFormat: DulcetAudioFormat
+    public let phase: DulcetPlaybackPresentationPhase
+    public let seekability: DulcetPlaybackSeekability
+    public let progressBegan: Bool
+    public let repeatMode: DulcetRepeatMode
+    public let shuffleEnabled: Bool
+    public let canGoNext: Bool
+    public let canGoPrevious: Bool
 
     public init(
+        sessionID: DulcetPlaybackSessionID? = nil,
         current: DulcetTrack,
         queue: [DulcetTrack],
+        currentIndex: Int = 0,
+        sourceDisplayName: String? = nil,
         elapsed: Duration,
         isPlaying: Bool,
         outputName: String,
         volume: Double,
-        audioFormat: DulcetAudioFormat
+        audioFormat: DulcetAudioFormat,
+        phase: DulcetPlaybackPresentationPhase = .progressing,
+        seekability: DulcetPlaybackSeekability = .seekable,
+        progressBegan: Bool = true,
+        repeatMode: DulcetRepeatMode = .off,
+        shuffleEnabled: Bool = false,
+        canGoNext: Bool = true,
+        canGoPrevious: Bool = true
     ) {
+        self.sessionID = sessionID
         self.current = current
         self.queue = queue
+        self.currentIndex = currentIndex
+        self.sourceDisplayName = sourceDisplayName
         self.elapsed = elapsed
         self.isPlaying = isPlaying
         self.outputName = outputName
         self.volume = volume
         self.audioFormat = audioFormat
+        self.phase = phase
+        self.seekability = seekability
+        self.progressBegan = progressBegan
+        self.repeatMode = repeatMode
+        self.shuffleEnabled = shuffleEnabled
+        self.canGoNext = canGoNext
+        self.canGoPrevious = canGoPrevious
     }
 
+}
+
+public enum DulcetPlaybackPresentationPhase: String, Sendable, Hashable {
+    case ready
+    case progressing
+    case buffering
+    case paused
+}
+
+public enum DulcetRepeatMode: String, Sendable, Hashable {
+    case off
+    case all
+    case one
 }
 
 public enum DulcetLibraryFailureKind: String, Sendable, Hashable {

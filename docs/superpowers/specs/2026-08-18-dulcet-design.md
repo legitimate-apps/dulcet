@@ -8,6 +8,19 @@ default-branch controls satisfy the Phase 0 exit criteria in §25.
 **Date:** 2026-08-18
 **Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
 
+A legacy transcode's `estimateContentLength` is now carried as an estimate rather
+than an exact byte count, which is what made a cold transcode cache fail every transcoded load;
+revision 82's pinned playback/scrobble controls measured both stream paths, legacy and
+extension offsets, exact opaque-parameter forwarding, and reference-server scrobble side effects;
+revision 81 exposed the exact Navidrome reference asset continuation-range failure the
+generated MP3 fixture could not: a chunk beginning `0x3C` was classified as an XML envelope and
+rejected as malformed, so envelope detection now requires a recognizable `subsonic-response` root
+before malformed-envelope semantics apply; revision 80 made Apple progressive playback account for
+AVFoundation's initial two-byte request; revision 79 added the implemented queue ownership tables to
+the schema-intent registry; revision 78 made a restored credential present as a saved account awaiting an explicit
+
+**Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
+
 The schema-intent registry now includes the implemented queue ownership tables;
 revision 78 made a restored credential present as a saved account awaiting an explicit
 reconnect rather than as no account at all, and every macOS destination owns its window title in
@@ -1170,9 +1183,11 @@ queries the engine for position.
 **OBSERVED** (https://www.subsonic.org/pages/api.jsp and
 https://opensubsonic.netlify.app/docs/endpoints/stream/): `stream` "returns binary data on success, or
 an XML document on error (in which case the HTTP content type will start with `text/xml`)." With
-`f=json`, compatible implementations may return a **JSON** envelope instead. **ASSUMED (defensive):**
-that such an error arrives with HTTP 200 is the compatibility-defensive assumption we design for; the
-reference server's actual status codes are measured by CONF-12 and only then become OBSERVED.
+`f=json`, compatible implementations may return a **JSON** envelope instead. **OBSERVED 2026-08-28
+by CONF-12 against Navidrome 0.63.2:** a bad id on legacy `stream` returned a JSON Subsonic error
+envelope at **HTTP 200**, while the corresponding bad-id `getTranscodeStream` request returned
+**HTTP 404**, `Content-Type: text/plain`, and the bare body `Not Found`. The compatibility-defensive
+HTTP-200 envelope path is therefore measured for the reference server rather than merely assumed.
 
 **HTTP 200 is not proof of audio, and content type alone is not proof either** — real servers and
 reverse proxies mislabel responses.
@@ -1235,6 +1250,27 @@ HLS again requires new evidence and a spec revision.
   server error instead of an opaque `AVFoundation` failure. Cost, stated honestly: we must satisfy
   `contentInformationRequest` correctly and implement range handling ourselves, or seeking breaks.
   **This is Phase-1 work. HLS is not accepted on this platform.**
+
+  **OBSERVED 2026-08-28:** for a progressive MP3 reached through the custom loader, AVFoundation's
+  first data request was only `bytes=0-1`. Two bytes cannot satisfy the normative MP3 signature rule
+  below, whose shortest valid shape is the three-byte `ID3` marker. Passing that exact range to the
+  inline validator rejected valid audio before `AVPlayerItem` could become ready. The loader therefore
+  fetches up to one bounded validation chunk for a request that still needs its audio signature,
+  validates those actual response bytes, and responds to AVFoundation with no more than the range it
+  requested. This was necessary but not sufficient: the original generated MP3 fixture reached
+  `Ready` and `PlaybackProgressBegan` while the reference asset still failed.
+
+  **OBSERVED 2026-08-28:** the exact 7,550,103-byte reference MP3 made the production seam fail at
+  range `bytes=3670016-3932159`. Its first byte is `0x3C` (`<`). Binary-envelope inspection previously
+  classified every payload beginning with `<` as XML and then called it malformed when no Subsonic
+  root existed. That turned a valid continuation chunk into `Protocol.MalformedEnvelope`, failed the
+  active AVFoundation loading request, and caused the repeated request behavior. Envelope inspection
+  remains unconditional and still detects valid and malformed Subsonic envelopes, but a JSON/XML
+  delimiter alone is no longer sufficient: the payload must contain the recognizable
+  `subsonic-response` root before malformed-envelope semantics apply. With that correction, the
+  production seam consumes all 30 exact ranges through byte 7,550,102 and terminates with two loading
+  requests finished, one AVFoundation cancellation, zero failed, and zero active. The real DEV-app
+  scrobble/play-count control remains operator verification and is not inferred from this test.
 - **Android:** a custom `DataSource.Factory` wrapping the HTTP client, giving the same visibility for
   substantially less work.
 - **Preflight is demoted to an optional, advisory fast-fail** used only where inline validation is
@@ -1297,15 +1333,49 @@ are hints, not a contract; the server may ignore them.
 
 **Path B also sends `estimateContentLength` whenever the plan is transcoded** — the lever revision 2
 missed. **OBSERVED:** `stream` takes `estimateContentLength`, which *"Sets Content-Length header for
-transcoded media."* Without it a legacy transcoded stream has no declared length, which is what makes
-it unseekable and what makes §14.5's "validated against the expected byte length" impossible for a
-transcoded download. Both §12.7 (seeking) and §14.5 (atomic promotion) quietly assumed that information
-existed; this is where it comes from. Record the returned length on the plan. `TranscodeDecision.LegacyHint` records that we
-are on this path so the UI never claims a negotiated result.
+transcoded media."* Without it a cold legacy transcoded stream has no declared length, so it is
+delivered chunked and cannot advertise a seekable resource size. Keep sending it.
 
-**`transcodeOffset` applies to Path B.** **OBSERVED** for the extension name and version only; the
-precise offset behavior on Path A is **ASSUMED** and is measured by **CONF-14b** before any Path-A seek
-code is written. Do not assume `timeOffset` carries over.
+🚨 **OBSERVED 2026-08-28 by CONF-13 against Navidrome 0.63.2: a COLD transcode is not
+range-capable at all.** A ranged `getTranscodeStream` against a transcode that is not yet cached
+answers **HTTP 200 with no `Content-Range` and `Accept-Ranges: none`** — the `Range` header is
+transmitted unchanged and simply not honoured. Once the same transcode is cached, the identical
+request returns **HTTP 206** with the exact requested bytes. So seekability of a transcoded stream
+is a property of the *server's cache state*, not of the endpoint, and a seek attempted on a
+just-started transcode will not be served. Any UI that offers seeking on a transcoded stream must
+treat the first play as potentially unseekable rather than assuming the 206 it will get later.
+
+⚠️ This also produced a false green: the JVM conformance run passed CONF-13 only because an earlier
+test in the same run had warmed that transcode. The control now establishes its own warm precondition
+instead of depending on execution order — a test whose outcome depends on what ran before it is not
+measuring what it claims.
+
+**OBSERVED 2026-08-28 by CONF-17 against Navidrome 0.63.2:** this value is usable only as an
+**estimate**, not an authoritative representation length. On a cold transcode cache, representative
+declared/body pairs were 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes: the
+header overshot the complete body by approximately 2.3–2.5%. Without the flag the same cold response
+had no `Content-Length` and completed chunked; after the transcode cache warmed, the declared length
+was exact. The plan therefore records the response as `PlaybackContentLength.Estimated`, a distinct
+type from `PlaybackContentLength.Exact`. EOF before an estimate is completion; EOF before an exact
+length is truncation. No validator, download promoter, or platform media loader may collapse those
+variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
+this path so the UI never claims a negotiated result.
+
+**`transcodeOffset` applies to Path B. OBSERVED 2026-08-28 by CONF-14a against Navidrome 0.63.2 with
+the pinned Linux ffmpeg 6.1.1:** the generated 31-second FLAC fixture transcoded to a 248,455-byte MP3
+at offset zero and a 128,501-byte MP3 at `timeOffset=15`; both passed the MP3 signature validator and
+the remaining-byte ratio was 0.5172 versus the expected remaining-duration ratio 16/31.
+
+**Path A has no offset parameter. OBSERVED 2026-08-28 by CONF-14b against the same reference
+environment:** adding legacy `timeOffset=1` to `getTranscodeStream` was ignored and returned a
+byte-identical 49,090-byte response to the no-offset request. The production extension resolver also
+returned byte-identical audio when its input carried a legacy offset. Path-A seek code must not be
+written until the extension defines a real offset mechanism; `timeOffset` does not carry over.
+
+**OBSERVED 2026-08-28 by CONF-15 against the same reference environment:** a POSTed `ClientInfo`
+returned `canTranscode=true` and a 241-character opaque `transcodeParams`; forwarding that exact
+string, without parsing or rebuilding it, returned HTTP 200 MP3 audio. A mutation that appended one
+suffix before production forwarding made the conformance control fail.
 
 **Path selection is per item, recorded on the plan, and visible in diagnostics.** A user preference
 ("prefer original quality on Wi-Fi, cap at 192 kbps on cellular") feeds the `ClientInfo` bitrate limit
@@ -1735,9 +1805,13 @@ and reconciliation against a changed server item. The platform owns the **execut
   outstanding tasks, match them to rows, mark rows with no task as interrupted, and mark tasks with no
   row for cancellation. Duplicate delivery after relaunch is harmless because promotion is keyed on the
   destination path.
-- **Atomic promotion:** bytes land in a temp file; the file is validated with the §12.4 validator table
-  **and** against the expected byte length; only then is it atomically renamed into place and the row
-  marked complete. A crash between validation and rename leaves a temp file that reconciliation deletes.
+- **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
+  table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
+  before the file is atomically renamed and the row marked complete. An estimated length is never an
+  integrity boundary. For a cold legacy transcoded download, completion is the terminal response-body
+  end plus successful container/signature validation; the stored row records the observed file byte
+  count as exact only **after** the complete temp file closes. A crash between validation and rename
+  leaves a temp file that reconciliation deletes.
 - **Partial files** keep platform-supplied resume data; resume data older than 7 days, or rejected by
   the platform, causes a restart from zero rather than a stuck row.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
@@ -1853,8 +1927,9 @@ otherwise and was wrong. The honest statement:
 
 > **Delivery is at-least-once.** Dulcet prefers a possible duplicate play to a lost one. Exactly-once
 > is unavailable without a server idempotency guarantee, which the protocol does not define.
-> **CONF-23** measures what the reference server does with a repeated `scrobble` carrying the same
-> `time`; the result is recorded per server in `docs/COMPATIBILITY.md`, never assumed globally.
+> **OBSERVED 2026-08-28 by CONF-23 against Navidrome 0.63.2:** repeated `scrobble` calls carrying the
+> same item and `time` were not deduplicated; relative play counts were 0, 1, then 2. This result is
+> recorded per server in `docs/COMPATIBILITY.md` and is not generalized to other servers.
 
 Entries older than **30 days are dropped** — a **product retention decision**, not a server fact.
 Dropping one loses user-authored play history, so it is surfaced in diagnostics rather than done
@@ -2525,7 +2600,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
 | CONF-16 | **drives the transcode concurrency limiter** until it rejects: asserts HTTP **429**, a `Retry-After` header, an envelope body, and that the client maps it to `Server.Busy` rather than a generic error (§18.12) |
-| CONF-17 | `estimateContentLength` on a transcoded legacy stream returns a usable `Content-Length` (§12.5) |
+| CONF-17 | `estimateContentLength` on a cold transcoded legacy stream returns a usable length only as an estimate: it overshoots the complete body and is non-authoritative (§12.5) |
 | CONF-43 | a fixed query set through `search3`, recording returned id sets, to measure local-vs-server matching divergence (§18.1) |
 | CONF-13 | `Range` support on raw and on transcoded streams |
 | CONF-14a | `transcodeOffset` seek on the **legacy** `stream` path returns audio at the requested offset |
@@ -3218,6 +3293,112 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 85 (2026-08-28)** — the estimated-body completion rule was platform-specific, and a
+Foundation delegate could terminate the process.
+
+1. OBSERVED: CIO surfaces an estimate-overshooting body as a terminal `EOFException`, while the
+   Darwin engine cancels the channel and raises `ClosedByteChannelException` wrapping
+   `DarwinHttpRequestException` whose `NSError` is `NSURLErrorDomain/-1005`. The same three controls
+   were green on JVM and red on `macosArm64` for that reason alone. Recovery is now matched on the
+   **typed** Darwin origin plus at least one received byte, an estimated length, and no range
+   request; it is not matched on exception text and does not accept a broader `NSError` family.
+   Exact lengths and ranged responses stay on the strict buffered path, and a truncation against an
+   exact length still fails — proven by mutating the predicate and observing the control die.
+2. OBSERVED: a cold transcode is not range-capable — see §12.5. CONF-13 had been passing on JVM only
+   because execution order warmed the transcode first; it now establishes that precondition itself.
+3. OBSERVED: the Darwin authentication-challenge handler threw a Kotlin marker exception from an
+   `NSURLSession` delegate callback. A Kotlin exception crossing that boundary terminates the
+   process, so this was a latent crash rather than a style issue. The challenge is now recorded
+   through a per-client thread-safe handoff, the delegate cancels the challenge, and Kotlin maps the
+   recorded fact to `Auth.UnsupportedAuthenticationChallenge` after Ktor returns control.
+4. The local conformance lifecycle now starts and guards the forward-proxy fixture that `apple-ci`
+   uses, so a local run exercises the same surface rather than a subset of it.
+
+**Revision 84 (2026-08-28)** — legacy transcode length estimates stopped masquerading as exact
+representation lengths.
+
+1. OBSERVED against a cold Navidrome 0.63.2 transcode cache: `estimateContentLength=true` produced
+   declared/body pairs of 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes,
+   overshooting by approximately 2.3–2.5%; omitting the flag removed `Content-Length` and delivered
+   the complete body chunked; a warm cache made the declaration exact. CONF-17 now records the answer
+   as "yes, but only as an estimate."
+2. `PlaybackContentLength.Exact` and `.Estimated` are separate public variants with differently named
+   numeric members. Legacy transcode plans keep sending `estimateContentLength`, and a completed full
+   load returns an immutable plan carrying the observed estimate. Only the exact variant is enforced
+   against body size; an EOF after received audio bytes completes an estimated body.
+3. §14.5 no longer promotes a download by comparing its file to an estimate. A cold transcoded
+   download closes and validates its temp file by the binary validator, records the completed file's
+   observed size, then promotes atomically; an exact server length remains an additional integrity
+   requirement.
+4. The Apple exposure was reachable: the legacy plan's HTTP 200 `Content-Length` flowed through
+   `resourceTotalLength`, core validation, and `DulcetPlaybackContentInformation` into AVFoundation.
+   Core now classifies that declaration from the plan and publishes the completed body length for an
+   estimate; an exact mismatch is rejected. Every Objective-C entry point continues to catch Kotlin
+   failures and return a closed DTO.
+5. Unit controls accept an estimated 1,218,703-byte declaration for a completed 1,191,316-byte body
+   and reject the same mismatch when exact, including the Apple total-length calculation. CONF-14a
+   and CONF-17 use unique bitrate keys in a fresh disposable instance so the relevant requests cannot
+   accidentally measure a warmed transcode cache. `FEATURES.yml` status cells remain unchanged.
+
+**Revision 83 (2026-08-28)** — the declared playback and scrobble controls became executable and
+the defensive assumptions they existed to measure became bounded observations.
+
+1. Eight common conformance tests now exercise CONF-11, CONF-12, CONF-13, CONF-14a, CONF-14b,
+   CONF-15, CONF-22, and CONF-23 through production playback/scrobble clients plus a redacted
+   test-only REST observation seam. Every transcode-dependent control first requires the
+   `transcoding` v1 extension and an actual `canTranscode=true` decision; absence fails rather than
+   skips. Every request uses a fresh 16-byte CSPRNG salt and exact credential canaries prove that
+   neither production logs nor the observation seam render the query string.
+2. OBSERVED against Navidrome 0.63.2 and pinned Linux ffmpeg 6.1.1: valid FLAC stream status/type/
+   signature was `200`, `audio/flac`, `fLaC`; bad legacy stream was an envelope at HTTP 200; bad
+   extension stream was bare `text/plain` at HTTP 404; raw and transcoded `bytes=0-63` requests both
+   returned HTTP 206 with matching content ranges; `ClientInfo` POST produced `canTranscode=true`
+   and a 241-character opaque parameter that streamed unchanged.
+3. OBSERVED in that environment: the 31-second legacy transcode was 248,455 bytes at offset zero and
+   128,501 bytes at `timeOffset=15`. Path A exposes no offset parameter; an extra legacy
+   `timeOffset=1` was ignored and the two 49,090-byte extension responses were byte-identical.
+4. OBSERVED server write semantics: `submission=false` left relative play count unchanged at 0,
+   `submission=true` advanced it to 1, and two identical-time submitted calls advanced another
+   fixture from 0 to 1 to 2. Navidrome therefore does not deduplicate the server half of an
+   at-least-once retry.
+5. Three production mutations proved the controls can fail: misclassifying the legacy envelope made
+   CONF-12 observe `BareHttpError` instead of `EnvelopeAtSuccess`; appending a suffix to the opaque
+   parameter made CONF-15 receive `Failed` instead of audio; encoding now-playing as
+   `submission=true` made CONF-22 observe an unexpected play-count increment. Each mutation was
+   restored before the final run.
+6. A mandatory `DULCET_CONFORMANCE_DISPOSABLE=true` marker now accompanies the loopback base URL on
+   JVM, macOS, iOS-simulator, and tvOS-simulator runs. The loopback port is configurable so a fresh
+   instance can coexist with another local service without weakening the disposable-only gate.
+   `FEATURES.yml` status cells remain unchanged pending a merge-backed CI run identity.
+
+**Revision 82 (2026-08-28)** — the exact Navidrome reference asset exposed the real continuation-
+range failure that the generated MP3 fixture missed.
+
+**Revision 81 (2026-08-28)** — Apple progressive playback now accounts for AVFoundation's initial
+two-byte request.
+
+1. The loopback server now serves the same 7,550,103-byte reference MP3 and exact 206/200 header
+   shapes as the measured Navidrome stream, including arbitrary ranges and the opening two-byte
+   probe. The package façade stayed green, but the production core-to-loader seam failed at
+   `bytes=3670016-3932159`, closing the false-green harness gap.
+2. OBSERVED root cause: byte 3,670,016 is `0x3C` (`<`). Generic binary-envelope detection treated
+   that single compressed-audio byte as XML and rejected the otherwise valid 256 KiB range as a
+   malformed Subsonic envelope. The loader finished one request, received one normal AVFoundation
+   cancellation, and failed the continuation request.
+3. Envelope detection now requires a recognizable `subsonic-response` root before it can classify a
+   delimiter-led payload as a malformed envelope. Valid error envelopes are still detected on
+   continuation ranges. The formerly-red production test now consumes the full file in 30 ranges
+   with zero failed or active loading requests. Content information is published once for each of
+   the three AVFoundation loading requests, not once per HTTP chunk; a later chunk that disagrees
+   about the resource metadata fails closed.
+4. OBSERVED 2026-08-28 on the macOS DEV app against the local disposable reference server, driven
+   with real pointer input: `Fluffing a Duck` (1:07, threshold 33.5 s) went `playCount` 4 -> 5,
+   `getNowPlaying` listed it under client `Dulcet` while it played, and the count stayed at 4 for
+   the `submission=false` now-playing report. The queue then advanced to the next item and opened a
+   new now-playing entry. This is a manual operator-grade observation on one machine, not a CI
+   control; CONF-11 through CONF-15 and CONF-22/CONF-23 remain unimplemented, so `playback.stream`
+   and `playback.scrobble` stay `planned` in `FEATURES.yml`.
 
 **Revision 80 (2026-08-28)** — CI evidence became structured and its disposable Linux environment
 became locally reproducible.

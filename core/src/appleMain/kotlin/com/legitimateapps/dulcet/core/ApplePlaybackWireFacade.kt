@@ -170,7 +170,17 @@ public class ApplePlaybackWireClient(
         val bytes = body.toByteArray()
         val headers = AuthenticatedEndpointResponseHeaders(
             contentType = contentType,
-            contentLength = contentLength.takeIf { it >= 0 },
+            contentLength = contentLength.takeIf { it >= 0 }?.let { byteCount ->
+                if (
+                    statusCode == 200 &&
+                    contentRange == null &&
+                    plan.corePlan.usesEstimatedLegacyContentLength()
+                ) {
+                    PlaybackContentLength.Estimated(byteCount)
+                } else {
+                    PlaybackContentLength.Exact(byteCount)
+                }
+            },
             retryAfter = retryAfter,
             acceptRanges = acceptRanges,
             contentRange = contentRange,
@@ -209,7 +219,7 @@ public class ApplePlaybackWireClient(
         }
         validation as PlaybackStreamValidationResult.Audio
         val range = PlaybackByteRange(requestedRangeStart, requestedRangeEndInclusive)
-        val totalLength = validateRangeAndTotalLength(
+        val totalLength = validateAppleRangeAndTotalLength(
             statusCode = statusCode,
             contentRange = contentRange,
             declaredContentLength = validation.contentLength,
@@ -292,10 +302,10 @@ private class ApplePlaybackWireOperationImpl(
     }
 }
 
-private fun validateRangeAndTotalLength(
+internal fun validateAppleRangeAndTotalLength(
     statusCode: Int,
     contentRange: String?,
-    declaredContentLength: Long?,
+    declaredContentLength: PlaybackContentLength?,
     bodyLength: Long,
     requestedRange: PlaybackByteRange,
 ): Long? {
@@ -318,8 +328,12 @@ private fun validateRangeAndTotalLength(
         return total
     }
     if (statusCode in 200..299 && requestedRange.start == 0L) {
-        val total = declaredContentLength ?: bodyLength
-        return total.takeIf { it >= bodyLength }
+        return when (declaredContentLength) {
+            null -> bodyLength
+            is PlaybackContentLength.Exact ->
+                declaredContentLength.byteCount.takeIf { it == bodyLength }
+            is PlaybackContentLength.Estimated -> bodyLength
+        }
     }
     return null
 }

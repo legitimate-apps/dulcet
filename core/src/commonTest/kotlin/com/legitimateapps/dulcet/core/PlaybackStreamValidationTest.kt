@@ -7,6 +7,46 @@ import kotlin.time.Duration.Companion.seconds
 
 class PlaybackStreamValidationTest {
     @Test
+    fun estimatedLengthLongerThanTheCompleteBodyIsAcceptedAsAnEstimate() {
+        val body = ascii("ID3\u0004complete")
+
+        val audio = assertIs<PlaybackStreamValidationResult.Audio>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = body,
+                    contentType = "audio/mpeg",
+                    contentLength = PlaybackContentLength.Estimated(body.size.toLong() + 23_398),
+                ),
+                AudioContainer.Mp3,
+            ),
+        )
+
+        assertEquals(
+            PlaybackContentLength.Estimated(body.size.toLong() + 23_398),
+            audio.contentLength,
+        )
+    }
+
+    @Test
+    fun exactLengthLongerThanTheBodyStillFailsAsATruncation() {
+        val body = ascii("ID3\u0004truncated")
+
+        val failure = assertIs<PlaybackStreamValidationResult.Failure>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = body,
+                    contentType = "audio/mpeg",
+                    contentLength = PlaybackContentLength.Exact(body.size.toLong() + 1),
+                ),
+                AudioContainer.Mp3,
+            ),
+        )
+
+        assertEquals(DomainError.Protocol.UnexpectedBinary, failure.error)
+        assertEquals(PlaybackErrorResponseShape.UnexpectedSuccessfulPayload, failure.shape)
+    }
+
+    @Test
     fun everyNormativeAudioSignatureHasAPositiveFixture() {
         val fixtures = listOf(
             AudioFixture(AudioContainer.Mp3, "audio/mpeg", ascii("ID3\u0004")),
@@ -175,6 +215,18 @@ class PlaybackStreamValidationTest {
         )
         assertEquals(AudioContainer.Mp3, continuation.container)
 
+        val delimiterAlignedAudio = assertIs<PlaybackStreamValidationResult.Audio>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = bytes(0x3C, 0xD8, 0xDD, 0x6D),
+                    contentType = "audio/mpeg",
+                ),
+                AudioContainer.Mp3,
+                requiresAudioSignature = false,
+            ),
+        )
+        assertEquals(AudioContainer.Mp3, delimiterAlignedAudio.container)
+
         val envelope = assertIs<PlaybackStreamValidationResult.Failure>(
             PlaybackStreamValidator.validate(
                 response(
@@ -189,6 +241,18 @@ class PlaybackStreamValidationTest {
         )
         assertEquals(PlaybackErrorResponseShape.EnvelopeAtSuccess, envelope.shape)
         assertEquals(DomainError.Auth.InvalidCredentials, envelope.error)
+
+        val malformedEnvelope = assertIs<PlaybackStreamValidationResult.Failure>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = ascii("""<subsonic-response status="failed"/>"""),
+                    contentType = "audio/mpeg",
+                ),
+                AudioContainer.Mp3,
+                requiresAudioSignature = false,
+            ),
+        )
+        assertEquals(PlaybackErrorResponseShape.MalformedEnvelope, malformedEnvelope.shape)
     }
 
     private fun response(
@@ -196,13 +260,14 @@ class PlaybackStreamValidationTest {
         body: ByteArray,
         contentType: String?,
         retryAfter: String? = null,
+        contentLength: PlaybackContentLength? = PlaybackContentLength.Exact(body.size.toLong()),
     ): AuthenticatedEndpointResponse = AuthenticatedEndpointResponse(
         statusCode = statusCode,
         body = body,
         redactedUrl = "https://music.invalid:443/rest/stream.view?<redacted>",
         headers = AuthenticatedEndpointResponseHeaders(
             contentType = contentType,
-            contentLength = body.size.toLong(),
+            contentLength = contentLength,
             retryAfter = retryAfter,
             acceptRanges = null,
             contentRange = null,

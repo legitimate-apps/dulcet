@@ -6,6 +6,7 @@ import Testing
 
 #if os(macOS)
 import CoreAudio
+import Network
 #endif
 
 @Suite(.serialized)
@@ -71,6 +72,77 @@ struct AVPlayerEngineTests {
 
         _ = await execute(engine, .release(commandID: .init("release")))
     }
+
+    #if os(macOS)
+    @Test
+    func loopbackHTTPServerMatchesNavidromeRangeSemantics() async throws {
+        let audio = try navidromeReferenceMP3Fixture()
+        #expect(audio.count > 7_000_000)
+        let server = try LoopbackRangeHTTPServer(audio: audio)
+        defer { server.stop() }
+
+        let twoByteProbe = try await loopbackResponse(from: server.url, range: "bytes=0-1")
+        #expect(twoByteProbe.response.statusCode == 206)
+        #expect(twoByteProbe.data.count == 2)
+        #expect(twoByteProbe.response.value(forHTTPHeaderField: "Content-Length") == "2")
+        #expect(
+            twoByteProbe.response.value(forHTTPHeaderField: "Content-Range") ==
+                "bytes 0-1/\(audio.count)"
+        )
+        #expect(twoByteProbe.response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes")
+        #expect(twoByteProbe.response.value(forHTTPHeaderField: "Content-Type") == "audio/mpeg")
+
+        let firstKilobyte = try await loopbackResponse(from: server.url, range: "bytes=0-1023")
+        #expect(firstKilobyte.response.statusCode == 206)
+        #expect(firstKilobyte.data.count == 1_024)
+        #expect(firstKilobyte.response.value(forHTTPHeaderField: "Content-Length") == "1024")
+        #expect(
+            firstKilobyte.response.value(forHTTPHeaderField: "Content-Range") ==
+                "bytes 0-1023/\(audio.count)"
+        )
+        #expect(firstKilobyte.response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes")
+
+        let complete = try await loopbackResponse(from: server.url, range: nil)
+        #expect(complete.response.statusCode == 200)
+        #expect(complete.data.count == audio.count)
+        #expect(
+            complete.response.value(forHTTPHeaderField: "Content-Length") == String(audio.count)
+        )
+        #expect(complete.response.value(forHTTPHeaderField: "Content-Range") == nil)
+        #expect(complete.response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes")
+    }
+
+    @Test
+    func loopbackHTTPRangeStreamBecomesReadyAndProgresses() async throws {
+        let server = try LoopbackRangeHTTPServer(audio: navidromeReferenceMP3Fixture())
+        defer { server.stop() }
+        let resource = LoopbackHTTPPlaybackResource(url: server.url)
+        let engine = DulcetAVPlayerEngine()
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+
+        let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
+        let prepare = await execute(
+            engine,
+            .prepare(commandID: .init("loopback-prepare"), plan: playbackPlan)
+        )
+        #expect(prepare == .accepted(commandID: .init("loopback-prepare")))
+        let play = await execute(engine, .play(commandID: .init("loopback-play")))
+        #expect(play == .accepted(commandID: .init("loopback-play")))
+
+        try await waitUntil("AVPlayer did not become ready through loopback HTTP range loading") {
+            events.containsReady(seekability: .seekable)
+        }
+        try await waitUntil("loopback HTTP playback never advanced media time", timeout: 5) {
+            events.containsProgressBegan
+        }
+        #expect(server.requests.count > 0)
+        #expect(server.requests.allSatisfy { $0.rangeHeader != nil })
+        #expect(server.requests.first?.rangeHeader == "bytes=0-262143")
+
+        _ = await execute(engine, .release(commandID: .init("loopback-release")))
+    }
+    #endif
 
     @Test
     func hlsIsRejectedWithoutTouchingThePlaybackResource() async {
@@ -303,7 +375,7 @@ struct AVPlayerEngineTests {
     }
 
     @Test
-    func remoteCommandsRejectStaleSessionsAndRouteOnlyCurrentQueueAndFeedbackActions() async throws {
+    func remoteCommandsRejectStaleSessionsAndRouteEveryCurrentCommand() async throws {
         let mediaControls = RecordingSystemMediaControls()
         let router = RecordingRemoteCommandRouter()
         let capabilities = DulcetRemoteCommandCapabilities(
@@ -335,6 +407,9 @@ struct AVPlayerEngineTests {
             isFavourite: true
         )))
         #expect(router.commands == [
+            .pause(sessionID: playbackPlan.playbackSessionID),
+            .toggle(sessionID: playbackPlan.playbackSessionID),
+            .seek(sessionID: playbackPlan.playbackSessionID, position: 0.5),
             .next(sessionID: playbackPlan.playbackSessionID),
             .previous(sessionID: playbackPlan.playbackSessionID),
             .rating(sessionID: playbackPlan.playbackSessionID, value: 4),
@@ -530,6 +605,7 @@ private func plan(
         data: makePCMWave(duration: 2)
     ),
     deliveryProtocol: DulcetPlaybackDeliveryProtocol = .httpProgressive,
+    expectedContainer: DulcetAudioContainer = .wav,
     session: String = "session",
     attempt: String = "attempt",
     title: String = "Playback fixture"
@@ -538,7 +614,7 @@ private func plan(
         playbackSessionID: .init(session),
         attemptID: .init(attempt),
         deliveryProtocol: deliveryProtocol,
-        expectedContainer: .wav,
+        expectedContainer: expectedContainer,
         resource: resource,
         metadata: .init(title: title, artist: "Dulcet Tests")
     )
@@ -771,6 +847,270 @@ private final class InMemoryPlaybackOperation: DulcetPlaybackResourceLoadOperati
     @unchecked Sendable {
     func cancel() {}
 }
+
+#if os(macOS)
+private struct LoopbackHTTPRequest: Sendable {
+    let rangeHeader: String?
+}
+
+private final class LoopbackRangeHTTPServer: @unchecked Sendable {
+    private let audio: Data
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.http-range-server")
+    private let lock = NSLock()
+    private var requestStorage: [LoopbackHTTPRequest] = []
+
+    var url: URL {
+        URL(string: "http://127.0.0.1:\(listener.port!.rawValue)/tone.mp3")!
+    }
+
+    init(audio: Data) throws {
+        self.audio = audio
+        listener = try NWListener(using: .tcp, on: .any)
+        let startup = LoopbackHTTPServerStartup()
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                startup.complete()
+            case let .failed(error):
+                startup.complete(error: error)
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        listener.start(queue: queue)
+        guard startup.wait(timeout: 5) else {
+            listener.cancel()
+            throw LoopbackHTTPServerError.startupTimedOut
+        }
+        if let error = startup.error {
+            listener.cancel()
+            throw error
+        }
+        guard listener.port != nil else {
+            listener.cancel()
+            throw LoopbackHTTPServerError.missingPort
+        }
+    }
+
+    var requests: [LoopbackHTTPRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestStorage
+    }
+
+    func stop() {
+        listener.cancel()
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        receive(from: connection, accumulated: Data())
+    }
+
+    private func receive(from connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
+            [weak self, weak connection] data, _, isComplete, error in
+            guard let self, let connection else { return }
+            var requestData = accumulated
+            if let data { requestData.append(data) }
+            if requestData.range(of: Data("\r\n\r\n".utf8)) != nil {
+                respond(to: connection, requestData: requestData)
+            } else if error != nil || isComplete {
+                connection.cancel()
+            } else {
+                receive(from: connection, accumulated: requestData)
+            }
+        }
+    }
+
+    private func respond(to connection: NWConnection, requestData: Data) {
+        let request = String(decoding: requestData, as: UTF8.self)
+        let rangeHeader = request
+            .split(separator: "\r\n")
+            .first { $0.lowercased().hasPrefix("range:") }
+            .map { String($0.dropFirst("range:".count)).trimmingCharacters(in: .whitespaces) }
+        lock.lock()
+        requestStorage.append(LoopbackHTTPRequest(rangeHeader: rangeHeader))
+        lock.unlock()
+
+        let bounds = requestedBounds(from: rangeHeader)
+        let body = audio.subdata(in: bounds.start..<(bounds.endInclusive + 1))
+        let status = rangeHeader == nil ? "200 OK" : "206 Partial Content"
+        var headers = [
+            "HTTP/1.1 \(status)",
+            "Content-Type: audio/mpeg",
+            "Content-Length: \(body.count)",
+            "Accept-Ranges: bytes",
+            "Connection: close",
+        ]
+        if rangeHeader != nil {
+            headers.append(
+                "Content-Range: bytes \(bounds.start)-\(bounds.endInclusive)/\(audio.count)"
+            )
+        }
+        var response = Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+        response.append(body)
+        connection.send(content: response, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    private func requestedBounds(from rangeHeader: String?) -> (start: Int, endInclusive: Int) {
+        guard let rangeHeader,
+              rangeHeader.lowercased().hasPrefix("bytes="),
+              let separator = rangeHeader.firstIndex(of: "-") else {
+            return (0, audio.count - 1)
+        }
+        let startText = rangeHeader[rangeHeader.index(rangeHeader.startIndex, offsetBy: 6)..<separator]
+        let endText = rangeHeader[rangeHeader.index(after: separator)...]
+        let start = min(Int(startText) ?? 0, audio.count - 1)
+        let requestedEnd = Int(endText) ?? (audio.count - 1)
+        return (start, min(max(start, requestedEnd), audio.count - 1))
+    }
+}
+
+private final class LoopbackHTTPServerStartup: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var completed = false
+    private var errorStorage: Error?
+
+    var error: Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return errorStorage
+    }
+
+    func complete(error: Error? = nil) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        errorStorage = error
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    func wait(timeout: TimeInterval) -> Bool {
+        semaphore.wait(timeout: .now() + timeout) == .success
+    }
+}
+
+private enum LoopbackHTTPServerError: Error {
+    case startupTimedOut
+    case missingPort
+    case missingFixture
+}
+
+private func loopbackResponse(
+    from url: URL,
+    range: String?
+) async throws -> (data: Data, response: HTTPURLResponse) {
+    var request = URLRequest(url: url)
+    if let range {
+        request.setValue(range, forHTTPHeaderField: "Range")
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    configuration.urlCache = nil
+    let (data, response) = try await URLSession(configuration: configuration).data(for: request)
+    guard let response = response as? HTTPURLResponse else {
+        throw URLError(.badServerResponse)
+    }
+    return (data, response)
+}
+
+private func navidromeReferenceMP3Fixture() throws -> Data {
+    guard let url = Bundle.module.url(
+        forResource: "navidrome-reference",
+        withExtension: "mp3",
+        subdirectory: "Fixtures"
+    ) else {
+        throw LoopbackHTTPServerError.missingFixture
+    }
+    return try Data(contentsOf: url, options: .mappedIfSafe)
+}
+
+private final class LoopbackHTTPPlaybackResource: DulcetPlaybackResourceLoading,
+    DulcetPlaybackRequestAuthorizing, DulcetPlaybackResponseValidating,
+    DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    private let url: URL
+    private lazy var resource = DulcetURLSessionPlaybackResource(
+        expectedContainer: .mp3,
+        authorizer: self,
+        validator: self,
+        redirectEvaluator: self
+    )
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    var description: String { "LoopbackHTTPPlaybackResource(<redacted>)" }
+
+    func load(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        resource.load(request, completion: completion)
+    }
+
+    func authorize(
+        range: DulcetPlaybackByteRange,
+        completion: @escaping @Sendable (
+            Result<DulcetPlaybackAuthorizedRequest, DulcetPlaybackFailure>
+        ) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        var request = URLRequest(url: url)
+        request.setValue("bytes=\(range.start)-\(range.endInclusive)", forHTTPHeaderField: "Range")
+        completion(.success(DulcetPlaybackAuthorizedRequest(request: request)))
+        return InMemoryPlaybackOperation()
+    }
+
+    func validate(
+        response: DulcetPlaybackHTTPResponse,
+        expectedContainer: DulcetAudioContainer,
+        requestedRange: DulcetPlaybackByteRange,
+        requiresAudioSignature: Bool
+    ) -> DulcetPlaybackResponseValidation {
+        guard response.statusCode == 206,
+              response.contentType?.lowercased() == "audio/mpeg",
+              !response.body.isEmpty,
+              response.body.count <= requestedRange.length,
+              let totalText = response.contentRange?.split(separator: "/").last,
+              let totalLength = Int64(totalText),
+              !requiresAudioSignature || response.body.starts(with: Data("ID3".utf8)) else {
+            return .rejected(error: .protocolViolation, refreshReason: .validationFailed)
+        }
+        return .accepted(
+            contentInformation: .init(contentLength: totalLength, supportsByteRanges: true)
+        )
+    }
+
+    func evaluate(
+        sourceURL: URL,
+        proposedURL: URL,
+        redirectsAlreadyFollowed: Int
+    ) -> DulcetPlaybackRedirectDecision {
+        .reject(.transport)
+    }
+}
+
+private func makeMP3Tone() -> Data {
+    Data(
+        base64Encoded: """
+        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
+        """,
+        options: .ignoreUnknownCharacters
+    )!
+}
+#endif
 
 private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecked Sendable {
     private let lock = NSLock()

@@ -244,11 +244,24 @@ def insert_build_setting(block: str, assignment: str) -> str:
     return block.replace(marker, marker + f"\t\t\t\t{assignment}\n", 1)
 
 
+def replace_build_setting(block: str, name: str, assignment: str) -> str:
+    """Set a build setting, replacing any existing definition of it.
+
+    insert_build_setting alone silently stops mutating once the target legitimately defines the same
+    setting: the injected line is shadowed and the negative control passes while proving nothing. That
+    happened when the app targets gained OTHER_LDFLAGS for -export_dynamic -- a real change that
+    disarmed this control rather than tripping it. Replace, so the mutation still bites.
+    """
+    pattern = re.compile(r"^\t{4}" + re.escape(name) + r" = [^\n]*\n", re.MULTILINE)
+    stripped, count = pattern.subn("", block)
+    return insert_build_setting(stripped if count else block, assignment)
+
+
 def drop_one_target_from_link_scope(source: str) -> str:
     return mutate_configurations(
         source,
         target_configuration_ids(source, "DulcetTV"),
-        lambda block: insert_build_setting(block, 'OTHER_LDFLAGS = "-ObjC";'),
+        lambda block: replace_build_setting(block, "OTHER_LDFLAGS", 'OTHER_LDFLAGS = "-ObjC";'),
     )
 
 

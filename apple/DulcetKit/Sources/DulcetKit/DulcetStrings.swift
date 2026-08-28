@@ -31,10 +31,19 @@ enum DulcetStrings {
     static let pause = text("action.pause", "Pause")
     static let previous = text("action.previous", "Previous Track")
     static let next = text("action.next", "Next Track")
+    static let repeatMode = text("action.repeat", "Repeat Mode")
+    static let repeatOff = text("player.repeat.off", "Off")
+    static let repeatAll = text("player.repeat.all", "Repeat All")
+    static let repeatOne = text("player.repeat.one", "Repeat One")
+    static let controlOn = text("control.on", "On")
+    static let controlOff = text("control.off", "Off")
+    static let buffering = text("player.buffering", "Buffering…")
+    static let paused = text("player.paused", "Paused")
+    static let readyToPlay = text("player.ready", "Ready to play")
     static let favorite = text("action.favorite", "Favorite")
     static let unfavorite = text("action.unfavorite", "Remove Favorite")
     static let volume = text("action.volume", "Volume")
-    static let queue = text("player.queue", "Up Next")
+    static let queue = text("player.queue", "Queue")
     static let playingOn = text("player.playingOn", "Playing on")
     static let firstRunTitle = text("empty.title", "Your music, wherever you listen")
     static let firstRunBody = text("empty.body", "Connect an OpenSubsonic server to browse your library and listen with native controls.")
@@ -52,8 +61,12 @@ enum DulcetStrings {
     static let libraryErrorSecurity = text("library.error.security", "A security or certificate check stopped the library request.")
     static let libraryErrorProtocol = text("library.error.protocol", "The server returned a library response Dulcet could not read.")
     static let libraryErrorGeneric = text("library.error.generic", "Check the server and network, then try again.")
-    static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing can play yet")
-    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Playback is a separate feature and has not been implemented in this build.")
+    static let nowPlayingPreparingTitle = text("player.preparing.title", "Preparing playback…")
+    static let nowPlayingPreparingBody = text("player.preparing.body", "Dulcet is opening the selected track.")
+    static let nowPlayingFailedTitle = text("player.failed.title", "This track could not be played")
+    static let nowPlayingFailedBody = text("player.failed.body", "Return to your library and choose another track.")
+    static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing is playing")
+    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a track, album, or library playback action to begin.")
     static let searchTitle = text("search.title", "Search")
     static let searchPrompt = text("search.prompt", "Artists, albums, and tracks")
     static let searchSummary = text("search.summary", "Results come from the connected server. Search begins after two characters.")
@@ -188,6 +201,10 @@ enum DulcetStrings {
         formatted("track.accessibility", "%1$@, %2$@, %3$@", title, subtitle, duration)
     }
 
+    static func currentTrackAccessibility(_ track: String) -> String {
+        formatted("track.accessibility.current", "Current track, %@", track)
+    }
+
     static func unavailableTrackAccessibility(
         title: String,
         subtitle: String,
@@ -220,6 +237,10 @@ enum DulcetStrings {
 
     static func playingOn(_ outputName: String) -> String {
         formatted("player.playingOnOutput", "Playing on %@", outputName)
+    }
+
+    static func playingFrom(_ sourceName: String) -> String {
+        formatted("player.playingFrom", "Playing from %@", sourceName)
     }
 
     static func searchResultAccessibility(
@@ -291,6 +312,19 @@ enum DulcetStrings {
     ) -> String {
         String(localized: key, defaultValue: fallback, bundle: .module)
     }
+}
+
+public enum DulcetPlaybackStrings {
+    public static let thisDevice = String(
+        localized: "player.thisDevice",
+        defaultValue: "This Device",
+        bundle: .module
+    )
+    public static let unknownAudioFormat = String(
+        localized: "player.unknownAudioFormat",
+        defaultValue: "Audio",
+        bundle: .module
+    )
 }
 
 enum DulcetLinks {
