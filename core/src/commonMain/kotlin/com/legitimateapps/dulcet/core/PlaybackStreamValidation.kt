@@ -55,6 +55,7 @@ internal object PlaybackStreamValidator {
     fun validate(
         response: AuthenticatedEndpointResponse,
         expectedContainer: AudioContainer,
+        requiresAudioSignature: Boolean = true,
     ): PlaybackStreamValidationResult {
         val envelope = response.body.inspectSubsonicBinaryEnvelope()
         val statusIsSuccess = response.statusCode in 200..299
@@ -111,7 +112,11 @@ internal object PlaybackStreamValidator {
             )
             return unexpectedSuccessfulPayload(response, error)
         }
-        if (response.body.size < rule.minimumBytes || !rule.signatureMatches(response.body)) {
+        if (
+            response.body.isEmpty() ||
+            (requiresAudioSignature &&
+                (response.body.size < rule.minimumBytes || !rule.signatureMatches(response.body)))
+        ) {
             return unexpectedSuccessfulPayload(response, DomainError.Protocol.UnexpectedBinary)
         }
         return PlaybackStreamValidationResult.Audio(

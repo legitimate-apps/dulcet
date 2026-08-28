@@ -164,6 +164,33 @@ class PlaybackStreamValidationTest {
         )
     }
 
+    @Test
+    fun continuationRangesSkipOnlyTheLeadingSignatureCheck() {
+        val continuation = assertIs<PlaybackStreamValidationResult.Audio>(
+            PlaybackStreamValidator.validate(
+                response(body = ascii("continuation bytes"), contentType = "audio/mpeg"),
+                AudioContainer.Mp3,
+                requiresAudioSignature = false,
+            ),
+        )
+        assertEquals(AudioContainer.Mp3, continuation.container)
+
+        val envelope = assertIs<PlaybackStreamValidationResult.Failure>(
+            PlaybackStreamValidator.validate(
+                response(
+                    body = ascii(
+                        """{"subsonic-response":{"status":"failed","error":{"code":40}}}""",
+                    ),
+                    contentType = "audio/mpeg",
+                ),
+                AudioContainer.Mp3,
+                requiresAudioSignature = false,
+            ),
+        )
+        assertEquals(PlaybackErrorResponseShape.EnvelopeAtSuccess, envelope.shape)
+        assertEquals(DomainError.Auth.InvalidCredentials, envelope.error)
+    }
+
     private fun response(
         statusCode: Int = 200,
         body: ByteArray,

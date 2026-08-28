@@ -10,6 +10,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.URLBuilder
 import io.ktor.http.contentType
 
 internal data class AuthenticatedEndpointCredentials(
@@ -48,6 +49,15 @@ internal data class AuthenticatedEndpointRequestOptions(
     private companion object {
         val BYTE_RANGE_PATTERN = Regex("bytes=[0-9]+-(?:[0-9]+)?")
     }
+}
+
+/** Signed request material for a platform loader. Rendering is deliberately redacted. */
+internal data class AuthenticatedEndpointPreparedRequest(
+    val url: String,
+    val hostHeader: String?,
+    val rangeHeader: String?,
+) {
+    override fun toString(): String = "AuthenticatedEndpointPreparedRequest(<redacted>)"
 }
 
 /**
@@ -97,26 +107,27 @@ internal class AuthenticatedEndpointClient(
         return execute(endpoint, parameters, options, jsonBody)
     }
 
+    suspend fun prepareGetRequest(
+        endpoint: String,
+        parameters: Map<String, String>,
+        options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
+    ): AuthenticatedEndpointPreparedRequest {
+        val common = authenticatedParameters(parameters)
+        val logicalUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
+        val target = localHttpPolicy.targetFor(logicalUrl, credentials.allowLocalHttp)
+        val url = URLBuilder(target.url).apply {
+            common.forEach { (name, value) -> this.parameters.append(name, value) }
+        }.buildString()
+        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range)
+    }
+
     private suspend fun execute(
         endpoint: String,
         parameters: Map<String, String>,
         options: AuthenticatedEndpointRequestOptions,
         jsonBody: String?,
     ): AuthenticatedEndpointResponse {
-        val salt = saltSource.nextSalt()
-        require(SALT_PATTERN.matches(salt)) {
-            "SaltSource must return exactly 16 bytes as lowercase hex"
-        }
-        val common = linkedMapOf(
-            "v" to AccountConnectionContract.protocolVersion,
-            "c" to CLIENT_NAME,
-            "f" to "json",
-        ).apply {
-            putAll(parameters)
-            put("u", credentials.username)
-            put("t", AccountConnectionContract.saltedToken(credentials.password, salt))
-            put("s", salt)
-        }
+        val common = authenticatedParameters(parameters)
         var currentUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
         var redirects = 0
         while (true) {
@@ -190,6 +201,23 @@ internal class AuthenticatedEndpointClient(
             }
             currentUrl = nextUrl.withoutQuery()
             redirects += 1
+        }
+    }
+
+    private fun authenticatedParameters(parameters: Map<String, String>): Map<String, String> {
+        val salt = saltSource.nextSalt()
+        require(SALT_PATTERN.matches(salt)) {
+            "SaltSource must return exactly 16 bytes as lowercase hex"
+        }
+        return linkedMapOf(
+            "v" to AccountConnectionContract.protocolVersion,
+            "c" to CLIENT_NAME,
+            "f" to "json",
+        ).apply {
+            putAll(parameters)
+            put("u", credentials.username)
+            put("t", AccountConnectionContract.saltedToken(credentials.password, salt))
+            put("s", salt)
         }
     }
 
