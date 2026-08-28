@@ -113,6 +113,45 @@ class ApplePlaybackQueueFacadeTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun submittedPlayIsPersistedBeforeEventIngestionReturns() {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var identity = 0
+        val client = ApplePlaybackQueueClient(
+            database = database,
+            controller = PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = resumePositions,
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+            resumePositions = resumePositions,
+        )
+        try {
+            client.configurePersistenceOnlyDelivery(
+                PersistentScrobbleOutbox(
+                    database,
+                    OutboxWallClock { 1_788_000_000_000 },
+                ),
+            )
+            client.replaceAndStart(queueRequest())
+            client.recordReady("attempt:2", 30_000, "seekable")
+            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+            client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+            client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+            client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+
+            client.recordEndedNaturally("attempt:2", 30_000)
+
+            assertEquals(1, client.pendingSubmittedPlayCount())
+        } finally {
+            client.close()
+            driver.close()
+        }
+    }
+
     private fun fixture(): FacadeFixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
