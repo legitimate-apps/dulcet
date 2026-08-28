@@ -96,6 +96,37 @@ def test_names() -> set[str]:
     return names
 
 
+SPEC_PATH = Path("docs/superpowers/specs/2026-08-18-dulcet-design.md")
+
+
+def require_registry_matches_spec(conformance_text: str) -> None:
+    """Require the registry and the design's representative-test table to name the same ids.
+
+    The registry reserves the identifiers and the design carries each one's detailed assertion, so
+    they are one id space by construction. Nothing enforced that, and they drifted: five ids named
+    entirely different tests in the two documents -- CONF-41 was "local and server search merge" in
+    one and "getCoverArt size behavior" in the other -- while five more existed only in the design.
+
+    This gate could not see any of it. It checked that a declared id EXISTS in the registry and is
+    evidenced exactly once, never what the id meant, so a shipped cell could carry evidence labelled
+    with one test while citing an id the design assigns to a different one, and stay green. That is
+    worse than a broken gate, because the evidence then reads as verified.
+
+    Set equality is deliberately all this checks. Comparing prose would be brittle and would fail on
+    harmless rewording; a one-sided id is unambiguous and is the shape every observed drift took.
+    """
+    table_row = re.compile(r"^\|\s*(CONF-[0-9]+[a-z]?)\s*\|", re.MULTILINE)
+    registry = set(table_row.findall(conformance_text))
+    spec = set(table_row.findall(SPEC_PATH.read_text()))
+    if registry == spec:
+        return
+    fail(
+        "docs/CONFORMANCE.md and the design's representative-test table must name the same "
+        f"conformance ids; only in registry={sorted(registry - spec)}; "
+        f"only in design={sorted(spec - registry)}"
+    )
+
+
 def validate(document: dict, source: str) -> dict[str, dict]:
     unknown = set(document) - TOP_KEYS
     if unknown:
@@ -111,6 +142,7 @@ def validate(document: dict, source: str) -> dict[str, dict]:
 
     conformance_text = Path("docs/CONFORMANCE.md").read_text()
     conformance_ids = set(re.findall(r"\bCONF-[0-9]+[a-z]?\b", conformance_text))
+    require_registry_matches_spec(conformance_text)
     jobs = workflow_jobs()
     execution_jobs = executed_evidence_jobs(jobs)
     required_checks = required_status_checks(jobs)
