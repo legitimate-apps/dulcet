@@ -5,6 +5,69 @@ import Testing
 @Suite(.serialized)
 struct PlaybackResourceLoadingTests {
 @Test
+func partialResponsePublishesContentRangeTotalRatherThanRangeLength() async throws {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    ScriptedPlaybackURLProtocol.install { _ in
+        .response(
+            status: 206,
+            headers: [
+                "Content-Type": "audio/mpeg",
+                "Content-Length": "3",
+                "Content-Range": "bytes 0-2/7550103",
+            ],
+            body: Data("ID3".utf8)
+        )
+    }
+    let validator = TotalLengthValidator(expected: 7_550_103)
+    let resource = makeURLSessionResource(
+        validator: validator,
+        configuration: configuration
+    )
+
+    let outcome = await load(resource)
+
+    guard case let .loaded(data, information) = outcome else {
+        Issue.record("valid partial response did not load")
+        return
+    }
+    #expect(data == Data("ID3".utf8))
+    #expect(information == .init(contentLength: 7_550_103, supportsByteRanges: true))
+    #expect(validator.observationCount == 1)
+}
+
+@Test
+func partialResponseWithoutAResourceTotalFailsBeforeValidation() async throws {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    ScriptedPlaybackURLProtocol.install { _ in
+        .response(
+            status: 206,
+            headers: [
+                "Content-Type": "audio/mpeg",
+                "Content-Length": "3",
+            ],
+            body: Data("ID3".utf8)
+        )
+    }
+    let validator = TotalLengthValidator(expected: 3)
+    let resource = makeURLSessionResource(
+        validator: validator,
+        configuration: configuration
+    )
+
+    let outcome = await load(resource)
+
+    guard case let .failed(error, refreshReason) = outcome else {
+        Issue.record("partial response without a resource total did not fail closed")
+        return
+    }
+    #expect(error == .protocolViolation)
+    #expect(refreshReason == .validationFailed)
+    #expect(validator.observationCount == 0)
+}
+
+@Test
 func urlSessionPlaybackResourcePassesEveryNegativeHTTPShapeToTheCoreValidator() async throws {
     let cases: [(String, ScriptedPlaybackURLProtocol.Response, DulcetPlaybackFailure)] = [
         (
@@ -229,6 +292,37 @@ private final class AcceptingPlaybackValidator: DulcetPlaybackResponseValidating
         #expect(response.body == Data("ID3".utf8))
         return .accepted(
             contentInformation: .init(contentLength: 3, supportsByteRanges: true)
+        )
+    }
+}
+
+private final class TotalLengthValidator: DulcetPlaybackResponseValidating, @unchecked Sendable {
+    private let lock = NSLock()
+    private let expected: Int64
+    private var observations = 0
+
+    init(expected: Int64) {
+        self.expected = expected
+    }
+
+    var observationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return observations
+    }
+
+    func validate(
+        response: DulcetPlaybackHTTPResponse,
+        expectedContainer: DulcetAudioContainer,
+        requestedRange: DulcetPlaybackByteRange,
+        requiresAudioSignature: Bool
+    ) -> DulcetPlaybackResponseValidation {
+        lock.lock()
+        observations += 1
+        lock.unlock()
+        #expect(response.contentLength == expected)
+        return .accepted(
+            contentInformation: .init(contentLength: expected, supportsByteRanges: true)
         )
     }
 }
