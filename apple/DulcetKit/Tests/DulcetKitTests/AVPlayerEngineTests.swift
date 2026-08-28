@@ -23,7 +23,12 @@ struct AVPlayerEngineTests {
         try await waitUntil("AVPlayer did not become ready through the custom resource loader") {
             events.containsReady(seekability: .seekable)
         }
-        #expect(resource.requests.count > 0)
+        // Reported rather than asserted bare, so a CI failure distinguishes "the engine never routed
+        // through our loader" from "it did, but slower than the deadline allowed".
+        #expect(
+            resource.requests.count > 0,
+            Comment(rawValue: "custom loader received \(resource.requests.count) requests")
+        )
         #expect(resource.requests.first?.range.start == 0)
         #expect(resource.requests.first?.requiresAudioSignature == true)
 
@@ -499,9 +504,17 @@ private func execute(
     }
 }
 
+// 20 seconds, not 2. AVFoundation has to spin up, resolve a custom-scheme asset through the
+// resource-loader delegate and reach readyToPlay; two seconds is a local-machine figure. On the
+// hosted runner these tests failed at 2.388s -- the deadline plus overhead -- while passing locally,
+// which is the signature of a budget that is too tight rather than of behaviour that is absent.
+//
+// The deadline still has teeth: if the loader is never invoked at all, the condition never becomes
+// true and the expectation fails at 20 seconds instead of 2. Waiting longer costs a slow test only
+// when something is already broken.
 private func waitUntil(
     _ failure: String,
-    timeout: TimeInterval = 2,
+    timeout: TimeInterval = 20,
     condition: @escaping @Sendable () -> Bool
 ) async throws {
     let clock = ContinuousClock()
