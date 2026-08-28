@@ -218,6 +218,8 @@ enum DulcetResponsiveGridLayout {
 struct DulcetLibraryBrowseView: View {
     let snapshot: DulcetSnapshot
     var onSelectAlbum: (DulcetAlbum) -> Void = { _ in }
+    var onPlayAll: () -> Void = {}
+    var onShuffle: () -> Void = {}
 
     private var totalTracks: Int {
         snapshot.albums.reduce(0) { $0 + $1.tracks.count } + snapshot.looseTracks.count
@@ -235,7 +237,9 @@ struct DulcetLibraryBrowseView: View {
                         subtitle: DulcetStrings.librarySummary(
                             albumCount: snapshot.albums.count,
                             trackCount: totalTracks
-                        )
+                        ),
+                        onPlayAll: onPlayAll,
+                        onShuffle: onShuffle
                     )
 
                     if !snapshot.musicFolders.isEmpty {
@@ -302,6 +306,8 @@ struct DulcetLibraryBrowseView: View {
 struct DulcetLibraryHeader: View {
     let title: String
     let subtitle: String
+    var onPlayAll: () -> Void = {}
+    var onShuffle: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.md) {
@@ -316,11 +322,11 @@ struct DulcetLibraryHeader: View {
             }
             Spacer(minLength: DulcetSpacing.md)
             HStack(spacing: DulcetSpacing.xs) {
-                Button(DulcetStrings.playAll, systemImage: "play.fill") {}
+                Button(DulcetStrings.playAll, systemImage: "play.fill", action: onPlayAll)
                     .buttonStyle(.borderedProminent)
                     .dulcetDefaultActionShortcut()
                     .accessibilityLabel(DulcetStrings.playAll)
-                Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
+                Button(DulcetStrings.shuffle, systemImage: "shuffle", action: onShuffle)
                     .buttonStyle(.bordered)
                     .accessibilityLabel(DulcetStrings.shuffle)
             }
@@ -408,10 +414,42 @@ struct DulcetTrackRow: View {
     let index: Int
     var offline = false
     var surface: DulcetTrackRowSurface = .window
+    var onActivate: () -> Void = {}
 
+    @ViewBuilder
     var body: some View {
-        Button(action: {}) {
-            HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+        #if os(macOS)
+        rowContent
+            .contentShape(Rectangle())
+            .gesture(
+                TapGesture(count: 2)
+                    .exclusively(before: TapGesture(count: 1))
+                    .onEnded { _ in performActivation() }
+            )
+            .focusable(!offline)
+            .onKeyPress(keys: [.return, .space]) { _ in
+                performActivation()
+                return offline ? .ignored : .handled
+            }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { performActivation() }
+            .dulcetForeground(surface.primaryPair)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
+        #else
+        Button(action: performActivation) {
+            rowContent
+        }
+        .disabled(offline)
+        .dulcetMediaButtonStyle()
+        .dulcetForeground(surface.primaryPair)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
+        #endif
+    }
+
+    private var rowContent: some View {
+        HStack(alignment: .center, spacing: DulcetSpacing.xs) {
                 Group {
                     if offline {
                         Image(systemName: "cloud.slash")
@@ -455,18 +493,14 @@ struct DulcetTrackRow: View {
                         .dulcetForeground(surface.secondaryPair)
                 }
 
-                Image(systemName: "ellipsis")
-                    .dulcetForeground(surface.secondaryPair)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, DulcetSpacing.xs)
-            .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
-            .contentShape(Rectangle())
         }
-        .dulcetMediaButtonStyle()
-        .dulcetForeground(surface.primaryPair)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
+        .padding(.horizontal, DulcetSpacing.xs)
+        .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
+    }
+
+    private func performActivation() {
+        guard !offline else { return }
+        onActivate()
     }
 
     private var trackSubtitle: String {
@@ -499,6 +533,9 @@ struct DulcetTrackRow: View {
 struct DulcetAlbumDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let album: DulcetAlbum
+    var onPlay: () -> Void = {}
+    var onShuffle: () -> Void = {}
+    var onActivateTrack: (DulcetTrack) -> Void = { _ in }
 
     var body: some View {
         ScrollView {
@@ -518,7 +555,8 @@ struct DulcetAlbumDetailView: View {
                                     track: track,
                                     showAlbum: false,
                                     index: index + 1,
-                                    surface: .window
+                                    surface: .window,
+                                    onActivate: { onActivateTrack(track) }
                                 )
                                 if track.id != tracks.last?.id {
                                     Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
@@ -579,16 +617,13 @@ struct DulcetAlbumDetailView: View {
 
     private var albumActions: some View {
         HStack(spacing: DulcetSpacing.xs) {
-            Button(DulcetStrings.play, systemImage: "play.fill") {}
+            Button(DulcetStrings.play, systemImage: "play.fill", action: onPlay)
                 .buttonStyle(.borderedProminent)
                 .dulcetDefaultActionShortcut()
                 .accessibilityLabel(DulcetStrings.play)
-            Button(DulcetStrings.shuffle, systemImage: "shuffle") {}
+            Button(DulcetStrings.shuffle, systemImage: "shuffle", action: onShuffle)
                 .buttonStyle(.bordered)
                 .accessibilityLabel(DulcetStrings.shuffle)
-            Button(DulcetStrings.more, systemImage: "ellipsis") {}
-                .buttonStyle(.bordered)
-                .accessibilityLabel(DulcetStrings.more)
         }
     }
 }

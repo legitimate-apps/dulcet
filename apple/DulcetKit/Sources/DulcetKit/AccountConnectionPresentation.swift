@@ -485,10 +485,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 destination: .library,
                 form: currentSnapshot.accountForm,
                 status: currentSnapshot.accountConnection,
+                musicFolders: currentSnapshot.musicFolders,
+                artists: currentSnapshot.artists,
+                albums: currentSnapshot.albums,
                 selectedAlbum: album
             )
         case let .playLibrary(shuffle):
-            let tracks = currentSnapshot.albums.flatMap(\.tracks)
+            let tracks = currentSnapshot.albums.flatMap(\.tracks) + currentSnapshot.looseTracks
             guard !tracks.isEmpty else { return }
             beginPlayback(DulcetPlaybackQueueIntent(
                 tracks: tracks,

@@ -338,13 +338,23 @@ private struct DulcetStateSurface: View {
             }
             .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryBrowse:
-            DulcetLibraryBrowseView(snapshot: snapshot) { album in
-                store.selectAlbum(album.id)
-            }
+            DulcetLibraryBrowseView(
+                snapshot: snapshot,
+                onSelectAlbum: { album in store.selectAlbum(album.id) },
+                onPlayAll: { store.playLibrary(shuffle: false) },
+                onShuffle: { store.playLibrary(shuffle: true) }
+            )
             .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .albumDetailMultiDisc:
             if let album = snapshot.selectedAlbum {
-                DulcetAlbumDetailView(album: album)
+                DulcetAlbumDetailView(
+                    album: album,
+                    onPlay: { store.playAlbum(album.id, shuffle: false) },
+                    onShuffle: { store.playAlbum(album.id, shuffle: true) },
+                    onActivateTrack: { track in
+                        store.activateTrack(albumID: album.id, trackID: track.id)
+                    }
+                )
             } else {
                 DulcetEmptyLibraryView(connected: true)
                     .navigationTitle(DulcetSidebarDestination.library.windowTitle)
