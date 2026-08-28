@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Static and mutation controls for the shared Linux conformance lifecycle."""
+
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOL = ROOT / "tools/conformance-env/linux-local"
+WORKFLOW = ROOT / ".github/workflows/core-ci.yml"
+
+
+environment = subprocess.run(
+    [sys.executable, str(TOOL), "env"],
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    check=False,
+)
+if environment.returncode != 0:
+    raise AssertionError(f"environment declaration failed: {environment.stdout}")
+expected = {
+    "export TZ=UTC",
+    "export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533",
+    "export DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540",
+    "export DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542",
+    "export DULCET_CONFORMANCE_DISPOSABLE=true",
+}
+if set(environment.stdout.splitlines()) != expected:
+    raise AssertionError(f"local environment drifted: {environment.stdout!r}")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-nondisposable-") as directory:
+    unsafe_root = Path(directory) / "not-declared"
+    unsafe_root.mkdir()
+    sentinel = unsafe_root / "must-survive"
+    sentinel.write_text("negative-control\n")
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--root", str(unsafe_root), "down"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode == 0 or "not a declared disposable conformance root" not in result.stdout:
+        raise AssertionError(f"unmarked root was accepted: {result.stdout!r}")
+    if sentinel.read_text() != "negative-control\n":
+        raise AssertionError("unmarked-root negative control was modified")
+
+source = TOOL.read_text()
+for required_source in (
+    'pin("navidrome.linux.image")',
+    'pin("navidrome.linux.architecture")',
+    'pin("navidrome.version")',
+    'pin("ffmpeg.linux.path")',
+    'pin("ffmpeg.linux.version")',
+    "require_running_container(name)",
+    'binding != expected_binding',
+    'REPOSITORY / "tools/seed-corpus"',
+    'TOOLS / "health-check"',
+):
+    if required_source not in source:
+        raise AssertionError(f"shared lifecycle source is missing {required_source!r}")
+
+workflow = WORKFLOW.read_text()
+if "tools/conformance-env/linux-local --root \"$ROOT\" up" not in workflow:
+    raise AssertionError("core-ci does not start the shared Linux lifecycle")
+if "tools/conformance-env/linux-local --root \"$ROOT\" run --" not in workflow:
+    raise AssertionError("core-ci does not run tests through the shared environment declaration")
+if "deluan/navidrome@sha256:" in workflow or "/usr/bin/ffmpeg" in workflow:
+    raise AssertionError("core-ci duplicates a conformance pin outside tools/conformance-env")
+
+print(
+    "Linux conformance lifecycle rejects an unmarked root, preserves its sentinel, exports the "
+    "loopback disposable contract, and shares every pin/corpus/health source with core-ci"
+)

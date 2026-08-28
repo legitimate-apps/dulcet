@@ -1060,6 +1060,9 @@ class AccountConnectConformanceTest {
 
     private fun conformanceBaseUrl(): String =
         requiredEnvironment("DULCET_CONFORMANCE_BASE_URL").also { baseUrl ->
+            check(requiredEnvironment("DULCET_CONFORMANCE_DISPOSABLE") == "true") {
+                "conformance suite requires an explicitly declared disposable instance"
+            }
             check(baseUrl == "http://127.0.0.1:4533") {
                 "conformance suite is restricted to the disposable loopback server, observed: $baseUrl"
             }

@@ -1,52 +1,156 @@
 #!/usr/bin/env python3
-"""Mutation fixtures proving the app-hosted execution guard cannot accept non-execution."""
+"""Mutation controls proving app-hosted xcresult evidence cannot accept non-execution."""
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
 VERIFY = ROOT / "tools/verify-xcode-test-execution"
-FIXTURES = ROOT / "tools/fixtures/xcode-test-execution"
+TRANSCRIPT_FIXTURES = ROOT / "tools/fixtures/xcode-test-execution"
 EXPECTED_CLASS = "DulcetMacTests.DulcetMacAccountConnectAppTest"
 EXPECTED_METHOD = "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState"
 
 
-def invoke(fixture: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            sys.executable,
-            str(VERIFY),
-            str(FIXTURES / fixture),
-            EXPECTED_CLASS,
-            EXPECTED_METHOD,
+def test_case(
+    method: str = EXPECTED_METHOD,
+    *,
+    identifier: str | None = None,
+    result: str | None = "Passed",
+    suite: str = "DulcetMacAccountConnectAppTest",
+) -> dict:
+    node = {
+        "nodeType": "Test Case",
+        "name": method,
+        "nodeIdentifier": identifier or f"DulcetMacTests/{suite}/{method}",
+    }
+    if result is not None:
+        node["result"] = result
+    return {
+        "devices": [],
+        "testPlanConfigurations": [],
+        "testNodes": [
+            {
+                "nodeType": "Unit test bundle",
+                "name": "DulcetMacTests.xctest",
+                "children": [
+                    {
+                        "nodeType": "Test Suite",
+                        "name": suite,
+                        "children": [node],
+                    }
+                ],
+            }
         ],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    }
 
 
-passing = invoke("one-passing.log")
+def count_cases(document: dict) -> tuple[int, dict[str, int]]:
+    results: list[str] = []
+
+    def visit(node: object) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("nodeType") == "Test Case" and isinstance(node.get("result"), str):
+            results.append(node["result"])
+        for child in node.get("children", []):
+            visit(child)
+
+    for node in document.get("testNodes", []):
+        visit(node)
+    return len(results), {
+        "totalTestCount": len(results),
+        "passedTests": results.count("Passed"),
+        "failedTests": results.count("Failed") + results.count("unknown"),
+        "skippedTests": results.count("Skipped"),
+        "expectedFailures": results.count("Expected Failure"),
+    }
+
+
+def invoke(document: dict, *, summary: dict | None = None) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="dulcet-xcode-execution-") as directory:
+        root = Path(directory)
+        bundle = root / "tests.xcresult"
+        bundle.mkdir()
+        fixture = root / "xcresult-tests.json"
+        fixture.write_text(json.dumps(document))
+        summary_fixture = root / "xcresult-summary.json"
+        summary_fixture.write_text(json.dumps(summary or count_cases(document)[1]))
+        shim = root / "xcrun"
+        shim.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib, sys\n"
+            "expected = ['xcresulttool', 'get', 'test-results']\n"
+            "assert sys.argv[1:4] == expected, sys.argv\n"
+            "key = 'DULCET_XCRESULT_TESTS' if sys.argv[4] == 'tests' else 'DULCET_XCRESULT_SUMMARY'\n"
+            "print(pathlib.Path(os.environ[key]).read_text())\n"
+        )
+        shim.chmod(0o755)
+        environment = os.environ.copy()
+        environment["PATH"] = f"{root}{os.pathsep}{environment['PATH']}"
+        environment["DULCET_XCRESULT_TESTS"] = str(fixture)
+        environment["DULCET_XCRESULT_SUMMARY"] = str(summary_fixture)
+        return subprocess.run(
+            [sys.executable, str(VERIFY), str(bundle), EXPECTED_CLASS, EXPECTED_METHOD],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=environment,
+        )
+
+
+passing = invoke(test_case())
 if passing.returncode != 0:
-    raise AssertionError(f"valid one-test record rejected: {passing.stdout}")
+    raise AssertionError(f"valid one-test xcresult rejected: {passing.stdout}")
 
-for fixture, expected in (
-    ("zero-tests.log", "expected exactly one terminal test record, observed 0"),
-    ("wrong-test.log", "wrong test executed"),
-    ("skipped-test.log", "terminated as skipped"),
-    ("failed-test.log", "terminated as failed"),
-    ("duplicate-test.log", "expected exactly one terminal test record, observed 2"),
+zero = test_case()
+zero["testNodes"][0]["children"][0]["children"] = []
+duplicate = test_case()
+duplicate_case = dict(duplicate["testNodes"][0]["children"][0]["children"][0])
+duplicate["testNodes"][0]["children"][0]["children"].append(duplicate_case)
+
+for label, document, expected in (
+    (
+        "run-summary-only",
+        {"title": "Selected tests", "result": "Passed", "totalTestCount": 1},
+        "testNodes array; a run summary is not proof",
+    ),
+    ("zero-tests", zero, "no individual Test Case results"),
+    ("wrong-test", test_case(method="anotherControl"), "wrong test executed"),
+    ("wrong-class", test_case(suite="AnotherTestClass"), "wrong test class"),
+    ("skipped-test", test_case(result="Skipped"), "terminated as Skipped"),
+    ("failed-test", test_case(result="Failed"), "terminated as Failed"),
+    ("missing-result", test_case(result=None), "must carry a non-empty result"),
+    ("duplicate-test", duplicate, "duplicate test identities"),
 ):
-    result = invoke(fixture)
+    result = invoke(document)
     if result.returncode == 0 or expected not in result.stdout:
         raise AssertionError(
-            f"{fixture} was not rejected with {expected!r}: "
+            f"{label} was not rejected with {expected!r}: "
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
-print("xcode test execution guard rejects zero, wrong, skipped, failed, and duplicate controls")
+for fixture in (
+    "one-passing.log",
+    "zero-tests.log",
+    "wrong-test.log",
+    "skipped-test.log",
+    "failed-test.log",
+    "duplicate-test.log",
+    "torn-passing.log",
+    "torn-host-lookalike.log",
+):
+    if not (TRANSCRIPT_FIXTURES / fixture).is_file():
+        raise AssertionError(f"retained XCTest transcript fixture is missing: {fixture}")
+
+print(
+    "xcresult execution guard rejects summary-only, zero, wrong, skipped, failed, missing, and "
+    "duplicate individual controls; transcript regression fixtures retained"
+)

@@ -72,23 +72,75 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-boundary-") as directory:
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
-with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-") as directory:
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-header-") as directory:
     root = Path(directory)
     materialize(root)
     spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
     spec = spec_path.read_text()
-    declaration = re.search(r"^\*\*Revision:\*\* (\d+)\b", spec, re.MULTILINE)
+    declaration = re.search(r"^\*\*Revision:\*\*.*$", spec, re.MULTILINE)
     if declaration is None:
-        raise AssertionError("declared revision fixture is missing")
-    declared = int(declaration.group(1))
-    mutated = spec[: declaration.start(1)] + str(declared - 1) + spec[declaration.end(1) :]
+        raise AssertionError("derived revision header fixture is missing")
+    mutated = spec[: declaration.start()] + "**Revision:** 80" + spec[declaration.end() :]
     spec_path.write_text(mutated)
 
     result = invoke(root)
-    expected = "must equal latest record"
+    expected = "must derive from the highest dated §28 record"
     if result.returncode == 0 or expected not in result.stdout:
         raise AssertionError(
-            "declared/latest revision mismatch was accepted: "
+            "hand-maintained revision declaration was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-duplicate-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    mutated = spec.replace("**Revision 79 (", "**Revision 80 (", 1)
+    if mutated == spec:
+        raise AssertionError("revision duplicate fixture is missing")
+    spec_path.write_text(mutated)
+    result = invoke(root)
+    expected = "must not contain duplicate numbers"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "duplicate revision record was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-order-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    mutated = spec.replace("**Revision 80 (", "**Revision TEMP (", 1)
+    mutated = mutated.replace("**Revision 79 (", "**Revision 80 (", 1)
+    mutated = mutated.replace("**Revision TEMP (", "**Revision 79 (", 1)
+    if mutated == spec:
+        raise AssertionError("revision order fixture is missing")
+    spec_path.write_text(mutated)
+    result = invoke(root)
+    expected = "must be unique and strictly descending"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "out-of-order revision records were accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-exceeds-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    marker = "**Revision 79 ("
+    if marker not in spec:
+        raise AssertionError("revision exceeds fixture is missing")
+    spec_path.write_text(spec.replace(marker, "**Revision 81 (", 1))
+    result = invoke(root)
+    expected = "exceeds its derived declaration"
+    if result.returncode == 0 or expected not in result.stdout:
+        raise AssertionError(
+            "revision above the derived declaration was accepted: "
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 

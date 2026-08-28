@@ -90,10 +90,16 @@ jobs:
       - name: Test native macOS presentation and registered-pair contrast ratios
         run: |
           set -o pipefail
-          swift test --package-path apple/DulcetKit 2>&1 | \
+          cd apple/DulcetKit
+          xcodebuild test \
+            -scheme DulcetKit-Package \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetKitDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-swift-testing.xcresult" 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-swift-testing.log"
+          cd "$GITHUB_WORKSPACE"
           python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-swift-testing.log" \
+            "$RUNNER_TEMP/dulcet-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-swift-testing-junit/TEST-DulcetKitTests.xml" \
             DulcetKitTests
       - name: Prove macOS capture rejects an inapplicable Dynamic Type label
@@ -257,11 +263,12 @@ jobs:
             -configuration Debug \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
             -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-swift-testing.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:DulcetKitIOSTests 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ios-swift-testing.log"
           python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ios-swift-testing.log" \
+            "$RUNNER_TEMP/dulcet-ios-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
             DulcetKitIOSTests
       - name: Build DulcetTV and test DulcetKit on tvOS
@@ -273,11 +280,12 @@ jobs:
             -configuration Debug \
             -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
             -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-swift-testing.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:DulcetKitTVOSTests 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-tvos-swift-testing.log"
           python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-tvos-swift-testing.log" \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit/TEST-DulcetKitTVOSTests.xml" \
             DulcetKitTVOSTests
       - name: Assert Kotlin and Xcode OS floors
@@ -396,22 +404,25 @@ jobs:
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test \
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetMac \
               -configuration Debug \
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
               DEVELOPMENT_TEAM= \
               PROVISIONING_PROFILE_SPECIFIER= \
-              DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 2>&1 | \
+              DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+              DULCET_TEST_CONFORMANCE_DISPOSABLE=true 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-mac-app-test.log"
           python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-mac-app-test.log" \
+            "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
@@ -421,6 +432,7 @@ jobs:
               -configuration Debug \
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-mac-keyboard-test.xcresult" \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
@@ -429,7 +441,7 @@ jobs:
               PROVISIONING_PROFILE_SPECIFIER= 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-mac-keyboard-test.log"
           python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-mac-keyboard-test.log" \
+            "$RUNNER_TEMP/dulcet-mac-keyboard-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction
           xcodebuild test-without-building \
@@ -438,6 +450,7 @@ jobs:
               -configuration Debug \
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/accountConnectDoubleReturnKeepsSingleConnectionActive \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
@@ -446,12 +459,13 @@ jobs:
               PROVISIONING_PROFILE_SPECIFIER= 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-mac-double-return-test.log"
           python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-mac-double-return-test.log" \
+            "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
           # Same suite, iOS target. A per-platform matrix is worthless if one
           # platform's run is cited as another's evidence, so account.connect/ios
@@ -472,9 +486,11 @@ jobs:
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
             -Pdulcet.iosSimulatorUdid="$conformance_sim"
           xcrun simctl shutdown "$conformance_sim" || true
@@ -489,9 +505,11 @@ jobs:
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
             ./gradlew --no-daemon :core-conformance:tvosSimulatorArm64Test \
             -Pdulcet.tvosSimulatorUdid="$tvos_conformance_sim"
           xcrun simctl shutdown "$tvos_conformance_sim" || true

@@ -1,0 +1,5 @@
+◇ Test firstClaim() started.
+◇ Test secondClaim() started.
+✔ Test secondClaim() passed after 0.01 seconds.
+✔ Test firstClaim() passed after 0.02 seconds.
+✔ Test run with 2 tests in 0 suites passed after 0.02 seconds.

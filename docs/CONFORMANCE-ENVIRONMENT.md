@@ -48,6 +48,43 @@ directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled
 providers, log redaction, cache sizes, and localhost-only address. The Darwin and Linux path values are
 the only substitutions.
 
+## One-command Linux environment
+
+The Linux/amd64 environment used by `core-ci.yml` is also the local environment. Docker Desktop (or
+Docker Engine on Linux) must be running; no separately installed Navidrome or ffmpeg is used.
+
+```bash
+tools/conformance-env/linux-local up
+tools/conformance-env/linux-local run -- ./gradlew --no-daemon :core-conformance:jvmTest
+tools/conformance-env/linux-local down
+```
+
+`up` is cold by default: it stops the named disposable container, deletes only the marker-guarded
+`data` and `cache` directories, then starts and health-checks the pinned image. The generated music
+corpus is retained, so a subsequent cold start does not rebuild 313 fixtures. To clear a warmed
+Navidrome database and transcode cache while the environment is in use, run:
+
+```bash
+tools/conformance-env/linux-local reset
+```
+
+The fixed cache observation can be run twice around that reset without changing its request:
+
+```bash
+tools/conformance-env/linux-local probe-cache  # first run reports cached=false
+tools/conformance-env/linux-local probe-cache  # second run reports cached=true
+```
+
+`probe-cache` reads Navidrome's own `Streaming file` record and requires `transcoding=true`; it does
+not infer cache behavior from client timing.
+
+`run` supplies the same variables as CI: `TZ=UTC`, the exact loopback Navidrome, redirect, and
+untrusted-TLS URLs, and `DULCET_CONFORMANCE_DISPOSABLE=true`. The common conformance suite requires
+both the exact loopback URL and that disposable declaration. It will not run against another server.
+All image, architecture, server-version, ffmpeg-path, and ffmpeg-version values are read at runtime
+from `tools/conformance-env/pins.json` through `read-pin`; the local command and CI contain no second
+copy.
+
 ## Fresh database per test class
 
 `tools/conformance-env/new-class-root` creates a uniquely named root containing new data, cache,

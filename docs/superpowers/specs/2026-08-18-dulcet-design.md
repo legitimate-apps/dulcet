@@ -6,7 +6,9 @@ public Kotlin Multiplatform and Xcode scaffold, hosted CI baseline, measured tim
 default-branch controls satisfy the Phase 0 exit criteria in §25.
 
 **Date:** 2026-08-18
-**Revision:** 79 — the schema-intent registry now includes the implemented queue ownership tables;
+**Revision:** derived from the highest dated §28 record; §28 is the single source of truth.
+
+The schema-intent registry now includes the implemented queue ownership tables;
 revision 78 made a restored credential present as a saved account awaiting an explicit
 reconnect rather than as no account at all, and every macOS destination owns its window title in
 every one of its states; revision 77 made artwork responses use unconditional XML/JSON-envelope-first
@@ -2253,13 +2255,15 @@ or one representative testcase for a multi-CONF claim is not evidence. The manif
 reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
 records the accepted timing boundary for that live comparison.
 
-Swift Testing does not emit JUnit in this workflow. The Apple job therefore retains its complete
-console transcript and converts it only after the test command succeeds. The converter requires one
-successful run summary, one unique passed-test line per summary count, and emits those executed
-identities as JUnit; an incomplete, duplicate, failed, or summary-free transcript emits no evidence.
-The executed-evidence verifier unions that report with Kotlin/Native's JUnit. This is a transport
-adapter for runner evidence, not a source-name assertion: deleting or filtering a named Swift test
-removes its passed-test line and fails the manifest binding.
+Swift Testing does not emit JUnit in this workflow. The Apple job therefore writes an Xcode result
+bundle and converts the structured `xcresulttool get test-results tests` tree after the test command
+succeeds. The converter requires an individual Test Case node with a unique `nodeIdentifier` and a
+passing `result` for every test counted by `get test-results summary`; a summary without individual
+results, an absent result, a duplicate identity, a non-passing result, or a count mismatch emits no
+evidence. The executed-evidence verifier unions that report with Kotlin/Native's JUnit. This is a
+transport adapter for runner evidence, not a source-name assertion: deleting or filtering a named
+Swift test removes its Test Case node and fails the manifest binding. Console output remains a
+diagnostic transcript only.
 
 **Evidence must match the claim's granularity.** A core unit test does not evidence a platform UI
 capability, and an iPhone simulator run does not evidence iPad navigation, resizing, pointer/keyboard
@@ -3215,6 +3219,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 80 (2026-08-28)** — CI evidence became structured and its disposable Linux environment
+became locally reproducible.
+
+1. The revision declaration now derives from the first (highest) dated record in this section. The
+   evidence-boundary gate requires a complete, unique, strictly descending record sequence, so two
+   branches can no longer create the same revision number without the duplicate becoming an error.
+2. Apple test evidence is read from Xcode result bundles through the current
+   `xcresulttool get test-results tests` interface. Console transcripts remain diagnostic output,
+   not proof that an individual test result arrived.
+3. The pinned Linux Navidrome environment has one local lifecycle command shared with CI. Startup
+   is cold by default, reset removes only the declared disposable data and transcode-cache roots,
+   and every test command receives the loopback-only disposable marker.
+
 **Revision 79 (2026-08-27)** — the queue ownership tables joined the complete schema-name contract.
 
 1. §11.3 now names `queue_state` and `active_queue`, which were already implemented but absent from
@@ -3434,11 +3451,12 @@ evidence and moved from `partial` to `shipped`.
    JUnit roots did not contain
    `DulcetKitTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation`. That isolates
    the evidence transport gap rather than a product or test failure.
-3. The Apple job now captures Swift Testing's transcript after a successful command, requires the
-   successful summary count to equal its unique passed-test lines, converts those identities to
+3. Superseded by revision 80: the Apple job writes an Xcode result bundle, requires its run summary
+   counts to equal its unique individual Test Case results, converts those structured identities to
    JUnit, and verifies the union of Swift and Kotlin/Native reports. Mutation controls reject a
-   missing passed-test line, a duplicate identity, a failed/missing summary, and omission of a
-   manifest-named Swift presentation test.
+   summary without individual results, a missing result, an absent or duplicate identity, a failed
+   result, and omission of a manifest-named Swift presentation test. Console transcripts are retained
+   only as regression fixtures and diagnostics.
 4. `shipped` means the macOS capability is reachable and has executed evidence for every declared
    claim. It makes no reachability claim for iOS, iPadOS, tvOS, Android, or Android TV, whose cells
    remain `planned`; it also does not widen revision 64's bounded proxy observation.
