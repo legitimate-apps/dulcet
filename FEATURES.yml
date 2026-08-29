@@ -13,6 +13,11 @@
           "status": "partial",
           "promotion_condition": {
             "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
+          "promotion_condition": {
+            "status": "blocked",
             "blocked_on": "signed-host-validation-workflow",
             "reason": "The signing identity is no longer an open decision. The release target now archives and signs with Apple Distribution (team 3LTL47SJ8C), hardened runtime enabled, and the keychain-access-groups entitlement was read back out of the signed binary rather than assumed from the build settings. What is still missing is a workflow that RUNS that entitled signed host and asserts the Keychain accessibility and non-sync attributes, which remain ASSUMED. No such workflow, job, or test exists in this repository, so none can be honestly named. The earlier signed-release-validation / entitled-keychain / DulcetMacEntitledKeychainTests candidate still does not resolve here and is not a promotion condition."
           },
@@ -106,6 +111,11 @@
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-ios-live-account-validation-workflow",
@@ -205,6 +215,11 @@
         },
         "tvos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-tvos-live-account-validation-workflow",
@@ -338,8 +353,53 @@
       "gates": ["engine:playable", "policy:allowed"],
       "conformance": ["CONF-11", "CONF-12", "CONF-13", "CONF-14a", "CONF-14b", "CONF-15"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"},
-        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "macos": {
+          "status": "shipped",
+          "evidence": [
+            {"conformance": "CONF-11", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+          ],
+          "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, and playback was additionally driven end to end on the real macOS DEV app against a disposable server: a track played past the scrobble threshold moved the server's playCount by exactly one, getNowPlaying listed it under client Dulcet, and submission=false left the count unchanged. Not covered: gapless and crossfade, AirPlay routing, and interrupted-session resume."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
+          "evidence": [
+            {"conformance": "CONF-11", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+          ],
+          "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
+        },
+        "ipados": {"status": "planned"},
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
+          "evidence": [
+            {"conformance": "CONF-11", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+          ],
+          "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
+        },
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }
     },
@@ -350,8 +410,41 @@
       "gates": ["permission:scrobble"],
       "conformance": ["CONF-22", "CONF-23"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"},
-        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "macos": {
+          "status": "shipped",
+          "evidence": [
+            {"conformance": "CONF-22", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+          ],
+          "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, and playback was additionally driven end to end on the real macOS DEV app against a disposable server: a track played past the scrobble threshold moved the server's playCount by exactly one, getNowPlaying listed it under client Dulcet, and submission=false left the count unchanged. Not covered: gapless and crossfade, AirPlay routing, and interrupted-session resume."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
+          "evidence": [
+            {"conformance": "CONF-22", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+          ],
+          "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
+        },
+        "ipados": {"status": "planned"},
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-audio-rendering",
+            "reason": "No workflow, job or test renders audio on this platform. The conformance controls prove the wire and validation halves on this runtime; the engine half rests on shared DulcetKit tests rather than an observation here. Promotion requires a run that drives playback on this platform and observes the server-side play record move."
+          },
+          "evidence": [
+            {"conformance": "CONF-22", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+          ],
+          "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
+        },
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }
     },

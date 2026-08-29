@@ -136,7 +136,7 @@ expect_rejection(
 )
 
 passing_report = """\
-<testsuite tests="24" failures="0" errors="0" skipped="0">
+<testsuite tests="32" failures="0" errors="0" skipped="0">
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
@@ -185,6 +185,22 @@ passing_report = """\
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"
             name="proxyChallengeFailsClosedWithoutAmbientCredentials[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer[macosArm64]" time="0.1" />
 </testsuite>
 """
 with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
