@@ -10,42 +10,54 @@ import Network
 #endif
 
 @Suite(.serialized)
-struct AVPlayerEngineTests {
+struct AVPlayerResourceLoaderIntegrationTests {
     @Test
-    func progressivePrepareUsesTheCustomLoaderAndReportsEngineSeekability() async throws {
+    func progressivePrepareRoutesAVFoundationRequestsThroughTheCustomLoader() async throws {
         let resource = InMemoryPlaybackResource(data: makePCMWave(duration: 2))
-        #if os(macOS)
         let engine = DulcetAVPlayerEngine()
-        #else
-        let clock = ManualAVPlayerEngineClock()
-        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
-        #endif
-        let events = PlaybackEventRecorder()
-        engine.setEventListener { events.append($0) }
 
         let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(resource: resource)))
         #expect(outcome == .accepted(commandID: .init("prepare")))
+        let playOutcome = await execute(engine, .play(commandID: .init("play")))
+        #expect(playOutcome == .accepted(commandID: .init("play")))
 
-        #if os(macOS)
-        try await waitUntil("AVPlayer did not become ready through the custom resource loader") {
-            events.containsReady(seekability: .seekable)
+        // This is intentionally an AVFoundation integration assertion on every Apple target. It
+        // requests playback and stops at the first resource request rather than waiting for
+        // simulator media readiness, which is a separate engine-state concern pinned below with
+        // the manual clock.
+        try await waitUntil("AVFoundation did not route through the custom resource loader") {
+            !resource.requests.isEmpty
         }
-        // Reported rather than asserted bare, so a CI failure distinguishes "the engine never routed
-        // through our loader" from "it did, but slower than the deadline allowed".
         #expect(
             resource.requests.count > 0,
             Comment(rawValue: "custom loader received \(resource.requests.count) requests")
         )
         #expect(resource.requests.first?.range.start == 0)
         #expect(resource.requests.first?.requiresAudioSignature == true)
-        #else
-        #expect(!events.containsReady)
-        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
-        #expect(events.containsReady(seekability: .seekable))
-        #endif
 
         _ = await execute(engine, .release(commandID: .init("release")))
     }
+}
+
+@Suite(.serialized)
+struct AVPlayerEngineTests {
+    #if !os(macOS)
+    @Test
+    func manuallyReportedReadinessPublishesSeekabilityWithoutAVFoundationTiming() async {
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+
+        let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        #expect(outcome == .accepted(commandID: .init("prepare")))
+        #expect(!events.containsReady)
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        #expect(events.containsReady(seekability: .seekable))
+
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+    #endif
 
     @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
