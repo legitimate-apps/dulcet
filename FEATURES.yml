@@ -552,7 +552,14 @@
           ],
           "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
         },
-        "ipados": {"status": "planned"},
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ci-reproducible-device-playback",
+            "reason": "OBSERVED on a physical iPad (iPad Air 4th generation, iPadOS 26.6.1) on 2026-08-30: the DEV build was installed with devicectl, driven through its own UI by DulcetiOSUITests/testRealDevicePlaybackAdvancesPastScrobbleThreshold against a cold disposable Navidrome 0.63.2, and the server-side play record for 'Thirty One Seconds' (31s, album 'Threshold Boundary') moved from playCount 0 to 1 at 2026-08-30T22:19:09Z. Exactly one song of 313 in that library had a nonzero count afterwards, and the data volume had been recreated cold beforehand, so the increment is attributable to that run. The count was read independently of the test rather than taken from its report. This satisfies platform-observed-audio-rendering, which no simulator can: stream alone records no play, and transport state does not prove sound. It is NOT CI-reproducible - the run needs a paired device and a LAN-reachable disposable server, so no workflow or job can cite it. Promotion to shipped requires that observation to become repeatable in CI, not another manual run."
+          }
+        },
         "tvos": {
           "status": "partial",
           "promotion_condition": {
@@ -601,7 +608,14 @@
           ],
           "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
         },
-        "ipados": {"status": "planned"},
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ci-reproducible-device-playback",
+            "reason": "OBSERVED on a physical iPad (iPad Air 4th generation, iPadOS 26.6.1) on 2026-08-30: the DEV build was installed with devicectl, driven through its own UI by DulcetiOSUITests/testRealDevicePlaybackAdvancesPastScrobbleThreshold against a cold disposable Navidrome 0.63.2, and the server-side play record for 'Thirty One Seconds' (31s, album 'Threshold Boundary') moved from playCount 0 to 1 at 2026-08-30T22:19:09Z. Exactly one song of 313 in that library had a nonzero count afterwards, and the data volume had been recreated cold beforehand, so the increment is attributable to that run. The count was read independently of the test rather than taken from its report. This satisfies platform-observed-audio-rendering, which no simulator can: stream alone records no play, and transport state does not prove sound. It is NOT CI-reproducible - the run needs a paired device and a LAN-reachable disposable server, so no workflow or job can cite it. Promotion to shipped requires that observation to become repeatable in CI, not another manual run."
+          }
+        },
         "tvos": {
           "status": "partial",
           "promotion_condition": {
