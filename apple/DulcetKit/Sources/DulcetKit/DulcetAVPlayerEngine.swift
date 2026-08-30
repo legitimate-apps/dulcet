@@ -9,6 +9,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<UInt8>()
     private let player: AVQueuePlayer
+    private let clock: any DulcetAVPlayerEngineClock
+    private let usesAVFoundationMediaStack: Bool
     private let audioSession: any DulcetAudioSessionManaging
     private let audioSessionGracePeriod: TimeInterval
     private let systemMediaControls: any DulcetSystemMediaControlling
@@ -21,14 +23,14 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var desiredRate: Float = 1
     private var playerObservers: [NSKeyValueObservation] = []
     private var notificationObservers: [NSObjectProtocol] = []
-    private var sampler: DispatchSourceTimer?
-    private var audioSessionGraceTimer: DispatchSourceTimer?
+    private var cancelSampler: (@Sendable () -> Void)?
+    private var cancelAudioSessionGrace: (@Sendable () -> Void)?
     private var activeAudioSessionID: DulcetPlaybackSessionID?
     private var interruptionWasPlaying = false
     private var resourceLoaderTraceHandler:
         (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?
 
-    public init(
+    public convenience init(
         player: AVQueuePlayer = AVQueuePlayer(),
         audioSession: any DulcetAudioSessionManaging = DulcetPlatformAudioSession(),
         audioSessionGracePeriod: TimeInterval = DulcetAVPlayerEngine.emptyQueueAudioSessionGracePeriod,
@@ -36,7 +38,31 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         remoteCommandRouter: (any DulcetRemotePlaybackCommandRouting)? = nil,
         remoteCommandCapabilities: DulcetRemoteCommandCapabilities = .init()
     ) {
+        self.init(
+            player: player,
+            clock: DulcetAVPlayerEngineSystemClock(),
+            usesAVFoundationMediaStack: true,
+            audioSession: audioSession,
+            audioSessionGracePeriod: audioSessionGracePeriod,
+            systemMediaControls: systemMediaControls,
+            remoteCommandRouter: remoteCommandRouter,
+            remoteCommandCapabilities: remoteCommandCapabilities
+        )
+    }
+
+    init(
+        player: AVQueuePlayer = AVQueuePlayer(),
+        clock: any DulcetAVPlayerEngineClock,
+        usesAVFoundationMediaStack: Bool,
+        audioSession: any DulcetAudioSessionManaging = DulcetPlatformAudioSession(),
+        audioSessionGracePeriod: TimeInterval = DulcetAVPlayerEngine.emptyQueueAudioSessionGracePeriod,
+        systemMediaControls: any DulcetSystemMediaControlling = DulcetPlatformSystemMediaControls(),
+        remoteCommandRouter: (any DulcetRemotePlaybackCommandRouting)? = nil,
+        remoteCommandCapabilities: DulcetRemoteCommandCapabilities = .init()
+    ) {
         self.player = player
+        self.clock = clock
+        self.usesAVFoundationMediaStack = usesAVFoundationMediaStack
         self.audioSession = audioSession
         self.audioSessionGracePeriod = max(0, audioSessionGracePeriod)
         self.systemMediaControls = systemMediaControls
@@ -92,6 +118,29 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    func reportCurrentItemReadyForTesting(
+        duration: TimeInterval?,
+        seekability: DulcetPlaybackSeekability
+    ) {
+        performOnQueueSynchronously { [self] in
+            guard let current else { return }
+            itemBecameReady(current, duration: duration, seekability: seekability)
+        }
+    }
+
+    /// Drive natural end-of-item on the non-AVFoundation test path.
+    ///
+    /// This calls exactly the `itemEnded` the `.AVPlayerItemDidPlayToEndTime` observer calls, so a
+    /// test using it exercises the production path rather than a parallel one; only the trigger
+    /// differs. The observer is not registered when the AVFoundation media stack is disabled, which
+    /// is why the seam is needed at all. It mirrors `reportCurrentItemReadyForTesting`.
+    func reportCurrentItemEndedForTesting() {
+        performOnQueueSynchronously { [self] in
+            guard let current else { return }
+            itemEnded(current)
+        }
+    }
+
     /// Applies queue/role capability changes only to the named live session.
     @discardableResult
     public func updateRemoteCommandCapabilities(
@@ -117,7 +166,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         audioSession.setEventHandler { [weak self] event in
             self?.enqueue { $0.handleAudioSessionEvent(event) }
         }
-        observePlayer()
+        if usesAVFoundationMediaStack {
+            observePlayer()
+        }
         startSampler()
     }
 
@@ -240,10 +291,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         let context = makeContext(plan: plan, resource: resource, isPreloaded: false)
         current?.invalidate()
         current = context
-        player.removeAllItems()
-        player.insert(context.item, after: nil)
-        if let preloaded {
-            player.insert(preloaded.item, after: context.item)
+        if usesAVFoundationMediaStack {
+            player.removeAllItems()
+            player.insert(context.item, after: nil)
+            if let preloaded {
+                player.insert(preloaded.item, after: context.item)
+            }
         }
         emit(.preparing(attemptID: plan.attemptID))
         if wasPlaying {
@@ -274,7 +327,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
         let context = makeContext(plan: plan, resource: resource, isPreloaded: true)
         preloaded = context
-        player.insert(context.item, after: current.item)
+        if usesAVFoundationMediaStack {
+            player.insert(context.item, after: current.item)
+        }
         emit(.preparing(attemptID: plan.attemptID))
         completion(.accepted(commandID: commandID))
     }
@@ -361,10 +416,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         playerObservers.removeAll()
         notificationObservers.forEach(NotificationCenter.default.removeObserver)
         notificationObservers.removeAll()
-        sampler?.cancel()
-        sampler = nil
-        audioSessionGraceTimer?.cancel()
-        audioSessionGraceTimer = nil
+        cancelSampler?()
+        cancelSampler = nil
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         deactivateAudioSessionImmediately()
         audioSession.setEventHandler(nil)
         systemMediaControls.setCommandHandler(nil)
@@ -379,8 +434,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             preloaded?.invalidate()
             playerObservers.forEach { $0.invalidate() }
             notificationObservers.forEach(NotificationCenter.default.removeObserver)
-            sampler?.cancel()
-            audioSessionGraceTimer?.cancel()
+            cancelSampler?()
+            cancelAudioSessionGrace?()
             audioSession.deactivate()
             audioSession.setEventHandler(nil)
             systemMediaControls.setCommandHandler(nil)
@@ -420,7 +475,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             isPreloaded: isPreloaded,
             rate: Double(desiredRate)
         )
-        observe(context)
+        if usesAVFoundationMediaStack {
+            observe(context)
+        }
         return context
     }
 
@@ -487,27 +544,35 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard isActive(context) else { return }
         switch context.item.status {
         case .readyToPlay:
-            guard !context.readyEmitted else { return }
-            context.readyEmitted = true
             let duration = finiteSeconds(context.item.duration)
-            context.duration = duration
-            context.seekability = seekability(context)
-            emit(
-                .ready(
-                    attemptID: context.plan.attemptID,
-                    duration: duration,
-                    seekability: context.seekability
-                )
-            )
-            if current === context {
-                publishNowPlaying(context)
-            }
+            itemBecameReady(context, duration: duration, seekability: seekability(context))
         case .failed:
             itemFailed(context)
         case .unknown:
             break
         @unknown default:
             itemFailed(context)
+        }
+    }
+
+    private func itemBecameReady(
+        _ context: PlayerItemContext,
+        duration: TimeInterval?,
+        seekability: DulcetPlaybackSeekability
+    ) {
+        guard isActive(context), !context.readyEmitted else { return }
+        context.readyEmitted = true
+        context.duration = duration
+        context.seekability = seekability
+        emit(
+            .ready(
+                attemptID: context.plan.attemptID,
+                duration: duration,
+                seekability: seekability
+            )
+        )
+        if current === context {
+            publishNowPlaying(context)
         }
     }
 
@@ -677,15 +742,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func startSampler() {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(
-            deadline: .now() + Self.sampleInterval,
-            repeating: Self.sampleInterval,
-            leeway: .milliseconds(50)
-        )
-        timer.setEventHandler { [weak self] in self?.samplePosition() }
-        sampler = timer
-        timer.resume()
+        cancelSampler = clock.startSampler(
+            on: queue,
+            interval: Self.sampleInterval
+        ) { [weak self] in
+            self?.samplePosition()
+        }
     }
 
     private func activateAudioSessionIfNeeded(
@@ -693,8 +755,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         commandID: DulcetPlaybackCommandID,
         completion: @escaping DulcetPlaybackCommandCompletion
     ) -> Bool {
-        audioSessionGraceTimer?.cancel()
-        audioSessionGraceTimer = nil
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         guard activeAudioSessionID != plan.playbackSessionID else { return true }
         do {
             try audioSession.activate()
@@ -708,24 +770,23 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func scheduleAudioSessionDeactivationAfterGrace() {
-        audioSessionGraceTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + audioSessionGracePeriod)
-        timer.setEventHandler { [weak self, weak timer] in
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = clock.scheduleOnce(
+            on: queue,
+            after: audioSessionGracePeriod
+        ) { [weak self] in
             guard let self, self.preloaded == nil, self.player.items().isEmpty else { return }
             self.audioSession.deactivate()
             self.activeAudioSessionID = nil
             self.systemMediaControls.clear()
-            timer?.cancel()
-            self.audioSessionGraceTimer = nil
+            self.cancelAudioSessionGrace?()
+            self.cancelAudioSessionGrace = nil
         }
-        audioSessionGraceTimer = timer
-        timer.resume()
     }
 
     private func deactivateAudioSessionImmediately() {
-        audioSessionGraceTimer?.cancel()
-        audioSessionGraceTimer = nil
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         guard activeAudioSessionID != nil else { return }
         audioSession.deactivate()
         activeAudioSessionID = nil
@@ -874,15 +935,14 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func samplePosition() {
-        guard let current, player.timeControlStatus == .playing else { return }
-        let position = currentPosition()
+        guard let current else { return }
+        let sample = clock.sample(player: player)
+        guard sample.isPlaying else { return }
+        let position = sample.mediaPosition
         guard position > current.lastSampledPosition + 0.000_001 else { return }
-        let monotonic = DulcetMonotonicInstant(
-            uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds
-        )
         if !current.progressBegan {
             current.progressBegan = true
-            current.progressStartWallClock = Date()
+            current.progressStartWallClock = clock.wallClockNow
             emit(
                 .playbackProgressBegan(
                     attemptID: current.plan.attemptID,
@@ -892,12 +952,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             )
         }
         current.lastSampledPosition = position
-        current.lastSampleMonotonic = monotonic
+        current.lastSampleMonotonic = sample.monotonicTime
         emit(
             .positionChanged(
                 attemptID: current.plan.attemptID,
                 mediaPosition: position,
-                monotonicTime: monotonic
+                monotonicTime: sample.monotonicTime
             )
         )
         updateSystemTransport(for: current, isPlaying: true)
@@ -953,6 +1013,86 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         } else {
             queue.sync(execute: work)
         }
+    }
+}
+
+struct DulcetAVPlayerEngineClockSample: Sendable {
+    let isPlaying: Bool
+    let mediaPosition: TimeInterval
+    let monotonicTime: DulcetMonotonicInstant
+}
+
+protocol DulcetAVPlayerEngineClock: Sendable {
+    var wallClockNow: Date { get }
+
+    func sample(player: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample
+
+    func startSampler(
+        on queue: DispatchQueue,
+        interval: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void
+
+    /// Schedule one deferred callback and return its cancel closure.
+    ///
+    /// The audio-session grace period used a `DispatchSourceTimer` built inline, which made
+    /// `anEmptyQueueDeactivatesAfterTheConfiguredGracePeriod` depend on real elapsed time on a
+    /// simulator whose media stack is the unreliable part. Routing it through the clock lets a test
+    /// fire the deadline instead of waiting for one.
+    func scheduleOnce(
+        on queue: DispatchQueue,
+        after interval: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void
+}
+
+private struct DulcetAVPlayerEngineSystemClock: DulcetAVPlayerEngineClock {
+    func scheduleOnce(
+        on queue: DispatchQueue,
+        after interval: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + interval)
+        // The handler captures the timer so the timer stays alive until it fires, and releases it
+        // by cancelling afterwards. Without that, the returned cancel closure would be the only
+        // strong reference and a caller who discarded it would get a timer that is deallocated
+        // before its deadline and silently never fires. OBSERVED by mutation while adding this.
+        timer.setEventHandler {
+            handler()
+            timer.cancel()
+        }
+        timer.resume()
+        return { timer.cancel() }
+    }
+
+    var wallClockNow: Date { Date() }
+
+    func sample(player: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample {
+        let seconds = CMTimeGetSeconds(player.currentTime())
+        return DulcetAVPlayerEngineClockSample(
+            isPlaying: player.timeControlStatus == .playing,
+            mediaPosition: seconds.isFinite && seconds >= 0 ? seconds : 0,
+            monotonicTime: DulcetMonotonicInstant(
+                uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds
+            )
+        )
+    }
+
+    func startSampler(
+        on queue: DispatchQueue,
+        interval: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(
+            deadline: .now() + interval,
+            repeating: interval,
+            leeway: .milliseconds(50)
+        )
+        timer.setEventHandler(handler: handler)
+        timer.resume()
+        return { timer.cancel() }
     }
 }
 

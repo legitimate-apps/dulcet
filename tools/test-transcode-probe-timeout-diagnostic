@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Pin the transcode probe's absolute deadline, phase diagnosis, and latency metrics."""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+ROOT = Path(__file__).resolve().parent
+PROBE = ROOT / "conformance-env" / "observe-transcode-cache"
+# The tool refuses any base URL but the disposable loopback one, so the stub must answer there.
+PORT = 4533
+STREAM_LINE = (
+    'time="2026-08-30T00:00:00Z" level=info msg="Streaming file" '
+    'title="Dulcet Health Probe" format=mp3 cached=false transcoding=true'
+)
+
+
+def make_handler(*, mode: str, log_file: Path):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):  # keep the control's output readable
+            pass
+
+        def do_GET(self):
+            if self.path.startswith("/rest/search3"):
+                body = json.dumps(
+                    {
+                        "subsonic-response": {
+                            "searchResult3": {
+                                "song": [{"id": "probe-id", "title": "Dulcet Health Probe"}]
+                            }
+                        }
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if mode == "header-stall":
+                # The server thread is daemonized, so the control returns at the probe's subsecond
+                # deadline instead of waiting for this deliberately blocked handler.
+                time.sleep(30)
+                return
+            log_file.write_text(log_file.read_text() + STREAM_LINE + "\n")
+            body = b"\xff\xfbaudio"
+            if mode == "healthy":
+                time.sleep(0.1)
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                if mode in {"body-drip", "healthy"}:
+                    for byte in body:
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                else:
+                    self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    return Handler
+
+
+def run_probe(*, mode: str, budget: float) -> subprocess.CompletedProcess:
+    with TemporaryDirectory() as tmp:
+        log_file = Path(tmp) / "navidrome.log"
+        log_file.write_text("")
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", PORT),
+            make_handler(mode=mode, log_file=log_file),
+        )
+        server.daemon_threads = True
+        thread = threading.Thread(
+            target=server.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
+        thread.start()
+        try:
+            return subprocess.run(
+                [sys.executable, str(PROBE), "--log-file", str(log_file), "--expect-cached", "false"],
+                text=True,
+                capture_output=True,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "DULCET_CONFORMANCE_DISPOSABLE": "true",
+                    "DULCET_CONFORMANCE_BASE_URL": f"http://127.0.0.1:{PORT}",
+                    "DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS": str(budget),
+                },
+                check=False,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+def main() -> None:
+    started = time.monotonic()
+    header_stall = run_probe(mode="header-stall", budget=0.25)
+    combined = header_stall.stdout + header_stall.stderr
+    if header_stall.returncode == 0:
+        raise SystemExit("NEGATIVE CONTROL FAILED: a response-header stall was accepted")
+    if "Traceback" in combined:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: a header stall still surfaces as a traceback:\n" + combined
+        )
+    if (
+        "during response headers" not in combined
+        or "plausible, not established" not in combined
+        or "neither proves nor exonerates ffmpeg" not in combined
+    ):
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: the header diagnostic overstates what it knows:\n" + combined
+        )
+    print("NEGATIVE CONTROL PASS header_timeout_phase=true causation=plausible-not-established")
+
+    body_drip = run_probe(mode="body-drip", budget=0.25)
+    combined = body_drip.stdout + body_drip.stderr
+    if body_drip.returncode == 0:
+        raise SystemExit("NEGATIVE CONTROL FAILED: a body that exceeded the wall deadline passed")
+    if "during response body" not in combined or "stalled or failed transcoder" not in combined:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: the body timeout does not keep the transcoder in scope:\n"
+            + combined
+        )
+    if "plausible, not established" in combined or "exonerates ffmpeg" in combined:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: body timeout reused the header-causation diagnostic:\n"
+            + combined
+        )
+    print("NEGATIVE CONTROL PASS body_timeout_phase=true wall_clock_deadline=true")
+
+    healthy = run_probe(mode="healthy", budget=2.0)
+    if healthy.returncode != 0:
+        raise SystemExit(
+            "POSITIVE CONTROL FAILED: a healthy probe was rejected:\n"
+            + healthy.stdout
+            + healthy.stderr
+        )
+    first_match = re.search(r"\bfirst_response_seconds=([0-9.]+)", healthy.stdout)
+    total_match = re.search(r"\btotal_request_seconds=([0-9.]+)", healthy.stdout)
+    if first_match is None or total_match is None:
+        raise SystemExit(
+            "POSITIVE CONTROL FAILED: a healthy probe does not report both latencies:\n"
+            + healthy.stdout
+        )
+    first = float(first_match.group(1))
+    total = float(total_match.group(1))
+    if not (0.05 <= first < 0.3 and total >= first + 0.25):
+        raise SystemExit(
+            "POSITIVE CONTROL FAILED: first response includes body transfer time: "
+            f"first={first} total={total}\n{healthy.stdout}"
+        )
+    print("POSITIVE CONTROL PASS " + healthy.stdout.strip().splitlines()[-1])
+    elapsed = time.monotonic() - started
+    if elapsed >= 3:
+        raise SystemExit(f"CONTROL SPEED FAILED: diagnostic control took {elapsed:.2f}s")
+    print(f"CONTROL SPEED PASS elapsed_seconds={elapsed:.2f}")
+
+
+if __name__ == "__main__":
+    main()

@@ -10,22 +10,24 @@ import Network
 #endif
 
 @Suite(.serialized)
-struct AVPlayerEngineTests {
+struct AVPlayerResourceLoaderIntegrationTests {
     @Test
-    func progressivePrepareUsesTheCustomLoaderAndReportsEngineSeekability() async throws {
+    func progressivePrepareRoutesAVFoundationRequestsThroughTheCustomLoader() async throws {
         let resource = InMemoryPlaybackResource(data: makePCMWave(duration: 2))
         let engine = DulcetAVPlayerEngine()
-        let events = PlaybackEventRecorder()
-        engine.setEventListener { events.append($0) }
 
         let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(resource: resource)))
         #expect(outcome == .accepted(commandID: .init("prepare")))
+        let playOutcome = await execute(engine, .play(commandID: .init("play")))
+        #expect(playOutcome == .accepted(commandID: .init("play")))
 
-        try await waitUntil("AVPlayer did not become ready through the custom resource loader") {
-            events.containsReady(seekability: .seekable)
+        // This is intentionally an AVFoundation integration assertion on every Apple target. It
+        // requests playback and stops at the first resource request rather than waiting for
+        // simulator media readiness, which is a separate engine-state concern pinned below with
+        // the manual clock.
+        try await waitUntil("AVFoundation did not route through the custom resource loader") {
+            !resource.requests.isEmpty
         }
-        // Reported rather than asserted bare, so a CI failure distinguishes "the engine never routed
-        // through our loader" from "it did, but slower than the deadline allowed".
         #expect(
             resource.requests.count > 0,
             Comment(rawValue: "custom loader received \(resource.requests.count) requests")
@@ -35,22 +37,78 @@ struct AVPlayerEngineTests {
 
         _ = await execute(engine, .release(commandID: .init("release")))
     }
+}
+
+@Suite(.serialized)
+struct AVPlayerEngineTests {
+    #if !os(macOS)
+    @Test
+    func manuallyReportedReadinessPublishesSeekabilityWithoutAVFoundationTiming() async {
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+
+        let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        #expect(outcome == .accepted(commandID: .init("prepare")))
+        #expect(!events.containsReady)
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        #expect(events.containsReady(seekability: .seekable))
+
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+    #endif
 
     @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
+        #if os(macOS)
         let engine = DulcetAVPlayerEngine()
+        #else
+        let startWallClock = Date(timeIntervalSince1970: 1_788_000_000)
+        let clock = ManualAVPlayerEngineClock(wallClockNow: startWallClock)
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        #endif
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 3)))
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        #if os(macOS)
         try await waitUntil("AVPlayer did not become ready") { events.containsReady(seekability: .seekable) }
+        #else
+        engine.reportCurrentItemReadyForTesting(duration: 3, seekability: .seekable)
+        #expect(events.containsReady(seekability: .seekable))
+        #endif
         #expect(!events.containsProgressBegan)
 
         _ = await execute(engine, .play(commandID: .init("play")))
+        #if os(macOS)
         try await waitUntil("the monotonic sampler did not observe advancing media time", timeout: 3) {
             events.positionSamples.count >= 2
         }
+        #else
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 0,
+            monotonicUptimeNanoseconds: 1_000_000_000
+        )
+        #expect(!events.containsProgressBegan)
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 0.5,
+            monotonicUptimeNanoseconds: 1_500_000_000
+        )
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 1,
+            monotonicUptimeNanoseconds: 2_000_000_000
+        )
+        #expect(events.positionSamples.map(\.monotonic.uptimeNanoseconds) == [
+            1_500_000_000,
+            2_000_000_000,
+        ])
+        #expect(events.progressStartWallClock == startWallClock)
+        #endif
 
         let snapshot = events.snapshot
         let progressIndex = try #require(snapshot.firstIndex { event in
@@ -299,7 +357,18 @@ struct AVPlayerEngineTests {
                 reason: .systemReclaimed
             ))
         }
-        #expect(audioSession.deactivationCount == 1)
+        // Deactivation is a SIBLING of the teardown event, not its cause, so observing
+        // engineTornDown does not guarantee the session has been deactivated yet. Asserting it
+        // synchronously passed locally and failed on a loaded CI runner with deactivationCount 0.
+        // Waiting on the asserted property keeps the assertion exactly as strong -- the count must
+        // still reach 1 -- while not depending on an ordering nothing specifies.
+        //
+        // The three sibling `#expect(...count...)` assertions after a waitUntil in this file were
+        // checked and left alone: each awaits an event that is CAUSED BY the thing it counts, so
+        // the count is already guaranteed when the wait returns.
+        try await waitUntil("external playback did not deactivate the audio session") {
+            audioSession.deactivationCount == 1
+        }
         let playOutcome = await execute(engine, .play(commandID: .init("play-after-takeover")))
         #expect(playOutcome == .rejected(commandID: .init("play-after-takeover"), reason: .invalidState))
         _ = await execute(engine, .release(commandID: .init("release")))
@@ -307,8 +376,11 @@ struct AVPlayerEngineTests {
 
     @Test
     func anEmptyQueueDeactivatesAfterTheConfiguredGracePeriod() async throws {
-        let player = AVQueuePlayer()
         let audioSession = RecordingAudioSession()
+        #if os(macOS)
+        // macOS keeps the real path: a real AVQueuePlayer, the real end-of-item notification, and a
+        // real 0.05s grace period elapsing. That is the coverage this test exists for.
+        let player = AVQueuePlayer()
         let engine = DulcetAVPlayerEngine(
             player: player,
             audioSession: audioSession,
@@ -319,6 +391,22 @@ struct AVPlayerEngineTests {
 
         NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: item)
         player.removeAllItems()
+        #else
+        // The simulator's media stack is the unreliable part, and it is not what this test asserts:
+        // the claim is that an empty queue deactivates the session after its grace period. Drive the
+        // same itemEnded the notification observer drives, then fire the deadline instead of waiting
+        // for wall time. This test timed out at 21.4s on a hosted iOS runner while macOS passed.
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession,
+            audioSessionGracePeriod: 0.05
+        )
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemEndedForTesting()
+        #expect(clock.fireScheduledDeadline(), "no grace deadline was scheduled to fire")
+        #endif
 
         try await waitUntil("empty queue did not deactivate after its grace period") {
             audioSession.deactivationCount == 1
@@ -1182,6 +1270,16 @@ private final class PlaybackEventRecorder: @unchecked Sendable {
         snapshot.contains { if case .playbackProgressBegan = $0 { true } else { false } }
     }
 
+    var containsReady: Bool {
+        snapshot.contains { if case .ready = $0 { true } else { false } }
+    }
+
+    var progressStartWallClock: Date? {
+        snapshot.compactMap {
+            if case let .playbackProgressBegan(_, wallClock, _) = $0 { wallClock } else { nil }
+        }.first
+    }
+
     func containsReady(seekability: DulcetPlaybackSeekability) -> Bool {
         snapshot.contains {
             if case let .ready(_, _, actual) = $0 { actual == seekability } else { false }
@@ -1202,6 +1300,103 @@ private final class PlaybackEventRecorder: @unchecked Sendable {
         }
     }
 }
+
+#if !os(macOS)
+private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unchecked Sendable {
+    let wallClockNow: Date
+
+    private let lock = NSLock()
+    private var currentSample = DulcetAVPlayerEngineClockSample(
+        isPlaying: false,
+        mediaPosition: 0,
+        monotonicTime: DulcetMonotonicInstant(uptimeNanoseconds: 0)
+    )
+    private var samplerQueue: DispatchQueue?
+    private var samplerHandler: (@Sendable () -> Void)?
+    private var deferredQueue: DispatchQueue?
+    private var deferredHandler: (@Sendable () -> Void)?
+
+    /// Fire the pending one-shot deadline (the audio-session grace period) without waiting for it.
+    /// Returns false when nothing is scheduled, so a test cannot silently pass by firing nothing.
+    @discardableResult
+    func fireScheduledDeadline() -> Bool {
+        lock.lock()
+        let queue = deferredQueue
+        let handler = deferredHandler
+        deferredQueue = nil
+        deferredHandler = nil
+        lock.unlock()
+        guard let queue, let handler else { return false }
+        queue.sync(execute: handler)
+        return true
+    }
+
+    func scheduleOnce(
+        on queue: DispatchQueue,
+        after _: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        lock.lock()
+        deferredQueue = queue
+        deferredHandler = handler
+        lock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            self.deferredQueue = nil
+            self.deferredHandler = nil
+            self.lock.unlock()
+        }
+    }
+
+    init(wallClockNow: Date = Date(timeIntervalSince1970: 1_788_000_000)) {
+        self.wallClockNow = wallClockNow
+    }
+
+    func sample(player _: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentSample
+    }
+
+    func startSampler(
+        on queue: DispatchQueue,
+        interval _: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        lock.lock()
+        samplerQueue = queue
+        samplerHandler = handler
+        lock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            samplerQueue = nil
+            samplerHandler = nil
+            lock.unlock()
+        }
+    }
+
+    func tick(
+        isPlaying: Bool,
+        mediaPosition: TimeInterval,
+        monotonicUptimeNanoseconds: UInt64
+    ) {
+        lock.lock()
+        currentSample = DulcetAVPlayerEngineClockSample(
+            isPlaying: isPlaying,
+            mediaPosition: mediaPosition,
+            monotonicTime: DulcetMonotonicInstant(
+                uptimeNanoseconds: monotonicUptimeNanoseconds
+            )
+        )
+        let queue = samplerQueue
+        let handler = samplerHandler
+        lock.unlock()
+        queue?.sync { handler?() }
+    }
+}
+#endif
 
 private func makePCMWave(duration: TimeInterval) -> Data {
     let sampleRate = 8_000

@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Block until a conformance Navidrome's library is actually queryable.
+
+HTTP readiness is not library readiness. Navidrome answers /app/ within a second of starting and
+then runs its scan asynchronously. Killing it for the next cold restart while that scan is in
+flight produces `Scan failed error="library count: context canceled"` and leaves the following test
+run against an empty library -- which surfaces as a dozen unrelated conformance failures rather
+than as an environment fault. OBSERVED on apple-ci 2026-08-30.
+
+Waiting on the scan boolean alone is not enough either: `scanning: false` is also true before a scan
+has started. Navidrome 0.63.2 exposes the newest library's successful ScanEnd timestamp as
+`scanStatus.lastScan`, so callers snapshot that field before restart and this tool requires it to
+advance. It then requires a non-zero count and a query that actually returns rows, because a database
+can report a completed scan and still fail every query (see V23).
+"""
+
+from __future__ import annotations
+
+import argparse
+from datetime import datetime
+import hashlib
+import json
+import secrets
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+
+
+def call(base_url: str, endpoint: str, **parameters: str) -> dict:
+    salt = secrets.token_hex(16)
+    token = hashlib.md5((ADMIN_PASSWORD + salt).encode()).hexdigest()
+    query = {
+        "u": ADMIN_USER, "t": token, "s": salt,
+        "v": "1.16.1", "c": "dulcet-await-library", "f": "json",
+    }
+    query.update(parameters)
+    url = f"{base_url}/rest/{endpoint}?" + urllib.parse.urlencode(query)
+    with urllib.request.urlopen(url, timeout=15) as response:
+        return json.load(response)["subsonic-response"]
+
+
+def parse_last_scan(value: object) -> tuple[str, datetime]:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"scan status did not carry lastScan: {value!r}")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        raise ValueError(f"scan status lastScan is not timezone-aware: {value!r}")
+    return value, parsed
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--print-last-scan",
+        action="store_true",
+        help="print the current completed-scan timestamp for use as a restart baseline",
+    )
+    mode.add_argument(
+        "--after-last-scan",
+        help="wait for a successful completed-scan timestamp later than this baseline",
+    )
+    parser.add_argument("--timeout-seconds", type=float, default=180.0)
+    parser.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    arguments = parser.parse_args()
+
+    if arguments.timeout_seconds <= 0:
+        parser.error("--timeout-seconds must be greater than zero")
+    if arguments.poll_interval_seconds <= 0:
+        parser.error("--poll-interval-seconds must be greater than zero")
+
+    if arguments.print_last_scan:
+        status = call(arguments.base_url, "getScanStatus").get("scanStatus", {})
+        if error := status.get("error"):
+            raise SystemExit(f"library scan status reported an error: {error}")
+        value, _ = parse_last_scan(status.get("lastScan"))
+        print(value)
+        return
+
+    baseline_value, baseline = parse_last_scan(arguments.after_last_scan)
+
+    deadline = time.monotonic() + arguments.timeout_seconds
+    last = "no observation"
+    while time.monotonic() < deadline:
+        try:
+            status = call(arguments.base_url, "getScanStatus").get("scanStatus", {})
+            scanning = bool(status.get("scanning"))
+            count = int(status.get("count") or 0)
+            if error := status.get("error"):
+                raise SystemExit(f"library scan status reported an error: {error}")
+            current_value, current = parse_last_scan(status.get("lastScan"))
+            advanced = current > baseline
+            if not scanning and advanced and count > 0:
+                albums = call(
+                    arguments.base_url, "getAlbumList2",
+                    type="alphabeticalByName", size="1",
+                ).get("albumList2", {}).get("album", [])
+                if albums:
+                    print(
+                        f"library ready: scanning=false lastScan={current_value} "
+                        f"advanced_from={baseline_value} count={count} queryable_albums>=1"
+                    )
+                    return
+                last = f"scan complete (count={count}) but getAlbumList2 returned no rows"
+            else:
+                last = (
+                    f"scanning={scanning} lastScan={current_value} "
+                    f"advanced={str(advanced).lower()} count={count}"
+                )
+        except Exception as error:  # noqa: BLE001 - report whatever the server did
+            last = f"probe error: {error}"
+        time.sleep(min(arguments.poll_interval_seconds, max(0, deadline - time.monotonic())))
+
+    print(f"library never became queryable within {arguments.timeout_seconds}s: {last}",
+          file=sys.stderr)
+    raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
