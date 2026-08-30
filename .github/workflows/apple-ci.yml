@@ -29,14 +29,20 @@ jobs:
     # The timeout exists as queue hygiene -- a hung job must not hold a capped macOS slot away from
     # the run that replaced it -- so it stays bounded rather than being removed. It is set with real
     # headroom so ordinary growth does not present as a conformance failure.
-    # MEASURED 2026-08-30, apple-ci job durations (job time, not queue time):
-    #   main 41m, 34m, 29m  |  library-sync 41m  |  ipados-evidence 28m
-    #   search-conformance 45m CANCELLED, twice -- it hit this ceiling exactly
-    # main alone had grown to 41m, leaving 4 minutes of margin, so ANY added work tipped the job over
-    # and GitHub reported the timeout as `cancelled`. That reads as the conformance step failing and
-    # is not that -- exactly the misdiagnosis the note above warns about, now observed twice more.
-    # 75 restores real headroom against a 41m baseline. It is still bounded: a genuinely hung job must
-    # not hold a capped macOS slot indefinitely. Re-measure before assuming this is still enough.
+    # MEASURED 2026-08-30 across 12 apple-ci runs. Successful job durations (job time, not queue
+    # time): 28, 29, 34, 34, 38, 41, 41 minutes. The spread is the point.
+    #
+    # CORRECTION to the reasoning that first raised this from 45: that commit claimed main had grown
+    # to 41m and that added work "tipped the job over". The branch blamed for tipping it then ran the
+    # SAME content in 29m once the machine was quiet, so the added work was not the cause. What the
+    # data actually shows is variance -- the same branch hit 45m twice and 29m once -- and the two
+    # 45m runs coincided with a fleet-wide load storm.
+    #
+    # So this budget exists to absorb runner-condition variance, not incremental suite growth. A
+    # timeout surfaces as `cancelled`, which reads as the conformance step failing and is not that;
+    # that misdiagnosis is the expensive part, and it has now happened four times. Re-measure the
+    # spread before assuming 75 is still right, and do not read a single fast run as proof it can
+    # come back down.
     timeout-minutes: 75
     env:
       TZ: UTC

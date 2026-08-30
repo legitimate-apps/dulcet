@@ -231,6 +231,8 @@ passing_cases = """\
             name="conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
             name="conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.SearchConformanceTest[macosArm64]"
+            name="conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping[macosArm64]" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
