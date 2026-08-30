@@ -415,11 +415,59 @@
       "conformance": ["CONF-31", "CONF-32", "CONF-33"],
       "platforms": {
         "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-library-sync-app-integration",
+            "reason": "Promotion requires a macOS app workflow and test that invoke the production AppleLibrarySyncClient, browse the committed SQLDelight generation, exercise scheduled refresh, and prove saved metadata remains browsable offline. No such app integration or test exists yet."
+          },
+          "evidence": [
+            {"conformance": "CONF-31", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
+            {"conformance": "CONF-32", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
+            {"conformance": "CONF-33", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+          ],
+          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the macosArm64 core-conformance runtime, proving generation-pinned reads, an atomic sync-generation commit, and the bounded stability witness in the production core. The macOS Library UI still uses the narrower read-through LibraryBrowse path: it does not start AppleLibrarySyncClient, browse the committed SQLDelight generation, schedule refreshes, or load real saved metadata offline. The durable engine is therefore present and evidenced on macOS, but the platform capability remains partial rather than shipped."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-library-sync-app-integration",
+            "reason": "Promotion requires an iOS app workflow and test that invoke the production AppleLibrarySyncClient, browse the committed SQLDelight generation, exercise scheduled refresh, and prove saved metadata remains browsable offline. No such app integration or test exists yet."
+          },
+          "evidence": [
+            {"conformance": "CONF-31", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
+            {"conformance": "CONF-32", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
+            {"conformance": "CONF-33", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+          ],
+          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the iosSimulatorArm64 core-conformance runtime, so the durable core engine is evidenced on iOS. No production iOS library surface starts that sync, browses its committed generation, schedules refreshes, or proves real saved metadata offline, so the platform cell is partial rather than shipped."
+        },
+        "ipados": {
           "status": "planned",
-          "reason": "The macOS app now reads music folders, artists, paged album summaries, and bounded-concurrency album track listings directly from the connected OpenSubsonic server, with explicit loading, empty, error, and cancellation behavior. It has no SQLDelight cache, generations, checkpoints, stability witness, scheduled refresh, or offline metadata, and every return to Library fetches the complete browse again. The LibraryBrowseTest and DulcetKit production-data-source tests cover this narrower read-through behavior, but they are intentionally not listed as CONF-31/32/33 evidence because those controls specify the deferred durable library engine."
-        }, "ios": {"status": "planned"},
-        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
-        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+          "reason": "The branch has no iPadOS-specific conformance execution or production app integration test. The iPhone simulator run is not substituted as iPadOS evidence, so this cell remains planned."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-library-sync-app-integration",
+            "reason": "Promotion requires a tvOS app workflow and test that invoke the production AppleLibrarySyncClient, browse the committed SQLDelight generation, exercise scheduled refresh, and prove saved metadata remains browsable offline. No such app integration or test exists yet."
+          },
+          "evidence": [
+            {"conformance": "CONF-31", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
+            {"conformance": "CONF-32", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
+            {"conformance": "CONF-33", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+          ],
+          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the tvosSimulatorArm64 core-conformance runtime, so the durable core engine is evidenced on tvOS. No production tvOS library surface starts that sync, browses its committed generation, schedules refreshes, or proves real saved metadata offline, so the platform cell is partial rather than shipped."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "The production core has Android database composition, but core-conformance declares no Android target and no Android CI run executes CONF-31, CONF-32 or CONF-33. This cell therefore remains planned."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "No Android TV conformance target, CI execution, or production library-sync integration test exists for CONF-31, CONF-32 or CONF-33, so this cell remains planned."
+        }
       }
     },
     {
