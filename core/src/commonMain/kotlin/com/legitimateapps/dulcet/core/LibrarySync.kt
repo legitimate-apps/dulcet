@@ -885,6 +885,7 @@ internal class LibrarySyncEngine(
     private val saltSource: SaltSource? = null,
     private val logSink: LogSink? = null,
     private val hostResolver: HostResolver = systemHostResolver(),
+    private val syncMutex: Mutex = LibrarySyncCoordinator.syncMutex,
 ) {
     init {
         require(albumPageSize > 0)
@@ -909,8 +910,8 @@ internal class LibrarySyncEngine(
         source: LibrarySyncSource,
         restart: Boolean = false,
         progress: (LibrarySyncProgress) -> Unit = {},
-    ): LibrarySyncResult = LibrarySyncCoordinator.syncMutex.withLock {
-        return try {
+    ): LibrarySyncResult = try {
+        syncMutex.withLock {
             require(serverId.isNotBlank())
             val isFirstSync = repository.committedGeneration() == 0L
             var checkpoint = repository.prepareCheckpoint(serverId, restart)
@@ -971,15 +972,15 @@ internal class LibrarySyncEngine(
                 }
             }
             completed
-        } catch (_: CancellationException) {
-            LibrarySyncResult.Failed(DomainError.Transport.Cancelled)
-        } catch (failure: LibraryRequestFailure) {
-            LibrarySyncResult.Failed(failure.error)
-        } catch (failure: AuthenticatedEndpointFailure) {
-            LibrarySyncResult.Failed(failure.error)
-        } catch (failure: Throwable) {
-            LibrarySyncResult.Failed(mapAccountConnectionFailure(failure))
         }
+    } catch (_: CancellationException) {
+        LibrarySyncResult.Failed(DomainError.Transport.Cancelled)
+    } catch (failure: LibraryRequestFailure) {
+        LibrarySyncResult.Failed(failure.error)
+    } catch (failure: AuthenticatedEndpointFailure) {
+        LibrarySyncResult.Failed(failure.error)
+    } catch (failure: Throwable) {
+        LibrarySyncResult.Failed(mapAccountConnectionFailure(failure))
     }
 
     private suspend fun <T> runSingleStage(

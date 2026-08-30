@@ -1,6 +1,9 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -280,6 +283,29 @@ class LibrarySyncTest {
 
         assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
         assertEquals(emptyList(), repository.readCommitted(SERVER).starredIds)
+        driver.close()
+    }
+
+    @Test
+    fun cancellationWhileWaitingForGlobalSyncLockIsReportedAsCancelled() = runTest {
+        val driver = createTestDriver()
+        val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
+        val heldMutex = Mutex(locked = true)
+        val manager = LibrarySyncManager(
+            LibrarySyncEngine(repository, syncMutex = heldMutex),
+            repository,
+        )
+        var response: LibrarySyncResponse? = null
+
+        val queuedSync = launch(start = CoroutineStart.UNDISPATCHED) {
+            response = manager.synchronize(SERVER, MutableSource())
+        }
+        queuedSync.cancel()
+        queuedSync.join()
+
+        val failed = assertIs<LibrarySyncResponse.Failed>(response)
+        assertEquals(DomainError.Transport.Cancelled, failed.error)
+        assertEquals(0, repository.committedGeneration())
         driver.close()
     }
 
