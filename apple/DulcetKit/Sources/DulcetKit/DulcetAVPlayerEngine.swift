@@ -1,6 +1,24 @@
 import AVFoundation
 import Foundation
 
+enum DulcetAVPlayerEngineQueueLiveness: Sendable {
+    case responsive(turnaroundSeconds: TimeInterval)
+    case notResponsive(waitedSeconds: TimeInterval)
+
+    var diagnosticDescription: String {
+        switch self {
+        case let .responsive(turnaroundSeconds):
+            "engine queue responsive; turnaround_seconds=\(Self.format(turnaroundSeconds))"
+        case let .notResponsive(waitedSeconds):
+            "engine queue not responsive; probe_wait_seconds=\(Self.format(waitedSeconds))"
+        }
+    }
+
+    private static func format(_ seconds: TimeInterval) -> String {
+        String(format: "%.3f", seconds)
+    }
+}
+
 public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked Sendable {
     public static let sampleInterval: TimeInterval = 0.5
     public static let cadenceMaximum: TimeInterval = 2
@@ -58,7 +76,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         audioSessionGracePeriod: TimeInterval = DulcetAVPlayerEngine.emptyQueueAudioSessionGracePeriod,
         systemMediaControls: any DulcetSystemMediaControlling = DulcetPlatformSystemMediaControls(),
         remoteCommandRouter: (any DulcetRemotePlaybackCommandRouting)? = nil,
-        remoteCommandCapabilities: DulcetRemoteCommandCapabilities = .init()
+        remoteCommandCapabilities: DulcetRemoteCommandCapabilities = .init(),
+        queue: DispatchQueue = DispatchQueue(label: "com.legitimateapps.dulcet.playback-engine")
     ) {
         self.player = player
         self.clock = clock
@@ -68,7 +87,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         self.systemMediaControls = systemMediaControls
         self.remoteCommandRouter = remoteCommandRouter
         self.remoteCommandCapabilities = remoteCommandCapabilities
-        self.queue = DispatchQueue(label: "com.legitimateapps.dulcet.playback-engine")
+        self.queue = queue
         superInitQueue()
     }
 
@@ -141,6 +160,32 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    /// Measures whether the serial engine queue can service newly submitted work.
+    ///
+    /// The timeout races on a separate queue, so this diagnostic still completes when the engine
+    /// queue is blocked. The queued probe may run later, but the one-shot result cannot change after
+    /// the timeout has reported the queue unresponsive.
+    func probeQueueLivenessForTesting(
+        timeout: TimeInterval = 1
+    ) async -> DulcetAVPlayerEngineQueueLiveness {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let timeout = max(0.001, timeout)
+        return await withCheckedContinuation { continuation in
+            let result = QueueLivenessProbeResult(continuation: continuation)
+            queue.async {
+                result.resolve(.responsive(
+                    turnaroundSeconds: Self.seconds(from: started.duration(to: clock.now))
+                ))
+            }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
+                result.resolve(.notResponsive(
+                    waitedSeconds: Self.seconds(from: started.duration(to: clock.now))
+                ))
+            }
+        }
+    }
+
     /// Applies queue/role capability changes only to the named live session.
     @discardableResult
     public func updateRemoteCommandCapabilities(
@@ -170,6 +215,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             observePlayer()
         }
         startSampler()
+    }
+
+    private static func seconds(from duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) +
+            TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
     }
 
     private func executeOnQueue(
@@ -1093,6 +1144,23 @@ private struct DulcetAVPlayerEngineSystemClock: DulcetAVPlayerEngineClock {
         timer.setEventHandler(handler: handler)
         timer.resume()
         return { timer.cancel() }
+    }
+}
+
+private final class QueueLivenessProbeResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<DulcetAVPlayerEngineQueueLiveness, Never>?
+
+    init(continuation: CheckedContinuation<DulcetAVPlayerEngineQueueLiveness, Never>) {
+        self.continuation = continuation
+    }
+
+    func resolve(_ result: DulcetAVPlayerEngineQueueLiveness) {
+        lock.lock()
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: result)
     }
 }
 
