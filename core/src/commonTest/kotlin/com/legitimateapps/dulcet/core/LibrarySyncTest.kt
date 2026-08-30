@@ -205,7 +205,7 @@ class LibrarySyncTest {
     }
 
     @Test
-    fun albumWitnessRetryBudgetSurvivesAnInterruptedRetry() = runTest {
+    fun albumWitnessAttemptIsReservedBeforeItsFallibleWalk() = runTest {
         val driver = createTestDriver()
         val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
         val source = InterruptingAlbumPaginationSource(MutableSource(albumCount = 4))
@@ -214,14 +214,18 @@ class LibrarySyncTest {
         assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, source))
         val interrupted = requireNotNull(repository.checkpoint(SERVER))
         assertEquals(LibrarySyncStage.Albums, interrupted.stage)
-        assertEquals(1, interrupted.attempt)
+        assertEquals(
+            2,
+            interrupted.attempt,
+            "the interrupted walk must have durably consumed its attempt",
+        )
 
         val completed = assertIs<LibrarySyncResult.Completed>(engine.synchronize(SERVER, source))
         assertEquals(LibrarySyncStability.Unverified, completed.stability)
         assertEquals(
-            5,
+            4,
             source.walkStarts,
-            "resume must continue attempts 2 and 3 instead of replenishing the retry budget",
+            "resume must have only attempt 3 left instead of replenishing the interrupted attempt",
         )
         driver.close()
     }

@@ -827,6 +827,10 @@ internal class LibrarySyncRepository(
             // Pruning is maintenance. A later pass may retry it without changing sync success.
         }
     }
+
+    fun writeAtomically(block: () -> Unit) {
+        database.transaction { block() }
+    }
 }
 
 private fun requireProvider(serverId: String, id: ProviderItemId) {
@@ -1000,16 +1004,20 @@ internal class LibrarySyncEngine(
         var attempt = checkpoint.attempt
         var unverified = checkpoint.unverified
         while (attempt < MAX_STABILITY_ATTEMPTS) {
+            attempt += 1
+            checkpoint = checkpoint.copy(attempt = attempt)
+                .also { repository.saveCheckpoint(serverId, it) }
             val values = fetch()
             val current = LibrarySyncWitness(values.syncIds(), 1)
-            attempt += 1
             if (current == baseline) return advance(serverId, checkpoint.copy(unverified = unverified))
-            repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-            put(serverId, checkpoint.generation, values)
-            repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
             baseline = current
-            checkpoint = checkpoint.copy(attempt = attempt, witness = baseline)
-                .also { repository.saveCheckpoint(serverId, it) }
+            checkpoint = checkpoint.copy(witness = baseline)
+            repository.writeAtomically {
+                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
+                put(serverId, checkpoint.generation, values)
+                repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.saveCheckpoint(serverId, checkpoint)
+            }
         }
         unverified = true
         return advance(serverId, checkpoint.copy(unverified = unverified))
@@ -1051,21 +1059,25 @@ internal class LibrarySyncEngine(
             repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
             baseline = LibrarySyncWitness(ids, pages)
         } else {
-            // A retry checkpoint is written only after the replacement walk is complete. Reusing
-            // that durable baseline preserves the bounded retry budget across process restarts.
+            // Each attempt is durably reserved before its fallible walk. The baseline and staged
+            // replacement then advance atomically, so a restart can spend at most three attempts.
             baseline = checkpoint.witness
         }
         var attempt = checkpoint.attempt
         while (attempt < MAX_STABILITY_ATTEMPTS) {
-            val current = walkAlbumPages(source)
             attempt += 1
-            if (current.witness == baseline) return advance(serverId, checkpoint)
-            repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-            repository.putAlbums(serverId, checkpoint.generation, current.albums)
-            repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
-            baseline = current.witness
-            checkpoint = checkpoint.copy(cursor = 0, attempt = attempt, witness = baseline)
+            checkpoint = checkpoint.copy(attempt = attempt)
                 .also { repository.saveCheckpoint(serverId, it) }
+            val current = walkAlbumPages(source)
+            if (current.witness == baseline) return advance(serverId, checkpoint)
+            baseline = current.witness
+            checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
+            repository.writeAtomically {
+                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.putAlbums(serverId, checkpoint.generation, current.albums)
+                repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.saveCheckpoint(serverId, checkpoint)
+            }
         }
         return advance(serverId, checkpoint.copy(unverified = true))
     }
@@ -1130,16 +1142,20 @@ internal class LibrarySyncEngine(
         }
         var attempt = checkpoint.attempt
         while (attempt < MAX_STABILITY_ATTEMPTS) {
+            attempt += 1
+            checkpoint = checkpoint.copy(attempt = attempt)
+                .also { repository.saveCheckpoint(serverId, it) }
             val currentAlbums = fetchAlbums(source, albumIds)
             val current = trackWitness(currentAlbums, albumIds.size.toLong())
-            attempt += 1
             if (current == baseline) return advance(serverId, checkpoint)
-            repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-            repository.putTracks(serverId, checkpoint.generation, currentAlbums)
-            repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
             baseline = current
-            checkpoint = checkpoint.copy(cursor = 0, attempt = attempt, witness = baseline)
-                .also { repository.saveCheckpoint(serverId, it) }
+            checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
+            repository.writeAtomically {
+                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.putTracks(serverId, checkpoint.generation, currentAlbums)
+                repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.saveCheckpoint(serverId, checkpoint)
+            }
         }
         return advance(serverId, checkpoint.copy(unverified = true))
     }
@@ -1209,19 +1225,23 @@ internal class LibrarySyncEngine(
         }
         var attempt = checkpoint.attempt
         while (attempt < MAX_STABILITY_ATTEMPTS) {
+            attempt += 1
+            checkpoint = checkpoint.copy(attempt = attempt)
+                .also { repository.saveCheckpoint(serverId, it) }
             val currentSummaries = source.playlists().distinctBy { it.id.rawId }
             val currentPlaylists = fetchPlaylists(source, currentSummaries)
             val current = playlistWitness(
                 currentSummaries, currentPlaylists, 1 + currentSummaries.size.toLong(),
             )
-            attempt += 1
             if (current == baseline) return advance(serverId, checkpoint)
-            repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-            repository.putPlaylists(serverId, checkpoint.generation, currentPlaylists)
-            repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
             baseline = current
-            checkpoint = checkpoint.copy(cursor = 0, attempt = attempt, witness = baseline)
-                .also { repository.saveCheckpoint(serverId, it) }
+            checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
+            repository.writeAtomically {
+                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.putPlaylists(serverId, checkpoint.generation, currentPlaylists)
+                repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.saveCheckpoint(serverId, checkpoint)
+            }
         }
         return advance(serverId, checkpoint.copy(unverified = true))
     }
