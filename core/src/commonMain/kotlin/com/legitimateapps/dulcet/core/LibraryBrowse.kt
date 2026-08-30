@@ -25,12 +25,12 @@ public data class ProviderItemId(
     }
 }
 
-internal enum class CreditRole {
+public enum class CreditRole {
     Artist,
     AlbumArtist,
 }
 
-internal data class Credit(
+public data class Credit(
     val role: CreditRole,
     val name: String,
     val id: ProviderItemId?,

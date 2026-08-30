@@ -15,6 +15,27 @@ import kotlin.time.Duration.Companion.seconds
 
 class SearchTest {
     @Test
+    fun serverRowsReplaceLocalRowsInPlaceWhileNewRowsAppendWithoutDuplicates() {
+        val overlapId = ProviderItemId(PROVIDER_INSTANCE_ID, "track:opaque/overlap:not-an-integer")
+        val localOnlyId = ProviderItemId(PROVIDER_INSTANCE_ID, "album:opaque/local:not-an-integer")
+        val serverOnlyId = ProviderItemId(PROVIDER_INSTANCE_ID, "artist:opaque/server:not-an-integer")
+        val staleLocal = item(overlapId, SearchResultType.Track, "Stale cached title")
+        val localOnly = item(localOnlyId, SearchResultType.Album, "Local only")
+        val freshServer = item(overlapId, SearchResultType.Track, "Fresh server title")
+        val serverOnly = item(serverOnlyId, SearchResultType.Artist, "Server only")
+
+        val merged = mergeSearchResults(
+            localResults = listOf(staleLocal, localOnly, staleLocal),
+            serverResults = listOf(freshServer, serverOnly, freshServer),
+        )
+
+        assertEquals(listOf(overlapId, localOnlyId, serverOnlyId), merged.map(SearchResultItem::id))
+        assertEquals(freshServer, merged[0], "the server row must refresh the local row in place")
+        assertEquals(localOnly, merged[1], "a local-only row must not be dropped")
+        assertEquals(serverOnly, merged[2], "a server-only row must append")
+    }
+
+    @Test
     fun sendsIndependentCountsOffsetsAndCopiesOpaqueStructuredResults() = runTest {
         var sent = emptyMap<String, String>()
         val result = ServerSearch(
@@ -212,5 +233,20 @@ class SearchTest {
 
         fun envelope(searchResult: String) =
             """{"subsonic-response":{"status":"ok","searchResult3":$searchResult}}"""
+
+        fun item(id: ProviderItemId, type: SearchResultType, title: String) = SearchResultItem(
+            id = id,
+            type = type,
+            title = title,
+            credits = emptyList(),
+            albumTitle = null,
+            year = null,
+            duration = null,
+            discNumber = null,
+            trackNumber = null,
+            sourceContainer = null,
+            mediaSourceId = null,
+            artworkKey = null,
+        )
     }
 }
