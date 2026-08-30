@@ -14,13 +14,19 @@ struct AVPlayerEngineTests {
     @Test
     func progressivePrepareUsesTheCustomLoaderAndReportsEngineSeekability() async throws {
         let resource = InMemoryPlaybackResource(data: makePCMWave(duration: 2))
+        #if os(macOS)
         let engine = DulcetAVPlayerEngine()
+        #else
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        #endif
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
 
         let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(resource: resource)))
         #expect(outcome == .accepted(commandID: .init("prepare")))
 
+        #if os(macOS)
         try await waitUntil("AVPlayer did not become ready through the custom resource loader") {
             events.containsReady(seekability: .seekable)
         }
@@ -32,25 +38,65 @@ struct AVPlayerEngineTests {
         )
         #expect(resource.requests.first?.range.start == 0)
         #expect(resource.requests.first?.requiresAudioSignature == true)
+        #else
+        #expect(!events.containsReady)
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        #expect(events.containsReady(seekability: .seekable))
+        #endif
 
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
     @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
+        #if os(macOS)
         let engine = DulcetAVPlayerEngine()
+        #else
+        let startWallClock = Date(timeIntervalSince1970: 1_788_000_000)
+        let clock = ManualAVPlayerEngineClock(wallClockNow: startWallClock)
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        #endif
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 3)))
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        #if os(macOS)
         try await waitUntil("AVPlayer did not become ready") { events.containsReady(seekability: .seekable) }
+        #else
+        engine.reportCurrentItemReadyForTesting(duration: 3, seekability: .seekable)
+        #expect(events.containsReady(seekability: .seekable))
+        #endif
         #expect(!events.containsProgressBegan)
 
         _ = await execute(engine, .play(commandID: .init("play")))
+        #if os(macOS)
         try await waitUntil("the monotonic sampler did not observe advancing media time", timeout: 3) {
             events.positionSamples.count >= 2
         }
+        #else
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 0,
+            monotonicUptimeNanoseconds: 1_000_000_000
+        )
+        #expect(!events.containsProgressBegan)
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 0.5,
+            monotonicUptimeNanoseconds: 1_500_000_000
+        )
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 1,
+            monotonicUptimeNanoseconds: 2_000_000_000
+        )
+        #expect(events.positionSamples.map(\.monotonic.uptimeNanoseconds) == [
+            1_500_000_000,
+            2_000_000_000,
+        ])
+        #expect(events.progressStartWallClock == startWallClock)
+        #endif
 
         let snapshot = events.snapshot
         let progressIndex = try #require(snapshot.firstIndex { event in
@@ -1182,6 +1228,16 @@ private final class PlaybackEventRecorder: @unchecked Sendable {
         snapshot.contains { if case .playbackProgressBegan = $0 { true } else { false } }
     }
 
+    var containsReady: Bool {
+        snapshot.contains { if case .ready = $0 { true } else { false } }
+    }
+
+    var progressStartWallClock: Date? {
+        snapshot.compactMap {
+            if case let .playbackProgressBegan(_, wallClock, _) = $0 { wallClock } else { nil }
+        }.first
+    }
+
     func containsReady(seekability: DulcetPlaybackSeekability) -> Bool {
         snapshot.contains {
             if case let .ready(_, _, actual) = $0 { actual == seekability } else { false }
@@ -1202,6 +1258,68 @@ private final class PlaybackEventRecorder: @unchecked Sendable {
         }
     }
 }
+
+#if !os(macOS)
+private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unchecked Sendable {
+    let wallClockNow: Date
+
+    private let lock = NSLock()
+    private var currentSample = DulcetAVPlayerEngineClockSample(
+        isPlaying: false,
+        mediaPosition: 0,
+        monotonicTime: DulcetMonotonicInstant(uptimeNanoseconds: 0)
+    )
+    private var samplerQueue: DispatchQueue?
+    private var samplerHandler: (@Sendable () -> Void)?
+
+    init(wallClockNow: Date = Date(timeIntervalSince1970: 1_788_000_000)) {
+        self.wallClockNow = wallClockNow
+    }
+
+    func sample(player _: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentSample
+    }
+
+    func startSampler(
+        on queue: DispatchQueue,
+        interval _: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        lock.lock()
+        samplerQueue = queue
+        samplerHandler = handler
+        lock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            samplerQueue = nil
+            samplerHandler = nil
+            lock.unlock()
+        }
+    }
+
+    func tick(
+        isPlaying: Bool,
+        mediaPosition: TimeInterval,
+        monotonicUptimeNanoseconds: UInt64
+    ) {
+        lock.lock()
+        currentSample = DulcetAVPlayerEngineClockSample(
+            isPlaying: isPlaying,
+            mediaPosition: mediaPosition,
+            monotonicTime: DulcetMonotonicInstant(
+                uptimeNanoseconds: monotonicUptimeNanoseconds
+            )
+        )
+        let queue = samplerQueue
+        let handler = samplerHandler
+        lock.unlock()
+        queue?.sync { handler?() }
+    }
+}
+#endif
 
 private func makePCMWave(duration: TimeInterval) -> Data {
     let sampleRate = 8_000
