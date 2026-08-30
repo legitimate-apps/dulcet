@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Block until a conformance Navidrome's library is actually queryable.
+
+HTTP readiness is not library readiness. Navidrome answers /app/ within a second of starting and
+then runs its scan asynchronously. Killing it for the next cold restart while that scan is in
+flight produces `Scan failed error="library count: context canceled"` and leaves the following test
+run against an empty library -- which surfaces as a dozen unrelated conformance failures rather
+than as an environment fault. OBSERVED on apple-ci 2026-08-30.
+
+Waiting on the scan alone is not enough either: `scanning: false` is also true before the scan has
+started. This requires a finished scan AND a non-zero count AND a query that actually returns rows,
+because a database can report a completed scan and still fail every query (see V23).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import secrets
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+
+
+def call(base_url: str, endpoint: str, **parameters: str) -> dict:
+    salt = secrets.token_hex(16)
+    token = hashlib.md5((ADMIN_PASSWORD + salt).encode()).hexdigest()
+    query = {
+        "u": ADMIN_USER, "t": token, "s": salt,
+        "v": "1.16.1", "c": "dulcet-await-library", "f": "json",
+    }
+    query.update(parameters)
+    url = f"{base_url}/rest/{endpoint}?" + urllib.parse.urlencode(query)
+    with urllib.request.urlopen(url, timeout=15) as response:
+        return json.load(response)["subsonic-response"]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--timeout-seconds", type=float, default=180.0)
+    arguments = parser.parse_args()
+
+    deadline = time.monotonic() + arguments.timeout_seconds
+    last = "no observation"
+    while time.monotonic() < deadline:
+        try:
+            status = call(arguments.base_url, "getScanStatus").get("scanStatus", {})
+            scanning = bool(status.get("scanning"))
+            count = int(status.get("count") or 0)
+            if not scanning and count > 0:
+                albums = call(
+                    arguments.base_url, "getAlbumList2",
+                    type="alphabeticalByName", size="1",
+                ).get("albumList2", {}).get("album", [])
+                if albums:
+                    print(
+                        f"library ready: scanning=false count={count} "
+                        f"queryable_albums>=1"
+                    )
+                    return
+                last = f"scan complete (count={count}) but getAlbumList2 returned no rows"
+            else:
+                last = f"scanning={scanning} count={count}"
+        except Exception as error:  # noqa: BLE001 - report whatever the server did
+            last = f"probe error: {error}"
+        time.sleep(1.0)
+
+    print(f"library never became queryable within {arguments.timeout_seconds}s: {last}",
+          file=sys.stderr)
+    raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
