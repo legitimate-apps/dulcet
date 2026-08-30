@@ -128,6 +128,19 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    /// Drive natural end-of-item on the non-AVFoundation test path.
+    ///
+    /// This calls exactly the `itemEnded` the `.AVPlayerItemDidPlayToEndTime` observer calls, so a
+    /// test using it exercises the production path rather than a parallel one; only the trigger
+    /// differs. The observer is not registered when the AVFoundation media stack is disabled, which
+    /// is why the seam is needed at all. It mirrors `reportCurrentItemReadyForTesting`.
+    func reportCurrentItemEndedForTesting() {
+        performOnQueueSynchronously { [self] in
+            guard let current else { return }
+            itemEnded(current)
+        }
+    }
+
     /// Applies queue/role capability changes only to the named live session.
     @discardableResult
     public func updateRemoteCommandCapabilities(

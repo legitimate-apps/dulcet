@@ -364,8 +364,11 @@ struct AVPlayerEngineTests {
 
     @Test
     func anEmptyQueueDeactivatesAfterTheConfiguredGracePeriod() async throws {
-        let player = AVQueuePlayer()
         let audioSession = RecordingAudioSession()
+        #if os(macOS)
+        // macOS keeps the real path: a real AVQueuePlayer, the real end-of-item notification, and a
+        // real 0.05s grace period elapsing. That is the coverage this test exists for.
+        let player = AVQueuePlayer()
         let engine = DulcetAVPlayerEngine(
             player: player,
             audioSession: audioSession,
@@ -376,6 +379,22 @@ struct AVPlayerEngineTests {
 
         NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: item)
         player.removeAllItems()
+        #else
+        // The simulator's media stack is the unreliable part, and it is not what this test asserts:
+        // the claim is that an empty queue deactivates the session after its grace period. Drive the
+        // same itemEnded the notification observer drives, then fire the deadline instead of waiting
+        // for wall time. This test timed out at 21.4s on a hosted iOS runner while macOS passed.
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession,
+            audioSessionGracePeriod: 0.05
+        )
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemEndedForTesting()
+        #expect(clock.fireScheduledDeadline(), "no grace deadline was scheduled to fire")
+        #endif
 
         try await waitUntil("empty queue did not deactivate after its grace period") {
             audioSession.deactivationCount == 1
