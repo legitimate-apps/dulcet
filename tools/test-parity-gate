@@ -141,8 +141,12 @@ expect_rejection(
     "evidence must cover each declared conformance id exactly once",
 )
 
-passing_report = """\
-<testsuite tests="42" failures="0" errors="0" skipped="0">
+# The summary count is DERIVED from the cases below, never written by hand. It used to be a
+# literal, which made it a merge-conflict magnet: every branch that adds a case had to bump the
+# same number, so concurrent pull requests collided on it and a careless resolution could land a
+# count that disagreed with the list it claims to summarize -- which is exactly the defect this
+# fixture exists to detect in real reports.
+passing_cases = """\
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
@@ -227,8 +231,12 @@ passing_report = """\
             name="conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
             name="conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer[macosArm64]" time="0.1" />
-</testsuite>
 """
+passing_report = (
+    f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
+    + passing_cases
+    + '</testsuite>\n'
+)
 with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
     root = Path(directory)
     materialize(root)
