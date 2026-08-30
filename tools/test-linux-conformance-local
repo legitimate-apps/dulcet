@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Static and mutation controls for the shared Linux conformance lifecycle."""
 
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,6 +15,7 @@ RESET_TOOL = ROOT / "tools/conformance-env/reset-transcode-cache"
 OBSERVE_TOOL = ROOT / "tools/conformance-env/observe-transcode-cache"
 WORKFLOW = ROOT / ".github/workflows/core-ci.yml"
 APPLE_WORKFLOW = ROOT / ".github/workflows/apple-ci.yml"
+linux_local = SourceFileLoader("linux_conformance_local", str(TOOL)).load_module()
 
 
 environment = subprocess.run(
@@ -50,6 +53,92 @@ with tempfile.TemporaryDirectory(prefix="dulcet-nondisposable-") as directory:
         raise AssertionError(f"unmarked root was accepted: {result.stdout!r}")
     if sentinel.read_text() != "negative-control\n":
         raise AssertionError("unmarked-root negative control was modified")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-volume-control-") as directory:
+    first_root = Path(directory) / "first"
+    second_root = Path(directory) / "second"
+    first_volume = linux_local.data_volume_name(first_root)
+    second_volume = linux_local.data_volume_name(second_root)
+    if first_volume != f"{linux_local.container_name(first_root)}-data":
+        raise AssertionError("data volume does not derive its suffix from the root-scoped container")
+    if first_volume == second_volume:
+        raise AssertionError("distinct conformance roots share one data volume")
+
+    commands: list[list[str]] = []
+
+    def record_volume_command(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        output = "true\n" if command[:3] == ["docker", "volume", "inspect"] else ""
+        return SimpleNamespace(stdout=output)
+
+    linux_local.volume_exists = lambda _name: True
+    linux_local.run = record_volume_command
+    linux_local.reset_data_volume(first_root, "pinned-image")
+    if ["docker", "volume", "rm", first_volume] not in commands:
+        raise AssertionError("data volume reset no longer removes the prior named volume")
+    create = [
+        "docker",
+        "volume",
+        "create",
+        "--label",
+        f"{linux_local.DISPOSABLE_LABEL}=true",
+        first_volume,
+    ]
+    if create not in commands:
+        raise AssertionError("data volume reset no longer creates a labelled named volume")
+    helpers = [command for command in commands if command[:2] == ["docker", "run"]]
+    if len(helpers) != 2:
+        raise AssertionError(f"data volume ownership/write helpers drifted: {helpers!r}")
+    owner, writer = helpers
+    if owner[owner.index("--user") + 1] != "0:0" or not owner[-1].startswith("chown "):
+        raise AssertionError(f"data volume is not initialized as root before Navidrome: {owner!r}")
+    expected_user = f"{linux_local.os.getuid()}:{linux_local.os.getgid()}"
+    if writer[writer.index("--user") + 1] != expected_user or ".dulcet-write-probe" not in writer[-1]:
+        raise AssertionError(f"data volume is not write-probed as the Navidrome user: {writer!r}")
+
+    commands.clear()
+    linux_local.start_container(first_root, "pinned-image", "container")
+    start = commands[0]
+    expected_mount = f"type=volume,source={first_volume},target=/data"
+    if start.count(expected_mount) != 1:
+        raise AssertionError(f"Navidrome /data is not the root-scoped named volume: {start!r}")
+    if f"{first_root / 'data'}:/data" in start:
+        raise AssertionError("Navidrome /data regressed to a host bind mount")
+    if f"{first_root / 'cache'}:/cache" not in start:
+        raise AssertionError("Navidrome /cache must remain a host bind mount")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-up-control-") as directory:
+    lifecycle_root = Path(directory) / "root"
+    events: list[tuple[str, str]] = []
+    linux_local.initialize_root = lambda root: root.mkdir(parents=True)
+    linux_local.down = lambda _root: events.append(("down", ""))
+    linux_local.require_available_loopback_ports = lambda: events.append(("ports", ""))
+    linux_local.clear_directory = lambda _root, name: events.append(("clear", name))
+    linux_local.pin = lambda name: {
+        "navidrome.linux.image": "pinned-image",
+        "navidrome.linux.architecture": "amd64",
+    }[name]
+    linux_local.reset_data_volume = lambda root, image: events.append(
+        ("reset-data", f"{linux_local.data_volume_name(root)}:{image}")
+    )
+    linux_local.ensure_corpus = lambda _root, _image: events.append(("corpus", ""))
+    linux_local.run = lambda _command, **_kwargs: SimpleNamespace(stdout="amd64\n")
+    linux_local.render_configuration = lambda _root: events.append(("config", ""))
+    linux_local.start_auxiliary = lambda _root: events.append(("auxiliary", ""))
+    linux_local.wait_for_url = lambda url, **_kwargs: events.append(("wait", url))
+    linux_local.start_container = lambda _root, _image, _name: events.append(("start", ""))
+    linux_local.health_check = lambda _root, _name: events.append(("health", ""))
+    linux_local.up(lifecycle_root)
+    reset_event = (
+        "reset-data",
+        f"{linux_local.data_volume_name(lifecycle_root)}:pinned-image",
+    )
+    if reset_event not in events:
+        raise AssertionError("up no longer resets the named data volume")
+    if events.index(reset_event) > events.index(("start", "")):
+        raise AssertionError("up resets the named data volume after Navidrome starts")
+    if ("clear", "cache") not in events or ("clear", "data") in events:
+        raise AssertionError(f"host cache/data reset contract drifted: {events!r}")
 
 source = TOOL.read_text()
 for required_source in (
@@ -106,6 +195,7 @@ for required_workflow in (
 
 print(
     "The conformance lifecycle rejects an unmarked root, preserves its sentinel, exports the "
-    "loopback disposable contract, shares every pin/corpus/health source with core-ci, and makes "
-    "all three apple-ci and local native runs reset then require an observed cold transcode"
+    "loopback disposable contract, gives each root a labelled/reset/write-probed named data "
+    "volume while keeping cache host-mounted, shares every pin/corpus/health source with core-ci, "
+    "and makes all three apple-ci and local native runs reset then require an observed cold transcode"
 )
