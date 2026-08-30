@@ -24,7 +24,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var playerObservers: [NSKeyValueObservation] = []
     private var notificationObservers: [NSObjectProtocol] = []
     private var cancelSampler: (@Sendable () -> Void)?
-    private var audioSessionGraceTimer: DispatchSourceTimer?
+    private var cancelAudioSessionGrace: (@Sendable () -> Void)?
     private var activeAudioSessionID: DulcetPlaybackSessionID?
     private var interruptionWasPlaying = false
     private var resourceLoaderTraceHandler:
@@ -405,8 +405,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         notificationObservers.removeAll()
         cancelSampler?()
         cancelSampler = nil
-        audioSessionGraceTimer?.cancel()
-        audioSessionGraceTimer = nil
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         deactivateAudioSessionImmediately()
         audioSession.setEventHandler(nil)
         systemMediaControls.setCommandHandler(nil)
@@ -422,7 +422,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             playerObservers.forEach { $0.invalidate() }
             notificationObservers.forEach(NotificationCenter.default.removeObserver)
             cancelSampler?()
-            audioSessionGraceTimer?.cancel()
+            cancelAudioSessionGrace?()
             audioSession.deactivate()
             audioSession.setEventHandler(nil)
             systemMediaControls.setCommandHandler(nil)
@@ -742,8 +742,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         commandID: DulcetPlaybackCommandID,
         completion: @escaping DulcetPlaybackCommandCompletion
     ) -> Bool {
-        audioSessionGraceTimer?.cancel()
-        audioSessionGraceTimer = nil
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         guard activeAudioSessionID != plan.playbackSessionID else { return true }
         do {
             try audioSession.activate()
@@ -757,24 +757,23 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func scheduleAudioSessionDeactivationAfterGrace() {
-        audioSessionGraceTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + audioSessionGracePeriod)
-        timer.setEventHandler { [weak self, weak timer] in
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = clock.scheduleOnce(
+            on: queue,
+            after: audioSessionGracePeriod
+        ) { [weak self] in
             guard let self, self.preloaded == nil, self.player.items().isEmpty else { return }
             self.audioSession.deactivate()
             self.activeAudioSessionID = nil
             self.systemMediaControls.clear()
-            timer?.cancel()
-            self.audioSessionGraceTimer = nil
+            self.cancelAudioSessionGrace?()
+            self.cancelAudioSessionGrace = nil
         }
-        audioSessionGraceTimer = timer
-        timer.resume()
     }
 
     private func deactivateAudioSessionImmediately() {
-        audioSessionGraceTimer?.cancel()
-        audioSessionGraceTimer = nil
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         guard activeAudioSessionID != nil else { return }
         audioSession.deactivate()
         activeAudioSessionID = nil
@@ -1020,9 +1019,40 @@ protocol DulcetAVPlayerEngineClock: Sendable {
         interval: TimeInterval,
         handler: @escaping @Sendable () -> Void
     ) -> @Sendable () -> Void
+
+    /// Schedule one deferred callback and return its cancel closure.
+    ///
+    /// The audio-session grace period used a `DispatchSourceTimer` built inline, which made
+    /// `anEmptyQueueDeactivatesAfterTheConfiguredGracePeriod` depend on real elapsed time on a
+    /// simulator whose media stack is the unreliable part. Routing it through the clock lets a test
+    /// fire the deadline instead of waiting for one.
+    func scheduleOnce(
+        on queue: DispatchQueue,
+        after interval: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void
 }
 
 private struct DulcetAVPlayerEngineSystemClock: DulcetAVPlayerEngineClock {
+    func scheduleOnce(
+        on queue: DispatchQueue,
+        after interval: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + interval)
+        // The handler captures the timer so the timer stays alive until it fires, and releases it
+        // by cancelling afterwards. Without that, the returned cancel closure would be the only
+        // strong reference and a caller who discarded it would get a timer that is deallocated
+        // before its deadline and silently never fires. OBSERVED by mutation while adding this.
+        timer.setEventHandler {
+            handler()
+            timer.cancel()
+        }
+        timer.resume()
+        return { timer.cancel() }
+    }
+
     var wallClockNow: Date { Date() }
 
     func sample(player: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample {

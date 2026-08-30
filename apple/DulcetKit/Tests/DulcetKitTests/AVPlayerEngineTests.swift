@@ -1282,6 +1282,41 @@ private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unche
     )
     private var samplerQueue: DispatchQueue?
     private var samplerHandler: (@Sendable () -> Void)?
+    private var deferredQueue: DispatchQueue?
+    private var deferredHandler: (@Sendable () -> Void)?
+
+    /// Fire the pending one-shot deadline (the audio-session grace period) without waiting for it.
+    /// Returns false when nothing is scheduled, so a test cannot silently pass by firing nothing.
+    @discardableResult
+    func fireScheduledDeadline() -> Bool {
+        lock.lock()
+        let queue = deferredQueue
+        let handler = deferredHandler
+        deferredQueue = nil
+        deferredHandler = nil
+        lock.unlock()
+        guard let queue, let handler else { return false }
+        queue.sync(execute: handler)
+        return true
+    }
+
+    func scheduleOnce(
+        on queue: DispatchQueue,
+        after _: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        lock.lock()
+        deferredQueue = queue
+        deferredHandler = handler
+        lock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            self.deferredQueue = nil
+            self.deferredHandler = nil
+            self.lock.unlock()
+        }
+    }
 
     init(wallClockNow: Date = Date(timeIntervalSince1970: 1_788_000_000)) {
         self.wallClockNow = wallClockNow
