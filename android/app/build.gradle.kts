@@ -59,6 +59,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // JVM unit tests for the channel split. These run on the host, not a device, so `kotlin("test")`
+    // is enough and no instrumentation dependency is involved.
+    testImplementation(kotlin("test"))
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)
