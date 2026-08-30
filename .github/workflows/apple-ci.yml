@@ -52,6 +52,8 @@ jobs:
         run: python3 tools/test-xcode-test-execution-guard
       - name: Prove uncataloged SwiftUI copy fails the source policy
         run: python3 tools/test-string-catalog-policy-gate
+      - name: Prove the iPad destination resolver rejects a non-iPad
+        run: python3 tools/test-ipad-destination-resolver
       - name: Require SwiftUI user-facing literals to use the string catalog
         run: python3 tools/verify_string_catalog_policy.py
       - name: Prove the DulcetCore build-order guard accepts a valid project and rejects ten broken ones
@@ -280,11 +282,18 @@ jobs:
       - name: Launch iPadOS shell and prove regular-width account layout
         run: |
           set -o pipefail
+          # The model name is NOT the thing being proved -- the UI test asserts regular width itself
+          # and rejects anything narrower. Pinning `iPad Pro 13-inch (M4)` broke when the hosted image
+          # rotated to M5 models, so resolve whatever iPad this image actually ships. The resolver
+          # fails loudly rather than falling back to an iPhone, which would keep CI green while
+          # proving nothing.
+          IPAD_DESTINATION="$(python3 tools/resolve-ipad-destination)"
+          echo "iPadOS destination: $IPAD_DESTINATION"
           xcodebuild test \
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetiOS \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4),OS=latest' \
+            -destination "$IPAD_DESTINATION" \
             -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
             -parallel-testing-enabled NO \
@@ -298,7 +307,7 @@ jobs:
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetiOS \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4),OS=latest' \
+            -destination "$IPAD_DESTINATION" \
             -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-swift-testing.xcresult" \
             -parallel-testing-enabled NO \

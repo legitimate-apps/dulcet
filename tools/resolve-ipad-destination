@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Resolve an available iPad simulator and print an xcodebuild destination for it.
+
+The iPadOS proof used to pin `name=iPad Pro 13-inch (M4)`. Apple rotates the marketing model names in
+the hosted image -- OBSERVED 2026-08-30, run 33316319093 failed because that image shipped only
+`iPad Pro 11-inch (M5)` and `iPad Pro 13-inch (M5)` -- so a pinned model name is a scheduled outage,
+not determinism.
+
+Resolving at run time is sound here because the model was never the thing being proved. The UI test
+asserts the regular-width layout itself and rejects anything narrower, so any genuine iPad is valid
+evidence and a wrong device fails inside the test with its own message. What this resolver owes that
+guard is the guarantee it never hands back a non-iPad: a silent fallback to an iPhone would turn a
+layout proof into a lie.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+
+RUNTIME_IOS = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?$")
+
+
+def load_devices(path: str | None) -> dict:
+    if path:
+        with open(path) as handle:
+            return json.load(handle)
+    result = subprocess.run(
+        ["xcrun", "simctl", "list", "devices", "available", "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"could not list simulators: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+def ipad_candidates(document: dict) -> list[tuple[tuple[int, int, int], str, str, str]]:
+    found = []
+    for runtime, devices in (document.get("devices") or {}).items():
+        match = RUNTIME_IOS.search(runtime)
+        if match is None:
+            continue
+        version = tuple(int(part) if part else 0 for part in match.groups())
+        for device in devices:
+            name = device.get("name") or ""
+            # The name is the only reliable family marker in this payload; deviceTypeIdentifier is
+            # absent on some runtimes. Require an explicit iPad prefix rather than a substring match,
+            # so a future "iPhone ... iPad-something" cannot slip through.
+            if not name.startswith("iPad"):
+                continue
+            if device.get("isAvailable") is False:
+                continue
+            udid = device.get("udid")
+            if not udid:
+                continue
+            found.append((version, name, udid, runtime))
+    return found
+
+
+def family_rank(name: str) -> int:
+    """Higher is preferred. The layout proof wants the widest iPad available, not merely an iPad."""
+    if name.startswith("iPad Pro"):
+        return 4
+    if name.startswith("iPad Air"):
+        return 3
+    if name.startswith("iPad mini"):
+        return 1
+    return 2
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--devices-json", help="read a simctl payload from a file instead of running simctl")
+    parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
+    args = parser.parse_args()
+
+    document = load_devices(args.devices_json)
+    candidates = ipad_candidates(document)
+    if not candidates:
+        names = sorted(
+            {d.get("name", "?") for devices in (document.get("devices") or {}).values() for d in devices}
+        )
+        raise SystemExit(
+            "no available iPad simulator was found, so the regular-width layout proof cannot run. "
+            f"Looked for an available device whose name starts with 'iPad' on an iOS runtime; saw: {names or '(none)'}"
+        )
+    # Deterministic AND widest-first. Sorting by name alone picked "iPad mini" over "iPad Pro"
+    # (lowercase 'm' sorts above 'P'), and the mini is the one iPad whose portrait width sits closest
+    # to the regular-width boundary this test depends on. Rank by family so the proof runs on the
+    # roomiest device the image offers, then by runtime, then by name for a stable tie-break.
+    candidates.sort(key=lambda entry: (family_rank(entry[1]), entry[0], entry[1]), reverse=True)
+    version, name, udid, _runtime = candidates[0]
+    if args.field == "name":
+        print(name)
+    elif args.field == "udid":
+        print(udid)
+    else:
+        print(f"platform=iOS Simulator,id={udid}")
+    print(
+        f"RESOLVED IPAD name={name!r} ios={'.'.join(str(p) for p in version)} candidates={len(candidates)}",
+        file=sys.stderr,
+    )
+
+
+if __name__ == "__main__":
+    main()

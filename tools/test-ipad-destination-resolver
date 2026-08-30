@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Prove the iPad destination resolver never hands back a non-iPad and never invents one.
+
+The regular-width layout proof is only as trustworthy as the device it runs on. A resolver that
+quietly fell back to an iPhone would keep CI green while proving nothing, and the UI test's width
+guard would then fail with a confusing message instead of a clear one. These controls pin the two
+properties that matter: an iPad-less image must fail loudly, and a device that merely mentions iPad
+must not be mistaken for one.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+RESOLVER = Path(__file__).resolve().parent / "resolve-ipad-destination"
+IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+OLD_IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+
+
+def run(payload: dict) -> subprocess.CompletedProcess:
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "devices.json"
+        path.write_text(json.dumps(payload))
+        return subprocess.run(
+            [sys.executable, str(RESOLVER), "--devices-json", str(path), "--print", "name"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+
+def device(name: str, udid: str, available: bool = True) -> dict:
+    return {"name": name, "udid": udid, "isAvailable": available}
+
+
+def main() -> None:
+    # 1. An image with no iPad at all must fail, and must say what it looked for.
+    iphones_only = run({"devices": {IOS: [device("iPhone 17 Pro", "AAA")]}})
+    if iphones_only.returncode == 0:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: an iPad-less device list resolved to "
+            f"{iphones_only.stdout.strip()!r}"
+        )
+    if "no available iPad simulator" not in iphones_only.stderr:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: the iPad-less failure does not name its own cause:\n"
+            + iphones_only.stderr
+        )
+    print("NEGATIVE CONTROL PASS ipad_less_image_rejected=true")
+
+    # 2. A name that merely CONTAINS "iPad" is not an iPad. This is the silent-wrong-device case.
+    decoy = run({"devices": {IOS: [device("iPhone iPad-sized Simulator", "BBB")]}})
+    if decoy.returncode == 0:
+        raise SystemExit(
+            f"NEGATIVE CONTROL FAILED: a non-iPad named {decoy.stdout.strip()!r} was accepted"
+        )
+    print("NEGATIVE CONTROL PASS non_ipad_named_device_rejected=true")
+
+    # 3. An unavailable iPad is not a usable iPad.
+    unavailable = run({"devices": {IOS: [device("iPad Pro 13-inch (M5)", "CCC", available=False)]}})
+    if unavailable.returncode == 0:
+        raise SystemExit("NEGATIVE CONTROL FAILED: an unavailable iPad was accepted")
+    print("NEGATIVE CONTROL PASS unavailable_ipad_rejected=true")
+
+    # 4. Given a choice, the widest iPad wins -- an iPad mini's portrait width sits closest to the
+    #    regular-width boundary the proof depends on, so picking it is a latent flake.
+    mixed = run({
+        "devices": {
+            IOS: [device("iPad mini (A17 Pro)", "DDD"), device("iPad Pro 13-inch (M5)", "EEE")],
+            OLD_IOS: [device("iPad Pro 13-inch (M5)", "FFF")],
+        }
+    })
+    if mixed.returncode != 0:
+        raise SystemExit("POSITIVE CONTROL FAILED: a valid mixed image did not resolve:\n" + mixed.stderr)
+    chosen = mixed.stdout.strip()
+    if chosen != "iPad Pro 13-inch (M5)":
+        raise SystemExit(f"POSITIVE CONTROL FAILED: expected the widest iPad, chose {chosen!r}")
+    print(f"POSITIVE CONTROL PASS widest_ipad_preferred={chosen!r}")
+
+    # 5. Determinism: the same payload must resolve identically twice.
+    again = run({
+        "devices": {
+            IOS: [device("iPad mini (A17 Pro)", "DDD"), device("iPad Pro 13-inch (M5)", "EEE")],
+            OLD_IOS: [device("iPad Pro 13-inch (M5)", "FFF")],
+        }
+    })
+    if again.stdout.strip() != chosen:
+        raise SystemExit(
+            f"POSITIVE CONTROL FAILED: resolution is not deterministic ({chosen!r} then {again.stdout.strip()!r})"
+        )
+    print("POSITIVE CONTROL PASS deterministic=true")
+
+
+if __name__ == "__main__":
+    main()
