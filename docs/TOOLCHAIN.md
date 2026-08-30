@@ -20,7 +20,7 @@ CI checks the Apple values duplicated in Xcode's native project format.
 | Compose Multiplatform | 1.11.0 | current stable JetBrains Compose release |
 | AndroidX Compose BOM | 2026.06.01 | resolved from Google Maven; pins the Android shell's Compose runtime, foundation, UI, tooling and UI-test artifacts to 1.11.4 and Material 3 to 1.4.0 |
 | AndroidX Activity Compose | 1.13.0 | resolved from Google Maven |
-| AndroidX Lifecycle Runtime Compose | 2.11.0 | resolved from Google Maven |
+| AndroidX Lifecycle Runtime Compose | 2.10.0 | resolved from Google Maven; **not 2.11.0** — that release's AAR metadata declares `minCompileSdk=37`, above this project's pinned compileSdk 36, and fails `checkAarMetadata`. 2.10.0 declares `minCompileSdk=35`, read from the AAR itself rather than inferred. |
 | AndroidX Test ext JUnit / runner | 1.3.0 / 1.7.0 | resolved from Google Maven |
 | Compose for TV Material | 1.1.0 | coordinate is `androidx.tv:tv-material` |
 | Compose for TV Foundation | 1.0.0 | resolved from Google Maven |
