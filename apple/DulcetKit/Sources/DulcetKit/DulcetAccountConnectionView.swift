@@ -151,6 +151,7 @@ struct DulcetAccountConnectionView: View {
                     .textFieldStyle(.roundedBorder)
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityLabel(DulcetStrings.serverAddress)
+                    .accessibilityIdentifier("dulcet.account-connect.server-address")
                     .focused($focusedControl, equals: .serverAddress)
                 }
                 GridRow {
@@ -159,6 +160,7 @@ struct DulcetAccountConnectionView: View {
                         .textFieldStyle(.roundedBorder)
                         .dulcetCredentialInput(.username)
                         .accessibilityLabel(DulcetStrings.username)
+                        .accessibilityIdentifier("dulcet.account-connect.username")
                         .focused($focusedControl, equals: .username)
                 }
                 GridRow {
@@ -167,6 +169,7 @@ struct DulcetAccountConnectionView: View {
                         .textFieldStyle(.roundedBorder)
                         .dulcetCredentialInput(.password)
                         .accessibilityLabel(DulcetStrings.password)
+                        .accessibilityIdentifier("dulcet.account-connect.password")
                         .focused($focusedControl, equals: .password)
                 }
                 GridRow {
@@ -213,6 +216,7 @@ struct DulcetAccountConnectionView: View {
                 .submitLabel(.next)
                 .onSubmit { focusedControl = .username }
                 .accessibilityLabel(DulcetStrings.serverAddress)
+                .accessibilityIdentifier("dulcet.account-connect.server-address")
                 .focused($focusedControl, equals: .serverAddress)
                 .prefersDefaultFocus(in: accountFocusScope)
             }
@@ -226,6 +230,7 @@ struct DulcetAccountConnectionView: View {
                     .submitLabel(.next)
                     .onSubmit { focusedControl = .password }
                     .accessibilityLabel(DulcetStrings.username)
+                    .accessibilityIdentifier("dulcet.account-connect.username")
                     .focused($focusedControl, equals: .username)
             }
 
@@ -238,6 +243,7 @@ struct DulcetAccountConnectionView: View {
                     .submitLabel(.next)
                     .onSubmit { focusedControl = .allowLocalHTTP }
                     .accessibilityLabel(DulcetStrings.password)
+                    .accessibilityIdentifier("dulcet.account-connect.password")
                     .focused($focusedControl, equals: .password)
             }
 
@@ -426,6 +432,7 @@ struct DulcetAccountConnectionView: View {
         }
         .buttonStyle(.borderedProminent)
         .dulcetDefaultActionShortcut()
+        .accessibilityIdentifier("dulcet.account-connect.primary-action")
         .focused($focusedControl, equals: .primaryAction)
         .disabled(
             !isConnecting
