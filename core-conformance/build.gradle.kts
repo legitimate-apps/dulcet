@@ -24,6 +24,18 @@ kotlin {
         }
     }
 
+    // The conformance suite now opens a real database for the library-sync controls, which pulls in
+    // the SQLiter native driver. Its cinterop wrappers reference sqlite3_* symbols that the Apple
+    // system library provides, and a Kotlin/Native test binary does not link it implicitly -- the app
+    // targets get it from Xcode, but this module's binaries are produced by Gradle. Without this the
+    // link fails with a wall of undefined _co_touchlab_sqliter_sqlite3_* symbols and no mention of
+    // SQLite in the error, which reads as a Kotlin/Native toolchain fault and is not one.
+    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        binaries.all {
+            linkerOpts("-lsqlite3")
+        }
+    }
+
     sourceSets {
         commonTest.dependencies {
             implementation(project(":core"))
