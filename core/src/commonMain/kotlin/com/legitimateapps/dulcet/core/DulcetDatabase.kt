@@ -3,7 +3,7 @@ package com.legitimateapps.dulcet.core
 import app.cash.sqldelight.db.SqlDriver
 import com.legitimateapps.dulcet.database.DulcetDatabase
 
-internal const val DULCET_SCHEMA_VERSION: Long = 2
+internal const val DULCET_SCHEMA_VERSION: Long = 3
 internal const val DULCET_CACHE_FORMAT_VERSION: Long = 1
 
 internal data class DulcetSchemaMetadata(
@@ -14,7 +14,7 @@ internal data class DulcetSchemaMetadata(
 
 internal class DulcetDatabaseStore private constructor(
     internal val database: DulcetDatabase,
-    private val driver: SqlDriver,
+    internal val driver: SqlDriver,
 ) {
     internal fun metadata(): DulcetSchemaMetadata =
         database.schemaMetaQueries.selectMetadata { schemaVersion, cacheFormatVersion, generation ->

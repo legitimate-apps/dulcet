@@ -2,23 +2,29 @@
   "schema_intent_version": 1,
   "implemented_table_names": [
     "active_queue",
+    "album",
+    "artist",
+    "credit",
+    "deletion_reconciliation",
     "download",
+    "genre",
+    "library_starred",
+    "music_folder",
     "mutation_outbox",
+    "playlist",
+    "playlist_entry",
     "queue_entry",
     "queue_state",
     "resume_position",
     "schema_meta",
-    "scrobble_outbox"
+    "scrobble_outbox",
+    "sync_checkpoint",
+    "sync_generation",
+    "sync_seen",
+    "track"
   ],
   "reserved_unpopulated_table_names": [
-    "album",
-    "artist",
     "artwork_cache",
-    "credit",
-    "playlist",
-    "playlist_entry",
-    "server_account",
-    "sync_checkpoint",
-    "track"
+    "server_account"
   ]
 }

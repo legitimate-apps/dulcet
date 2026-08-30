@@ -1,0 +1,730 @@
+CREATE TABLE music_folder (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, raw_id, valid_from_generation)
+);
+
+CREATE TABLE artist (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  media_source_id TEXT,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, raw_id, valid_from_generation)
+);
+
+CREATE TABLE album (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  artist_name TEXT,
+  artist_raw_id TEXT,
+  year INTEGER,
+  duration_milliseconds INTEGER NOT NULL CHECK (duration_milliseconds >= 0),
+  media_source_id TEXT,
+  artwork_key TEXT,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, raw_id, valid_from_generation)
+);
+
+CREATE TABLE track (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  album_raw_id TEXT,
+  title TEXT NOT NULL,
+  artist_name TEXT,
+  artist_raw_id TEXT,
+  album_title TEXT,
+  disc_number INTEGER,
+  track_number INTEGER,
+  duration_milliseconds INTEGER NOT NULL CHECK (duration_milliseconds >= 0),
+  source_container TEXT,
+  media_source_id TEXT,
+  artwork_key TEXT,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, raw_id, valid_from_generation)
+);
+
+CREATE TABLE credit (
+  server_id TEXT NOT NULL,
+  seen_key TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('album', 'track')),
+  owner_raw_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('artist', 'album_artist')),
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+  name TEXT NOT NULL,
+  artist_raw_id TEXT,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, seen_key, valid_from_generation)
+);
+
+CREATE TABLE playlist (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, raw_id, valid_from_generation)
+);
+
+CREATE TABLE playlist_entry (
+  server_id TEXT NOT NULL,
+  seen_key TEXT NOT NULL,
+  playlist_raw_id TEXT NOT NULL,
+  entry_position INTEGER NOT NULL CHECK (entry_position >= 0),
+  track_raw_id TEXT NOT NULL,
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, seen_key, valid_from_generation)
+);
+
+CREATE TABLE library_starred (
+  server_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track')),
+  raw_id TEXT NOT NULL,
+  seen_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, item_kind, raw_id, valid_from_generation)
+);
+
+CREATE TABLE genre (
+  server_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  song_count INTEGER NOT NULL CHECK (song_count >= 0),
+  album_count INTEGER NOT NULL CHECK (album_count >= 0),
+  content_key TEXT NOT NULL,
+  valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation > 0),
+  valid_to_generation INTEGER CHECK (
+    valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
+  ),
+  PRIMARY KEY (server_id, name, valid_from_generation)
+);
+
+CREATE TABLE sync_checkpoint (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  stage TEXT NOT NULL CHECK (
+    stage IN ('folders', 'artists', 'albums', 'tracks', 'playlists', 'starred', 'genres')
+  ),
+  cursor INTEGER NOT NULL CHECK (cursor >= 0),
+  attempt INTEGER NOT NULL CHECK (attempt BETWEEN 0 AND 3),
+  witness_ids TEXT NOT NULL,
+  witness_page_count INTEGER NOT NULL CHECK (witness_page_count >= 0),
+  unverified INTEGER NOT NULL CHECK (unverified IN (0, 1))
+);
+
+CREATE TABLE sync_seen (
+  server_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  stage TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  PRIMARY KEY (server_id, generation, stage, raw_id)
+);
+
+CREATE TABLE sync_generation (
+  generation INTEGER NOT NULL PRIMARY KEY CHECK (generation > 0),
+  server_id TEXT NOT NULL,
+  stability TEXT NOT NULL CHECK (stability IN ('verified', 'unverified'))
+);
+
+CREATE TABLE deletion_reconciliation (
+  server_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  raw_id TEXT NOT NULL,
+  downloaded_reference_count INTEGER NOT NULL CHECK (downloaded_reference_count >= 0),
+  queue_reference_count INTEGER NOT NULL CHECK (queue_reference_count >= 0),
+  PRIMARY KEY (server_id, generation, raw_id)
+);
+
+selectOtherCheckpointServer:
+SELECT server_id FROM sync_checkpoint WHERE server_id != ? LIMIT 1;
+
+CREATE INDEX music_folder_generation ON music_folder(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX artist_generation ON artist(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX album_generation ON album(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX album_title_generation ON album(server_id, title, valid_from_generation, valid_to_generation);
+CREATE INDEX track_generation ON track(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX track_title_generation ON track(server_id, title, valid_from_generation, valid_to_generation);
+CREATE INDEX credit_generation ON credit(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX playlist_generation ON playlist(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX playlist_entry_generation ON playlist_entry(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX library_starred_generation ON library_starred(server_id, valid_from_generation, valid_to_generation);
+CREATE INDEX genre_generation ON genre(server_id, valid_from_generation, valid_to_generation);
+
+selectCheckpoint:
+SELECT generation, stage, cursor, attempt, witness_ids, witness_page_count, unverified
+FROM sync_checkpoint
+WHERE server_id = ?;
+
+saveCheckpoint:
+INSERT OR REPLACE INTO sync_checkpoint(
+  server_id, generation, stage, cursor, attempt, witness_ids, witness_page_count, unverified
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteCheckpoint:
+DELETE FROM sync_checkpoint WHERE server_id = ?;
+
+markSeen:
+INSERT OR IGNORE INTO sync_seen(server_id, generation, stage, raw_id)
+VALUES (?, ?, ?, ?);
+
+selectSeenIds:
+SELECT raw_id FROM sync_seen
+WHERE server_id = ? AND generation = ? AND stage = ?
+ORDER BY raw_id;
+
+clearSeenStage:
+DELETE FROM sync_seen WHERE server_id = ? AND generation = ? AND stage = ?;
+
+clearSeenGeneration:
+DELETE FROM sync_seen WHERE server_id = ? AND generation = ?;
+
+closeMusicFolderIfChanged:
+UPDATE music_folder SET valid_to_generation = :generation
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertMusicFolderIfAbsent:
+INSERT INTO music_folder(server_id, raw_id, name, content_key, valid_from_generation, valid_to_generation)
+SELECT :server_id, :raw_id, :name, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM music_folder
+  WHERE server_id = :server_id AND raw_id = :raw_id
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closeArtistIfChanged:
+UPDATE artist SET valid_to_generation = :generation
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertArtistIfAbsent:
+INSERT INTO artist(server_id, raw_id, name, media_source_id, content_key, valid_from_generation, valid_to_generation)
+SELECT :server_id, :raw_id, :name, :media_source_id, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM artist
+  WHERE server_id = :server_id AND raw_id = :raw_id
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closeAlbumIfChanged:
+UPDATE album SET valid_to_generation = :generation
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertAlbumIfAbsent:
+INSERT INTO album(
+  server_id, raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds,
+  media_source_id, artwork_key, content_key, valid_from_generation, valid_to_generation
+)
+SELECT :server_id, :raw_id, :title, :artist_name, :artist_raw_id, :year,
+  :duration_milliseconds, :media_source_id, :artwork_key, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM album
+  WHERE server_id = :server_id AND raw_id = :raw_id
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closeTrackIfChanged:
+UPDATE track SET valid_to_generation = :generation
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertTrackIfAbsent:
+INSERT INTO track(
+  server_id, raw_id, album_raw_id, title, artist_name, artist_raw_id, album_title,
+  disc_number, track_number, duration_milliseconds, source_container, media_source_id,
+  artwork_key, content_key, valid_from_generation, valid_to_generation
+)
+SELECT :server_id, :raw_id, :album_raw_id, :title, :artist_name, :artist_raw_id,
+  :album_title, :disc_number, :track_number, :duration_milliseconds, :source_container,
+  :media_source_id, :artwork_key, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM track
+  WHERE server_id = :server_id AND raw_id = :raw_id
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closeCreditIfChanged:
+UPDATE credit SET valid_to_generation = :generation
+WHERE server_id = :server_id AND seen_key = :seen_key
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertCreditIfAbsent:
+INSERT INTO credit(
+  server_id, seen_key, owner_kind, owner_raw_id, role, ordinal, name, artist_raw_id,
+  content_key, valid_from_generation, valid_to_generation
+)
+SELECT :server_id, :seen_key, :owner_kind, :owner_raw_id, :role, :ordinal, :name,
+  :artist_raw_id, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM credit
+  WHERE server_id = :server_id AND seen_key = :seen_key
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closePlaylistIfChanged:
+UPDATE playlist SET valid_to_generation = :generation
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertPlaylistIfAbsent:
+INSERT INTO playlist(server_id, raw_id, name, content_key, valid_from_generation, valid_to_generation)
+SELECT :server_id, :raw_id, :name, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM playlist
+  WHERE server_id = :server_id AND raw_id = :raw_id
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closePlaylistEntryIfChanged:
+UPDATE playlist_entry SET valid_to_generation = :generation
+WHERE server_id = :server_id AND seen_key = :seen_key
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertPlaylistEntryIfAbsent:
+INSERT INTO playlist_entry(
+  server_id, seen_key, playlist_raw_id, entry_position, track_raw_id, content_key,
+  valid_from_generation, valid_to_generation
+)
+SELECT :server_id, :seen_key, :playlist_raw_id, :entry_position, :track_raw_id,
+  :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM playlist_entry
+  WHERE server_id = :server_id AND seen_key = :seen_key
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+insertStarredIfAbsent:
+INSERT INTO library_starred(
+  server_id, item_kind, raw_id, seen_key, valid_from_generation, valid_to_generation
+)
+SELECT :server_id, :item_kind, :raw_id, :seen_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM library_starred
+  WHERE server_id = :server_id AND item_kind = :item_kind AND raw_id = :raw_id
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closeGenreIfChanged:
+UPDATE genre SET valid_to_generation = :generation
+WHERE server_id = :server_id AND name = :name
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND content_key != :content_key;
+
+insertGenreIfAbsent:
+INSERT INTO genre(
+  server_id, name, song_count, album_count, content_key,
+  valid_from_generation, valid_to_generation
+)
+SELECT :server_id, :name, :song_count, :album_count, :content_key, :generation, NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM genre
+  WHERE server_id = :server_id AND name = :name
+    AND valid_from_generation <= :generation
+    AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+);
+
+closeMissingMusicFolders:
+UPDATE music_folder SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = music_folder.raw_id
+  );
+
+closeMissingArtists:
+UPDATE artist SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = artist.raw_id
+  );
+
+closeMissingAlbums:
+UPDATE album SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = album.raw_id
+  );
+
+closeMissingTracks:
+UPDATE track SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = track.raw_id
+  );
+
+closeMissingCredits:
+UPDATE credit SET valid_to_generation = :generation
+WHERE server_id = :server_id AND owner_kind = :owner_kind
+  AND valid_to_generation IS NULL AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = credit.seen_key
+  );
+
+closeMissingPlaylists:
+UPDATE playlist SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = playlist.raw_id
+  );
+
+closeMissingPlaylistEntries:
+UPDATE playlist_entry SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = playlist_entry.seen_key
+  );
+
+closeMissingStarred:
+UPDATE library_starred SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = library_starred.seen_key
+  );
+
+closeMissingGenres:
+UPDATE genre SET valid_to_generation = :generation
+WHERE server_id = :server_id AND valid_to_generation IS NULL
+  AND valid_from_generation < :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_seen
+    WHERE sync_seen.server_id = :server_id AND sync_seen.generation = :generation
+      AND sync_seen.stage = :stage AND sync_seen.raw_id = genre.name
+  );
+
+selectAlbumIdsAtGeneration:
+SELECT raw_id FROM album
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY title COLLATE NOCASE, raw_id;
+
+selectFoldersAtGeneration:
+SELECT raw_id, name FROM music_folder
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY name COLLATE NOCASE, raw_id;
+
+selectArtistsAtGeneration:
+SELECT raw_id, name, media_source_id FROM artist
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY name COLLATE NOCASE, raw_id;
+
+selectAlbumsAtGeneration:
+SELECT raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds,
+  media_source_id, artwork_key
+FROM album
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY title COLLATE NOCASE, raw_id;
+
+selectTracksAtGeneration:
+SELECT raw_id, album_raw_id, title, artist_name, artist_raw_id, album_title,
+  disc_number, track_number, duration_milliseconds, source_container, media_source_id,
+  artwork_key
+FROM track
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY album_title COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE, raw_id;
+
+selectPlaylistsAtGeneration:
+SELECT raw_id, name FROM playlist
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY name COLLATE NOCASE, raw_id;
+
+selectPlaylistEntriesAtGeneration:
+SELECT playlist_raw_id, entry_position, track_raw_id FROM playlist_entry
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY playlist_raw_id, entry_position;
+
+selectStarredAtGeneration:
+SELECT item_kind, raw_id FROM library_starred
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY item_kind, raw_id;
+
+selectGenresAtGeneration:
+SELECT name, song_count, album_count FROM genre
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY name COLLATE NOCASE;
+
+deleteMusicFoldersFromGeneration:
+DELETE FROM music_folder WHERE server_id = ? AND valid_from_generation = ?;
+reopenMusicFoldersClosedAtGeneration:
+UPDATE music_folder SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deleteArtistsFromGeneration:
+DELETE FROM artist WHERE server_id = ? AND valid_from_generation = ?;
+reopenArtistsClosedAtGeneration:
+UPDATE artist SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deleteAlbumsFromGeneration:
+DELETE FROM album WHERE server_id = ? AND valid_from_generation = ?;
+reopenAlbumsClosedAtGeneration:
+UPDATE album SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deleteTracksFromGeneration:
+DELETE FROM track WHERE server_id = ? AND valid_from_generation = ?;
+reopenTracksClosedAtGeneration:
+UPDATE track SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deleteCreditsFromGenerationByOwnerKind:
+DELETE FROM credit WHERE server_id = ? AND owner_kind = ? AND valid_from_generation = ?;
+reopenCreditsClosedAtGenerationByOwnerKind:
+UPDATE credit SET valid_to_generation = NULL
+WHERE server_id = ? AND owner_kind = ? AND valid_to_generation = ?;
+deletePlaylistsFromGeneration:
+DELETE FROM playlist WHERE server_id = ? AND valid_from_generation = ?;
+reopenPlaylistsClosedAtGeneration:
+UPDATE playlist SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deletePlaylistEntriesFromGeneration:
+DELETE FROM playlist_entry WHERE server_id = ? AND valid_from_generation = ?;
+reopenPlaylistEntriesClosedAtGeneration:
+UPDATE playlist_entry SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deleteStarredFromGeneration:
+DELETE FROM library_starred WHERE server_id = ? AND valid_from_generation = ?;
+reopenStarredClosedAtGeneration:
+UPDATE library_starred SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+deleteGenresFromGeneration:
+DELETE FROM genre WHERE server_id = ? AND valid_from_generation = ?;
+reopenGenresClosedAtGeneration:
+UPDATE genre SET valid_to_generation = NULL WHERE server_id = ? AND valid_to_generation = ?;
+
+insertSyncGeneration:
+INSERT INTO sync_generation(generation, server_id, stability) VALUES (?, ?, ?);
+
+selectSyncGeneration:
+SELECT server_id, stability FROM sync_generation WHERE generation = ?;
+
+insertDeletionReconciliations:
+INSERT OR REPLACE INTO deletion_reconciliation(
+  server_id, generation, raw_id, downloaded_reference_count, queue_reference_count
+)
+SELECT
+  closed.server_id,
+  :generation,
+  closed.raw_id,
+  (SELECT count(*) FROM download WHERE download.server_id = closed.server_id AND download.raw_id = closed.raw_id AND download.state = 'complete'),
+  (SELECT count(*) FROM queue_entry WHERE queue_entry.server_id = closed.server_id AND queue_entry.raw_id = closed.raw_id)
+FROM track AS closed
+WHERE closed.server_id = :server_id
+  AND closed.valid_to_generation = :generation
+  AND NOT EXISTS (
+    SELECT 1 FROM track AS replacement
+    WHERE replacement.server_id = closed.server_id
+      AND replacement.raw_id = closed.raw_id
+      AND replacement.valid_from_generation <= :generation
+      AND (replacement.valid_to_generation IS NULL OR :generation < replacement.valid_to_generation)
+  )
+  AND (
+    EXISTS (SELECT 1 FROM download WHERE download.server_id = closed.server_id AND download.raw_id = closed.raw_id AND download.state = 'complete')
+    OR EXISTS (SELECT 1 FROM queue_entry WHERE queue_entry.server_id = closed.server_id AND queue_entry.raw_id = closed.raw_id)
+  );
+
+selectVisibleDeletionReconciliations:
+SELECT deletion_reconciliation.generation, raw_id, downloaded_reference_count, queue_reference_count
+FROM deletion_reconciliation, schema_meta
+WHERE deletion_reconciliation.server_id = ?
+  AND deletion_reconciliation.generation <= schema_meta.committed_generation
+  AND schema_meta.singleton_id = 1
+ORDER BY deletion_reconciliation.generation DESC, raw_id;
+
+selectDeletionReconciliationsForGeneration:
+SELECT generation, raw_id, downloaded_reference_count, queue_reference_count
+FROM deletion_reconciliation
+WHERE server_id = :server_id AND generation = :generation
+ORDER BY raw_id;
+
+countVisibleTracksWithoutAlbum:
+SELECT count(*)
+FROM track, schema_meta
+WHERE track.server_id = :server_id
+  AND schema_meta.singleton_id = 1
+  AND track.album_raw_id IS NOT NULL
+  AND track.valid_from_generation <= schema_meta.committed_generation
+  AND (track.valid_to_generation IS NULL OR schema_meta.committed_generation < track.valid_to_generation)
+  AND NOT EXISTS (
+    SELECT 1 FROM album
+    WHERE album.server_id = track.server_id
+      AND album.raw_id = track.album_raw_id
+      AND album.valid_from_generation <= schema_meta.committed_generation
+      AND (album.valid_to_generation IS NULL OR schema_meta.committed_generation < album.valid_to_generation)
+  );
+
+countTrackAtGeneration:
+SELECT count(*) FROM track
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation);
+
+countArtistAtGeneration:
+SELECT count(*) FROM artist
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation);
+
+countAlbumAtGeneration:
+SELECT count(*) FROM album
+WHERE server_id = :server_id AND raw_id = :raw_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation);
+
+countVisiblePlaylistEntriesWithoutTrack:
+SELECT count(*)
+FROM playlist_entry, schema_meta
+WHERE playlist_entry.server_id = :server_id
+  AND schema_meta.singleton_id = 1
+  AND playlist_entry.valid_from_generation <= schema_meta.committed_generation
+  AND (playlist_entry.valid_to_generation IS NULL OR schema_meta.committed_generation < playlist_entry.valid_to_generation)
+  AND NOT EXISTS (
+    SELECT 1 FROM track
+    WHERE track.server_id = playlist_entry.server_id
+      AND track.raw_id = playlist_entry.track_raw_id
+      AND track.valid_from_generation <= schema_meta.committed_generation
+      AND (track.valid_to_generation IS NULL OR schema_meta.committed_generation < track.valid_to_generation)
+  );
+
+countVisibleStarredArtistsWithoutTarget:
+SELECT count(*)
+FROM library_starred, schema_meta
+WHERE library_starred.server_id = :server_id
+  AND schema_meta.singleton_id = 1
+  AND item_kind = 'artist'
+  AND library_starred.valid_from_generation <= schema_meta.committed_generation
+  AND (library_starred.valid_to_generation IS NULL OR schema_meta.committed_generation < library_starred.valid_to_generation)
+  AND NOT EXISTS (
+    SELECT 1 FROM artist WHERE artist.server_id = library_starred.server_id
+      AND artist.raw_id = library_starred.raw_id
+      AND artist.valid_from_generation <= schema_meta.committed_generation
+      AND (artist.valid_to_generation IS NULL OR schema_meta.committed_generation < artist.valid_to_generation)
+  );
+
+countVisibleStarredAlbumsWithoutTarget:
+SELECT count(*)
+FROM library_starred, schema_meta
+WHERE library_starred.server_id = :server_id
+  AND schema_meta.singleton_id = 1
+  AND item_kind = 'album'
+  AND library_starred.valid_from_generation <= schema_meta.committed_generation
+  AND (library_starred.valid_to_generation IS NULL OR schema_meta.committed_generation < library_starred.valid_to_generation)
+  AND NOT EXISTS (
+    SELECT 1 FROM album WHERE album.server_id = library_starred.server_id
+      AND album.raw_id = library_starred.raw_id
+      AND album.valid_from_generation <= schema_meta.committed_generation
+      AND (album.valid_to_generation IS NULL OR schema_meta.committed_generation < album.valid_to_generation)
+  );
+
+countVisibleStarredTracksWithoutTarget:
+SELECT count(*)
+FROM library_starred, schema_meta
+WHERE library_starred.server_id = :server_id
+  AND schema_meta.singleton_id = 1
+  AND item_kind = 'track'
+  AND library_starred.valid_from_generation <= schema_meta.committed_generation
+  AND (library_starred.valid_to_generation IS NULL OR schema_meta.committed_generation < library_starred.valid_to_generation)
+  AND NOT EXISTS (
+    SELECT 1 FROM track WHERE track.server_id = library_starred.server_id
+      AND track.raw_id = library_starred.raw_id
+      AND track.valid_from_generation <= schema_meta.committed_generation
+      AND (track.valid_to_generation IS NULL OR schema_meta.committed_generation < track.valid_to_generation)
+  );
+
+pruneMusicFolders:
+DELETE FROM music_folder WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+pruneArtists:
+DELETE FROM artist WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+pruneAlbums:
+DELETE FROM album WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+pruneTracks:
+DELETE FROM track WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+pruneCredits:
+DELETE FROM credit WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+prunePlaylists:
+DELETE FROM playlist WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+prunePlaylistEntries:
+DELETE FROM playlist_entry WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+pruneStarred:
+DELETE FROM library_starred WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+pruneGenres:
+DELETE FROM genre WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
+
+deleteDeletionReconciliationsForGeneration:
+DELETE FROM deletion_reconciliation WHERE server_id = ? AND generation = ?;
