@@ -478,10 +478,41 @@
       "conformance": ["CONF-41"],
       "platforms": {
         "macos": {
-          "status": "planned",
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-41", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-search-activation",
+            "reason": "CONF-41 proves the local/server merge against the reference server on this runtime: a server row replaces the local row carrying the same opaque id in place, local-only rows keep their position, server-only rows append, and no identity is duplicated or dropped. It does not observe the user-facing half on this platform - that a typed query reaches the field, that ranked results render, and that activating one starts the search-sourced queue. Promotion requires a run that drives search through this platform's own UI and observes the resulting playback intent, rather than a core conformance test standing in for it."
+          },
           "reason": "The server half is implemented as a read-through search3 query with per-type counts and offsets, a 250 ms presentation debounce, in-flight cancellation, explicit ranking, independently paged result types, and Objective-C class DTOs copied into Swift value types. On macOS, double-click and Return now send one semantic presentation action: an activatable track builds a search-sourced queue from the ranked result set, an album opens album detail, and an artist opens artist detail through the existing library read. A track result whose server response omits duration remains visible but unactivatable because the authoritative queue contract requires duration; an album or artist that search3 returns but the subsequent complete library read omits cannot open detail and surfaces a library protocol error. The required apple-ci/apple-ci job runs SearchTest/ranksExactPrefixWordStartSubstringThenTypeWithCompatibilityNormalization and the DulcetKit tests serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently and searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent, but the registered CONF-41 local/server merge control does not exist, and this build deliberately has no local database, normalized index column, instant local results, or local/server merge. The broader feature therefore remains planned rather than using narrower server-only controls as promotion evidence. The registry and the design's representative-test table were reconciled: they now name the same conformance ids, CONF-41 is search merge in both, and getCoverArt moved to CONF-44. tools/parity_gate.py now fails if either document names an id the other does not."
-        }, "ios": {"status": "planned"},
-        "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        }, "ios": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-41", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-search-activation",
+            "reason": "CONF-41 proves the local/server merge against the reference server on this runtime: a server row replaces the local row carrying the same opaque id in place, local-only rows keep their position, server-only rows append, and no identity is duplicated or dropped. It does not observe the user-facing half on this platform - that a typed query reaches the field, that ranked results render, and that activating one starts the search-sourced queue. Promotion requires a run that drives search through this platform's own UI and observes the resulting playback intent, rather than a core conformance test standing in for it."
+          }
+        },
+        "ipados": {"status": "planned"}, "tvos": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-41", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "platform-observed-search-activation",
+            "reason": "CONF-41 proves the local/server merge against the reference server on this runtime: a server row replaces the local row carrying the same opaque id in place, local-only rows keep their position, server-only rows append, and no identity is duplicated or dropped. It does not observe the user-facing half on this platform - that a typed query reaches the field, that ranked results render, and that activating one starts the search-sourced queue. Promotion requires a run that drives search through this platform's own UI and observes the resulting playback intent, rather than a core conformance test standing in for it."
+          }
+        },
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }
     },
