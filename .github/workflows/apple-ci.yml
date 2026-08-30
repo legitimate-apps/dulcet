@@ -29,7 +29,15 @@ jobs:
     # The timeout exists as queue hygiene -- a hung job must not hold a capped macOS slot away from
     # the run that replaced it -- so it stays bounded rather than being removed. It is set with real
     # headroom so ordinary growth does not present as a conformance failure.
-    timeout-minutes: 45
+    # MEASURED 2026-08-30, apple-ci job durations (job time, not queue time):
+    #   main 41m, 34m, 29m  |  library-sync 41m  |  ipados-evidence 28m
+    #   search-conformance 45m CANCELLED, twice -- it hit this ceiling exactly
+    # main alone had grown to 41m, leaving 4 minutes of margin, so ANY added work tipped the job over
+    # and GitHub reported the timeout as `cancelled`. That reads as the conformance step failing and
+    # is not that -- exactly the misdiagnosis the note above warns about, now observed twice more.
+    # 75 restores real headroom against a 41m baseline. It is still bounded: a genuinely hung job must
+    # not hold a capped macOS slot indefinitely. Re-measure before assuming this is still enough.
+    timeout-minutes: 75
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
