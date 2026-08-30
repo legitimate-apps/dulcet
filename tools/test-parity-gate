@@ -26,7 +26,13 @@ def materialize(root: Path) -> None:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    for relative in (".github/workflows", "docs", "core-conformance", "apple/DulcetKit/Tests"):
+    for relative in (
+        ".github/workflows",
+        "docs",
+        "core-conformance",
+        "apple/DulcetKit/Tests",
+        "apple/DulcetiOSUITests",
+    ):
         shutil.copytree(REPOSITORY / relative, root / relative)
 
 
@@ -136,7 +142,7 @@ expect_rejection(
 )
 
 passing_report = """\
-<testsuite tests="32" failures="0" errors="0" skipped="0">
+<testsuite tests="33" failures="0" errors="0" skipped="0">
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
@@ -173,6 +179,8 @@ passing_report = """\
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAccountConnectUsesRegularWidthSplitLayout" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"

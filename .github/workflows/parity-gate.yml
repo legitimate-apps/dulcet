@@ -50,3 +50,7 @@ jobs:
         run: python3 tools/parity_gate.py
       - name: Verify CI policy
         run: python3 tools/verify_ci_policy.py
+      - name: Prove the project-spec path gate rejects a missing referenced file
+        run: python3 tools/test-project-spec-paths
+      - name: Require every path named in the project spec to exist
+        run: python3 tools/verify_project_spec_paths.py

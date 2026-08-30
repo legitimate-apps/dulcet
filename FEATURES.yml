@@ -210,8 +210,99 @@
           "reason": "The universal iOS target now hosts the production Dulcet root, and apple-ci is wired to build that shell and run the shared presentation, credential-store, and iOS root-host controls on an iPhone simulator. The iOS JUnit report has its own DulcetKitIOSTests identity, so the Apple presentation evidence cannot resolve against the macOS package run. CONF-01 through CONF-08 and CONF-10c remain bounded common Kotlin/Darwin controls; they do not claim a live connection from the iOS app process. A successful production connection, signed Keychain persistence, and the connected UI in the real iOS app process remain unproved, so shipped would be unearned."
         },
         "ipados": {
-          "status": "planned",
-          "reason": "The universal target compiles for device family 2, but no iPad simulator launch, iPad navigation/layout assertion, or iPad interaction test exists. The iPhone simulator evidence is not promoted into an iPadOS runtime claim."
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "signed-ipados-live-account-and-interaction-validation",
+            "reason": "The regular-width simulator proof covers layout only. No workflow, job, or test executes a successful connection through the production iOS adapter in the iPad app process, proves the saved data-protection-Keychain item's accessibility and non-sync attributes, or exercises account-connect interaction on iPadOS, so no named promotion target can honestly resolve yet."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-01",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"
+            },
+            {
+              "conformance": "CONF-02",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf02ReferenceServerExtensionSet"
+            },
+            {
+              "conformance": "CONF-03",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf03BaselinePingAuthentication"
+            },
+            {
+              "conformance": "CONF-04",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf04VersionCompatibility"
+            },
+            {
+              "conformance": "CONF-05",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf05OpenSubsonicEnvelopeFields"
+            },
+            {
+              "conformance": "CONF-06",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf06DistinguishesAuthenticationAndTransportFailures"
+            },
+            {
+              "conformance": "CONF-07",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf07RedactsCredentialsFromDiagnostics"
+            },
+            {
+              "conformance": "CONF-08",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"
+            },
+            {
+              "conformance": "CONF-09a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation"
+            },
+            {
+              "conformance": "CONF-09b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout"
+            },
+            {
+              "conformance": "CONF-09c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/accountDomainErrorsHaveATotalActionablePresentation"
+            },
+            {
+              "conformance": "CONF-10a",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/unentitledKeychainWriteFailsClosedWithoutLegacyFallback"
+            },
+            {
+              "conformance": "CONF-10b",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect"
+            },
+            {
+              "conformance": "CONF-10c",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
+            }
+          ],
+          "reason": "apple-ci now launches the universal shell on one iPad Pro 13-inch simulator, executes the shared iOS presentation and credential-store controls there, and runs testAccountConnectUsesRegularWidthSplitLayout in a separate UI-test bundle. That assertion requires a regular horizontal size class and simultaneously hittable, horizontally separated Library-sidebar and account-detail elements, so the compact iPhone presentation cannot satisfy it. CONF-01 through CONF-08 and CONF-10c remain bounded controls for the same universal iosSimulatorArm64 Kotlin/Darwin target; they do not claim an iPad app-process connection. This is one layout assertion, not an iPad interaction suite: touch, hardware-keyboard traversal, rotation, multitasking widths, a successful production connection, signed Keychain persistence, and the connected UI in the real iPad app process remain unproved, so shipped would be unearned."
         },
         "tvos": {
           "status": "partial",

@@ -1,4 +1,5 @@
 import AVFoundation
+import Dispatch
 import Foundation
 import MediaPlayer
 import Testing
@@ -25,7 +26,11 @@ struct AVPlayerResourceLoaderIntegrationTests {
         // requests playback and stops at the first resource request rather than waiting for
         // simulator media readiness, which is a separate engine-state concern pinned below with
         // the manual clock.
-        try await waitUntil("AVFoundation did not route through the custom resource loader") {
+        try await waitUntil(
+            "AVFoundation did not route through the custom resource loader",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             !resource.requests.isEmpty
         }
         #expect(
@@ -60,6 +65,63 @@ struct AVPlayerEngineTests {
     #endif
 
     @Test
+    func slowWaitDiagnosticReportsResponsiveEngineQueue() async {
+        let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.queue-responsive")
+        let engine = DulcetAVPlayerEngine(
+            clock: ManualAVPlayerEngineClock(),
+            usesAVFoundationMediaStack: false,
+            queue: queue
+        )
+        let clock = ContinuousClock()
+        let started = clock.now
+        try? await Task.sleep(for: .milliseconds(50))
+        let waited = durationSeconds(started.duration(to: clock.now))
+        let waitBudget: TimeInterval = 0.025
+
+        let diagnostic = await waitFailureDiagnostic(
+            "condition remained false",
+            engine: engine,
+            waitBudget: waitBudget,
+            waited: waited,
+            queueProbeTimeout: 5
+        )
+
+        #expect(waited >= waitBudget)
+        #expect(diagnostic.contains("waited_seconds="))
+        #expect(diagnostic.contains("engine queue responsive; turnaround_seconds="))
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func blockedWaitDiagnosticReportsUnresponsiveEngineQueue() async {
+        let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.queue-blocked")
+        let engine = DulcetAVPlayerEngine(
+            clock: ManualAVPlayerEngineClock(),
+            usesAVFoundationMediaStack: false,
+            queue: queue
+        )
+        let unblockQueue = DispatchSemaphore(value: 0)
+        await withCheckedContinuation { blockerStarted in
+            queue.async {
+                blockerStarted.resume()
+                unblockQueue.wait()
+            }
+        }
+
+        let diagnostic = await waitFailureDiagnostic(
+            "condition remained false",
+            engine: engine,
+            waitBudget: 0.05,
+            waited: 0.05,
+            queueProbeTimeout: 0.05
+        )
+
+        #expect(diagnostic.contains("engine queue not responsive; probe_wait_seconds="))
+        unblockQueue.signal()
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
         #if os(macOS)
         let engine = DulcetAVPlayerEngine()
@@ -74,7 +136,11 @@ struct AVPlayerEngineTests {
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
         #if os(macOS)
-        try await waitUntil("AVPlayer did not become ready") { events.containsReady(seekability: .seekable) }
+        try await waitUntil(
+            "AVPlayer did not become ready",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) { events.containsReady(seekability: .seekable) }
         #else
         engine.reportCurrentItemReadyForTesting(duration: 3, seekability: .seekable)
         #expect(events.containsReady(seekability: .seekable))
@@ -83,7 +149,11 @@ struct AVPlayerEngineTests {
 
         _ = await execute(engine, .play(commandID: .init("play")))
         #if os(macOS)
-        try await waitUntil("the monotonic sampler did not observe advancing media time", timeout: 3) {
+        try await waitUntil(
+            "the monotonic sampler did not observe advancing media time",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             events.positionSamples.count >= 2
         }
         #else
@@ -188,10 +258,18 @@ struct AVPlayerEngineTests {
         let play = await execute(engine, .play(commandID: .init("loopback-play")))
         #expect(play == .accepted(commandID: .init("loopback-play")))
 
-        try await waitUntil("AVPlayer did not become ready through loopback HTTP range loading") {
+        try await waitUntil(
+            "AVPlayer did not become ready through loopback HTTP range loading",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             events.containsReady(seekability: .seekable)
         }
-        try await waitUntil("loopback HTTP playback never advanced media time", timeout: 5) {
+        try await waitUntil(
+            "loopback HTTP playback never advanced media time",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             events.containsProgressBegan
         }
         #expect(server.requests.count > 0)
@@ -235,7 +313,10 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
         player.advanceToNextItem()
 
-        try await waitUntil("AVQueuePlayer did not publish the preloaded session boundary") {
+        try await waitUntil(
+            "AVQueuePlayer did not publish the preloaded session boundary",
+            engine: engine
+        ) {
             events.containsAdvance(old: replacement.attemptID, new: next.attemptID)
         }
         let snapshot = events.snapshot
@@ -315,23 +396,34 @@ struct AVPlayerEngineTests {
         engine.setEventListener { events.append($0) }
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
-        try await waitUntil("AVPlayer did not become ready") { events.containsReady(seekability: .seekable) }
+        try await waitUntil(
+            "AVPlayer did not become ready",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) { events.containsReady(seekability: .seekable) }
         _ = await execute(engine, .play(commandID: .init("play")))
-        try await waitUntil("playback did not progress before interruption") { events.containsProgressBegan }
+        try await waitUntil(
+            "playback did not progress before interruption",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) { events.containsProgressBegan }
 
         audioSession.publish(.interruptionBegan)
-        try await waitUntil("interruption begin was not emitted") {
+        try await waitUntil("interruption begin was not emitted", engine: engine) {
             events.snapshot.contains { if case .interruptionBegan(_, false) = $0 { true } else { false } }
         }
         audioSession.publish(.interruptionEnded(systemAllowsResume: true))
-        try await waitUntil("eligible interruption did not resume") {
+        try await waitUntil("eligible interruption did not resume", engine: engine) {
             events.snapshot.contains { if case .interruptionEnded(_, true) = $0 { true } else { false } }
         }
-        try await waitUntil("transport did not resume after the system-authorized interruption") {
+        try await waitUntil(
+            "transport did not resume after the system-authorized interruption",
+            engine: engine
+        ) {
             events.snapshot.contains { if case .resumed = $0 { true } else { false } }
         }
         audioSession.publish(.routeChanged(old: .bluetooth, new: .builtIn, becomingNoisy: true))
-        try await waitUntil("becoming-noisy route did not pause") {
+        try await waitUntil("becoming-noisy route did not pause", engine: engine) {
             events.snapshot.contains {
                 if case .routeChanged(_, .bluetooth, .builtIn, true) = $0 { true } else { false }
             }
@@ -351,7 +443,10 @@ struct AVPlayerEngineTests {
 
         audioSession.publish(.externalPlaybackBegan)
 
-        try await waitUntil("external playback did not finalize the engine session") {
+        try await waitUntil(
+            "external playback did not finalize the engine session",
+            engine: engine
+        ) {
             events.snapshot.contains(.engineTornDown(
                 attemptID: playbackPlan.attemptID,
                 reason: .systemReclaimed
@@ -366,7 +461,10 @@ struct AVPlayerEngineTests {
         // The three sibling `#expect(...count...)` assertions after a waitUntil in this file were
         // checked and left alone: each awaits an event that is CAUSED BY the thing it counts, so
         // the count is already guaranteed when the wait returns.
-        try await waitUntil("external playback did not deactivate the audio session") {
+        try await waitUntil(
+            "external playback did not deactivate the audio session",
+            engine: engine
+        ) {
             audioSession.deactivationCount == 1
         }
         let playOutcome = await execute(engine, .play(commandID: .init("play-after-takeover")))
@@ -408,7 +506,10 @@ struct AVPlayerEngineTests {
         #expect(clock.fireScheduledDeadline(), "no grace deadline was scheduled to fire")
         #endif
 
-        try await waitUntil("empty queue did not deactivate after its grace period") {
+        try await waitUntil(
+            "empty queue did not deactivate after its grace period",
+            engine: engine
+        ) {
             audioSession.deactivationCount == 1
         }
         _ = await execute(engine, .release(commandID: .init("release")))
@@ -425,7 +526,11 @@ struct AVPlayerEngineTests {
         #expect(mediaControls.publications.isEmpty)
 
         suspended.resume(with: makePCMWave(duration: 2))
-        try await waitUntil("Ready did not publish Now Playing") {
+        try await waitUntil(
+            "Ready did not publish Now Playing",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             mediaControls.publications.count == 1
         }
         let state = try #require(mediaControls.publications.first)
@@ -444,7 +549,11 @@ struct AVPlayerEngineTests {
         let original = plan(session: "session", attempt: "original", title: "Original")
         let replacement = plan(session: "session", attempt: "replacement", title: "Replacement")
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: original))
-        try await waitUntil("initial Ready did not publish metadata") {
+        try await waitUntil(
+            "initial Ready did not publish metadata",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             mediaControls.publications.count == 1
         }
         ordering.reset()
@@ -479,7 +588,11 @@ struct AVPlayerEngineTests {
         )
         let playbackPlan = plan(session: "current-session", attempt: "current-attempt")
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
-        try await waitUntil("Ready did not publish command availability") {
+        try await waitUntil(
+            "Ready did not publish command availability",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             mediaControls.publications.last?.seekability == .seekable
         }
 
@@ -558,7 +671,11 @@ struct AVPlayerEngineTests {
 
         #expect(await execute(engine, .prepare(commandID: .init("prepare"), plan: current))
             == .accepted(commandID: .init("prepare")))
-        try await waitUntil("command fixture did not become ready") {
+        try await waitUntil(
+            "command fixture did not become ready",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             events.containsReady(seekability: .seekable)
         }
         #expect(await execute(engine, .play(commandID: .init("play")))
@@ -596,7 +713,11 @@ struct AVPlayerEngineTests {
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
 
-        try await waitUntil("401 did not request a source refresh") {
+        try await waitUntil(
+            "401 did not request a source refresh",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
             events.snapshot.contains(.sourceRefreshRequired(
                 attemptID: playbackPlan.attemptID,
                 reason: .unauthorized
@@ -667,25 +788,65 @@ private func execute(
     }
 }
 
-// 20 seconds, not 2. AVFoundation has to spin up, resolve a custom-scheme asset through the
-// resource-loader delegate and reach readyToPlay; two seconds is a local-machine figure. On the
-// hosted runner these tests failed at 2.388s -- the deadline plus overhead -- while passing locally,
-// which is the signature of a budget that is too tight rather than of behaviour that is absent.
+// This budget is deliberately opt-in. Only waits driven by real AVFoundation loading, readyToPlay,
+// or advancing media time use it; ordinary engine-event waits retain the 20-second default below.
+// Run 33301231544 measured unrelated passing siblings at 28.139s and 10.789s, and the real custom-
+// loader test at 8.859s, while this suite's first readiness wait failed after 29.662s on its former
+// 20-second budget. Sixty seconds gives that measured contention headroom without changing what
+// passes.
 //
-// The deadline still has teeth: if the loader is never invoked at all, the condition never becomes
-// true and the expectation fails at 20 seconds instead of 2. Waiting longer costs a slow test only
-// when something is already broken.
+// The deadline keeps its teeth: if AVFoundation never requests the resource, never becomes ready,
+// or media time never advances, the condition never becomes true and the test still fails, just
+// later. On failure the queue probe below says whether the engine queue itself could service work.
+private let realAVFoundationProgressTimeout: TimeInterval = 60
+
 private func waitUntil(
     _ failure: String,
+    engine: DulcetAVPlayerEngine,
     timeout: TimeInterval = 20,
     condition: @escaping @Sendable () -> Bool
 ) async throws {
     let clock = ContinuousClock()
+    let started = clock.now
     let deadline = clock.now.advanced(by: .seconds(timeout))
     while !condition(), clock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
     }
-    #expect(condition(), Comment(rawValue: failure))
+    guard !condition() else { return }
+
+    let diagnostic = await waitFailureDiagnostic(
+        failure,
+        engine: engine,
+        waitBudget: timeout,
+        waited: durationSeconds(started.duration(to: clock.now))
+    )
+    #expect(Bool(false), Comment(rawValue: diagnostic))
+}
+
+private func waitFailureDiagnostic(
+    _ failure: String,
+    engine: DulcetAVPlayerEngine,
+    waitBudget: TimeInterval,
+    waited: TimeInterval,
+    queueProbeTimeout: TimeInterval = 1
+) async -> String {
+    let liveness = await engine.probeQueueLivenessForTesting(timeout: queueProbeTimeout)
+    return [
+        failure,
+        "wait_budget_seconds=\(formatSeconds(waitBudget))",
+        "waited_seconds=\(formatSeconds(waited))",
+        liveness.diagnosticDescription,
+    ].joined(separator: "; ")
+}
+
+private func durationSeconds(_ duration: Duration) -> TimeInterval {
+    let components = duration.components
+    return TimeInterval(components.seconds) +
+        TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+}
+
+private func formatSeconds(_ seconds: TimeInterval) -> String {
+    String(format: "%.3f", seconds)
 }
 
 private func plan(
@@ -1301,7 +1462,6 @@ private final class PlaybackEventRecorder: @unchecked Sendable {
     }
 }
 
-#if !os(macOS)
 private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unchecked Sendable {
     let wallClockNow: Date
 
@@ -1396,7 +1556,6 @@ private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unche
         queue?.sync { handler?() }
     }
 }
-#endif
 
 private func makePCMWave(duration: TimeInterval) -> Data {
     let sampleRate = 8_000
