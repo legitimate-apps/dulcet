@@ -10,13 +10,13 @@ import kotlinx.serialization.json.intOrNull
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-internal enum class SearchResultType {
+public enum class SearchResultType {
     Track,
     Album,
     Artist,
 }
 
-internal data class SearchResultItem(
+public data class SearchResultItem(
     val id: ProviderItemId,
     val type: SearchResultType,
     val title: String,
@@ -31,7 +31,7 @@ internal data class SearchResultItem(
     val artworkKey: String?,
 )
 
-internal data class SearchPageRequest(
+public data class SearchPageRequest(
     val providerInstanceId: String,
     val normalizedBaseUrl: String,
     val username: String,
@@ -63,7 +63,7 @@ internal data class SearchPageRequest(
     override fun toString(): String = "SearchPageRequest(<redacted>)"
 }
 
-internal data class SearchPage(
+public data class SearchPage(
     val results: List<SearchResultItem>,
     val artistResultCount: Int,
     val albumResultCount: Int,
@@ -73,7 +73,7 @@ internal data class SearchPage(
     val trackHasMore: Boolean,
 )
 
-internal sealed interface SearchPageResult {
+public sealed interface SearchPageResult {
     data class Loaded(val page: SearchPage) : SearchPageResult
     data class Failed(val error: DomainError) : SearchPageResult
 }
@@ -88,10 +88,10 @@ internal fun interface SearchEndpointTransport {
     suspend fun request(parameters: Map<String, String>): SearchEndpointResponse
 }
 
-internal class ServerSearch private constructor(
+public class ServerSearch private constructor(
     private val transportFactory: (SearchPageRequest) -> SearchEndpointTransport,
 ) {
-    constructor(
+    public constructor(
         saltSource: SaltSource? = null,
         logSink: LogSink? = null,
         hostResolver: HostResolver = systemHostResolver(),
@@ -103,7 +103,7 @@ internal class ServerSearch private constructor(
 
     internal constructor(transport: SearchEndpointTransport) : this({ transport })
 
-    suspend fun search(request: SearchPageRequest): SearchPageResult {
+    public suspend fun search(request: SearchPageRequest): SearchPageResult {
         val transport = transportFactory(request)
         return try {
             val response = transport.request(request.parameters())
@@ -146,6 +146,29 @@ internal class ServerSearch private constructor(
             SearchPageResult.Failed(mapAccountConnectionFailure(failure))
         } finally {
             (transport as? AutoCloseableSearchTransport)?.close()
+        }
+    }
+}
+
+/**
+ * Merges an already-visible local result set with a later server result set.
+ *
+ * A server row replaces the local row with the same provider-scoped opaque id in place. Local-only
+ * rows retain their position, and server-only rows append in server order. IDs are compared as
+ * strings through [ProviderItemId]; they are never parsed as numbers.
+ */
+public fun mergeSearchResults(
+    localResults: List<SearchResultItem>,
+    serverResults: List<SearchResultItem>,
+): List<SearchResultItem> {
+    val serverById = serverResults.associateBy(SearchResultItem::id)
+    val emittedIds = mutableSetOf<ProviderItemId>()
+    return buildList {
+        localResults.forEach { local ->
+            if (emittedIds.add(local.id)) add(serverById[local.id] ?: local)
+        }
+        serverById.values.forEach { server ->
+            if (emittedIds.add(server.id)) add(server)
         }
     }
 }
