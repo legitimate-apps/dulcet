@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import subprocess
 import time
 import urllib.parse
@@ -22,9 +23,16 @@ ADMIN_PASSWORD = "dulcet-ci-canary-password"
 CLIENT = "dulcet-cache-observation"
 SUBSONIC_VERSION = "1.16.1"
 STREAM_LOG = 'msg="Streaming file"'
-# Bounded, with real headroom: see the note at the request site. Overridable so the negative
-# control can exercise the timeout branch in a second instead of three minutes.
+# A true end-to-end request deadline, enforced by ITIMER_REAL rather than urllib's per-socket-
+# operation timeout. Overridable so the controls can exercise both timeout phases quickly.
 STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS", "180"))
+
+
+class StreamDeadlineExceeded(TimeoutError):
+    def __init__(self, phase: str, elapsed: float) -> None:
+        super().__init__(phase)
+        self.phase = phase
+        self.elapsed = elapsed
 
 
 def subsonic_url(base_url: str, endpoint: str, parameters: dict[str, str]) -> str:
@@ -71,6 +79,63 @@ def streaming_logs(*, container: str | None, log_file: str | None) -> list[str]:
     return [line for line in lines if STREAM_LOG in line]
 
 
+def read_stream_with_deadline(url: str, budget: float) -> tuple[bytes, bool, float, float]:
+    """Read one response under a wall-clock deadline and report header/body phase timings."""
+
+    started = time.monotonic()
+    phase = "response headers"
+    response = None
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def deadline_expired(_signum, _frame) -> None:
+        raise StreamDeadlineExceeded(phase, time.monotonic() - started)
+
+    signal.signal(signal.SIGALRM, deadline_expired)
+    signal.siginterrupt(signal.SIGALRM, True)
+    signal.setitimer(signal.ITIMER_REAL, budget)
+    try:
+        try:
+            response = urllib.request.urlopen(url, timeout=budget)
+            first_response_elapsed = time.monotonic() - started
+            phase = "response body"
+            incomplete_read = False
+            try:
+                payload = response.read()
+            except http.client.IncompleteRead as error:
+                payload = error.partial
+                incomplete_read = True
+            total_elapsed = time.monotonic() - started
+            return payload, incomplete_read, first_response_elapsed, total_elapsed
+        except StreamDeadlineExceeded:
+            raise
+        except TimeoutError as error:
+            raise StreamDeadlineExceeded(phase, time.monotonic() - started) from error
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if response is not None:
+            response.close()
+
+
+def timeout_diagnostic(error: StreamDeadlineExceeded, budget: float) -> str:
+    prefix = (
+        f"fixed transcode cache probe timed out after {error.elapsed:.1f}s "
+        f"during {error.phase} (wall-clock budget {budget}s). "
+    )
+    if error.phase == "response headers":
+        return prefix + (
+            "The client closed the request before Navidrome returned a status line. A nearby "
+            '"Transcoding returned empty output" log may be downstream of that disconnect, but '
+            "that causal link is plausible, not established; this timeout alone neither proves nor "
+            "exonerates ffmpeg. Compare correlated Navidrome/ffmpeg timestamps and runner load."
+        )
+    return prefix + (
+        "Navidrome returned the status line and headers, then the audio body stopped completing. "
+        "This can reflect a stalled or failed transcoder, a blocked server, transport trouble, or "
+        "runner load; inspect the correlated Navidrome and ffmpeg logs."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -78,6 +143,8 @@ def main() -> None:
     source.add_argument("--log-file")
     parser.add_argument("--expect-cached", choices=("true", "false"))
     args = parser.parse_args()
+    if STREAM_TIMEOUT_SECONDS <= 0:
+        raise SystemExit("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS must be greater than zero")
     if os.environ.get("DULCET_CONFORMANCE_DISPOSABLE") != "true":
         raise SystemExit("cache observation requires DULCET_CONFORMANCE_DISPOSABLE=true")
     base_url = os.environ.get("DULCET_CONFORMANCE_BASE_URL")
@@ -114,32 +181,18 @@ def main() -> None:
             "estimateContentLength": "true",
         },
     )
-    # A COLD transcode has to start ffmpeg before Navidrome can send a single response header, and
-    # this probe runs immediately before a simulator-backed conformance run on a small hosted macOS
-    # runner -- so first-byte latency here is a function of machine load, not of correctness. A 30s
-    # ceiling was too tight for that: the client walked away mid-transcode, and Navidrome then logged
-    # `Transcoding returned empty output, ffmpeg may have failed.` because its reader had vanished.
-    # That reads as a damning ffmpeg failure and is nothing of the sort, which is the expensive part.
-    # The budget is therefore generous but still bounded, and the latency is REPORTED on success so a
-    # genuine regression shows up as a trend instead of hiding until it crosses the ceiling.
-    incomplete_read = False
-    started = time.monotonic()
+    # A cold transcode must start ffmpeg before Navidrome can return response headers. On a loaded
+    # runner that phase can be slow, so the request gets measured headroom under one absolute
+    # wall-clock deadline. Header and body failures are diagnosed separately: a client disconnect is
+    # one plausible explanation for a nearby empty-output server log, not proof of its cause, while a
+    # body-phase timeout keeps a stalled or failed transcoder explicitly in scope.
     try:
-        with urllib.request.urlopen(stream_url, timeout=STREAM_TIMEOUT_SECONDS) as response:
-            payload = response.read()
-    except http.client.IncompleteRead as error:
-        payload = error.partial
-        incomplete_read = True
-    except TimeoutError as error:
-        raise SystemExit(
-            "fixed transcode cache probe timed out after "
-            f"{time.monotonic() - started:.1f}s waiting for Navidrome to respond "
-            f"(budget {STREAM_TIMEOUT_SECONDS}s). Navidrome will log "
-            '"Transcoding returned empty output" for this request because the client gave up '
-            "mid-transcode; that log line is a consequence of this timeout, not an ffmpeg fault. "
-            "Check runner load and concurrent simulator boots before suspecting the transcoder."
-        ) from error
-    elapsed = time.monotonic() - started
+        payload, incomplete_read, first_response_elapsed, total_elapsed = read_stream_with_deadline(
+            stream_url,
+            STREAM_TIMEOUT_SECONDS,
+        )
+    except StreamDeadlineExceeded as error:
+        raise SystemExit(timeout_diagnostic(error, STREAM_TIMEOUT_SECONDS)) from None
     if not payload:
         raise SystemExit("fixed transcode cache probe returned no audio bytes")
 
@@ -165,7 +218,8 @@ def main() -> None:
     observation = (
         "TRANSCODE CACHE OBSERVATION "
         f"cached={cached.group(1)} transcoding=true bytes={len(payload)} "
-        f"first_response_seconds={elapsed:.1f} "
+        f"first_response_seconds={first_response_elapsed:.3f} "
+        f"total_request_seconds={total_elapsed:.3f} "
         f"incomplete_read={str(incomplete_read).lower()} song=Dulcet-Health-Probe"
     )
     print(observation)
