@@ -22,6 +22,9 @@ ADMIN_PASSWORD = "dulcet-ci-canary-password"
 CLIENT = "dulcet-cache-observation"
 SUBSONIC_VERSION = "1.16.1"
 STREAM_LOG = 'msg="Streaming file"'
+# Bounded, with real headroom: see the note at the request site. Overridable so the negative
+# control can exercise the timeout branch in a second instead of three minutes.
+STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS", "180"))
 
 
 def subsonic_url(base_url: str, endpoint: str, parameters: dict[str, str]) -> str:
@@ -111,13 +114,32 @@ def main() -> None:
             "estimateContentLength": "true",
         },
     )
+    # A COLD transcode has to start ffmpeg before Navidrome can send a single response header, and
+    # this probe runs immediately before a simulator-backed conformance run on a small hosted macOS
+    # runner -- so first-byte latency here is a function of machine load, not of correctness. A 30s
+    # ceiling was too tight for that: the client walked away mid-transcode, and Navidrome then logged
+    # `Transcoding returned empty output, ffmpeg may have failed.` because its reader had vanished.
+    # That reads as a damning ffmpeg failure and is nothing of the sort, which is the expensive part.
+    # The budget is therefore generous but still bounded, and the latency is REPORTED on success so a
+    # genuine regression shows up as a trend instead of hiding until it crosses the ceiling.
     incomplete_read = False
+    started = time.monotonic()
     try:
-        with urllib.request.urlopen(stream_url, timeout=30) as response:
+        with urllib.request.urlopen(stream_url, timeout=STREAM_TIMEOUT_SECONDS) as response:
             payload = response.read()
     except http.client.IncompleteRead as error:
         payload = error.partial
         incomplete_read = True
+    except TimeoutError as error:
+        raise SystemExit(
+            "fixed transcode cache probe timed out after "
+            f"{time.monotonic() - started:.1f}s waiting for Navidrome to respond "
+            f"(budget {STREAM_TIMEOUT_SECONDS}s). Navidrome will log "
+            '"Transcoding returned empty output" for this request because the client gave up '
+            "mid-transcode; that log line is a consequence of this timeout, not an ffmpeg fault. "
+            "Check runner load and concurrent simulator boots before suspecting the transcoder."
+        ) from error
+    elapsed = time.monotonic() - started
     if not payload:
         raise SystemExit("fixed transcode cache probe returned no audio bytes")
 
@@ -143,6 +165,7 @@ def main() -> None:
     observation = (
         "TRANSCODE CACHE OBSERVATION "
         f"cached={cached.group(1)} transcoding=true bytes={len(payload)} "
+        f"first_response_seconds={elapsed:.1f} "
         f"incomplete_read={str(incomplete_read).lower()} song=Dulcet-Health-Probe"
     )
     print(observation)
