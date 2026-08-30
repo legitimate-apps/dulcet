@@ -345,7 +345,18 @@ struct AVPlayerEngineTests {
                 reason: .systemReclaimed
             ))
         }
-        #expect(audioSession.deactivationCount == 1)
+        // Deactivation is a SIBLING of the teardown event, not its cause, so observing
+        // engineTornDown does not guarantee the session has been deactivated yet. Asserting it
+        // synchronously passed locally and failed on a loaded CI runner with deactivationCount 0.
+        // Waiting on the asserted property keeps the assertion exactly as strong -- the count must
+        // still reach 1 -- while not depending on an ordering nothing specifies.
+        //
+        // The three sibling `#expect(...count...)` assertions after a waitUntil in this file were
+        // checked and left alone: each awaits an event that is CAUSED BY the thing it counts, so
+        // the count is already guaranteed when the wait returns.
+        try await waitUntil("external playback did not deactivate the audio session") {
+            audioSession.deactivationCount == 1
+        }
         let playOutcome = await execute(engine, .play(commandID: .init("play-after-takeover")))
         #expect(playOutcome == .rejected(commandID: .init("play-after-takeover"), reason: .invalidState))
         _ = await execute(engine, .release(commandID: .init("release")))
