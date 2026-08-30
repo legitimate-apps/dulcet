@@ -62,7 +62,10 @@ dependencies {
 
     // JVM unit tests for the channel split. These run on the host, not a device, so `kotlin("test")`
     // is enough and no instrumentation dependency is involved.
-    testImplementation(kotlin("test"))
+    // `kotlin("test")` alone does not resolve for an Android unit-test variant: it needs an explicit
+    // framework binding, and without one `kotlin.test.Test` is an unresolved reference at compile
+    // time. `test-junit` supplies the JUnit4 binding these variants actually run on.
+    testImplementation(kotlin("test-junit"))
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)
