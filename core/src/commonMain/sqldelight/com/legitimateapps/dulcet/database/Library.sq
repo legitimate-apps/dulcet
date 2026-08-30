@@ -726,12 +726,5 @@ DELETE FROM library_starred WHERE valid_to_generation IS NOT NULL AND valid_to_g
 pruneGenres:
 DELETE FROM genre WHERE valid_to_generation IS NOT NULL AND valid_to_generation <= ?;
 
-countVisibleDeletionReconciliationsForGeneration:
-SELECT count(*) FROM deletion_reconciliation, schema_meta
-WHERE deletion_reconciliation.server_id = :server_id
-  AND deletion_reconciliation.generation = :generation
-  AND deletion_reconciliation.generation <= schema_meta.committed_generation
-  AND schema_meta.singleton_id = 1;
-
 deleteDeletionReconciliationsForGeneration:
 DELETE FROM deletion_reconciliation WHERE server_id = ? AND generation = ?;

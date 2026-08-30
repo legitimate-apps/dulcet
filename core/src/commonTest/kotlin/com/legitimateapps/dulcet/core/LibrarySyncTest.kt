@@ -62,6 +62,23 @@ class LibrarySyncTest {
     }
 
     @Test
+    fun failureAfterCommitTransactionCannotReviseSuccess() = runTest {
+        assertPostCommitFailureCannotReviseSuccess(LibrarySyncPostCommitSite.AfterTransaction)
+    }
+
+    @Test
+    fun failureBeforeReconciliationDeliveryCannotReviseSuccess() = runTest {
+        assertPostCommitFailureCannotReviseSuccess(
+            LibrarySyncPostCommitSite.BeforeReconciliationDelivery,
+        )
+    }
+
+    @Test
+    fun pruningFailureCannotReviseSuccess() = runTest {
+        assertPostCommitFailureCannotReviseSuccess(LibrarySyncPostCommitSite.BeforePruning)
+    }
+
+    @Test
     fun changedReferencedTrackIsNotReportedAsDeletedButRemovalIs() {
         val driver = createTestDriver()
         val store = DulcetDatabaseStore.open(driver)
@@ -86,12 +103,14 @@ class LibrarySyncTest {
 
         repository.putTracks(SERVER, 2, listOf(album("album", track("stable-track", "After"))))
         repository.completeStage(SERVER, 2, LibrarySyncStage.Tracks)
-        assertEquals(0, repository.commit(SERVER, 2, LibrarySyncStability.Verified))
+        assertEquals(0, repository.commit(SERVER, 2, LibrarySyncStability.Verified)
+            .deletionReconciliations.size)
         assertEquals(emptyList(), repository.deletionReconciliations(SERVER, 2))
 
         repository.putTracks(SERVER, 3, emptyList())
         repository.completeStage(SERVER, 3, LibrarySyncStage.Tracks)
-        assertEquals(1, repository.commit(SERVER, 3, LibrarySyncStability.Verified))
+        assertEquals(1, repository.commit(SERVER, 3, LibrarySyncStability.Verified)
+            .deletionReconciliations.size)
         assertEquals(
             listOf(LibraryDeletionReconciliation(3, "stable-track", 0, 1)),
             repository.deletionReconciliations(SERVER, 3),
@@ -260,6 +279,30 @@ class LibrarySyncTest {
         driver.close()
     }
 
+    private suspend fun assertPostCommitFailureCannotReviseSuccess(site: LibrarySyncPostCommitSite) {
+        val driver = createTestDriver()
+        val store = DulcetDatabaseStore.open(driver)
+        val repository = LibrarySyncRepository(
+            store = store,
+            postCommitProbe = LibrarySyncPostCommitProbe { visited ->
+                if (visited == site) throw PostCommitInterruption
+            },
+        )
+        val manager = LibrarySyncManager(LibrarySyncEngine(repository), repository)
+
+        val response = manager.synchronize(SERVER, MutableSource())
+        val completed = assertIs<LibrarySyncResponse.Completed>(response)
+
+        assertEquals(1, completed.generation)
+        assertEquals(1, store.metadata().committedGeneration)
+        assertEquals(null, repository.checkpoint(SERVER))
+        assertEquals(
+            SERVER,
+            store.database.libraryQueries.selectSyncGeneration(1).executeAsOne().server_id,
+        )
+        driver.close()
+    }
+
     private class MutableSource(
         albumCount: Int = 1,
         playlistCount: Int = 0,
@@ -352,6 +395,7 @@ class LibrarySyncTest {
         const val SERVER = "server:opaque"
 
         object CommitInterruption : RuntimeException()
+        object PostCommitInterruption : RuntimeException()
 
         fun id(rawId: String) = ProviderItemId(SERVER, rawId)
 

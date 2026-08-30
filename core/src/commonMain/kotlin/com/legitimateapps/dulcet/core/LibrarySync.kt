@@ -105,8 +105,24 @@ public class LibrarySyncManager internal constructor(
         request: LibrarySyncRequest,
         restart: Boolean = false,
         progress: (LibrarySyncProgress) -> Unit = {},
+    ): LibrarySyncResponse = complete(request.providerInstanceId) {
+        engine.synchronize(request.asBrowseRequest(), restart, progress)
+    }
+
+    internal suspend fun synchronize(
+        providerInstanceId: String,
+        source: LibrarySyncSource,
+        restart: Boolean = false,
+        progress: (LibrarySyncProgress) -> Unit = {},
+    ): LibrarySyncResponse = complete(providerInstanceId) {
+        engine.synchronize(providerInstanceId, source, restart, progress)
+    }
+
+    private suspend fun complete(
+        providerInstanceId: String,
+        synchronize: suspend () -> LibrarySyncResult,
     ): LibrarySyncResponse = try {
-        when (val result = engine.synchronize(request.asBrowseRequest(), restart, progress)) {
+        when (val result = synchronize()) {
             is LibrarySyncResult.Completed -> {
                 val stability = when (result.stability) {
                     LibrarySyncStability.Verified -> LibrarySyncCompletionStability.Verified
@@ -116,13 +132,10 @@ public class LibrarySyncManager internal constructor(
                     generation = result.generation,
                     stability = stability,
                     deletionNotices = LibraryDeletionNoticeList(
-                        repository.deletionReconciliations(
-                            request.providerInstanceId,
-                            result.generation,
-                        ).map { notice ->
+                        result.deletionReconciliations.map { notice ->
                             LibraryDeletionNotice(
                                 generation = notice.generation,
-                                providerInstanceId = request.providerInstanceId,
+                                providerInstanceId = providerInstanceId,
                                 rawId = notice.rawId,
                                 downloadedReferenceCount = notice.downloadedReferenceCount,
                                 queueReferenceCount = notice.queueReferenceCount,
@@ -131,7 +144,8 @@ public class LibrarySyncManager internal constructor(
                     ),
                     libraryChangedDuringScan = stability == LibrarySyncCompletionStability.Unverified,
                 )
-                repository.pruneClosedVersions()
+                repository.observePostCommit(LibrarySyncPostCommitSite.BeforeReconciliationDelivery)
+                repository.pruneClosedVersionsBestEffort()
                 response
             }
             is LibrarySyncResult.Failed -> LibrarySyncResponse.Failed(result.error)
@@ -385,8 +399,27 @@ internal fun interface LibrarySyncCommitProbe {
     }
 }
 
+internal enum class LibrarySyncPostCommitSite {
+    AfterTransaction,
+    BeforeReconciliationDelivery,
+    BeforePruning,
+}
+
+internal fun interface LibrarySyncPostCommitProbe {
+    fun visit(site: LibrarySyncPostCommitSite)
+
+    companion object {
+        val None = LibrarySyncPostCommitProbe {}
+    }
+}
+
+internal data class LibrarySyncCommit(
+    val deletionReconciliations: List<LibraryDeletionReconciliation>,
+)
+
 internal class LibrarySyncRepository(
     private val store: DulcetDatabaseStore,
+    private val postCommitProbe: LibrarySyncPostCommitProbe = LibrarySyncPostCommitProbe.None,
     private val commitProbe: LibrarySyncCommitProbe = LibrarySyncCommitProbe.None,
 ) {
     private val database = store.database
@@ -712,9 +745,9 @@ internal class LibrarySyncRepository(
         }
     }
 
-    fun commit(serverId: String, generation: Long, stability: LibrarySyncStability): Long {
+    fun commit(serverId: String, generation: Long, stability: LibrarySyncStability): LibrarySyncCommit {
         check(store.metadata().committedGeneration + 1 == generation)
-        database.transaction {
+        val committed = database.transactionWithResult {
             queries.deleteDeletionReconciliationsForGeneration(serverId, generation)
             queries.insertDeletionReconciliations(generation, serverId)
             queries.insertSyncGeneration(generation, serverId, stability.wireName)
@@ -722,9 +755,12 @@ internal class LibrarySyncRepository(
             commitProbe.afterCommittedGenerationUpdate()
             queries.deleteCheckpoint(serverId)
             queries.clearSeenGeneration(serverId, generation)
+            LibrarySyncCommit(
+                deletionReconciliations = deletionReconciliations(serverId, generation),
+            )
         }
-        return queries.countVisibleDeletionReconciliationsForGeneration(serverId, generation)
-            .executeAsOne()
+        observePostCommit(LibrarySyncPostCommitSite.AfterTransaction)
+        return committed
     }
 
     fun readCommitted(serverId: String): CommittedLibrarySnapshot =
@@ -774,6 +810,23 @@ internal class LibrarySyncRepository(
             queries.pruneGenres(retentionGeneration)
         }
     }
+
+    fun observePostCommit(site: LibrarySyncPostCommitSite) {
+        try {
+            postCommitProbe.visit(site)
+        } catch (_: Throwable) {
+            // A committed generation is already authoritative. Diagnostics cannot revise its result.
+        }
+    }
+
+    fun pruneClosedVersionsBestEffort() {
+        try {
+            postCommitProbe.visit(LibrarySyncPostCommitSite.BeforePruning)
+            pruneClosedVersions()
+        } catch (_: Throwable) {
+            // Pruning is maintenance. A later pass may retry it without changing sync success.
+        }
+    }
 }
 
 private fun requireProvider(serverId: String, id: ProviderItemId) {
@@ -815,7 +868,7 @@ internal sealed interface LibrarySyncResult {
     data class Completed(
         val generation: Long,
         val stability: LibrarySyncStability,
-        val deletionReconciliationCount: Long,
+        val deletionReconciliations: List<LibraryDeletionReconciliation>,
     ) : LibrarySyncResult
 
     data class Failed(val error: DomainError) : LibrarySyncResult
@@ -894,18 +947,22 @@ internal class LibrarySyncEngine(
                         } else {
                             LibrarySyncStability.Verified
                         }
-                        val deletions = repository.commit(serverId, finished.generation, stability)
+                        val commit = repository.commit(serverId, finished.generation, stability)
                         completed = LibrarySyncResult.Completed(
-                            finished.generation, stability, deletions,
+                            finished.generation, stability, commit.deletionReconciliations,
                         )
-                        progress(
-                            LibrarySyncProgress(
-                                stage = "complete",
-                                completedStageCount = LibrarySyncStage.entries.size,
-                                totalStageCount = LibrarySyncStage.entries.size,
-                                isFirstSync = isFirstSync,
-                            ),
-                        )
+                        try {
+                            progress(
+                                LibrarySyncProgress(
+                                    stage = "complete",
+                                    completedStageCount = LibrarySyncStage.entries.size,
+                                    totalStageCount = LibrarySyncStage.entries.size,
+                                    isFirstSync = isFirstSync,
+                                ),
+                            )
+                        } catch (_: Throwable) {
+                            // Progress is advisory and cannot revise a durably committed result.
+                        }
                     }
                 }
             }
