@@ -42,6 +42,8 @@ jobs:
         run: python3 tools/test-linux-conformance-local
       - name: Prove required-check drift is rejected
         run: python3 tools/test-required-checks
+      - name: Prove library readiness belongs to the current Navidrome process
+        run: python3 tools/test-await-library-ready
       - name: Prove a stalled transcode probe reports a timeout, not an ffmpeg fault
         run: python3 tools/test-transcode-probe-timeout-diagnostic
       - name: Validate FEATURES.yml
