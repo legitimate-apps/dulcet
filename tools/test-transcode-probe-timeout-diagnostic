@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -105,7 +106,37 @@ def run_probe(*, mode: str, budget: float) -> subprocess.CompletedProcess:
             server.server_close()
 
 
+def require_port_free() -> None:
+    """Fail with the cause, not an OSError traceback, when something already holds the probe port.
+
+    This control MUST bind 4533: `observe-transcode-cache` refuses any base URL but the disposable
+    loopback one, and that guard is what keeps automated cache observation off a real server, so it
+    is not weakened to let this test pick an ephemeral port. The consequence is that a leftover
+    disposable conformance container makes this control unrunnable -- OBSERVED 2026-08-30, where it
+    surfaced as `OSError: [Errno 48] Address already in use` from deep inside socketserver and read
+    as a defect in the gate rather than as a dirty machine.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("127.0.0.1", PORT))
+    except OSError as error:
+        holder = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip() or "(lsof reported nothing)"
+        raise SystemExit(
+            f"port {PORT} is already in use, so this control cannot run: {error}\n"
+            "This is an environment fault, not a gate failure. The usual cause is a disposable\n"
+            "conformance server left running -- clear it with `tools/conformance-env/linux-local down`\n"
+            "or by stopping the labelled container. Current listener:\n" + holder
+        ) from error
+    finally:
+        probe.close()
+
+
 def main() -> None:
+    require_port_free()
     started = time.monotonic()
     header_stall = run_probe(mode="header-stall", budget=0.25)
     combined = header_stall.stdout + header_stall.stderr
