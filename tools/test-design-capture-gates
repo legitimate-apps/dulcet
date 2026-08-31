@@ -189,6 +189,26 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(inactive_root, "controlActiveState is not key")
 
+        ambient_scale_root = Path(temporary) / "ambient-layout-scale"
+        shutil.copytree(args.root, ambient_scale_root)
+        manifest_path = ambient_scale_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["layoutDisplayScale"] = 1.0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(ambient_scale_root, "manifest layoutDisplayScale mismatch")
+
+        wrong_backing_scale_root = Path(temporary) / "wrong-window-backing-scale"
+        shutil.copytree(args.root, wrong_backing_scale_root)
+        manifest_path = wrong_backing_scale_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["windowBackingScaleFactor"] = 1.0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(wrong_backing_scale_root, "windowBackingScaleFactor mismatch")
+
         substituted_control_root = Path(temporary) / "substituted-pinned-control"
         shutil.copytree(args.root, substituted_control_root)
         control = (
@@ -242,6 +262,7 @@ def main() -> None:
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
+        "ambient-layout-scale=true wrong-window-backing-scale=true "
         "substituted-pinned-control=true "
         "reencoded-pinned-control-as-reference-pixel-duplicate=true"
     )
