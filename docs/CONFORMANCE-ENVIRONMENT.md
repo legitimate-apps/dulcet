@@ -55,9 +55,17 @@ Docker Engine on Linux) must be running; no separately installed Navidrome or ff
 
 ```bash
 tools/conformance-env/linux-local up
-tools/conformance-env/linux-local run -- ./gradlew --no-daemon :core-conformance:jvmTest
+tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:jvmTest
+tools/conformance-env/linux-local reset
+tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:testAndroidHostTest
 tools/conformance-env/linux-local down
 ```
+
+The reset between JVM targets is required: both suites contain cold-transcode controls, and the first
+suite warms the shared cache. `reset` stops the disposable server, clears only its guarded transcode
+cache, restarts it, and requires Navidrome's own log to report `cached=false` before the Android host
+suite starts. The Android task compiles the production Android source set and runs the common controls
+on the host JVM; it does not start an emulator or claim device-runtime coverage.
 
 `up` is cold by default: it stops the named disposable container, deletes only the marker-guarded
 `data` and `cache` directories, then starts and health-checks the pinned image. The generated music
@@ -159,11 +167,12 @@ to both the job log and the GitHub Actions job summary.
 
 ## CI identities
 
-The Linux preconditions and `:core-conformance:jvmTest` are job `conformance-env-linux` in
-`.github/workflows/core-ci.yml`. The required `core-ci` context is a final fail-closed aggregator: it
-runs even after an upstream failure or skip and passes only when both `core-build` and
-`conformance-env-linux` report `success`. The Darwin preconditions and the macOS, iOS simulator, and
-tvOS simulator native conformance tasks are a serial tail of the sole `apple-ci` job in
+The Linux preconditions, `:core-conformance:jvmTest`, a fail-loud cold-cache reset, and
+`:core-conformance:testAndroidHostTest` are job `conformance-env-linux` in `.github/workflows/core-ci.yml`.
+The required `core-ci` context is a final fail-closed aggregator: it runs even after an upstream failure
+or skip and passes only when both `core-build` and `conformance-env-linux` report `success`. The Darwin
+preconditions and the macOS, iOS simulator, and tvOS simulator native conformance tasks are a serial
+tail of the sole `apple-ci` job in
 `.github/workflows/apple-ci.yml`; they do not allocate a second hosted-macOS job. That tail restarts
 the Darwin server against the same root after clearing its stopped transcode cache, then requires an
 observed `cached=false` record before every platform task. Both workflows use standard hosted

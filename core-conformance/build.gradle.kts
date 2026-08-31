@@ -61,6 +61,7 @@ kotlin {
         }
         getByName("androidHostTest").dependencies {
             implementation(libs.ktor.client.cio)
+            implementation(libs.sqldelight.sqlite.driver)
         }
         appleTest.dependencies {
             implementation(libs.ktor.client.darwin)

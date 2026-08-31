@@ -2696,7 +2696,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
@@ -3301,6 +3301,23 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 87 (2026-08-31)** — the common conformance controls gained an Android host execution leg.
+
+1. `core-conformance` now uses the same Google Kotlin Multiplatform Android library target and
+   `testAndroidHostTest` shape already established by `core`. The common suite compiles against the
+   Android source set and its CIO transport. Kotlin/Native's explicit `-lsqlite3` remains native-only;
+   Android production storage continues to use `AndroidSqliteDriver`, while the host controls use the
+   file-backed JDBC test driver already established for Android host tests.
+2. `conformance-env-linux` runs JVM conformance first, then stops Navidrome, clears the guarded
+   transcode cache, requires the server log to report `cached=false`, and runs Android host
+   conformance. The reset is evidence, not optimization: CONF-14a and CONF-17 require a cold
+   transcode, and running both targets against one warmed cache makes the second measurement fail.
+3. Android host results are valid evidence for runtime-independent wire/protocol controls because
+   they compile and execute the Android target's production core sources against the live disposable
+   server, consistent with simulator evidence elsewhere in the matrix. They are not evidence for an
+   Android device runtime, Android framework integration, app-process behavior, Compose UI, Keystore,
+   or Android TV input/focus behavior; cells requiring those links remain below `shipped`.
 
 **Revision 86 (2026-08-28)** — the conformance registry and the design's representative-test table
 became one id space again, and the gate can now see it.
