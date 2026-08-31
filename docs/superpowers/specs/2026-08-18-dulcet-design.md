@@ -2696,7 +2696,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator uses `always()` and passes only when both report `success`. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator downloads the Android-only JUnit artifact, resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase, then passes only when both upstream jobs report `success`. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
@@ -3317,7 +3317,9 @@ argue against the recorded rationale — not as filling in a blank.
    they compile and execute the Android target's production core sources against the live disposable
    server, consistent with simulator evidence elsewhere in the matrix. They are not evidence for an
    Android device runtime, Android framework integration, app-process behavior, Compose UI, Keystore,
-   or Android TV input/focus behavior; cells requiring those links remain below `shipped`.
+   or Android TV input/focus behavior; cells requiring those links remain below `shipped`. The required
+   `core-ci` aggregator downloads an Android-only JUnit artifact and runs the executed-evidence verifier,
+   so JVM results cannot silently satisfy these Android/AndroidTV tuples.
 
 **Revision 86 (2026-08-28)** — the conformance registry and the design's representative-test table
 became one id space again, and the gate can now see it.

@@ -169,10 +169,12 @@ to both the job log and the GitHub Actions job summary.
 
 The Linux preconditions, `:core-conformance:jvmTest`, a fail-loud cold-cache reset, and
 `:core-conformance:testAndroidHostTest` are job `conformance-env-linux` in `.github/workflows/core-ci.yml`.
-The required `core-ci` context is a final fail-closed aggregator: it runs even after an upstream failure
-or skip and passes only when both `core-build` and `conformance-env-linux` report `success`. The Darwin
-preconditions and the macOS, iOS simulator, and tvOS simulator native conformance tasks are a serial
-tail of the sole `apple-ci` job in
+That job uploads a separate Android-only JUnit artifact. The required `core-ci` context downloads that
+artifact and resolves every Android/AndroidTV `FEATURES.yml` evidence identity against an executed,
+passing, non-skipped testcase before checking the upstream results. It runs even after an upstream
+failure or skip and passes only when the evidence verification succeeds and both `core-build` and
+`conformance-env-linux` report `success`. The Darwin preconditions and the macOS, iOS simulator, and
+tvOS simulator native conformance tasks are a serial tail of the sole `apple-ci` job in
 `.github/workflows/apple-ci.yml`; they do not allocate a second hosted-macOS job. That tail restarts
 the Darwin server against the same root after clearing its stopped transcode cache, then requires an
 observed `cached=false` record before every platform task. Both workflows use standard hosted
