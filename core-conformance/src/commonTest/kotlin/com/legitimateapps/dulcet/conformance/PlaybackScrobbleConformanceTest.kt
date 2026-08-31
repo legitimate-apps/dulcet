@@ -3,6 +3,9 @@ package com.legitimateapps.dulcet.conformance
 import com.legitimateapps.dulcet.core.AccountConnectionContract
 import com.legitimateapps.dulcet.core.AttemptId
 import com.legitimateapps.dulcet.core.AudioContainer
+import com.legitimateapps.dulcet.core.DownloadControlPayload
+import com.legitimateapps.dulcet.core.DownloadIdentity
+import com.legitimateapps.dulcet.core.DownloadPolicyContract
 import com.legitimateapps.dulcet.core.DirectPlayAudioProfile
 import com.legitimateapps.dulcet.core.LegacyPlaybackPreference
 import com.legitimateapps.dulcet.core.LogSink
@@ -15,6 +18,7 @@ import com.legitimateapps.dulcet.core.PlaybackLoadResult
 import com.legitimateapps.dulcet.core.PlaybackResolutionResult
 import com.legitimateapps.dulcet.core.PlaybackResolveRequest
 import com.legitimateapps.dulcet.core.PlaybackSessionId
+import com.legitimateapps.dulcet.core.PlaybackPlan
 import com.legitimateapps.dulcet.core.PlaybackWallClockTime
 import com.legitimateapps.dulcet.core.PlaybackWireClient
 import com.legitimateapps.dulcet.core.PlaybackWireTranscodeDecision
@@ -54,6 +58,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
@@ -421,6 +426,125 @@ class PlaybackScrobbleConformanceTest {
         }
     }
 
+    @Test
+    fun conf51LiveDownloadsValidateBeforeAtomicPromotion() = runTest {
+        withFixture {
+            val source = requireSong("CONF-51", HEALTH_PROBE_TITLE)
+            assertEquals(AudioContainer.Flac, source.container, "CONF-51 corpus format drifted")
+
+            val direct = requireAudio(
+                playback.load(requireLegacyPlan("CONF-51", source)),
+                "CONF-51 direct source failed before download promotion",
+            )
+            val directLength = assertIs<PlaybackContentLength.Exact>(
+                direct.validation.contentLength,
+                "CONF-51 direct source must supply an exact integrity boundary",
+            )
+            val directControl = DownloadPolicyContract.validatedAtomicPromotion(
+                DownloadControlPayload(
+                    serverId = CONFORMANCE_PROVIDER_ID,
+                    rawId = source.id,
+                    transcodeProfile = DownloadIdentity.ORIGINAL_PROFILE,
+                    container = source.container,
+                    contentType = "audio/flac",
+                    contentLength = directLength,
+                    bytes = direct.bytes,
+                ),
+            )
+            assertEquals(direct.bytes.size.toLong(), directControl.promotedByteCount)
+            assertEquals(direct.bytes.size.toLong(), directControl.storedExactByteCount)
+            assertTrue(directControl.temporaryFileRemoved)
+            assertTrue(directControl.exactMismatchRejected)
+            assertTrue(
+                directControl.exactMismatchLeftNoDestination,
+                "CONF-51 exact-length mismatch appeared at the destination before validation",
+            )
+            assertTrue(directControl.duplicateDeliveryWasIdempotent)
+
+            // Missing ffmpeg/transcoding is a failed precondition, never a skipped green control.
+            requireTranscodingCapability("CONF-51", source)
+            val coldLegacy = requireAudio(
+                playback.load(
+                    requireLegacyMp3Plan(
+                        "CONF-51",
+                        source,
+                        offsetSeconds = 0,
+                        maxBitRateKbps = CONF_51_COLD_BITRATE_KBPS,
+                    ),
+                    purpose = com.legitimateapps.dulcet.core.PlaybackWireRequestPurpose.Download,
+                ),
+                "CONF-51 cold legacy transcode failed after capability assertion",
+            )
+            val estimate = assertIs<PlaybackContentLength.Estimated>(
+                coldLegacy.validation.contentLength,
+                "CONF-51 cold legacy transcode must retain estimated-length semantics",
+            )
+            assertNotEquals(
+                estimate.estimatedByteCount,
+                coldLegacy.bytes.size.toLong(),
+                "CONF-51 cold transcode unexpectedly lost the pinned estimate mismatch",
+            )
+            val estimatedControl = DownloadPolicyContract.validatedAtomicPromotion(
+                DownloadControlPayload(
+                    serverId = CONFORMANCE_PROVIDER_ID,
+                    rawId = source.id,
+                    transcodeProfile = "legacy-mp3:$CONF_51_COLD_BITRATE_KBPS",
+                    container = AudioContainer.Mp3,
+                    contentType = "audio/mpeg",
+                    contentLength = estimate,
+                    bytes = coldLegacy.bytes,
+                ),
+            )
+            assertEquals(coldLegacy.bytes.size.toLong(), estimatedControl.storedExactByteCount)
+            assertTrue(estimatedControl.temporaryFileRemoved)
+            assertTrue(estimatedControl.exactMismatchLeftNoDestination)
+            record(
+                "CONF-51 OBSERVED direct_exact_bytes=${directLength.byteCount} " +
+                    "cold_estimate_bytes=${estimate.estimatedByteCount} " +
+                    "cold_observed_exact_after_close=${estimatedControl.storedExactByteCount} " +
+                    "exact_mismatch_rejected=${directControl.exactMismatchRejected} " +
+                    "destination_absent_on_rejection=${directControl.exactMismatchLeftNoDestination} " +
+                    "duplicate_idempotent=${directControl.duplicateDeliveryWasIdempotent}",
+            )
+        }
+    }
+
+    @Test
+    fun conf52PromotedLiveItemProducesLocalPlanAfterNetworkClientsClose() = runTest {
+        withFixture {
+            val source = requireSong("CONF-52", HEALTH_PROBE_TITLE)
+            val downloaded = requireAudio(
+                playback.load(requireLegacyPlan("CONF-52", source)),
+                "CONF-52 source failed before the offline boundary",
+            )
+            val exactLength = assertIs<PlaybackContentLength.Exact>(
+                downloaded.validation.contentLength,
+                "CONF-52 direct source did not supply an exact length",
+            )
+            closeNetworkClients()
+
+            val offline = DownloadPolicyContract.offlinePlayback(
+                DownloadControlPayload(
+                    serverId = CONFORMANCE_PROVIDER_ID,
+                    rawId = source.id,
+                    transcodeProfile = DownloadIdentity.ORIGINAL_PROFILE,
+                    container = source.container,
+                    contentType = "audio/flac",
+                    contentLength = exactLength,
+                    bytes = downloaded.bytes,
+                ),
+            )
+            assertIs<PlaybackPlan>(offline.plan)
+            assertEquals(source.id, offline.plan.identity.rawId)
+            assertEquals(downloaded.bytes.size.toLong(), offline.plan.exactByteLength)
+            assertContentEquals(downloaded.bytes, offline.loadedBytes)
+            record(
+                "CONF-52 OBSERVED network_clients=closed plan=LocalPlaybackPlan " +
+                    "bytes=${offline.loadedBytes.size} source=promoted_destination",
+            )
+        }
+    }
+
     private suspend fun PlaybackFixture.requireSong(confId: String, title: String): SeedSong {
         val response = rest.getJson(
             "search3",
@@ -618,6 +742,7 @@ class PlaybackScrobbleConformanceTest {
         const val FULL_BITRATE_KBPS = 64
         const val SEEK_BITRATE_KBPS = 96
         const val CONF_17_COLD_BITRATE_KBPS = 73
+        const val CONF_51_COLD_BITRATE_KBPS = 81
         const val OFFSET_RATIO_TOLERANCE = 0.03
         const val CONF_22_SESSION_TIME = 1_788_220_000_001
         const val CONF_23_REPEATED_SESSION_TIME = 1_788_230_000_001
@@ -702,11 +827,18 @@ private class PlaybackFixture {
         saltSource = SaltSource(credentialEvidence::nextSalt),
         logSink = LogSink(logs::add),
     )
+    private var networkClientsClosed = false
 
-    fun closeAndAssertRedaction() {
+    fun closeNetworkClients() {
+        if (networkClientsClosed) return
         rest.close()
         playback.close()
         scrobble.close()
+        networkClientsClosed = true
+    }
+
+    fun closeAndAssertRedaction() {
+        closeNetworkClients()
         credentialEvidence.assertFreshAndRedacted(
             logs + rest.observations.map(SafeRestObservation::toString),
         )

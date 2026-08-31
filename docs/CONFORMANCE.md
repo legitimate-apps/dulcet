@@ -42,6 +42,6 @@ the detailed assertion.
 | CONF-42 | `songLyrics` v2 structured response shape |
 | CONF-43 | `search3` local-versus-server matching divergence |
 | CONF-44 | `getCoverArt` size behavior, content types, error envelopes, and image signatures |
-| CONF-51 | validated atomic download promotion |
-| CONF-52 | offline playback plan |
+| CONF-51 | live exact and cold-estimated bodies validate before atomic promotion; exact mismatch never reaches destination and duplicate delivery is idempotent |
+| CONF-52 | a live item promoted locally yields a `LocalPlaybackPlan` and identical bytes after all conformance network clients close |
 | CONF-61 | unknown response fields are preserved and ignored |
