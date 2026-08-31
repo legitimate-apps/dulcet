@@ -306,6 +306,11 @@ internal class DownloadPolicyEngine(
             ?: error("unknown download")
     }
 
+    fun destinationExists(downloadId: DownloadId): Boolean {
+        requireReconciled()
+        return store.byId(downloadId)?.let(files::destinationExists) ?: false
+    }
+
     fun writeCompletedTemporaryFile(downloadId: DownloadId, bytes: ByteArray) {
         requireReconciled()
         val row = store.byId(downloadId) ?: error("unknown download")

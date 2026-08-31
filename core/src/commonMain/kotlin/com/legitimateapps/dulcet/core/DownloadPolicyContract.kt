@@ -78,7 +78,7 @@ public object DownloadPolicyContract {
                     PlaybackContentLength.Exact(mismatchLength),
                 ),
             )
-            val mismatchPlan = engine.offlinePlaybackPlan(mismatch.identity)
+            val mismatchDestinationExists = engine.destinationExists(mismatch.downloadId)
 
             val duplicate = engine.promote(
                 row.downloadId,
@@ -90,7 +90,7 @@ public object DownloadPolicyContract {
                     ?: error("promotion failed to record observed exact length"),
                 temporaryFileRemoved = tempRemoved,
                 exactMismatchRejected = mismatchResult is DownloadPromotionResult.Rejected,
-                exactMismatchLeftNoDestination = mismatchPlan is OfflinePlaybackPlanResult.NotDownloaded,
+                exactMismatchLeftNoDestination = !mismatchDestinationExists,
                 duplicateDeliveryWasIdempotent = duplicate is DownloadPromotionResult.AlreadyPromoted,
             )
         } finally {
