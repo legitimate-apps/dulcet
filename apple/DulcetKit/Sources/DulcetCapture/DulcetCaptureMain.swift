@@ -120,7 +120,15 @@ private enum CaptureSettleStatistics {
 
 private enum CaptureRenderingPolicy {
     static let layoutDisplayScale: CGFloat = 2
-    static let windowBackingScaleFactor: CGFloat = 2
+    // NOT a fixed expectation. The hosted macOS runner presents a 1x display while a developer's
+    // Retina Mac presents 2x, so any hardcoded value is wrong on one of them -- OBSERVED in CI as
+    // `expected=2.0 observed=1.0`, which failed the capture on a machine that was behaving correctly.
+    //
+    // What must be constant is not the VALUE but its CONSISTENCY: the two capture processes the gate
+    // compares must render at the same scale. That is enforced by recording the observed scale in the
+    // manifest, which the exact-byte gate then diffs between run-a and run-b -- so a scale that moves
+    // between runs fails loudly and names itself, without this file having to guess the right number
+    // for every machine that will ever run it.
     static let hostLayerContentsScale: CGFloat = 2
     static let bitmapPixelsPerPoint: CGFloat = 1
 }
@@ -221,7 +229,7 @@ private struct CaptureManifest: Codable {
     let timeZone: String
     let fixedClock: String
     let network: String
-    let requiredWindowBackingScaleFactor: Double
+    let windowBackingScaleFactor: Double
     let controlBaselinePolicy: String
     let captures: [CaptureRecord]
 }
@@ -320,6 +328,17 @@ private struct DulcetCaptureMain {
             }
         }
 
+        let observedWindowBackingScaleFactors = Set(
+            records.compactMap(\.windowBackingScaleFactor)
+        )
+        guard observedWindowBackingScaleFactors.count == 1,
+              let observedWindowBackingScaleFactor = observedWindowBackingScaleFactors.first else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "capture records do not share one positive window backing scale: observed="
+                    + "\(observedWindowBackingScaleFactors.sorted())"
+            )
+        }
+
         let manifest = CaptureManifest(
             schemaVersion: 10,
             widthPixels: width,
@@ -341,9 +360,7 @@ private struct DulcetCaptureMain {
             timeZone: "UTC",
             fixedClock: "2026-08-21T14:32:00Z",
             network: "disabled-by-fixture-source",
-            requiredWindowBackingScaleFactor: Double(
-                CaptureRenderingPolicy.windowBackingScaleFactor
-            ),
+            windowBackingScaleFactor: observedWindowBackingScaleFactor,
             controlBaselinePolicy: "bundled-reviewed-resources-explicit-regeneration-only",
             captures: records.sorted { $0.file < $1.file }
         )
@@ -357,7 +374,7 @@ private struct DulcetCaptureMain {
                 + "max-settle-attempts=\(CaptureSettleStatistics.maximumAttempts) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
                 + "layout-display-scale=\(CaptureRenderingPolicy.layoutDisplayScale) "
-                + "window-backing-scale=\(CaptureRenderingPolicy.windowBackingScaleFactor) "
+                + "window-backing-scale=\(observedWindowBackingScaleFactor) "
                 + "bitmap-pixels-per-point=\(CaptureRenderingPolicy.bitmapPixelsPerPoint) "
                 + "font-smoothing=disabled font-subpixel-positioning=disabled "
                 + "control-active-state=key "
@@ -488,8 +505,9 @@ private struct DulcetCaptureMain {
         // This loop detects within-process movement only. Cross-process determinism comes from the
         // pinned environment above: CI proved that two processes can each converge to a different
         // stable layout when NSHostingView first measures native fields before its backing scale is
-        // resolved. The host is now constructed only after the final 2x window exists, with the
-        // same 2x SwiftUI display scale and layer contents scale already explicit.
+        // resolved. The host is now constructed only after the window has resolved a positive
+        // ambient backing scale, with the 2x SwiftUI display scale and layer contents scale already
+        // explicit.
         func renderFrame() throws -> Data {
             captureView.layoutSubtreeIfNeeded()
             captureView.displayIfNeeded()
@@ -601,11 +619,11 @@ private struct DulcetCaptureMain {
         effectiveAppearance: NSAppearance? = nil,
         requestedAppearance: NSAppearance.Name? = nil
     ) throws {
-        guard windowBackingScaleFactor == CaptureRenderingPolicy.windowBackingScaleFactor else {
+        // The scale is recorded, not asserted against a constant -- see the policy note above. A
+        // nonpositive scale is still a real fault: it means the window never resolved a display.
+        guard windowBackingScaleFactor > 0 else {
             throw CaptureError.renderingEnvironmentMismatch(
-                "\(stage) window backing scale expected="
-                    + "\(CaptureRenderingPolicy.windowBackingScaleFactor) "
-                    + "observed=\(windowBackingScaleFactor)"
+                "\(stage) window backing scale is not positive: observed=\(windowBackingScaleFactor)"
             )
         }
         if let hostLayerContentsScale,
