@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 import subprocess
@@ -94,6 +95,12 @@ def assert_states_match_swift_enum() -> None:
 APPEARANCES = ("light", "dark")
 WIDTH = 1180
 HEIGHT = 760
+LAYOUT_DISPLAY_SCALE = 2.0
+HOST_LAYER_CONTENTS_SCALE = 2.0
+BITMAP_PIXELS_PER_POINT = 1.0
+# The window's backing scale is ambient: hosted runners can be 1x while Retina Macs are 2x. The
+# manifest records the observed positive value, and every rendered record must agree with it. The
+# workflow's exact-byte run-a/run-b diff then rejects a scale that changes between processes.
 MIN_JPEG_BYTES = 5_000
 MAX_JPEG_BYTES = 350_000
 PINNED_CONTROL_SHA256 = {
@@ -265,14 +272,23 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 9,
+        "schemaVersion": 10,
         "widthPixels": WIDTH,
         "heightPixels": HEIGHT,
         "captureSurface": "titled-nswindow-with-standard-chrome",
         "windowTitlePolicy": "visible-centered-standard-window-title",
         "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",
-        "preflightRender": "discarded-library-browse-light-before-recording",
+        "preflightRender": "discarded-all-states-all-appearances-before-recording",
+        "appearanceResolutionPolicy": (
+            "requested-appearance-current-before-host-construction"
+        ),
+        "bitmapPixelsPerPoint": BITMAP_PIXELS_PER_POINT,
+        "fontSmoothingPolicy": "disabled-explicit-bitmap-context",
+        "fontSubpixelPositioningPolicy": "disabled-explicit-bitmap-context",
+        "fontSubpixelQuantizationPolicy": "disabled-explicit-bitmap-context",
+        "hostLayerContentsScale": HOST_LAYER_CONTENTS_SCALE,
         "jpegCompression": 0.72,
+        "layoutDisplayScale": LAYOUT_DISPLAY_SCALE,
         "locale": "en_US_POSIX",
         "calendar": "gregorian",
         "timeZone": "UTC",
@@ -286,6 +302,18 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 f"{directory.name} manifest {key} mismatch: "
                 f"expected {expected_value!r}, observed {manifest.get(key)!r}"
             )
+
+    window_backing_scale_factor = manifest.get("windowBackingScaleFactor")
+    if (
+        isinstance(window_backing_scale_factor, bool)
+        or not isinstance(window_backing_scale_factor, (int, float))
+        or not math.isfinite(window_backing_scale_factor)
+        or window_backing_scale_factor <= 0
+    ):
+        raise CaptureVerificationError(
+            f"{directory.name} manifest windowBackingScaleFactor is not positive: "
+            f"observed {window_backing_scale_factor!r}"
+        )
 
     expected_files = expected | {"manifest.json"}
     observed_entries = {path.name for path in directory.iterdir()}
@@ -389,6 +417,23 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             if "pinnedControlSha256" in record:
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} reference capture claims a pinned control hash"
+                )
+            rendering_environment_contract = {
+                "layoutDisplayScale": LAYOUT_DISPLAY_SCALE,
+                "hostLayerContentsScale": HOST_LAYER_CONTENTS_SCALE,
+                "bitmapPixelsPerPoint": BITMAP_PIXELS_PER_POINT,
+            }
+            for key, expected_value in rendering_environment_contract.items():
+                if record.get(key) != expected_value:
+                    raise CaptureVerificationError(
+                        f"{directory.name}/{filename} {key} mismatch: "
+                        f"expected {expected_value}, observed {record.get(key)!r}"
+                    )
+            if record.get("windowBackingScaleFactor") != window_backing_scale_factor:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} windowBackingScaleFactor mismatch: "
+                    f"expected manifest-observed {window_backing_scale_factor!r}, "
+                    f"observed {record.get('windowBackingScaleFactor')!r}"
                 )
         binding = bindings_by_file[filename]
         for field, expected_value in (

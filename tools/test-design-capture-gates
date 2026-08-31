@@ -189,6 +189,47 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(inactive_root, "controlActiveState is not key")
 
+        wrong_layout_scale_root = Path(temporary) / "wrong-layout-scale"
+        shutil.copytree(args.root, wrong_layout_scale_root)
+        manifest_path = wrong_layout_scale_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["layoutDisplayScale"] = 1.0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(wrong_layout_scale_root, "manifest layoutDisplayScale mismatch")
+
+        ambient_backing_scale_root = Path(temporary) / "ambient-window-backing-scale"
+        shutil.copytree(args.root, ambient_backing_scale_root)
+        manifest_path = ambient_backing_scale_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        original_backing_scale = manifest["windowBackingScaleFactor"]
+        alternate_backing_scale = 1.0 if original_backing_scale != 1.0 else 2.0
+        manifest["windowBackingScaleFactor"] = alternate_backing_scale
+        for record in manifest["captures"]:
+            if record["captureProvenance"] == "rendered-current-run":
+                record["windowBackingScaleFactor"] = alternate_backing_scale
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        verifier.verify_capture_root(ambient_backing_scale_root)
+
+        nonpositive_backing_scale_root = Path(temporary) / "nonpositive-window-backing-scale"
+        shutil.copytree(args.root, nonpositive_backing_scale_root)
+        manifest_path = nonpositive_backing_scale_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["windowBackingScaleFactor"] = 0.0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(nonpositive_backing_scale_root, "is not positive")
+
+        inconsistent_backing_scale_root = Path(temporary) / "inconsistent-window-backing-scale"
+        shutil.copytree(args.root, inconsistent_backing_scale_root)
+        manifest_path = inconsistent_backing_scale_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["windowBackingScaleFactor"] = manifest["windowBackingScaleFactor"] + 1.0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(inconsistent_backing_scale_root, "windowBackingScaleFactor mismatch")
+
         substituted_control_root = Path(temporary) / "substituted-pinned-control"
         shutil.copytree(args.root, substituted_control_root)
         control = (
@@ -242,6 +283,8 @@ def main() -> None:
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
+        "wrong-layout-scale=true ambient-window-backing-scale-accepted=true "
+        "nonpositive-window-backing-scale=true inconsistent-window-backing-scale=true "
         "substituted-pinned-control=true "
         "reencoded-pinned-control-as-reference-pixel-duplicate=true"
     )
