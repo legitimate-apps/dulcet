@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "Dulcet"
 include(":core")
 include(":core-conformance")
+include(":android:app")

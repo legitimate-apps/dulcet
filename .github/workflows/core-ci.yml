@@ -46,6 +46,29 @@ jobs:
           :core:testAndroidHostTest
           :core:bundleAndroidMainAar
           :core:licensee
+      # The Android shell builds here rather than in a job of its own. This runner already provisions
+      # the SDK for the core's Android target, so a separate job would duplicate that setup and widen
+      # a matrix the design deliberately keeps narrow -- for no added signal.
+      #
+      # Both variants are assembled on purpose. The PROD variant must not be able to compile a
+      # preconfigured server URL, and that guarantee is structural: `ChannelDefaults` is an interface
+      # in `main`, and each flavour source set supplies its own `ActiveChannelDefaults` -- prod null,
+      # dev the loopback dev server. Building prod alone would not prove the split holds; building
+      # both means a mistake that collapses them fails here.
+      - name: Build the Android shell, both channels
+        run: >-
+          ./gradlew --no-daemon
+          :android:app:assembleDevDebug
+          :android:app:assembleProdDebug
+      # BOTH variants' unit tests run. The prod test asserts PROD ships no preconfigured server URL;
+      # the dev test asserts DEV still carries one. The second is the positive control for the first
+      # -- a refactor collapsing both flavours onto a single null-returning implementation would leave
+      # the prod assertion passing while proving nothing, and the dev test is what catches that.
+      - name: Test the Android shell, both channels
+        run: >-
+          ./gradlew --no-daemon
+          :android:app:testDevDebugUnitTest
+          :android:app:testProdDebugUnitTest
 
   conformance-env-linux:
     name: conformance-env-linux
