@@ -1,7 +1,5 @@
 package com.legitimateapps.dulcet.core
 
-import okio.Path.Companion.toPath
-
 internal class DownloadControlEnvironment(
     val engine: DownloadPolicyEngine,
     private val database: DulcetDatabaseStore,
@@ -62,9 +60,7 @@ public object DownloadPolicyContract {
                 DownloadResponseMetadata(payload.contentType, payload.contentLength),
             ) as? DownloadPromotionResult.Promoted
                 ?: error("control payload did not promote")
-            val tempRemoved = engine.temporaryFilePath(row.downloadId).let { path ->
-                !okio.FileSystem.SYSTEM.exists(path.toPath())
-            }
+            val tempRemoved = !engine.temporaryExists(row.downloadId)
 
             val mismatchLength = payload.bytes.size.toLong() + 1L
             val mismatch = engine.enqueue(

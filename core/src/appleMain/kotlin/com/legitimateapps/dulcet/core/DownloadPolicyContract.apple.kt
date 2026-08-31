@@ -13,7 +13,10 @@ internal actual fun createDownloadControlEnvironment(): DownloadControlEnvironme
         databaseName = "dulcet-download-control-$identity.db",
         inMemory = true,
     ).openDulcetDatabase()
-    val engine = DownloadPolicyEngine(database.database, DownloadFileStore((root / "files").toString()))
+    val engine = DownloadPolicyEngine(
+        database.database,
+        DownloadFileStore((root / "files").toString(), FileSystem.SYSTEM),
+    )
     return DownloadControlEnvironment(engine, database) {
         FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
     }

@@ -311,6 +311,11 @@ internal class DownloadPolicyEngine(
         return store.byId(downloadId)?.let(files::destinationExists) ?: false
     }
 
+    fun temporaryExists(downloadId: DownloadId): Boolean {
+        requireReconciled()
+        return store.byId(downloadId)?.let(files::temporaryExists) ?: false
+    }
+
     fun writeCompletedTemporaryFile(downloadId: DownloadId, bytes: ByteArray) {
         requireReconciled()
         val row = store.byId(downloadId) ?: error("unknown download")
@@ -515,7 +520,7 @@ internal class DownloadPolicyEngine(
 
 internal class DownloadFileStore(
     rootPath: String,
-    private val fileSystem: FileSystem = FileSystem.SYSTEM,
+    private val fileSystem: FileSystem,
 ) {
     private val root = rootPath.toPath(normalize = true)
     private val temporaryRoot = root / ".tmp"

@@ -125,6 +125,30 @@ class DulcetDriverFactoryTest {
                     """.trimIndent(),
                 )
                 statement.execute("INSERT INTO schema_meta VALUES (1, 2, 1, 42)")
+                // v2 already shipped the protected download table. The original interruption
+                // fixture omitted it because v2 -> v3 did not read it; v3 -> v4 legitimately does.
+                statement.execute(
+                    """
+                    CREATE TABLE download (
+                      server_id TEXT NOT NULL,
+                      raw_id TEXT NOT NULL,
+                      transcode_profile TEXT NOT NULL,
+                      download_id TEXT NOT NULL,
+                      state TEXT NOT NULL CHECK (
+                        state IN ('queued', 'downloading', 'interrupted', 'complete', 'stale')
+                      ),
+                      file_relative_path TEXT NOT NULL,
+                      expected_byte_length INTEGER,
+                      file_size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (file_size_bytes >= 0),
+                      platform_resume_data BLOB,
+                      resume_data_created_at_wall_clock INTEGER,
+                      PRIMARY KEY (server_id, raw_id, transcode_profile),
+                      UNIQUE (download_id),
+                      UNIQUE (file_relative_path),
+                      CHECK (expected_byte_length IS NULL OR expected_byte_length >= 0)
+                    )
+                    """.trimIndent(),
+                )
                 statement.execute("PRAGMA user_version = 2")
             }
         }

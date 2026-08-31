@@ -252,7 +252,7 @@ class DownloadPolicyTest {
         val database = DulcetDatabaseStore.open(createTestDriver())
         val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
             "dulcet-download-test-${secureRandomBytes(8).toLowerHex()}"
-        val files = DownloadFileStore(root.toString())
+        val files = DownloadFileStore(root.toString(), FileSystem.SYSTEM)
         val fixture = Fixture(database, files, DownloadPolicyEngine(database.database, files), root)
         try {
             block(fixture)
