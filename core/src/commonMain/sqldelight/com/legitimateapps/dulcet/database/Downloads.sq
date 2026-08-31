@@ -1,0 +1,209 @@
+CREATE TABLE download_policy_state (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  transcode_profile TEXT NOT NULL,
+  expected_container TEXT NOT NULL CHECK (
+    expected_container IN ('mp3', 'mp4', 'wav', 'flac', 'ogg', 'adts_aac')
+  ),
+  source_duration_milliseconds INTEGER CHECK (
+    source_duration_milliseconds IS NULL OR source_duration_milliseconds >= 0
+  ),
+  source_size_bytes INTEGER CHECK (source_size_bytes IS NULL OR source_size_bytes >= 0),
+  enqueue_sequence INTEGER NOT NULL CHECK (enqueue_sequence >= 0),
+  auth_generation INTEGER NOT NULL CHECK (auth_generation >= 0),
+  retry_attempt INTEGER NOT NULL DEFAULT 0 CHECK (retry_attempt >= 0),
+  retry_not_before_wall_clock INTEGER,
+  updated_at_wall_clock INTEGER NOT NULL,
+  PRIMARY KEY (server_id, raw_id, transcode_profile),
+  FOREIGN KEY (server_id, raw_id, transcode_profile)
+    REFERENCES download(server_id, raw_id, transcode_profile) ON DELETE CASCADE
+);
+
+CREATE INDEX download_policy_schedule
+ON download_policy_state(server_id, enqueue_sequence);
+
+insertDownload:
+INSERT INTO download(
+  server_id,
+  raw_id,
+  transcode_profile,
+  download_id,
+  state,
+  file_relative_path,
+  expected_byte_length,
+  file_size_bytes,
+  platform_resume_data,
+  resume_data_created_at_wall_clock
+) VALUES (?, ?, ?, ?, 'queued', ?, ?, 0, NULL, NULL);
+
+insertDownloadPolicyState:
+INSERT INTO download_policy_state(
+  server_id,
+  raw_id,
+  transcode_profile,
+  expected_container,
+  source_duration_milliseconds,
+  source_size_bytes,
+  enqueue_sequence,
+  auth_generation,
+  retry_attempt,
+  retry_not_before_wall_clock,
+  updated_at_wall_clock
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?);
+
+selectMaximumEnqueueSequence:
+SELECT max(enqueue_sequence) FROM download_policy_state WHERE server_id = ?;
+
+selectDownloadByIdentity:
+SELECT
+  d.server_id,
+  d.raw_id,
+  d.transcode_profile,
+  d.download_id,
+  d.state,
+  d.file_relative_path,
+  d.expected_byte_length,
+  d.file_size_bytes,
+  d.platform_resume_data,
+  d.resume_data_created_at_wall_clock,
+  p.expected_container,
+  p.source_duration_milliseconds,
+  p.source_size_bytes,
+  p.enqueue_sequence,
+  p.auth_generation,
+  p.retry_attempt,
+  p.retry_not_before_wall_clock,
+  p.updated_at_wall_clock
+FROM download AS d
+JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
+WHERE d.server_id = ? AND d.raw_id = ? AND d.transcode_profile = ?;
+
+selectDownloadById:
+SELECT
+  d.server_id,
+  d.raw_id,
+  d.transcode_profile,
+  d.download_id,
+  d.state,
+  d.file_relative_path,
+  d.expected_byte_length,
+  d.file_size_bytes,
+  d.platform_resume_data,
+  d.resume_data_created_at_wall_clock,
+  p.expected_container,
+  p.source_duration_milliseconds,
+  p.source_size_bytes,
+  p.enqueue_sequence,
+  p.auth_generation,
+  p.retry_attempt,
+  p.retry_not_before_wall_clock,
+  p.updated_at_wall_clock
+FROM download AS d
+JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
+WHERE d.download_id = ?;
+
+selectDownloadsForServer:
+SELECT
+  d.server_id,
+  d.raw_id,
+  d.transcode_profile,
+  d.download_id,
+  d.state,
+  d.file_relative_path,
+  d.expected_byte_length,
+  d.file_size_bytes,
+  d.platform_resume_data,
+  d.resume_data_created_at_wall_clock,
+  p.expected_container,
+  p.source_duration_milliseconds,
+  p.source_size_bytes,
+  p.enqueue_sequence,
+  p.auth_generation,
+  p.retry_attempt,
+  p.retry_not_before_wall_clock,
+  p.updated_at_wall_clock
+FROM download AS d
+JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
+WHERE d.server_id = ?
+ORDER BY p.enqueue_sequence, d.download_id;
+
+selectAllDownloads:
+SELECT
+  d.server_id,
+  d.raw_id,
+  d.transcode_profile,
+  d.download_id,
+  d.state,
+  d.file_relative_path,
+  d.expected_byte_length,
+  d.file_size_bytes,
+  d.platform_resume_data,
+  d.resume_data_created_at_wall_clock,
+  p.expected_container,
+  p.source_duration_milliseconds,
+  p.source_size_bytes,
+  p.enqueue_sequence,
+  p.auth_generation,
+  p.retry_attempt,
+  p.retry_not_before_wall_clock,
+  p.updated_at_wall_clock
+FROM download AS d
+JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
+ORDER BY d.server_id, p.enqueue_sequence, d.download_id;
+
+updateDownloadState:
+UPDATE download SET state = ? WHERE download_id = ?;
+
+markDownloadStarted:
+UPDATE download SET state = 'downloading' WHERE download_id = ?;
+
+markDownloadInterrupted:
+UPDATE download SET state = 'interrupted' WHERE download_id = ?;
+
+markDownloadQueued:
+UPDATE download SET state = 'queued' WHERE download_id = ?;
+
+markDownloadComplete:
+UPDATE download
+SET state = 'complete',
+    expected_byte_length = ?,
+    file_size_bytes = ?,
+    platform_resume_data = NULL,
+    resume_data_created_at_wall_clock = NULL
+WHERE download_id = ?;
+
+markDownloadStale:
+UPDATE download SET state = 'stale' WHERE download_id = ?;
+
+updateDownloadResumeData:
+UPDATE download
+SET platform_resume_data = ?, resume_data_created_at_wall_clock = ?
+WHERE download_id = ?;
+
+clearDownloadResumeData:
+UPDATE download
+SET platform_resume_data = NULL, resume_data_created_at_wall_clock = NULL
+WHERE download_id = ?;
+
+updateDownloadRetry:
+UPDATE download_policy_state
+SET retry_attempt = ?, retry_not_before_wall_clock = ?, updated_at_wall_clock = ?
+WHERE server_id = ? AND raw_id = ? AND transcode_profile = ?;
+
+resetDownloadRetry:
+UPDATE download_policy_state
+SET retry_attempt = 0, retry_not_before_wall_clock = NULL, updated_at_wall_clock = ?
+WHERE server_id = ? AND raw_id = ? AND transcode_profile = ?;
+
+updateDownloadCredentialGeneration:
+UPDATE download_policy_state
+SET auth_generation = ?, updated_at_wall_clock = ?
+WHERE server_id = ? AND raw_id = ? AND transcode_profile = ?;
+
+updateDownloadServerSnapshot:
+UPDATE download_policy_state
+SET source_duration_milliseconds = ?, source_size_bytes = ?, updated_at_wall_clock = ?
+WHERE server_id = ? AND raw_id = ? AND transcode_profile = ?;
+
+deleteDownload:
+DELETE FROM download WHERE download_id = ?;

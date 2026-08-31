@@ -3,7 +3,7 @@ package com.legitimateapps.dulcet.core
 import app.cash.sqldelight.db.SqlDriver
 import com.legitimateapps.dulcet.database.DulcetDatabase
 
-internal const val DULCET_SCHEMA_VERSION: Long = 3
+internal const val DULCET_SCHEMA_VERSION: Long = 4
 internal const val DULCET_CACHE_FORMAT_VERSION: Long = 1
 
 internal data class DulcetSchemaMetadata(
