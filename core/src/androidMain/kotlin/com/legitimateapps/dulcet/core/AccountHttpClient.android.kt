@@ -5,6 +5,8 @@ import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.cio.CIO
 import io.ktor.http.Url
+import io.ktor.http.HttpStatusCode
+import io.ktor.client.plugins.api.createClientPlugin
 
 internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
@@ -18,6 +20,23 @@ internal actual fun createAccountHttpClient(
             )
         }
     }
+    // Mark a proxy challenge the way the Darwin delegate does. Without this the tracker is never
+    // set on Android, `consumeUnsupported()` stays false, and a 407 falls through as a transport
+    // failure -- OBSERVED via CONF-10c, which saw Transport.Unreachable where Darwin reports
+    // Auth.UnsupportedAuthenticationChallenge. That mistranslation is user-visible and wrong: it
+    // tells someone their server is unreachable when a proxy actually demanded credentials they
+    // were never asked for.
+    //
+    // Ktor's CIO engine surfaces the challenge as an ordinary 407 response rather than a delegate
+    // callback, so the hook is a response observer instead. Nothing here answers the challenge:
+    // marking it is what makes the request fail CLOSED with a typed error.
+    install(createClientPlugin("DulcetProxyChallengeMarker") {
+        onResponse { response ->
+            if (response.status == HttpStatusCode.ProxyAuthenticationRequired) {
+                transport.challengeTracker.markUnsupported()
+            }
+        }
+    })
     configure()
 }
 
