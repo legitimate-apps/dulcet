@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
 import android.app.Application
+import android.content.Context
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.AudioContainer
@@ -27,6 +28,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -172,6 +175,44 @@ class AccountConnectAndroidConformanceTest {
         assertTrue(crossOriginRecovery.contains("SSO", ignoreCase = true))
     }
 
+    @Test
+    fun conf10aUnavailableSecureStorageFailsClosedWithoutFallback() {
+        val application = RuntimeEnvironment.getApplication<Application>()
+        val cleared = application.getSharedPreferences(
+            AndroidAccountCredentialStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().clear().commit()
+        assertTrue(cleared, "CONF-10a could not establish an empty record-store precondition")
+        val cipher = UnavailableCredentialCipher()
+        val store = AndroidAccountCredentialStore(application, cipher)
+
+        val failure = assertFailsWith<CredentialStoreException> {
+            store.save(
+                serverName = "Music",
+                serverUrl = "https://music.example.invalid",
+                username = "listener",
+                password = "fixture-password",
+                allowLocalHttp = false,
+            )
+        }
+
+        assertEquals(
+            CredentialStoreException.Reason.SecureStorageUnavailable,
+            failure.reason,
+            "CONF-10a secure-storage failure lost its typed reason",
+        )
+        assertEquals(1, cipher.encryptAttempts)
+        assertFalse(
+            store.hasActiveAccountPointer(),
+            "CONF-10a selected an account whose secure credential write failed",
+        )
+        assertEquals(
+            0,
+            store.storedEntryCount(),
+            "CONF-10a persisted credential material after the secure cipher failed",
+        )
+    }
+
     private fun viewModel(
         gateway: AccountConnectionGateway,
         credentialStore: AccountCredentialStore = MemoryCredentialStore(),
@@ -183,6 +224,21 @@ class AccountConnectAndroidConformanceTest {
             override val preconfiguredServerUrl: String? = null
         },
     )
+}
+
+private class UnavailableCredentialCipher : AccountCredentialCipher {
+    var encryptAttempts: Int = 0
+        private set
+
+    override fun encrypt(id: String, plaintext: ByteArray): ByteArray {
+        encryptAttempts += 1
+        throw IllegalStateException("AndroidKeyStore unavailable to this caller")
+    }
+
+    override fun decrypt(id: String, payload: ByteArray): ByteArray =
+        error("CONF-10a must not attempt a read after its failed write")
+
+    override fun delete(id: String) = Unit
 }
 
 private fun allAccountPresentationErrors(): List<DomainError> = buildList {
