@@ -461,12 +461,32 @@
           "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the tvosSimulatorArm64 core-conformance runtime, so the durable core engine is evidenced on tvOS. No production tvOS library surface starts that sync, browses its committed generation, schedules refreshes, or proves real saved metadata offline, so the platform cell is partial rather than shipped."
         },
         "android": {
-          "status": "planned",
-          "reason": "The production core has Android database composition, but core-conformance declares no Android target and no Android CI run executes CONF-31, CONF-32 or CONF-33. This cell therefore remains planned."
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-library-sync-app-integration",
+            "reason": "Promotion requires an Android app workflow and test that start production library sync, browse the committed SQLDelight generation through AndroidSqliteDriver, exercise refresh lifecycle behavior, and prove saved metadata remains browsable offline. The host controls use a file-backed JDBC control database and do not observe those device/app-process links."
+          },
+          "evidence": [
+            {"conformance": "CONF-31", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
+            {"conformance": "CONF-32", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
+            {"conformance": "CONF-33", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+          ],
+          "reason": "conformance-env-linux executes CONF-31, CONF-32 and CONF-33 from the Android target against the live disposable server, proving the shared durable sync algorithm's generation-pinned reads, atomic commit, and bounded witness on the Android-compiled core. This host run is valid bounded core evidence, not device evidence: the control database is file-backed JDBC, and no Android app process starts sync or browses AndroidSqliteDriver state. The cell is therefore partial, not shipped."
         },
         "androidtv": {
-          "status": "planned",
-          "reason": "No Android TV conformance target, CI execution, or production library-sync integration test exists for CONF-31, CONF-32 or CONF-33, so this cell remains planned."
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-library-sync-app-integration",
+            "reason": "Promotion requires an Android TV app workflow and test that start production library sync, browse the committed AndroidSqliteDriver generation, exercise refresh lifecycle behavior, and prove saved metadata remains browsable offline through the TV surface. The shared Android host controls do not observe the app process, device storage, focus, or remote interaction."
+          },
+          "evidence": [
+            {"conformance": "CONF-31", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
+            {"conformance": "CONF-32", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
+            {"conformance": "CONF-33", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+          ],
+          "reason": "Android TV consumes the same Android-compiled core, and conformance-env-linux executes all three declared sync controls on that target against the live disposable server. That is valid evidence for the shared core algorithm only. It does not observe an Android TV app process, AndroidSqliteDriver storage, offline browsing, focus, or remote interaction, so the cell is partial rather than shipped."
         }
       }
     },
@@ -513,7 +533,32 @@
             "reason": "CONF-41 proves the local/server merge against the reference server on this runtime: a server row replaces the local row carrying the same opaque id in place, local-only rows keep their position, server-only rows append, and no identity is duplicated or dropped. It does not observe the user-facing half on this platform - that a typed query reaches the field, that ranked results render, and that activating one starts the search-sourced queue. Promotion requires a run that drives search through this platform's own UI and observes the resulting playback intent, rather than a core conformance test standing in for it."
           }
         },
-        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
+             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-search-app-integration",
+            "reason": "Promotion requires an Android app workflow that types a query through the Compose surface, renders the ranked merged results, and observes activation routing into the production playback or detail intent. The Android host control proves only the core merge and wire behavior."
+          },
+          "reason": "conformance-env-linux executes CONF-41 from the Android target against the live disposable server, proving that server rows replace matching local opaque ids without duplicates or drops. This is valid bounded wire/core evidence, but it does not run an Android device, Compose search UI, or activation path, so the feature is partial rather than shipped."
+        },
+        "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
+             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-search-app-integration",
+            "reason": "Promotion requires an Android TV workflow that enters a query with TV input, renders and traverses the ranked results with focus, and observes activation routing into playback or detail. The shared Android host control proves only the core merge and wire behavior."
+          },
+          "reason": "Android TV shares the Android core that executes CONF-41 in conformance-env-linux, so the local/server merge has bounded target evidence. The host run does not observe a TV device, focus model, remote text entry, result rendering, or activation, so the cell is partial rather than shipped."
+        }
       }
     },
     {
@@ -577,7 +622,40 @@
           ],
           "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
         },
-        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-platform-observed-audio-rendering",
+            "reason": "Promotion requires an Android device or emulator workflow that drives playback through the production Media3 integration, validates the bytes consumed by the engine, and observes progressing media plus the server-side play record. The host controls do not execute Media3 or an Android app process."
+          },
+          "evidence": [
+            {"conformance": "CONF-11", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+          ],
+          "reason": "All six declared stream controls execute from the Android target against the pinned live server after a fail-loud cold-cache reset. They prove the Android-compiled core's wire requests, validation, ranges, legacy offset, extension offset semantics, and opaque transcode parameters. They do not run Media3, inline engine-byte validation, or audio rendering on a device, so this is partial rather than shipped."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-platform-observed-audio-rendering",
+            "reason": "Promotion requires an Android TV device or emulator workflow that drives playback through the production Media3 and TV surfaces, validates the bytes consumed by the engine, and observes progressing media plus the server-side play record. The shared host controls do not execute Media3, focus, remote commands, or a TV app process."
+          },
+          "evidence": [
+            {"conformance": "CONF-11", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+          ],
+          "reason": "Android TV shares the Android core for which all six declared stream controls pass against the pinned live server after an independently proven cold reset. This is bounded wire/core evidence only; no TV device, Media3 engine, focus, remote commands, or audio rendering executes, so the cell is partial rather than shipped."
+        }
       }
     },
     {
@@ -629,7 +707,32 @@
           ],
           "reason": "The declared conformance controls execute on this platform's own runtime in apple-ci, exercising the production wire client and stream validator against the pinned reference server. No run drives actual audio rendering on this platform, so the engine half rests on shared DulcetKit tests rather than an observation here. That is why this is partial and not shipped."
         },
-        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-playback-progress-integration",
+            "reason": "Promotion requires an Android device or emulator workflow that derives progressing media time from the production Media3 adapter, crosses the scrobble threshold, and observes exactly one submitted server play. The host controls issue protocol calls directly and do not observe that trigger chain."
+          },
+          "evidence": [
+            {"conformance": "CONF-22", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+          ],
+          "reason": "The Android target executes CONF-22 and CONF-23 against the live disposable server, proving the reference server's now-playing versus submitted-scrobble side effects and repeated same-time behavior through the Android-compiled wire client. The host run does not execute Media3 or the progressing-media threshold reducer in an Android app process, so the cell is partial rather than shipped."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-playback-progress-integration",
+            "reason": "Promotion requires an Android TV device or emulator workflow that derives progressing media time from the production Media3 adapter, crosses the threshold under TV lifecycle and remote control, and observes exactly one submitted server play. The shared host controls issue protocol calls directly."
+          },
+          "evidence": [
+            {"conformance": "CONF-22", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+          ],
+          "reason": "Android TV shares the Android-compiled core for which CONF-22 and CONF-23 pass against the live disposable server. That proves bounded protocol semantics, not Media3 progress, TV lifecycle, remote-control handling, or an app-process submission trigger, so the cell is partial rather than shipped."
+        }
       }
     },
     {

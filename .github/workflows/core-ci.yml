@@ -108,19 +108,38 @@ jobs:
           trap cleanup EXIT
           tools/conformance-env/linux-local --root "$ROOT" up
           tools/conformance-env/linux-local --root "$ROOT" run -- \
-            ./gradlew --no-daemon :core-conformance:jvmTest
+            ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
+            :core-conformance:jvmTest
+          # CONF-14a and CONF-17 measure a cold transcode. The JVM run warms that cache, so the
+          # Android target gets the same fail-loud stopped-server reset used between Apple targets.
+          # `reset` proves cached=false from Navidrome's own log before this second suite starts.
+          tools/conformance-env/linux-local --root "$ROOT" reset
+          tools/conformance-env/linux-local --root "$ROOT" run -- \
+            ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
+            :core-conformance:testAndroidHostTest
 
       # A conformance failure is a measurement disagreeing with the reference server, so the JUnit
       # XML is the evidence -- it carries the assertion message with the observed values. apple-ci
       # already uploads its three native equivalents; core-ci uploaded nothing, so a JVM conformance
       # failure could only be guessed at from the console. OBSERVED 2026-08-28 on a CONF-14a
       # failure. `always()` is the point: this artifact matters most when the step failed.
-      - name: Upload jvm core-conformance JUnit results
+      - name: Upload Linux core-conformance JUnit results
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dulcet-core-conformance-jvm-junit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: core-conformance/build/test-results/jvmTest
+          name: dulcet-core-conformance-linux-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            core-conformance/build/test-results/jvmTest
+            core-conformance/build/test-results/testAndroidHostTest
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Android core-conformance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/testAndroidHostTest
           if-no-files-found: warn
           retention-days: 7
 
@@ -134,6 +153,14 @@ jobs:
       CORE_BUILD_RESULT: ${{ needs.core-build.result }}
       CONFORMANCE_ENV_LINUX_RESULT: ${{ needs.conformance-env-linux.result }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download Android core-conformance evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-core-conformance-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance-android-results
+      - name: Verify Android parity evidence executed and passed
+        run: python3 tools/verify-parity-evidence core-conformance-android-results
       - name: Require build and Linux conformance environment
         run: |
           echo "core-build=$CORE_BUILD_RESULT"

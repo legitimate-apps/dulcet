@@ -132,7 +132,10 @@ expect_rejection(
 )
 expect_rejection(
     "required aggregator that never verifies executed tests",
-    lambda document: macos_evidence(document)[0].update(workflow="core-ci", job="core-ci"),
+    lambda document: macos_evidence(document)[0].update(
+        workflow="parity-gate",
+        job="parity-gate",
+    ),
     "evidence job is not wired to executed-test verification",
 )
 expect_rejection(

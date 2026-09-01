@@ -526,7 +526,9 @@ def up(root: Path) -> None:
     }
     (root / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
     print(f"conformance environment up cold: root={root} container={name}")
-    print("run tests: tools/conformance-env/linux-local run -- ./gradlew --no-daemon :core-conformance:jvmTest")
+    print("run JVM tests: tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:jvmTest")
+    print("then reset: tools/conformance-env/linux-local reset")
+    print("run Android host tests: tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:testAndroidHostTest")
 
 
 def conformance_environment() -> dict[str, str]:
