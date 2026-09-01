@@ -69,6 +69,16 @@ jobs:
           ./gradlew --no-daemon
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
+      - name: Upload Android app account-control evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-android-app-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            android/app/build/test-results/testDevDebugUnitTest
+            android/app/build/test-results/testProdDebugUnitTest
+          if-no-files-found: warn
+          retention-days: 7
 
   conformance-env-linux:
     name: conformance-env-linux
@@ -159,8 +169,16 @@ jobs:
         with:
           name: dulcet-core-conformance-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance-android-results
+      - name: Download Android app account-control evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-android-app-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: android-app-results
       - name: Verify Android parity evidence executed and passed
-        run: python3 tools/verify-parity-evidence core-conformance-android-results
+        run: >-
+          python3 tools/verify-parity-evidence
+          core-conformance-android-results
+          android-app-results
       - name: Require build and Linux conformance environment
         run: |
           echo "core-build=$CORE_BUILD_RESULT"
