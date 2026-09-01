@@ -404,7 +404,81 @@
           ],
           "reason": "The tvOS target now hosts the production Dulcet root with a dedicated full-screen navigation and focus model, native tvOS credential fields, and its own application and test-bundle identities. apple-ci builds the app and executes shared presentation and credential-store controls in DulcetKitTVOSTests on an Apple TV simulator; accountConnectRootLoadsForTVOS constrains the 1920-by-1080 root, while accountConnectTVOSUsesSystemCredentialTextEntryAndInitialFocus separately constrains three system credential fields and the initial remote focus. The tvOS JUnit report and tvosSimulatorArm64 core-conformance result are separate from the macOS and iOS runs. CONF-01 through CONF-08 and CONF-10c remain bounded core/Darwin controls; they do not claim a live connection from the DulcetTV app process. A successful production connection, signed Keychain persistence, and the connected UI in the real tvOS app process remain unproved, so shipped would be unearned."
         },
-        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-01", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"},
+            {"conformance": "CONF-02", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf02ReferenceServerExtensionSet"},
+            {"conformance": "CONF-03", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf03BaselinePingAuthentication"},
+            {"conformance": "CONF-04", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf04VersionCompatibility"},
+            {"conformance": "CONF-05", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf05OpenSubsonicEnvelopeFields"},
+            {"conformance": "CONF-06", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf06DistinguishesAuthenticationAndTransportFailures"},
+            {"conformance": "CONF-07", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf07RedactsCredentialsFromDiagnostics"},
+            {"conformance": "CONF-08", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"},
+            {"conformance": "CONF-09a", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf09aProgressIsPublishedAndTheActiveOperationIsCancellable"},
+            {"conformance": "CONF-09b", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf09bEveryDeclaredDistinctRenderStateIsReachable"},
+            {"conformance": "CONF-09c", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf09cEveryDomainErrorHasAnActionablePresentation"},
+            {"conformance": "CONF-10a", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf10aUnavailableSecureStorageFailsClosedWithoutFallback"},
+            {"conformance": "CONF-10b", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf10bRelaunchPrefillsCredentialsAndWaitsForExplicitReconnect"},
+            {"conformance": "CONF-10c", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProxyAuthenticationConformanceTest/conf10cProxyChallengeRejectsAmbientCredentials"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-device-and-tv-interaction",
+            "reason": "All fourteen declared controls execute on Android and are verified by the branch-protection-required core-ci job, which downloads the Android-only evidence artifacts and runs tools/verify-parity-evidence over them, so JVM or Apple results cannot stand in. Verified locally against a cold disposable Navidrome: executed=48 failures=0 skipped=0. NOT proven: these are host-side tests exercising Android-compiled code on a JVM, not a device or a real app process, and nothing Android TV lean-back specific is covered - androidtv cites the identical core evidence. KNOWN DIVERGENCE, recorded rather than smoothed over: CONF-10c's security properties hold identically on Android - fails closed, ambient proxy authenticator never consulted, no ambient credentials on the wire - but the error is labelled Transport.Unreachable where Darwin reports Auth.UnsupportedAuthenticationChallenge, because Ktor's CIO engine surfaces a 407 as a bare IOException carrying no status."
+          }
+        }, "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-01", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf01UnauthenticatedExtensionDiscovery"},
+            {"conformance": "CONF-02", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf02ReferenceServerExtensionSet"},
+            {"conformance": "CONF-03", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf03BaselinePingAuthentication"},
+            {"conformance": "CONF-04", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf04VersionCompatibility"},
+            {"conformance": "CONF-05", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf05OpenSubsonicEnvelopeFields"},
+            {"conformance": "CONF-06", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf06DistinguishesAuthenticationAndTransportFailures"},
+            {"conformance": "CONF-07", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf07RedactsCredentialsFromDiagnostics"},
+            {"conformance": "CONF-08", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectConformanceTest/conf08EnforcesRedirectCredentialPolicy"},
+            {"conformance": "CONF-09a", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf09aProgressIsPublishedAndTheActiveOperationIsCancellable"},
+            {"conformance": "CONF-09b", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf09bEveryDeclaredDistinctRenderStateIsReachable"},
+            {"conformance": "CONF-09c", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf09cEveryDomainErrorHasAnActionablePresentation"},
+            {"conformance": "CONF-10a", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf10aUnavailableSecureStorageFailsClosedWithoutFallback"},
+            {"conformance": "CONF-10b", "workflow": "core-ci", "job": "core-ci",
+             "test": "AccountConnectAndroidConformanceTest/conf10bRelaunchPrefillsCredentialsAndWaitsForExplicitReconnect"},
+            {"conformance": "CONF-10c", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProxyAuthenticationConformanceTest/conf10cProxyChallengeRejectsAmbientCredentials"}
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-device-and-tv-interaction",
+            "reason": "All fourteen declared controls execute on Android and are verified by the branch-protection-required core-ci job, which downloads the Android-only evidence artifacts and runs tools/verify-parity-evidence over them, so JVM or Apple results cannot stand in. Verified locally against a cold disposable Navidrome: executed=48 failures=0 skipped=0. NOT proven: these are host-side tests exercising Android-compiled code on a JVM, not a device or a real app process, and nothing Android TV lean-back specific is covered - androidtv cites the identical core evidence. KNOWN DIVERGENCE, recorded rather than smoothed over: CONF-10c's security properties hold identically on Android - fails closed, ambient proxy authenticator never consulted, no ambient credentials on the wire - but the error is labelled Transport.Unreachable where Darwin reports Auth.UnsupportedAuthenticationChallenge, because Ktor's CIO engine surfaces a 407 as a bare IOException carrying no status."
+          }
+        }
       }
     },
     {
