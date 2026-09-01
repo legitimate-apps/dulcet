@@ -446,6 +446,10 @@ public class AccountConnector private constructor(
                 traceRecorder.clear()
                 val result = try {
                     connectNormalized(client, baseUrl, request, traceRecorder)
+                } catch (_: UnsupportedAuthenticationChallengeFailure) {
+                    AccountConnectionResult.Failed(
+                        DomainError.Auth.UnsupportedAuthenticationChallenge,
+                    )
                 } catch (failure: RedirectPolicyFailure) {
                     AccountConnectionResult.Failed(failure.error)
                 } catch (failure: LocalHttpPolicyFailure) {
@@ -670,6 +674,10 @@ public class AccountConnector private constructor(
                 useForm = useForm,
                 allowLocalHttp = allowLocalHttp,
             )
+            if (response.status.value == 407) {
+                response.bodyAsText()
+                throw UnsupportedAuthenticationChallengeFailure()
+            }
             if (response.status.value !in REDIRECT_STATUS_CODES) {
                 return WireResponse(
                     statusCode = response.status.value,
@@ -790,6 +798,8 @@ public class AccountConnector private constructor(
         val SALT_PATTERN = Regex("[0-9a-f]{32}")
     }
 }
+
+private class UnsupportedAuthenticationChallengeFailure : Exception()
 
 internal fun mapAccountConnectionFailure(failure: Throwable): DomainError = when {
     failure is HttpRequestTimeoutException ||
