@@ -40,6 +40,8 @@ jobs:
       - name: Build, test, and audit dependency licences
         run: >-
           ./gradlew --no-daemon
+          --max-workers=2
+          -Dorg.gradle.workers.max=2
           :core:verifySqlDelightMigration
           :core:allMetadataJar
           :core:jvmTest
@@ -58,6 +60,8 @@ jobs:
       - name: Build the Android shell, both channels
         run: >-
           ./gradlew --no-daemon
+          --max-workers=2
+          -Dorg.gradle.workers.max=2
           :android:app:assembleDevDebug
           :android:app:assembleProdDebug
       # BOTH variants' unit tests run. The prod test asserts PROD ships no preconfigured server URL;
@@ -67,6 +71,8 @@ jobs:
       - name: Test the Android shell, both channels
         run: >-
           ./gradlew --no-daemon
+          --max-workers=2
+          -Dorg.gradle.workers.max=2
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
       - name: Upload Android app account-control evidence
