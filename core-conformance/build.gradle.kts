@@ -62,6 +62,10 @@ kotlin {
         getByName("androidHostTest").dependencies {
             implementation(libs.ktor.client.cio)
             implementation(libs.sqldelight.sqlite.driver)
+            // The Android download controls hand the core a FileSystem for their temp file store,
+            // the same way the JVM actual does. Android's production driver needs a Context, so
+            // these host-only resources are supplied by this module rather than built in core.
+            implementation(libs.okio)
         }
         appleTest.dependencies {
             implementation(libs.ktor.client.darwin)
