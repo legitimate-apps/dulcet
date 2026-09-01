@@ -301,8 +301,20 @@ jobs:
           # rotated to M5 models, so resolve whatever iPad this image actually ships. The resolver
           # fails loudly rather than falling back to an iPhone, which would keep CI green while
           # proving nothing.
-          IPAD_DESTINATION="$(python3 tools/resolve-ipad-destination)"
+          IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          IPAD_DESTINATION="platform=iOS Simulator,id=$IPAD_UDID"
           echo "iPadOS destination: $IPAD_DESTINATION"
+          # Boot that iPad and wait for it BEFORE xcodebuild launches anything into it. Every
+          # simulator step above this one uses a different device, so this iPad is cold here and its
+          # first boot would otherwise run inside the UI test's app-launch window and compete with
+          # it. OBSERVED: two runs failed at DulcetiOSUITests.swift:23 with "Timed out while
+          # launching application via Xcode" -- 33420584120 (2026-08-31, 97.1s) and 33457633113
+          # (2026-09-01, on main, 63.0s) -- while the iPhone test steps above them passed in those
+          # same runs, so CoreSimulator was healthy and only this cold launch timed out.
+          # `bootstatus -b` boots the device if it is not already booted and blocks until it
+          # reports booted, which takes boot work out of the launch window. It is NOT a retry: a
+          # genuine launch regression still fails this step exactly as before.
+          xcrun simctl bootstatus "$IPAD_UDID" -b
           xcodebuild test \
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetiOS \
