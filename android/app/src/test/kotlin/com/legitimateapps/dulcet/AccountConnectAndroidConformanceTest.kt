@@ -3,9 +3,17 @@ package com.legitimateapps.dulcet
 import android.app.Application
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
+import com.legitimateapps.dulcet.core.AudioContainer
+import com.legitimateapps.dulcet.core.CapabilityFeature
 import com.legitimateapps.dulcet.core.CapabilitySet
 import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.core.InvalidServerUrlReason
+import com.legitimateapps.dulcet.core.ObservedPlaybackContentType
+import com.legitimateapps.dulcet.core.ProtocolVersionLevel
+import com.legitimateapps.dulcet.core.RedirectRejectionReason
+import com.legitimateapps.dulcet.core.RedirectTargetHost
+import com.legitimateapps.dulcet.core.TlsTrustFailure
 import com.legitimateapps.dulcet.core.UserPermissions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -21,6 +29,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 @RunWith(RobolectricTestRunner::class)
 class AccountConnectAndroidConformanceTest {
@@ -114,6 +123,55 @@ class AccountConnectAndroidConformanceTest {
         }
     }
 
+    @Test
+    fun conf09cEveryDomainErrorHasAnActionablePresentation() {
+        val application = RuntimeEnvironment.getApplication<Application>()
+        val errors = allAccountPresentationErrors()
+        val presentations = errors.map(DomainError::accountFailurePresentation)
+
+        assertEquals(errors.size, presentations.size)
+        presentations.forEachIndexed { index, presentation ->
+            val title = application.getString(presentation.title)
+            val message = presentation.messageArgument?.let {
+                application.getString(presentation.message, it)
+            } ?: application.getString(presentation.message)
+            val recovery = application.getString(presentation.recovery)
+
+            assertTrue(title.isNotBlank(), "CONF-09c error #$index has no title")
+            assertTrue(message.isNotBlank(), "CONF-09c error #$index has no explanatory message")
+            assertTrue(recovery.isNotBlank(), "CONF-09c error #$index has no recovery action")
+        }
+
+        val internationalized = DomainError.Input.InvalidServerUrl(
+            InvalidServerUrlReason.UnsupportedInternationalizedHost,
+        ).accountFailurePresentation()
+        assertTrue(
+            application.getString(internationalized.recovery).contains("punycode", ignoreCase = true),
+            "CONF-09c lost the decided internationalized-host remedy",
+        )
+
+        val tls = DomainError.Security.TlsUntrusted(
+            TlsTrustFailure.CertificateChain,
+        ).accountFailurePresentation()
+        val tlsRecovery = application.getString(tls.recovery)
+        assertTrue(tlsRecovery.contains("CA", ignoreCase = true))
+        assertTrue(tlsRecovery.contains("operating-system", ignoreCase = true))
+
+        val targetHost = "login.example.invalid"
+        val crossOrigin = DomainError.Auth.CrossOriginRedirectRejected(
+            RedirectTargetHost(targetHost),
+        ).accountFailurePresentation()
+        val crossOriginMessage = application.getString(
+            crossOrigin.message,
+            requireNotNull(crossOrigin.messageArgument),
+        )
+        val crossOriginRecovery = application.getString(crossOrigin.recovery)
+        assertTrue(crossOriginMessage.contains(targetHost))
+        assertTrue('/' !in crossOriginMessage && '?' !in crossOriginMessage)
+        assertTrue(crossOriginRecovery.contains("/rest/"))
+        assertTrue(crossOriginRecovery.contains("SSO", ignoreCase = true))
+    }
+
     private fun viewModel(
         gateway: AccountConnectionGateway,
         credentialStore: AccountCredentialStore = MemoryCredentialStore(),
@@ -125,6 +183,49 @@ class AccountConnectAndroidConformanceTest {
             override val preconfiguredServerUrl: String? = null
         },
     )
+}
+
+private fun allAccountPresentationErrors(): List<DomainError> = buildList {
+    addAll(InvalidServerUrlReason.entries.map { DomainError.Input.InvalidServerUrl(it) })
+    add(DomainError.Transport.Unreachable)
+    add(DomainError.Transport.Timeout)
+    add(DomainError.Transport.Cancelled)
+    addAll(TlsTrustFailure.entries.map { DomainError.Security.TlsUntrusted(it) })
+    add(DomainError.Security.LocalExceptionViolated)
+    addAll(
+        RedirectRejectionReason.entries.map {
+            DomainError.Security.RedirectRejected(it)
+        },
+    )
+    add(DomainError.Protocol.MalformedEnvelope)
+    add(
+        DomainError.Protocol.UnexpectedContentType(
+            actual = ObservedPlaybackContentType.Other,
+            expected = AudioContainer.Mp3,
+        ),
+    )
+    add(DomainError.Protocol.UnexpectedBinary)
+    add(
+        DomainError.Protocol.Incompatible(
+            clientVersion = ProtocolVersionLevel(1, 16),
+            serverVersion = ProtocolVersionLevel(2, 0),
+        ),
+    )
+    add(DomainError.Protocol.NotASubsonicServer)
+    add(DomainError.Server.Busy(5.seconds))
+    add(DomainError.Server.Known(40))
+    add(DomainError.Server.Unknown(999))
+    add(DomainError.Auth.InvalidCredentials)
+    add(DomainError.Auth.TokenAuthUnsupported)
+    add(DomainError.Auth.Forbidden)
+    add(DomainError.Auth.UnsupportedAuthenticationChallenge)
+    add(
+        DomainError.Auth.CrossOriginRedirectRejected(
+            RedirectTargetHost("login.example.invalid"),
+        ),
+    )
+    add(DomainError.Playback.NoPlayableSource)
+    addAll(CapabilityFeature.entries.map { DomainError.CapabilityUnsupported(it) })
 }
 
 private fun AccountConnectStatus.renderStateName(): String = when (this) {
