@@ -41,7 +41,6 @@ jobs:
         run: >-
           ./gradlew --no-daemon
           --max-workers=2
-          -Dorg.gradle.workers.max=2
           :core:verifySqlDelightMigration
           :core:allMetadataJar
           :core:jvmTest
@@ -61,7 +60,6 @@ jobs:
         run: >-
           ./gradlew --no-daemon
           --max-workers=2
-          -Dorg.gradle.workers.max=2
           :android:app:assembleDevDebug
           :android:app:assembleProdDebug
       # BOTH variants' unit tests run. The prod test asserts PROD ships no preconfigured server URL;
@@ -72,7 +70,6 @@ jobs:
         run: >-
           ./gradlew --no-daemon
           --max-workers=2
-          -Dorg.gradle.workers.max=2
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
       - name: Upload Android app account-control evidence
@@ -83,7 +80,7 @@ jobs:
           path: |
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
   conformance-env-linux:
@@ -147,7 +144,7 @@ jobs:
           path: |
             core-conformance/build/test-results/jvmTest
             core-conformance/build/test-results/testAndroidHostTest
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: Upload Android core-conformance evidence
@@ -156,7 +153,7 @@ jobs:
         with:
           name: dulcet-core-conformance-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance/build/test-results/testAndroidHostTest
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
   core-ci:

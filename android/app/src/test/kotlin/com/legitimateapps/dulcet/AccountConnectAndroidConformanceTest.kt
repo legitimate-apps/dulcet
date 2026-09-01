@@ -128,7 +128,7 @@ class AccountConnectAndroidConformanceTest {
 
     @Test
     fun conf09cEveryDomainErrorHasAnActionablePresentation() {
-        val application = RuntimeEnvironment.getApplication<Application>()
+        val application = RuntimeEnvironment.getApplication()
         val errors = allAccountPresentationErrors()
         val presentations = errors.map(DomainError::accountFailurePresentation)
 
@@ -177,7 +177,7 @@ class AccountConnectAndroidConformanceTest {
 
     @Test
     fun conf10aUnavailableSecureStorageFailsClosedWithoutFallback() {
-        val application = RuntimeEnvironment.getApplication<Application>()
+        val application = RuntimeEnvironment.getApplication()
         val cleared = application.getSharedPreferences(
             AndroidAccountCredentialStore.PREFERENCES_NAME,
             Context.MODE_PRIVATE,
@@ -265,7 +265,7 @@ class AccountConnectAndroidConformanceTest {
         gateway: AccountConnectionGateway,
         credentialStore: AccountCredentialStore = MemoryCredentialStore(),
     ): AccountConnectViewModel = AccountConnectViewModel(
-        application = RuntimeEnvironment.getApplication<Application>(),
+        application = RuntimeEnvironment.getApplication(),
         gateway = gateway,
         credentialStore = credentialStore,
         defaults = object : ChannelDefaults {
