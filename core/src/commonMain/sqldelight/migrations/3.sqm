@@ -1,0 +1,61 @@
+CREATE TABLE download_policy_state (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  transcode_profile TEXT NOT NULL,
+  expected_container TEXT NOT NULL CHECK (
+    expected_container IN ('mp3', 'mp4', 'wav', 'flac', 'ogg', 'adts_aac')
+  ),
+  source_duration_milliseconds INTEGER CHECK (
+    source_duration_milliseconds IS NULL OR source_duration_milliseconds >= 0
+  ),
+  source_size_bytes INTEGER CHECK (source_size_bytes IS NULL OR source_size_bytes >= 0),
+  enqueue_sequence INTEGER NOT NULL CHECK (enqueue_sequence >= 0),
+  auth_generation INTEGER NOT NULL CHECK (auth_generation >= 0),
+  retry_attempt INTEGER NOT NULL DEFAULT 0 CHECK (retry_attempt >= 0),
+  retry_not_before_wall_clock INTEGER,
+  updated_at_wall_clock INTEGER NOT NULL,
+  PRIMARY KEY (server_id, raw_id, transcode_profile),
+  FOREIGN KEY (server_id, raw_id, transcode_profile)
+    REFERENCES download(server_id, raw_id, transcode_profile) ON DELETE CASCADE
+);
+
+CREATE INDEX download_policy_schedule
+ON download_policy_state(server_id, enqueue_sequence);
+
+-- Released schema-v3 rows predate executable download policy. Preserve every protected row and
+-- attach conservative metadata so relaunch reconciliation can see it instead of losing it through
+-- the policy join. The legacy transcode profile remains opaque; only well-known media hints select
+-- a validator, with Ogg as the conservative container for the historical Opus fixtures.
+INSERT INTO download_policy_state(
+  server_id,
+  raw_id,
+  transcode_profile,
+  expected_container,
+  source_duration_milliseconds,
+  source_size_bytes,
+  enqueue_sequence,
+  auth_generation,
+  retry_attempt,
+  retry_not_before_wall_clock,
+  updated_at_wall_clock
+)
+SELECT
+  server_id,
+  raw_id,
+  transcode_profile,
+  CASE
+    WHEN lower(transcode_profile) LIKE '%flac%' THEN 'flac'
+    WHEN lower(transcode_profile) LIKE '%mp3%' OR lower(transcode_profile) LIKE '%mpeg%' THEN 'mp3'
+    WHEN lower(transcode_profile) LIKE '%wav%' THEN 'wav'
+    WHEN lower(transcode_profile) LIKE '%aac%' THEN 'adts_aac'
+    WHEN lower(transcode_profile) LIKE '%mp4%' OR lower(transcode_profile) LIKE '%m4a%' THEN 'mp4'
+    ELSE 'ogg'
+  END,
+  NULL,
+  expected_byte_length,
+  rowid - 1,
+  0,
+  0,
+  NULL,
+  coalesce(resume_data_created_at_wall_clock, 0)
+FROM download;

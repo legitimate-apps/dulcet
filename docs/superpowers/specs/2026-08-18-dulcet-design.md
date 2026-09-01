@@ -2622,8 +2622,8 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-31 | generation-pinned reads: a sync generation's reads observe one committed snapshot (§16.3) |
 | CONF-32 | atomic sync-generation commit: a generation becomes visible in one step or not at all (§16.4) |
 | CONF-41 | local and server search results merge without duplicating or dropping an entry (§18.1) |
-| CONF-51 | validated atomic download promotion: a download is validated, then promoted atomically (§14.5) |
-| CONF-52 | offline playback plan: a downloaded item plays with no network dependency (§14.5) |
+| CONF-51 | validated atomic download promotion: live exact and cold-estimated response bodies pass the §12.4 validator before atomic rename; exact mismatch leaves no destination, observed terminal length becomes exact, and duplicate delivery is idempotent (§14.5) |
+| CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
 
 ### 20.5 Facade header review
 

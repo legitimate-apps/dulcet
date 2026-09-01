@@ -61,6 +61,7 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.okio)
             implementation(libs.sqldelight.runtime)
         }
         jvmMain.dependencies {
