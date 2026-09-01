@@ -41,6 +41,7 @@ extensions.configure<ApplicationExtension> {
 
     testOptions {
         animationsDisabled = true
+        unitTests.isIncludeAndroidResources = true
     }
 
     packaging {
@@ -66,6 +67,8 @@ dependencies {
     // framework binding, and without one `kotlin.test.Test` is an unresolved reference at compile
     // time. `test-junit` supplies the JUnit4 binding these variants actually run on.
     testImplementation(kotlin("test-junit"))
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)

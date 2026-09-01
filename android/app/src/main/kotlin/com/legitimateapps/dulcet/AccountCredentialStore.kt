@@ -38,19 +38,51 @@ internal interface AccountCredentialStore {
     fun delete()
 }
 
-internal class CredentialStoreException(cause: Throwable? = null) : Exception(cause)
+internal class CredentialStoreException(
+    val reason: Reason,
+    cause: Throwable? = null,
+) : Exception(reason.name, cause) {
+    enum class Reason {
+        SecureStorageUnavailable,
+        CorruptRecord,
+        PersistenceFailed,
+    }
+}
 
-internal class AndroidAccountCredentialStore(context: Context) : AccountCredentialStore {
+/**
+ * The only credential cryptography used by [AndroidAccountCredentialStore].
+ *
+ * Keeping this boundary injectable lets host tests make Android Keystore unavailable and prove
+ * that the production record store fails closed. There is deliberately no plaintext implementation
+ * and no recovery branch that can persist the encoded account without this boundary succeeding.
+ */
+internal interface AccountCredentialCipher {
+    fun encrypt(id: String, plaintext: ByteArray): ByteArray
+    fun decrypt(id: String, payload: ByteArray): ByteArray
+    fun delete(id: String)
+}
+
+internal class AndroidAccountCredentialStore internal constructor(
+    context: Context,
+    private val cipher: AccountCredentialCipher,
+) : AccountCredentialStore {
+    constructor(context: Context) : this(context, AndroidKeystoreAccountCredentialCipher())
+
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     override fun load(): StoredAccount? {
         val id = preferences.getString(ACTIVE_ACCOUNT_KEY, null) ?: return null
         val encrypted = preferences.getString(payloadKey(id), null)
-            ?: throw CredentialStoreException()
+            ?: throw CredentialStoreException(CredentialStoreException.Reason.CorruptRecord)
         return try {
-            CredentialCodec.decode(id, decrypt(id, Base64.decode(encrypted, Base64.NO_WRAP)))
+            CredentialCodec.decode(
+                id,
+                cipher.decrypt(id, Base64.decode(encrypted, Base64.NO_WRAP)),
+            )
+        } catch (failure: CredentialStoreException) {
+            throw failure
         } catch (failure: Exception) {
-            throw CredentialStoreException(failure)
+            throw CredentialStoreException(CredentialStoreException.Reason.CorruptRecord, failure)
         }
     }
 
@@ -72,40 +104,74 @@ internal class AndroidAccountCredentialStore(context: Context) : AccountCredenti
         )
         return try {
             val encoded = Base64.encodeToString(
-                encrypt(account.id, CredentialCodec.encode(account)),
+                try {
+                    cipher.encrypt(account.id, CredentialCodec.encode(account))
+                } catch (failure: Exception) {
+                    throw CredentialStoreException(
+                        CredentialStoreException.Reason.SecureStorageUnavailable,
+                        failure,
+                    )
+                },
                 Base64.NO_WRAP,
             )
             val committed = preferences.edit()
                 .putString(payloadKey(account.id), encoded)
                 .putString(ACTIVE_ACCOUNT_KEY, account.id)
                 .commit()
-            if (!committed) throw CredentialStoreException()
+            if (!committed) {
+                throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+            }
 
             if (previousId != null && previousId != account.id) {
                 preferences.edit().remove(payloadKey(previousId)).apply()
-                deleteKey(previousId)
+                cipher.delete(previousId)
             }
             account
         } catch (failure: Exception) {
-            deleteKey(account.id)
+            // A failed secure write must not leave the new account selected, even if a
+            // SharedPreferences disk commit reported failure after updating its in-memory map.
+            preferences.edit()
+                .remove(payloadKey(account.id))
+                .apply {
+                    if (previousId == null) remove(ACTIVE_ACCOUNT_KEY)
+                    else putString(ACTIVE_ACCOUNT_KEY, previousId)
+                }
+                .commit()
+            runCatching { cipher.delete(account.id) }
             if (failure is CredentialStoreException) throw failure
-            throw CredentialStoreException(failure)
+            throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed, failure)
         }
     }
 
     override fun delete() {
         val id = preferences.getString(ACTIVE_ACCOUNT_KEY, null) ?: return
         if (!preferences.edit().remove(payloadKey(id)).remove(ACTIVE_ACCOUNT_KEY).commit()) {
-            throw CredentialStoreException()
+            throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
         }
         try {
-            deleteKey(id)
+            cipher.delete(id)
         } catch (failure: Exception) {
-            throw CredentialStoreException(failure)
+            throw CredentialStoreException(
+                CredentialStoreException.Reason.SecureStorageUnavailable,
+                failure,
+            )
         }
     }
 
-    private fun encrypt(id: String, plaintext: ByteArray): ByteArray {
+    internal fun hasActiveAccountPointer(): Boolean = preferences.contains(ACTIVE_ACCOUNT_KEY)
+
+    internal fun storedEntryCount(): Int = preferences.all.size
+
+    private fun payloadKey(id: String): String = "account.$id"
+
+    internal companion object {
+        const val PREFERENCES_NAME = "dulcet.account"
+        private const val ACTIVE_ACCOUNT_KEY = "activeAccountId"
+    }
+}
+
+private class AndroidKeystoreAccountCredentialCipher : AccountCredentialCipher {
+    override fun encrypt(id: String, plaintext: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(id))
         val ciphertext = cipher.doFinal(plaintext)
@@ -120,7 +186,7 @@ internal class AndroidAccountCredentialStore(context: Context) : AccountCredenti
         }
     }
 
-    private fun decrypt(id: String, payload: ByteArray): ByteArray {
+    override fun decrypt(id: String, payload: ByteArray): ByteArray {
         val input = DataInputStream(ByteArrayInputStream(payload))
         val ivSize = input.readInt()
         require(ivSize in 12..32)
@@ -154,20 +220,19 @@ internal class AndroidAccountCredentialStore(context: Context) : AccountCredenti
     }
 
     private fun existingKey(id: String): SecretKey =
-        keyStore().getKey(alias(id), null) as? SecretKey ?: throw CredentialStoreException()
+        keyStore().getKey(alias(id), null) as? SecretKey
+            ?: throw CredentialStoreException(
+                CredentialStoreException.Reason.SecureStorageUnavailable,
+            )
 
-    private fun deleteKey(id: String) {
+    override fun delete(id: String) {
         keyStore().deleteEntry(alias(id))
     }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
 
     private fun alias(id: String): String = "com.legitimateapps.dulcet.$id"
-    private fun payloadKey(id: String): String = "account.$id"
-
-    internal companion object {
-        const val PREFERENCES_NAME = "dulcet.account"
-        private const val ACTIVE_ACCOUNT_KEY = "activeAccountId"
+    private companion object {
         private const val KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val MAX_CIPHERTEXT_BYTES = 1_048_576

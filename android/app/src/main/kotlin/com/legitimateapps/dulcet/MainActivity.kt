@@ -167,7 +167,10 @@ private fun AccountStatusCard(status: AccountConnectStatus) {
         )
         is AccountConnectStatus.Failed -> StatusCard(
             title = stringResource(status.presentation.title),
-            body = stringResource(status.presentation.body),
+            body = status.presentation.messageArgument?.let {
+                stringResource(status.presentation.message, it)
+            } ?: stringResource(status.presentation.message),
+            recovery = stringResource(status.presentation.recovery),
             tag = "account.status.failed",
         )
         AccountConnectStatus.PersistenceFailed -> StatusCard(
@@ -179,7 +182,7 @@ private fun AccountStatusCard(status: AccountConnectStatus) {
 }
 
 @Composable
-private fun StatusCard(title: String, body: String, tag: String) {
+private fun StatusCard(title: String, body: String, tag: String, recovery: String = "") {
     Card(modifier = Modifier.fillMaxWidth().testTag(tag)) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -187,6 +190,7 @@ private fun StatusCard(title: String, body: String, tag: String) {
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             if (body.isNotEmpty()) Text(body, style = MaterialTheme.typography.bodyMedium)
+            if (recovery.isNotEmpty()) Text(recovery, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
