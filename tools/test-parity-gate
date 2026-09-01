@@ -32,6 +32,11 @@ def materialize(root: Path) -> None:
         "core-conformance",
         "apple/DulcetKit/Tests",
         "apple/DulcetiOSUITests",
+        # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
+        # verifies that every cited evidence test NAME exists in the tree. Without this the fixture
+        # is missing those sources and a correct FEATURES.yml is rejected as citing tests that do
+        # not exist -- a false negative that looks exactly like a bad promotion.
+        "android/app/src",
     ):
         shutil.copytree(REPOSITORY / relative, root / relative)
 
