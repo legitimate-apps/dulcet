@@ -15,12 +15,12 @@ the detailed assertion.
 | CONF-07 | wire-observed credential channels and credential-free diagnostics |
 | CONF-07b | form-POSTed credentials on `stream` |
 | CONF-08 | fail-closed request-channel inventory; same-origin preservation and pre-send cross-origin refusal on every account-connect hop |
-| CONF-09a | Apple account-connect progress and active-operation cancellation |
-| CONF-09b | Apple account-connect render-state inventory |
-| CONF-09c | total actionable Apple account-error presentation |
-| CONF-10a | an unentitled Apple caller gets a typed data-protection-Keychain entitlement failure without an active-account pointer or legacy-Keychain fallback |
-| CONF-10b | Apple explicit reconnect after persisted-credential prefill |
-| CONF-10c | Darwin 407 proxy-auth challenge rejects ambient credentials |
+| CONF-09a | account-connect progress and active-operation cancellation |
+| CONF-09b | account-connect render-state inventory |
+| CONF-09c | total actionable account-error presentation |
+| CONF-10a | unavailable platform-secure credential storage fails closed with a typed reason, no active-account pointer, and no weaker fallback |
+| CONF-10b | explicit reconnect after persisted-credential prefill |
+| CONF-10c | a 407 proxy-auth challenge rejects ambient credentials |
 | CONF-10d | restricted-user permission errors map to `Auth.Forbidden` |
 | CONF-11 | successful stream content type and signature validation |
 | CONF-12 | legacy-stream and extension-stream error status and shape |
