@@ -213,6 +213,54 @@ class AccountConnectAndroidConformanceTest {
         )
     }
 
+    @Test
+    fun conf10bRelaunchPrefillsCredentialsAndWaitsForExplicitReconnect() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val persisted = storedAccount()
+            val gateway = CancellableGateway()
+
+            // A new ViewModel is the Android shell's process/relaunch restoration boundary.
+            val relaunched = viewModel(
+                gateway = gateway,
+                credentialStore = MemoryCredentialStore(persisted),
+            )
+
+            val restored = relaunched.state.value
+            val saved = assertIs<AccountConnectStatus.Saved>(restored.status)
+            assertEquals(persisted.serverName, saved.serverName)
+            assertEquals(persisted.serverUrl, restored.serverUrl)
+            assertEquals(persisted.username, restored.username)
+            assertEquals(persisted.password, restored.password)
+            assertEquals(persisted.allowLocalHttp, restored.allowLocalHttp)
+            assertTrue(
+                gateway.requests.isEmpty(),
+                "CONF-10b performed a network request while restoring persisted credentials",
+            )
+
+            relaunched.submitOrCancel()
+            assertIs<AccountConnectStatus.Connecting>(relaunched.state.value.status)
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    AccountConnectionRequest(
+                        serverUrl = persisted.serverUrl,
+                        username = persisted.username,
+                        password = persisted.password,
+                        allowLocalHttp = persisted.allowLocalHttp,
+                    ),
+                ),
+                gateway.requests,
+                "CONF-10b did not wait for explicit reconnect or changed the restored request",
+            )
+            relaunched.submitOrCancel()
+            runCurrent()
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun viewModel(
         gateway: AccountConnectionGateway,
         credentialStore: AccountCredentialStore = MemoryCredentialStore(),
