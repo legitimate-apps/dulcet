@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.cio.CIO
+import io.ktor.http.Url
 
 internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
@@ -11,8 +12,9 @@ internal actual fun createAccountHttpClient(
 ): HttpClient = HttpClient(CIO) {
     engine {
         if (transport is AccountClientTransport.ForwardProxy) {
+            // ProxyBuilder.http takes a Url on this Ktor version, not a String.
             proxy = ProxyBuilder.http(
-                "http://${transport.proxy.host}:${transport.proxy.port}/",
+                Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
             )
         }
     }
