@@ -3,11 +3,13 @@
 
 `simctl bootstatus -b` proves that CoreSimulator considers boot complete. It does not prove that
 the device bootstrap is accepting process launches yet. This probe closes that gap without
-launching the product under test: by default it runs the runtime's `launchctl print system` through
-the device PATH and requires a successful exit.
+launching the product under test: by default it runs the runtime's `launchctl error 0` through the
+device PATH and requires a successful exit. That starts a real process without dumping the system
+bootstrap namespace.
 
-The deadline covers every in-flight `simctl spawn`, not just the sleeps between attempts. A wedged
-spawn therefore cannot turn this bounded prerequisite into another unbounded wait.
+Each `simctl spawn` has a short timeout independent of the total deadline, so one hung launch cannot
+consume the whole polling window. The total deadline still covers every attempt and sleep, keeping
+the prerequisite bounded when the simulator is genuinely unusable.
 """
 
 from __future__ import annotations
@@ -21,8 +23,9 @@ import sys
 import time
 
 DEFAULT_DEADLINE_SECONDS = 60.0
+DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 5.0
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
-DEFAULT_PROBE_COMMAND = ("launchctl", "print", "system")
+DEFAULT_PROBE_COMMAND = ("launchctl", "error", "0")
 
 
 def positive_seconds(value: str) -> float:
@@ -51,16 +54,22 @@ def run_attempt(command: list[str], timeout: float) -> tuple[int | None, str]:
     try:
         _stdout, stderr = process.communicate(timeout=timeout)
         return process.returncode, (stderr or "").strip()
-    except subprocess.TimeoutExpired:
-        # Kill the process group so an xcrun child cannot survive the deadline after its parent is
-        # terminated. SIGKILL is intentional here: there is no grace period outside the budget.
+    except subprocess.TimeoutExpired as error:
+        # Kill the process group so an xcrun child cannot survive after its parent is terminated.
+        # Do not call communicate() again: reaping a stuck child is not allowed to extend this
+        # attempt's independent timeout and prevent the next poll.
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        _stdout, stderr = process.communicate()
-        diagnostic = (stderr or "").strip()
-        return None, diagnostic or "simctl spawn did not return before the deadline"
+        partial_stderr = error.stderr or ""
+        if isinstance(partial_stderr, bytes):
+            partial_stderr = partial_stderr.decode(errors="replace")
+        diagnostic = partial_stderr.strip()
+        if process.stderr is not None:
+            process.stderr.close()
+        process.poll()
+        return None, diagnostic or "simctl spawn did not return before its attempt timeout"
 
 
 def last_line(value: str) -> str:
@@ -78,6 +87,15 @@ def main() -> None:
         help=f"absolute process-readiness budget (default: {DEFAULT_DEADLINE_SECONDS:g})",
     )
     parser.add_argument(
+        "--attempt-timeout-seconds",
+        type=positive_seconds,
+        default=DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+        help=(
+            "maximum duration of one process-launch attempt "
+            f"(default: {DEFAULT_ATTEMPT_TIMEOUT_SECONDS:g})"
+        ),
+    )
+    parser.add_argument(
         "--poll-interval-seconds",
         type=positive_seconds,
         default=DEFAULT_POLL_INTERVAL_SECONDS,
@@ -86,7 +104,7 @@ def main() -> None:
     parser.add_argument(
         "probe_command",
         nargs=argparse.REMAINDER,
-        help="command passed to simctl spawn (default: launchctl print system)",
+        help="command passed to simctl spawn (default: launchctl error 0)",
     )
     args = parser.parse_args()
 
@@ -109,13 +127,16 @@ def main() -> None:
         attempts += 1
         status, diagnostic = run_attempt(
             ["xcrun", "simctl", "spawn", args.udid, *probe_command],
-            timeout=remaining,
+            timeout=min(args.attempt_timeout_seconds, remaining),
         )
         elapsed = time.monotonic() - started
         if status == 0:
             print(
                 "IPADOS SIMULATOR PROCESS READY "
-                f"attempts={attempts} elapsed_seconds={elapsed:.2f} command={rendered_command!r}"
+                f"attempts={attempts} elapsed_seconds={elapsed:.2f} "
+                f"attempt_timeout_seconds={display_seconds(args.attempt_timeout_seconds)} "
+                f"total_deadline_seconds={display_seconds(args.deadline_seconds)} "
+                f"command={rendered_command!r}"
             )
             return
 
@@ -141,7 +162,9 @@ def main() -> None:
     )
     print(
         "IPADOS SIMULATOR PROCESS NOT READY "
-        f"attempts={attempts} elapsed_seconds={elapsed:.2f} command={rendered_command!r} "
+        f"attempts={attempts} elapsed_seconds={elapsed:.2f} "
+        f"attempt_timeout_seconds={display_seconds(args.attempt_timeout_seconds)} "
+        f"total_deadline_seconds={budget} command={rendered_command!r} "
         f"last_diagnostic={last_line(last_diagnostic)!r}",
         file=sys.stderr,
     )
