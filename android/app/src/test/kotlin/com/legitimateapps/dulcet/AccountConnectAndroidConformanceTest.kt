@@ -31,6 +31,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -214,6 +215,43 @@ class AccountConnectAndroidConformanceTest {
     }
 
     @Test
+    fun rotationCleanupFailureKeepsTheNewCredentialUsable() {
+        val application = RuntimeEnvironment.getApplication()
+        val cleared = application.getSharedPreferences(
+            AndroidAccountCredentialStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().clear().commit()
+        assertTrue(cleared, "Could not establish an empty record-store precondition")
+        val store = AndroidAccountCredentialStore(application, DeleteFailingCredentialCipher())
+
+        store.save(
+            serverName = "First",
+            serverUrl = "https://first.example.invalid",
+            username = "first-user",
+            password = "",
+            allowLocalHttp = false,
+        )
+        val rotation = runCatching {
+            store.save(
+                serverName = "Second",
+                serverUrl = "https://second.example.invalid",
+                username = "second-user",
+                password = "",
+                allowLocalHttp = false,
+            )
+        }
+
+        val restored = assertNotNull(store.load())
+        val rotated = rotation.getOrThrow()
+        assertEquals(rotated.id, restored.id)
+        assertEquals(rotated.serverName, restored.serverName)
+        assertEquals(rotated.serverUrl, restored.serverUrl)
+        assertEquals(rotated.username, restored.username)
+        assertTrue(rotated.password == restored.password)
+        assertEquals(rotated.allowLocalHttp, restored.allowLocalHttp)
+    }
+
+    @Test
     fun conf10bRelaunchPrefillsCredentialsAndWaitsForExplicitReconnect() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
@@ -287,6 +325,15 @@ private class UnavailableCredentialCipher : AccountCredentialCipher {
         error("CONF-10a must not attempt a read after its failed write")
 
     override fun delete(id: String) = Unit
+}
+
+private class DeleteFailingCredentialCipher : AccountCredentialCipher {
+    override fun encrypt(id: String, plaintext: ByteArray): ByteArray = plaintext
+
+    override fun decrypt(id: String, payload: ByteArray): ByteArray = payload
+
+    override fun delete(id: String): Nothing =
+        throw IllegalStateException("Secure credential cleanup unavailable")
 }
 
 private fun allAccountPresentationErrors(): List<DomainError> = buildList {
