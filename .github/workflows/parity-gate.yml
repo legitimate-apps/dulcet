@@ -46,6 +46,8 @@ jobs:
         run: python3 tools/test-await-library-ready
       - name: Prove the play-count reader fails closed
         run: python3 tools/test-read-play-count
+      - name: Prove the main-health reporter refuses rather than reporting nothing
+        run: python3 tools/test-report-main-health
       - name: Prove transcode timeouts identify their phase and obey the wall-clock budget
         run: python3 tools/test-transcode-probe-timeout-diagnostic
       - name: Validate FEATURES.yml
