@@ -1,0 +1,54 @@
+name: main-health
+
+# A branch has an owner watching it; `main` has nobody. Sessions watch a pull request until it
+# merges and then stop, so a check that goes red AFTER the merge is invisible by construction.
+#
+# Measured 2026-09-02 by an authenticated sweep of 57 completed apple-ci runs: `main` appeared in
+# the failure list SIX times and nobody had noticed any of them, while two sessions worked the
+# repository all day asserting it was green.
+#
+# workflow_run fires AFTER the watched workflow finishes, on the default branch, with no schedule
+# and no polling. It cannot itself be the thing nobody watches, because its output is an issue that
+# a person has to close.
+
+on:
+  workflow_run:
+    workflows: [apple-ci, core-ci, parity-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Keyed on the TRIGGERING RUN's id, not the commit, so the group is unique per invocation and
+  # nothing is ever actually cancelled. Two checks failing on the same commit are two facts; a
+  # commit-keyed group with cancel-in-progress would drop the second one.
+  group: main-health-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    name: main-health
+    # `cancelled` is excluded on purpose: the watched workflows use cancel-in-progress, so a
+    # superseded run on a fast-moving branch is cancelled as designed and is not a health signal.
+    # `failure` and `timed_out` are. A timeout is the shape a hang takes, and hangs are exactly
+    # what nobody notices.
+    if: >-
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event != 'pull_request' &&
+      (github.event.workflow_run.conclusion == 'failure' ||
+       github.event.workflow_run.conclusion == 'timed_out')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open or update the main-is-red issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FAILED_WORKFLOW: ${{ github.event.workflow_run.name }}
+          FAILED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          FAILED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 tools/report_main_health.py
