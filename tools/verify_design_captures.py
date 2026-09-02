@@ -97,7 +97,7 @@ WINDOW_WIDTH_POINTS = 1180
 WINDOW_HEIGHT_POINTS = 760
 # This is deliberately one contract value. The renderer uses it for layout, layer contents, and
 # bitmap density, so the verifier must reject any manifest that claims those grids differ.
-CAPTURE_SCALE = 2.0
+CAPTURE_SCALE = 1.0
 CAPTURE_WIDTH_PIXELS = int(WINDOW_WIDTH_POINTS * CAPTURE_SCALE)
 CAPTURE_HEIGHT_PIXELS = int(WINDOW_HEIGHT_POINTS * CAPTURE_SCALE)
 PINNED_CONTROL_WIDTH_PIXELS = 1180
@@ -106,9 +106,7 @@ PINNED_CONTROL_HEIGHT_PIXELS = 760
 # manifest records the resolved value, but it does not select any of the three capture grids. The
 # workflow's exact-byte run-a/run-b diff still rejects a scale that changes between processes.
 MIN_JPEG_BYTES = 5_000
-# The 2x references have four times the pixels of the former 1x raster. This retains the former
-# 350,000-byte ceiling per 1180x760 pixels rather than loosening the encoded-size density limit.
-MAX_REFERENCE_JPEG_BYTES = 1_400_000
+MAX_REFERENCE_JPEG_BYTES = 350_000
 MAX_PINNED_CONTROL_JPEG_BYTES = 350_000
 PINNED_CONTROL_SHA256 = {
     "light": "3c46bfa842033834d417f276c43ee29ce85e1f4eefd8cbea17faedecf1d6c60f",
@@ -279,7 +277,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 10,
+        "schemaVersion": 11,
         "widthPixels": CAPTURE_WIDTH_PIXELS,
         "heightPixels": CAPTURE_HEIGHT_PIXELS,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -426,6 +424,10 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} pinnedControlSha256 mismatch"
                 )
+            if "layoutDiagnostics" in record:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} pinned control claims layout diagnostics"
+                )
         else:
             if record.get("captureProvenance") != "rendered-current-run":
                 raise CaptureVerificationError(
@@ -451,6 +453,37 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                     f"{directory.name}/{filename} windowBackingScaleFactor mismatch: "
                     f"expected manifest-observed {window_backing_scale_factor!r}, "
                     f"observed {record.get('windowBackingScaleFactor')!r}"
+                )
+            layout_diagnostics = record.get("layoutDiagnostics")
+            if not isinstance(layout_diagnostics, dict):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} layoutDiagnostics is missing or not an object"
+                )
+            if layout_diagnostics.get("collectionStage") != (
+                "after-two-identical-frames-before-jpeg-encoding"
+            ):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} layoutDiagnostics collectionStage mismatch"
+                )
+            root_layout = layout_diagnostics.get("root")
+            if not isinstance(root_layout, dict) or root_layout.get("coordinateSystem") != (
+                "appkit-capture-view-points"
+            ):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} root layout facts are missing or malformed"
+                )
+            native_controls = layout_diagnostics.get("nativeControls")
+            if not isinstance(native_controls, list):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} native control layout facts are not a list"
+                )
+            hierarchy_paths = [control.get("hierarchyPath") for control in native_controls]
+            if (
+                any(not isinstance(path, str) or not path for path in hierarchy_paths)
+                or len(hierarchy_paths) != len(set(hierarchy_paths))
+            ):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} native control hierarchy paths are invalid"
                 )
         binding = bindings_by_file[filename]
         for field, expected_value in (
