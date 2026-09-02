@@ -27,6 +27,7 @@ final class DulcetiOSUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments.append("-dulcet-account-connect-layout-fixture")
         app.launch()
+        print("DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true")
 
         // Guard on window width, not XCUIApplication.horizontalSizeClass: that attribute reports
         // .unspecified for the application element (OBSERVED on iPad Pro 13-inch, rawValue 0), so
