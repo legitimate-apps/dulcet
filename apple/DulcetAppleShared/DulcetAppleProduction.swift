@@ -7,14 +7,26 @@ import ImageIO
 @MainActor
 enum DulcetAppleProduction {
     static func makePresentationStore() -> DulcetPresentationStore {
-        DulcetPresentationStore(
+        let credentialStore = DulcetKeychainCredentialStore()
+        #if os(macOS)
+        let downloads = DulcetCoreDownloadController.production()
+        #else
+        let downloads: (any DulcetDownloadControlling)? = nil
+        #endif
+        return DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
-                credentialStore: DulcetKeychainCredentialStore(),
+                credentialStore: credentialStore,
                 libraryBrowser: DulcetCoreLibraryBrowser(),
                 artworkFetcher: DulcetCoreArtworkFetcher(),
                 serverSearch: DulcetCoreServerSearch(),
-                playbackController: DulcetCorePlaybackController()
+                playbackController: DulcetCorePlaybackController(
+                    downloadController: downloads
+                ),
+                downloadController: downloads,
+                providerInstanceIDFactory: {
+                    credentialStore.activeAccountID ?? UUID().uuidString
+                }
             )
         )
     }

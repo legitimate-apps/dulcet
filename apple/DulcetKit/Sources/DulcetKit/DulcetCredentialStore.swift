@@ -3,9 +3,14 @@ import Security
 
 @MainActor
 public protocol DulcetCredentialStoring: AnyObject {
+    var credentialGeneration: Int64 { get }
     func load() throws -> DulcetAccountConnectRequest?
     func save(_ request: DulcetAccountConnectRequest) throws
     func delete() throws
+}
+
+public extension DulcetCredentialStoring {
+    var credentialGeneration: Int64 { 0 }
 }
 
 public enum DulcetCredentialStoreError: Error, Equatable {
@@ -23,6 +28,11 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
     private let service: String
     private let defaults: UserDefaults
     private let activeAccountKey: String
+    public private(set) var credentialGeneration: Int64 = 0
+
+    public var activeAccountID: String? {
+        defaults.string(forKey: activeAccountKey)
+    }
 
     public init(
         service: String = DulcetKeychainCredentialStore.productionService,
@@ -36,8 +46,15 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
 
     public func load() throws -> DulcetAccountConnectRequest? {
         guard let accountID = defaults.string(forKey: activeAccountKey) else {
+            credentialGeneration = 0
             return nil
         }
+        let record = try loadRecord(accountID: accountID)
+        credentialGeneration = record.credentialGeneration
+        return record.request
+    }
+
+    private func loadRecord(accountID: String) throws -> CredentialRecord {
         var result: CFTypeRef?
         var query = baseQuery(accountID: accountID)
         query[kSecReturnData as String] = kCFBooleanTrue
@@ -53,12 +70,24 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
               let record = try? JSONDecoder().decode(CredentialRecord.self, from: data) else {
             throw DulcetCredentialStoreError.malformedRecord
         }
-        return record.request
+        return record
     }
 
     public func save(_ request: DulcetAccountConnectRequest) throws {
         let accountID = defaults.string(forKey: activeAccountKey) ?? UUID().uuidString
-        let data = try JSONEncoder().encode(CredentialRecord(request))
+        let previous = try? loadRecord(accountID: accountID)
+        let nextGeneration: Int64
+        if previous?.request == request {
+            nextGeneration = previous?.credentialGeneration ?? 0
+        } else if let previous, previous.credentialGeneration < Int64.max {
+            nextGeneration = previous.credentialGeneration + 1
+        } else {
+            nextGeneration = 1
+        }
+        let data = try JSONEncoder().encode(CredentialRecord(
+            request,
+            credentialGeneration: nextGeneration
+        ))
         let query = baseQuery(accountID: accountID)
         let update: [String: Any] = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
@@ -77,15 +106,20 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
             throw storeError(for: finalStatus)
         }
         defaults.set(accountID, forKey: activeAccountKey)
+        credentialGeneration = nextGeneration
     }
 
     public func delete() throws {
-        guard let accountID = defaults.string(forKey: activeAccountKey) else { return }
+        guard let accountID = defaults.string(forKey: activeAccountKey) else {
+            credentialGeneration = 0
+            return
+        }
         let status = SecItemDelete(baseQuery(accountID: accountID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw storeError(for: status)
         }
         defaults.removeObject(forKey: activeAccountKey)
+        credentialGeneration = 0
     }
 
     private func baseQuery(accountID: String) -> [String: Any] {
@@ -117,12 +151,30 @@ private struct CredentialRecord: Codable, CustomStringConvertible, CustomDebugSt
     let username: String
     let password: String
     let allowLocalHTTP: Bool
+    let credentialGeneration: Int64
 
-    init(_ request: DulcetAccountConnectRequest) {
+    init(_ request: DulcetAccountConnectRequest, credentialGeneration: Int64) {
         serverURL = request.serverURL
         username = request.username
         password = request.password
         allowLocalHTTP = request.allowLocalHTTP
+        self.credentialGeneration = credentialGeneration
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case serverURL, username, password, allowLocalHTTP, credentialGeneration
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        serverURL = try values.decode(String.self, forKey: .serverURL)
+        username = try values.decode(String.self, forKey: .username)
+        password = try values.decode(String.self, forKey: .password)
+        allowLocalHTTP = try values.decode(Bool.self, forKey: .allowLocalHTTP)
+        credentialGeneration = try values.decodeIfPresent(
+            Int64.self,
+            forKey: .credentialGeneration
+        ) ?? 0
     }
 
     var request: DulcetAccountConnectRequest {

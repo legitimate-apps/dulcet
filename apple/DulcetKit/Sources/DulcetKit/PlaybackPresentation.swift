@@ -7,19 +7,22 @@ public struct DulcetPlaybackAccount: Sendable,
     public let username: String
     public let password: String
     public let allowLocalHTTP: Bool
+    public let credentialGeneration: Int64
 
     public init(
         providerInstanceID: String,
         normalizedServerURL: String,
         username: String,
         password: String,
-        allowLocalHTTP: Bool
+        allowLocalHTTP: Bool,
+        credentialGeneration: Int64 = 0
     ) {
         self.providerInstanceID = providerInstanceID
         self.normalizedServerURL = normalizedServerURL
         self.username = username
         self.password = password
         self.allowLocalHTTP = allowLocalHTTP
+        self.credentialGeneration = credentialGeneration
     }
 
     public var description: String { "DulcetPlaybackAccount(<redacted>)" }

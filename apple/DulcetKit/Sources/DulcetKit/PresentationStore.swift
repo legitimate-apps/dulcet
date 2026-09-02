@@ -10,6 +10,7 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case playLibrary(shuffle: Bool)
     case playAlbum(DulcetProviderItemID, shuffle: Bool)
     case activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID)
+    case downloadTrack(DulcetProviderItemID)
     case playbackControl(DulcetPlaybackControlIntent)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
@@ -25,8 +26,13 @@ public enum DulcetPresentationAction: Sendable, Hashable {
 @MainActor
 public protocol DulcetDataSource: AnyObject {
     var currentSnapshot: DulcetSnapshot { get }
+    var downloadsEnabled: Bool { get }
     func setSnapshotHandler(_ handler: @escaping @MainActor (DulcetSnapshot) -> Void)
     func send(_ action: DulcetPresentationAction)
+}
+
+public extension DulcetDataSource {
+    var downloadsEnabled: Bool { false }
 }
 
 @MainActor
@@ -37,6 +43,7 @@ public final class DulcetPresentationStore {
 
     public private(set) var snapshot: DulcetSnapshot
     public private(set) var selectedDestination: DulcetSidebarDestination
+    public var downloadsEnabled: Bool { source.downloadsEnabled }
     public var searchQuery: String {
         didSet {
             guard !isApplyingSourceSnapshot, searchQuery != oldValue else { return }
@@ -105,6 +112,10 @@ public final class DulcetPresentationStore {
 
     public func activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID) {
         source.send(.activateTrack(albumID: albumID, trackID: trackID))
+    }
+
+    public func downloadTrack(_ id: DulcetProviderItemID) {
+        source.send(.downloadTrack(id))
     }
 
     public func sendPlaybackControl(_ intent: DulcetPlaybackControlIntent) {

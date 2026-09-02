@@ -6,6 +6,7 @@ import Foundation
 final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     private let queueClient: ApplePlaybackQueueClient
     private let engine: DulcetAVPlayerEngine
+    private let downloadController: (any DulcetDownloadControlling)?
     private var wireClient: ApplePlaybackWireClient?
     private var resolveOperation: (any ApplePlaybackWireOperation)?
     private var account: PlaybackEndpointAccount?
@@ -24,10 +25,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
 
     init(
         databaseName: String = "dulcet.db",
-        engine: DulcetAVPlayerEngine = DulcetAVPlayerEngine()
+        engine: DulcetAVPlayerEngine = DulcetAVPlayerEngine(),
+        downloadController: (any DulcetDownloadControlling)? = nil
     ) {
         queueClient = ApplePlaybackQueueClient(databaseName: databaseName)
         self.engine = engine
+        self.downloadController = downloadController
         engine.setEventListener { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.receiveEngineEvent(event)
@@ -164,12 +167,48 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             publish(queueClient.snapshot())
             return
         }
-        guard let wireClient,
-              let track = catalog[DulcetProviderItemID(
+        guard let track = catalog[DulcetProviderItemID(
                 providerInstanceID: directive.providerInstanceId,
                 rawID: directive.rawId
               )],
               let sourceContainer = track.sourceContainer?.coreContainer else {
+            _ = queueClient.recordFailedBeforeStart(
+                attemptId: directive.attemptId,
+                errorKind: "sourceUnavailable"
+            )
+            publishFailure()
+            return
+        }
+        if let offline = downloadController?.offlinePlaybackAsset(for: track) {
+            resolveOperation?.cancel()
+            resolveOperation = nil
+            activeDirectiveIdentity = directive.attemptId
+            pendingStarts[directive.attemptId] = PendingStart(
+                shouldAutoPlay: directive.shouldAutoPlay,
+                resumePositionMilliseconds: directive.resumePositionMilliseconds
+            )
+            if !directive.shouldAutoPlay {
+                restoredPausedSessions.insert(directive.playbackSessionId)
+            }
+            publishPreparing()
+            let plan = DulcetPlaybackPlan(
+                playbackSessionID: DulcetPlaybackSessionID(directive.playbackSessionId),
+                attemptID: DulcetPlaybackAttemptID(directive.attemptId),
+                deliveryProtocol: .httpProgressive,
+                expectedContainer: offline.expectedContainer,
+                resource: offline.resource,
+                metadata: DulcetNowPlayingMetadata(
+                    title: track.title,
+                    artist: track.artistNames.joined(separator: ", "),
+                    albumTitle: track.albumTitle
+                )
+            )
+            execute(.stop(commandID: commandID("replace"))) { [weak self] _ in
+                self?.prepare(plan)
+            }
+            return
+        }
+        guard let wireClient else {
             _ = queueClient.recordFailedBeforeStart(
                 attemptId: directive.attemptId,
                 errorKind: "sourceUnavailable"
