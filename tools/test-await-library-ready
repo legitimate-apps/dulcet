@@ -79,7 +79,7 @@ def run_tool(statuses: list[dict], *arguments: str) -> subprocess.CompletedProce
 def status(*, scanning: bool, last_scan: str, error: str = "") -> dict:
     return {
         "scanning": scanning,
-        "count": 313,
+        "count": 314,
         "lastScan": last_scan,
         "error": error,
     }

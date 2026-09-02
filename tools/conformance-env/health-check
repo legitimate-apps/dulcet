@@ -232,8 +232,8 @@ def main() -> None:
         )
     if manifest.get("copyrighted_audio") is not False:
         raise SystemExit("corpus manifest must assert copyrighted_audio=false")
-    if manifest.get("generated_media_files") != 313:
-        raise SystemExit("corpus manifest must contain exactly 313 scanner-visible media files")
+    if manifest.get("generated_media_files") != 314:
+        raise SystemExit("corpus manifest must contain exactly 314 scanner-visible media files")
     format_evidence = manifest.get("formats", {})
     expected_format_tokens = ["flac", "m4a", "mp3", "ogg"]
     if format_evidence.get("expected_tokens") != expected_format_tokens:
@@ -326,6 +326,11 @@ def main() -> None:
             "ffprobe_verified_tracks": [1, 150, 300],
         },
         "threshold_durations_seconds": [29, 31],
+        "ui_playback_canary": {
+            "title": "UI Playback Canary",
+            "duration_seconds": 31,
+            "silent": True,
+        },
     }
     if manifest.get("awkward_cases") != expected_awkward_cases:
         raise SystemExit(

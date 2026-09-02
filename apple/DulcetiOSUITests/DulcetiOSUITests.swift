@@ -1,6 +1,12 @@
 import XCTest
 
 final class DulcetiOSUITests: XCTestCase {
+    private enum BlockingSystemDialogProbeResult {
+        case absent
+        case handled
+        case unsupported
+    }
+
     private struct LivePlaybackConfiguration {
         let serverURL: String
         let username: String
@@ -61,9 +67,42 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("This playback proof requires a physical iPad; a simulator is not valid evidence")
             return
         }
+
+        proveLivePlaybackAdvancesPastScrobbleThreshold()
+    }
+
+    /// Simulator-only evidence for the same live account, library, stream, audio engine, and
+    /// progressing-media-time scrobble path exercised by the physical-iPad proof.
+    @MainActor
+    func testSimulatorPlaybackAdvancesPastScrobbleThreshold() {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This playback proof requires an iPad simulator; a physical device is not valid evidence")
+            return
+        }
+
+        proveLivePlaybackAdvancesPastScrobbleThreshold(usingInjectedAccount: true)
+    }
+
+    @MainActor
+    private func proveLivePlaybackAdvancesPastScrobbleThreshold(
+        usingInjectedAccount: Bool = false
+    ) {
         guard let configuration = livePlaybackConfiguration() else { return }
 
         let app = XCUIApplication()
+        if usingInjectedAccount {
+            app.launchArguments += [
+                "-dulcet-debug-connect-account",
+                "-dulcet-debug-account-server-url",
+                configuration.serverURL,
+                "-dulcet-debug-account-username",
+                configuration.username,
+                "-dulcet-debug-account-password",
+                configuration.password,
+            ]
+        } else {
+            installSystemAlertInterruptionMonitors()
+        }
         app.launch()
 
         let window = app.windows.firstMatch
@@ -74,73 +113,75 @@ final class DulcetiOSUITests: XCTestCase {
             "This playback proof requires a regular-width iPad window; an iPhone is invalid evidence"
         )
 
-        let serverField = app.textFields["dulcet.account-connect.server-address"].firstMatch
-        let usernameField = app.textFields["dulcet.account-connect.username"].firstMatch
-        let passwordField = app.secureTextFields["dulcet.account-connect.password"].firstMatch
-        guard replaceText(in: serverField, with: configuration.serverURL, name: "server address"),
-              replaceText(in: usernameField, with: configuration.username, name: "username"),
-              replaceText(
-                in: passwordField,
-                with: configuration.password,
-                name: "password",
-                secure: true
-              ) else { return }
-        guard dismissKeyboardIfPresent(in: app) else { return }
+        if !usingInjectedAccount {
+            let serverField = app.textFields["dulcet.account-connect.server-address"].firstMatch
+            let usernameField = app.textFields["dulcet.account-connect.username"].firstMatch
+            let passwordField = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+            guard replaceText(in: serverField, with: configuration.serverURL, name: "server address"),
+                  replaceText(in: usernameField, with: configuration.username, name: "username"),
+                  replaceText(
+                    in: passwordField,
+                    with: configuration.password,
+                    name: "password",
+                    secure: true
+                  ) else { return }
+            guard dismissKeyboardIfPresent(in: app) else { return }
 
-        if configuration.serverURL.lowercased().hasPrefix("http://") {
-            // The physical-device accessibility service describes this as Button, Toggle, while
-            // XCUITest exposes neither a Button nor a Switch. Match its semantic label and binary
-            // value across element types, then guard uniqueness so a decorative child cannot win.
-            let localHTTPControls = app.descendants(matching: .any).matching(
-                NSPredicate(
-                    format: "label == %@ AND (value == %@ OR value == %@)",
-                    "Allow HTTP on this local network",
-                    "0",
-                    "1"
+            if configuration.serverURL.lowercased().hasPrefix("http://") {
+                // The physical-device accessibility service describes this as Button, Toggle,
+                // while XCUITest exposes neither a Button nor a Switch. Match its semantic label
+                // and binary value across element types, then guard uniqueness so a decorative
+                // child cannot win.
+                let localHTTPControls = app.descendants(matching: .any).matching(
+                    NSPredicate(
+                        format: "label == %@ AND (value == %@ OR value == %@)",
+                        "Allow HTTP on this local network",
+                        "0",
+                        "1"
+                    )
                 )
-            )
-            let allowLocalHTTP = localHTTPControls.firstMatch
-            guard allowLocalHTTP.waitForExistence(timeout: 5) else {
-                XCTFail("The local-HTTP consent control must exist for a cleartext disposable server")
-                return
+                let allowLocalHTTP = localHTTPControls.firstMatch
+                guard allowLocalHTTP.waitForExistence(timeout: 5) else {
+                    XCTFail("The local-HTTP consent control must exist for a cleartext disposable server")
+                    return
+                }
+                XCTAssertEqual(
+                    localHTTPControls.count,
+                    1,
+                    "The local-HTTP consent query must resolve to exactly one semantic control"
+                )
+                guard scrollIntoView(allowLocalHTTP, in: app) else {
+                    XCTFail("The local-HTTP consent control must be hittable before it is changed")
+                    return
+                }
+                if (allowLocalHTTP.value as? String) != "1" {
+                    allowLocalHTTP.coordinate(
+                        withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
+                    ).tap()
+                }
+                guard waitForValue("1", of: allowLocalHTTP, timeout: 5) else {
+                    XCTFail("The local-HTTP consent control must visibly change from off to on")
+                    return
+                }
             }
-            XCTAssertEqual(
-                localHTTPControls.count,
-                1,
-                "The local-HTTP consent query must resolve to exactly one semantic control"
-            )
-            guard makeHittable(allowLocalHTTP, byScrolling: app) else {
-                XCTFail("The local-HTTP consent control must be hittable before it is changed")
-                return
-            }
-            if (allowLocalHTTP.value as? String) != "1" {
-                allowLocalHTTP.coordinate(
-                    withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
-                ).tap()
-            }
-            guard waitForValue("1", of: allowLocalHTTP, timeout: 5) else {
-                XCTFail("The local-HTTP consent control must visibly change from off to on")
-                return
-            }
-        }
 
-        let connectAction = app.buttons["dulcet.account-connect.primary-action"].firstMatch
-        guard connectAction.waitForExistence(timeout: 5) else {
-            XCTFail("The account primary action must exist")
-            return
+            let connectAction = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+            guard connectAction.waitForExistence(timeout: 5) else {
+                XCTFail("The account primary action must exist")
+                return
+            }
+            guard connectAction.isEnabled else {
+                XCTFail("The account primary action must enable after all required values are entered")
+                return
+            }
+            connectAction.tap()
+            allowLocalNetworkAccessIfRequested()
         }
-        guard connectAction.isEnabled else {
-            XCTFail("The account primary action must enable after all required values are entered")
-            return
-        }
-        connectAction.tap()
-        allowLocalNetworkAccessIfRequested()
 
         guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
             XCTFail("The live account connection must succeed before playback is attempted")
             return
         }
-        dismissPasswordSavePromptIfRequested()
 
         // staticTexts avoids the duplicate Image/StaticText identifier carried by sidebar Labels.
         let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
@@ -157,20 +198,28 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The disposable server must expose the Threshold Boundary album")
             return
         }
-        guard makeHittable(thresholdAlbum, byScrolling: app) else {
+        guard scrollIntoView(
+            thresholdAlbum,
+            in: app,
+            probingBlockingSystemAlerts: !usingInjectedAccount
+        ) else {
             XCTFail("The threshold canary album must be reachable in the library")
             return
         }
         thresholdAlbum.tap()
 
         let thresholdTrack = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "Thirty One Seconds")
+            NSPredicate(format: "label CONTAINS %@", "UI Playback Canary")
         ).firstMatch
         guard thresholdTrack.waitForExistence(timeout: 10) else {
-            XCTFail("The disposable server must expose the eligible 31-second scrobble canary")
+            XCTFail("The disposable server must expose the dedicated eligible UI playback canary")
             return
         }
-        guard makeHittable(thresholdTrack, byScrolling: app) else {
+        guard scrollIntoView(
+            thresholdTrack,
+            in: app,
+            probingBlockingSystemAlerts: !usingInjectedAccount
+        ) else {
             XCTFail("The scrobble canary track must be reachable")
             return
         }
@@ -287,18 +336,86 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func makeHittable(
+    private func scrollIntoView(
         _ element: XCUIElement,
-        byScrolling app: XCUIApplication
+        in app: XCUIApplication,
+        probingBlockingSystemAlerts: Bool = true
     ) -> Bool {
-        for _ in 0..<6 {
-            if element.exists && element.isHittable {
-                return true
+        let window = app.windows.firstMatch
+        guard window.exists else {
+            XCTFail("Dulcet's app window is unavailable because the app terminated or was backgrounded")
+            return false
+        }
+
+        var swipeCount = 0
+        while true {
+            if probingBlockingSystemAlerts {
+                let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                // An application-level swipe always resolves a hit point, even while SpringBoard
+                // is presenting an alert, so XCTest has no blocked action with which to invoke an
+                // interruption monitor. Alert handling does not consume a scroll attempt.
+                switch dismissBlockingSystemAlertIfPresent(in: springboard) {
+                case .handled:
+                    continue
+                case .unsupported:
+                    return false
+                case .absent:
+                    break
+                }
             }
+
+            if element.exists {
+                let frame = element.frame
+                let midpoint = CGPoint(x: frame.midX, y: frame.midY)
+                if !frame.isEmpty && !frame.isInfinite &&
+                    window.frame.contains(midpoint) && element.isHittable {
+                    return true
+                }
+            }
+
+            guard swipeCount < 6 else { return false }
+
+            // This must remain a real event rather than an isHittable-gated preflight. Tap paths
+            // can still invoke the interruption monitors installed as a backstop.
             app.swipeUp()
+            swipeCount += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        return element.exists && element.isHittable
+    }
+
+    @MainActor
+    private func dismissBlockingSystemAlertIfPresent(
+        in springboard: XCUIApplication
+    ) -> BlockingSystemDialogProbeResult {
+        // The password-save surface is not exposed as a SpringBoard alert on every runtime. Its
+        // dismissal buttons are exposed directly on the SpringBoard process, however. Query only
+        // known decline labels: falling back to an arbitrary SpringBoard button can background the
+        // app or drive unrelated system UI.
+        let knownDeclineLabels = ["Not Now", "Never", "No Thanks", "Don't Save", "Don’t Save"]
+        let knownDecline = springboard.buttons.matching(
+            NSPredicate(format: "label IN %@", knownDeclineLabels)
+        ).firstMatch
+        if knownDecline.waitForExistence(timeout: 3) {
+            let title = knownDecline.label
+            knownDecline.tap()
+            print("DULCET_UI_SYSTEM_ALERT handled=proactive button=\(title)")
+            return .handled
+        }
+
+        // A changed button label must not collapse into the same result as no dialog. The dialog's
+        // password copy is independent evidence that the blocking surface exists; if it is present,
+        // preserve the surface, report every observed button label, and fail at the probe site.
+        let passwordCopy = springboard.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "password")
+        )
+        guard passwordCopy.count > 0 else { return .absent }
+
+        let labels = observedButtonLabels(in: springboard)
+        print("DULCET_UI_SYSTEM_ALERT handled=unsupported buttons=\(labels)")
+        XCTFail(
+            "Unsupported blocking password dialog; observed SpringBoard buttons: \(labels)"
+        )
+        return .unsupported
     }
 
     @MainActor
@@ -327,11 +444,44 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func dismissPasswordSavePromptIfRequested() {
+    private func installSystemAlertInterruptionMonitors() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let notNow = springboard.buttons["Not Now"].firstMatch
-        if notNow.waitForExistence(timeout: 3) {
-            notNow.tap()
+
+        // Monitors run in reverse installation order. Keep this general fallback first so the
+        // expected-response monitor below gets the first opportunity to preserve test intent.
+        _ = addUIInterruptionMonitor(withDescription: "Dismiss an unexpected system alert") { _ in
+            for title in ["Cancel", "Close", "Dismiss", "Not Now", "OK"] {
+                let button = springboard.buttons[title].firstMatch
+                if button.exists {
+                    button.tap()
+                    print("DULCET_UI_INTERRUPTION handled=general button=\(title)")
+                    return true
+                }
+            }
+
+            let labels = self.observedButtonLabels(in: springboard)
+            print("DULCET_UI_INTERRUPTION handled=unsupported buttons=\(labels)")
+            XCTFail("Unsupported system interruption; observed SpringBoard buttons: \(labels)")
+            return false
+        }
+
+        _ = addUIInterruptionMonitor(withDescription: "Handle expected system alerts") { _ in
+            for title in ["Not Now", "Allow"] {
+                let button = springboard.buttons[title].firstMatch
+                if button.exists {
+                    button.tap()
+                    print("DULCET_UI_INTERRUPTION handled=expected button=\(title)")
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    @MainActor
+    private func observedButtonLabels(in application: XCUIApplication) -> [String] {
+        application.buttons.allElementsBoundByIndex.map { button in
+            button.label.isEmpty ? "<empty>" : button.label
         }
     }
 
