@@ -18,7 +18,8 @@ def invoke(
     mode: str,
     *,
     deadline: float,
-    probe_command: tuple[str, ...] = ("launchctl", "print", "system"),
+    attempt_timeout: float = 5.0,
+    probe_command: tuple[str, ...] = ("launchctl", "error", "0"),
 ) -> tuple[subprocess.CompletedProcess[str], int, str]:
     with TemporaryDirectory(prefix="dulcet-simulator-process-probe-") as directory:
         root = Path(directory)
@@ -55,6 +56,8 @@ def invoke(
                 "DULCET-CONTROL-UDID",
                 "--deadline-seconds",
                 str(deadline),
+                "--attempt-timeout-seconds",
+                str(attempt_timeout),
                 "--poll-interval-seconds",
                 "0.03",
                 "--",
@@ -78,7 +81,7 @@ def main() -> None:
             + eventual.stderr
         )
     expected_arguments = "\0".join(
-        ("simctl", "spawn", "DULCET-CONTROL-UDID", "launchctl", "print", "system")
+        ("simctl", "spawn", "DULCET-CONTROL-UDID", "launchctl", "error", "0")
     )
     if arguments != expected_arguments:
         raise SystemExit(
@@ -131,6 +134,48 @@ def main() -> None:
     print(
         "NEGATIVE CONTROL PASS hung_spawn_bounded=true "
         f"annotation={ANNOTATION!r} exit={hung.returncode} shim_starts={shim_starts} "
+        f"wall_seconds={wall_seconds:.2f}"
+    )
+
+    started = time.monotonic()
+    polled_hang, shim_starts, _arguments = invoke(
+        "hang",
+        deadline=0.5,
+        attempt_timeout=0.1,
+    )
+    wall_seconds = time.monotonic() - started
+    combined = polled_hang.stdout + polled_hang.stderr
+    if polled_hang.returncode == 0 or ANNOTATION not in combined:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: a repeatedly hung probe did not fail as a prerequisite:\n"
+            + combined
+        )
+    attempt_count = combined.count("IPADOS SIMULATOR PROCESS WAIT attempt=")
+    if attempt_count <= 1 or shim_starts <= 1:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: a hung attempt consumed the entire polling deadline: "
+            f"attempts={attempt_count} shim_starts={shim_starts} output={combined!r}"
+        )
+    if combined.count("status=attempt-timeout") != attempt_count:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: timeout diagnostics do not account for every attempt: "
+            f"attempts={attempt_count} output={combined!r}"
+        )
+    if f"IPADOS SIMULATOR PROCESS NOT READY attempts={attempt_count} " not in combined:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: final diagnostic does not report the polled attempt count: "
+            f"attempts={attempt_count} output={combined!r}"
+        )
+    if wall_seconds >= 2:
+        raise SystemExit(
+            "NEGATIVE CONTROL FAILED: repeatedly timing out attempts escaped the half-second "
+            f"absolute deadline; wall_seconds={wall_seconds:.2f}"
+        )
+    print(
+        "NEGATIVE CONTROL PASS hung_attempt_retried=true "
+        f"attempt_timeout_seconds=0.1 total_deadline_seconds=0.5 attempts={attempt_count} "
+        f"shim_starts={shim_starts} "
+        f"annotation={ANNOTATION!r} exit={polled_hang.returncode} "
         f"wall_seconds={wall_seconds:.2f}"
     )
 

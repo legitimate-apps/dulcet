@@ -334,13 +334,15 @@ jobs:
             exit 1
           fi
           # `simctl spawn` treats an absolute executable path as a host path. Ask the simulated
-          # device PATH for launchctl instead, then prove both process launch and access to the
-          # device's system bootstrap. A loaded runner may finish bootstatus before those services
-          # accept launches, so poll for up to 60 seconds. The deadline covers a hung attempt too.
+          # device PATH for its launchctl instead. `launchctl error 0` proves a real process ran
+          # without dumping the entire system bootstrap. A healthy attempt takes about one second,
+          # so abandon an unresponsive attempt after five seconds and keep polling. The separate
+          # 60-second total deadline bounds a genuinely unusable simulator and fails the step.
           python3 tools/wait-for-simulator-process \
             --udid "$IPAD_UDID" \
+            --attempt-timeout-seconds 5 \
             --deadline-seconds 60 \
-            -- launchctl print system
+            -- launchctl error 0
 
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true process-launch=true app-launched=false"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
