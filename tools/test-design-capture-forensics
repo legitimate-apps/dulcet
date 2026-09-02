@@ -255,6 +255,16 @@ def main() -> None:
             {"dy": -3, "dx": 0},
             "known-shift best-fit shift",
         )
+        assert_equal(
+            translation["analysisRegionInclusive"],
+            shift_delta["boundingBoxInclusive"],
+            "known-shift translation analysis region",
+        )
+        assert_equal(
+            translation["regionStartY"],
+            shift_delta["boundingBoxInclusive"]["minY"],
+            "known-shift translation region start",
+        )
         if translation["residualAfter"] <= 0:
             raise SystemExit(
                 "known-shift non-rigid fixture incorrectly has zero residual after shift"
@@ -298,6 +308,9 @@ def main() -> None:
             )
         for expected_log_fragment in (
             "classification=translation-component dy=-3 dx=0",
+            f'region-start-y={translation["regionStartY"]}',
+            f'residual-before={translation["residualBefore"]} '
+            f'residual-after={translation["residualAfter"]}',
             "run-comparison=apparently-unchanged information=no-information",
             "element=0 run-a=5..7(height=3,gap-top=None) "
             "run-b=6..8(height=3,gap-top=None) top-delta=1 height-delta=0",
