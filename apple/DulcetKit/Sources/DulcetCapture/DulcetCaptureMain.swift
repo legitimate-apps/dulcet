@@ -211,10 +211,14 @@ private struct CaptureFontMetrics: Codable {
 
 private struct CaptureNativeControlLayoutFact: Codable {
     let hierarchyPath: String
+    let semanticKey: String
+    let controlKind: String
     let className: String
     let cellClassName: String?
     let accessibilityIdentifier: String?
     let accessibilityLabel: String?
+    let placeholder: String?
+    let buttonTitle: String?
     let frameInCapturePoints: CapturePointRect
     let boundsSizePoints: CapturePointSize
     let intrinsicContentSizePoints: CapturePointSize
@@ -241,8 +245,8 @@ private struct CaptureRootLayoutFacts: Codable {
     let hostingViewFrameInCapturePoints: CapturePointRect
     let hostingViewBoundsPoints: CapturePointRect
     let hostingViewIntrinsicContentSizePoints: CapturePointSize
-    let hostingViewFirstBaselineOffsetFromTopPoints: Double
-    let hostingViewLastBaselineOffsetFromBottomPoints: Double
+    let hostingViewFirstBaselineOffsetFromTopPoints: Double?
+    let hostingViewLastBaselineOffsetFromBottomPoints: Double?
     let hostingViewLayerContentsScale: Double?
 }
 
@@ -284,6 +288,7 @@ private struct CaptureManifest: Codable {
     let textSizingPolicy: String
     let preflightRender: String
     let appearanceResolutionPolicy: String
+    let layoutDiagnosticsPolicy: String
     let bitmapPixelsPerPoint: Double
     let fontSmoothingPolicy: String
     let fontSubpixelPositioningPolicy: String
@@ -435,6 +440,7 @@ private struct DulcetCaptureMain {
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
             preflightRender: "discarded-all-states-all-appearances-before-recording",
             appearanceResolutionPolicy: "requested-appearance-current-before-host-construction",
+            layoutDiagnosticsPolicy: "resolved-root-and-native-controls-after-frame-convergence",
             bitmapPixelsPerPoint: captureScale,
             fontSmoothingPolicy: "disabled-explicit-bitmap-context",
             fontSubpixelPositioningPolicy: "disabled-explicit-bitmap-context",
@@ -721,10 +727,22 @@ private struct DulcetCaptureMain {
             if view is NSTextField || view is NSButton {
                 let control = view as? NSControl
                 let cell = control?.cell
+                let textField = view as? NSTextField
+                let button = view as? NSButton
+                let placeholder = nonempty(textField?.placeholderString)
+                let buttonTitle = nonempty(button?.title)
+                let controlKind: String
+                if view is NSSecureTextField {
+                    controlKind = "secure-text-field"
+                } else if view is NSTextField {
+                    controlKind = "text-field"
+                } else {
+                    controlKind = "button"
+                }
                 let font: NSFont?
-                if let textField = view as? NSTextField {
+                if let textField {
                     font = textField.font
-                } else if let button = view as? NSButton {
+                } else if let button {
                     font = button.font
                 } else {
                     font = nil
@@ -732,10 +750,14 @@ private struct DulcetCaptureMain {
                 let effectiveLayer = effectiveLayerContentsScale(for: view, window: window)
                 nativeControls.append(CaptureNativeControlLayoutFact(
                     hierarchyPath: path,
+                    semanticKey: "\(controlKind):\(placeholder ?? buttonTitle ?? path)",
+                    controlKind: controlKind,
                     className: String(describing: type(of: view)),
                     cellClassName: cell.map { String(describing: type(of: $0)) },
-                    accessibilityIdentifier: view.accessibilityIdentifier(),
-                    accessibilityLabel: view.accessibilityLabel(),
+                    accessibilityIdentifier: nonempty(view.accessibilityIdentifier()),
+                    accessibilityLabel: nonempty(view.accessibilityLabel()),
+                    placeholder: placeholder,
+                    buttonTitle: buttonTitle,
                     frameInCapturePoints: pointRect(view.convert(view.bounds, to: captureView)),
                     boundsSizePoints: pointSize(view.bounds.size),
                     intrinsicContentSizePoints: pointSize(view.intrinsicContentSize),
@@ -778,10 +800,10 @@ private struct DulcetCaptureMain {
                 hostingViewIntrinsicContentSizePoints: pointSize(
                     hostingView.intrinsicContentSize
                 ),
-                hostingViewFirstBaselineOffsetFromTopPoints: Double(
+                hostingViewFirstBaselineOffsetFromTopPoints: meaningfulBaselineOffset(
                     hostingView.firstBaselineOffsetFromTop
                 ),
-                hostingViewLastBaselineOffsetFromBottomPoints: Double(
+                hostingViewLastBaselineOffsetFromBottomPoints: meaningfulBaselineOffset(
                     hostingView.lastBaselineOffsetFromBottom
                 ),
                 hostingViewLayerContentsScale: hostingView.layer.map {
@@ -826,6 +848,16 @@ private struct DulcetCaptureMain {
             xHeight: Double(font.xHeight),
             boundingRect: pointRect(font.boundingRectForFont)
         )
+    }
+
+    private static func nonempty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func meaningfulBaselineOffset(_ value: CGFloat) -> Double? {
+        guard value != .leastNormalMagnitude else { return nil }
+        return Double(value)
     }
 
     @MainActor
