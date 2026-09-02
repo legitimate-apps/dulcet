@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Controls for read-play-count.
+
+Every rejection path must bite and the pass path must pass -- but the control this suite exists for
+is the FAIL-OPEN one: an earlier revision printed `PLAY COUNT ASSERTION PASS` and exited 0 when
+invoked with no expectation at all, and this suite's own positive controls blessed it by asserting
+only `returncode == 0`. A control that accepts the answer without checking what was asserted is not
+a control.
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+TOOL = Path(__file__).resolve().parent / "read-play-count"
+
+
+def run(songs, *extra):
+    payload = {"subsonic-response": {"status": "ok", "searchResult3": {"song": songs}}}
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(payload, handle)
+        path = handle.name
+    try:
+        return subprocess.run(
+            [sys.executable, str(TOOL), "--base-url", "http://unused",
+             "--title", "UI Playback Canary", "--search-json", path, *extra],
+            capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+
+
+CANARY = {"id": "abc123", "title": "UI Playback Canary", "playCount": 1}
+ZERO = {"id": "abc123", "title": "UI Playback Canary"}          # playCount omitted
+OTHER = {"id": "zzz", "title": "Thirty One Seconds", "playCount": 9}
+
+failures = []
+
+
+def expect(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  -- {detail}" if not ok else ""))
+    if not ok:
+        failures.append(name)
+
+
+print("FAIL-OPEN CONTROLS (the reason this suite exists)")
+r = run([CANARY])
+expect("no expectation at all is REJECTED by argparse, not answered",
+       r.returncode != 0 and "required" in (r.stdout + r.stderr).lower()
+       and "ASSERTION PASS" not in r.stdout, (r.stdout + r.stderr)[:160])
+r = run([dict(CANARY, playCount=7)], "--expect", "0")
+expect("a mismatch NEVER prints ASSERTION PASS",
+       r.returncode != 0 and "ASSERTION PASS" not in r.stdout, r.stdout)
+
+print("POSITIVE CONTROLS")
+r = run([CANARY, OTHER], "--expect", "1")
+expect("reads the canary, ignores other titles, and says what it asserted",
+       r.returncode == 0 and "observed=1 expected=1" in r.stdout
+       and "ASSERTION PASS" in r.stdout, r.stdout + r.stderr)
+r = run([ZERO, OTHER], "--expect", "0")
+expect("omitted playCount reads as 0",
+       r.returncode == 0 and "observed=0" in r.stdout, r.stdout + r.stderr)
+
+print("NEGATIVE CONTROLS")
+r = run([OTHER], "--expect", "0")
+expect("missing canary is REJECTED, not read as zero",
+       r.returncode != 0 and "no song titled" in (r.stdout + r.stderr), r.stdout + r.stderr)
+r = run([CANARY, dict(CANARY, id="dup")], "--expect", "1")
+expect("duplicate titles are REJECTED (ambiguous attribution)",
+       r.returncode != 0 and "ambiguous canary" in (r.stdout + r.stderr), r.stdout + r.stderr)
+r = run([ZERO], "--expect", "1")
+expect("too FEW is rejected and names delivery lag as a cause",
+       r.returncode != 0 and "fewer than expected" in (r.stdout + r.stderr), r.stdout + r.stderr)
+r = run([dict(CANARY, playCount=2)], "--expect", "1")
+expect("too MANY is rejected and names another actor",
+       r.returncode != 0 and "something other than the app under test" in (r.stdout + r.stderr),
+       r.stdout + r.stderr)
+r = run([dict(CANARY, playCount="1")], "--expect", "1")
+expect("non-integer playCount is REJECTED",
+       r.returncode != 0 and "not an integer" in (r.stdout + r.stderr), r.stdout + r.stderr)
+
+# The fixture path must not be a way to bypass envelope validation.
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+    json.dump({"subsonic-response": {"status": "failed", "error": {"code": 40}}}, handle)
+    bad = handle.name
+r = subprocess.run([sys.executable, str(TOOL), "--base-url", "http://unused",
+                    "--title", "UI Playback Canary", "--search-json", bad, "--expect", "0"],
+                   capture_output=True, text=True)
+os.unlink(bad)
+expect("a non-ok envelope is REJECTED even on the fixture path",
+       r.returncode != 0 and "ASSERTION PASS" not in r.stdout, r.stdout + r.stderr)
+
+print()
+if failures:
+    raise SystemExit(f"{len(failures)} control(s) failed: {failures}")
+print("ALL CONTROLS PASS (2 fail-open, 2 positive, 6 negative)")
