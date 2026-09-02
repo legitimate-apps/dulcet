@@ -362,7 +362,10 @@ private struct DulcetStateSurface: View {
                     onShuffle: { store.playAlbum(album.id, shuffle: true) },
                     onActivateTrack: { track in
                         store.activateTrack(albumID: album.id, trackID: track.id)
-                    }
+                    },
+                    onDownloadTrack: store.downloadsEnabled
+                        ? { track in store.downloadTrack(track.id) }
+                        : nil
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)
@@ -380,7 +383,15 @@ private struct DulcetStateSurface: View {
                     .navigationTitle(DulcetSidebarDestination.library.windowTitle)
             }
         case .offlineMetadataOnly:
-            DulcetOfflineLibraryView(snapshot: snapshot)
+            DulcetOfflineLibraryView(
+                snapshot: snapshot,
+                onActivateTrack: { track in
+                    guard let album = snapshot.albums.first(where: {
+                        $0.tracks.contains(where: { $0.id == track.id })
+                    }) else { return }
+                    store.activateTrack(albumID: album.id, trackID: track.id)
+                }
+            )
                 .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         default:
             DulcetEmptyLibraryView(connected: snapshot.accountConnected)

@@ -246,6 +246,43 @@ func playbackSurfaceIntentsReachTheSinglePlaybackControllerBoundary() throws {
 }
 
 @Test @MainActor
+func downloadSurfaceIntentAndDurableStateReachTheDownloadControllerBoundary() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let downloads = ControlledDownloadController()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        downloadController: downloads,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    #expect(store.downloadsEnabled)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    #expect(downloads.configuredAccount?.providerInstanceID == "provider-instance-fixture")
+
+    store.selectDestination(.library)
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    store.downloadTrack(album.tracks[0].id)
+    #expect(downloads.requestedTracks.map(\.id) == [album.tracks[0].id])
+
+    downloads.publish(.downloaded, for: album.tracks[0].id)
+    let renderedTrack = try #require(store.snapshot.albums.first?.tracks.first)
+    #expect(renderedTrack.downloadState == .downloaded)
+
+    downloads.downloadsEnabled = false
+    #expect(!store.downloadsEnabled)
+}
+
+@Test @MainActor
 func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
     let playback = ControlledPlaybackController()
     let source = DulcetAccountDataSource(
@@ -1069,6 +1106,42 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
     func publish(_ presentation: DulcetPlaybackPresentation) {
         currentPresentation = presentation
         handler?(presentation)
+    }
+}
+
+@MainActor
+private final class ControlledDownloadController: DulcetDownloadControlling {
+    var downloadsEnabled = true
+    private var handler: (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
+    private(set) var configuredAccount: DulcetPlaybackAccount?
+    private(set) var requestedTracks: [DulcetTrack] = []
+
+    func setStatusHandler(
+        _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
+    ) {
+        self.handler = handler
+    }
+
+    func configure(account: DulcetPlaybackAccount) {
+        configuredAccount = account
+    }
+
+    func requestDownload(_ track: DulcetTrack) {
+        requestedTracks.append(track)
+    }
+
+    func status(for id: DulcetProviderItemID) -> DulcetDownloadState {
+        .notDownloaded
+    }
+
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? {
+        nil
+    }
+
+    func disconnect() {}
+
+    func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {
+        handler?(id, state)
     }
 }
 

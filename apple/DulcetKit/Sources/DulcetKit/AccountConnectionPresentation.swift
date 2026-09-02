@@ -361,6 +361,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let artworkFetcher: (any DulcetArtworkFetching)?
     private let serverSearch: (any DulcetServerSearching)?
     private let playbackController: (any DulcetPlaybackControlling)?
+    private let downloadController: (any DulcetDownloadControlling)?
     private let searchDebounce: Duration
     private let providerInstanceIDFactory: @MainActor () -> String
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
@@ -388,6 +389,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private static let searchPageSize = 20
 
     public private(set) var currentSnapshot: DulcetSnapshot
+    public var downloadsEnabled: Bool {
+        downloadController?.downloadsEnabled == true
+    }
 
     public init(
         connector: any DulcetAccountConnecting,
@@ -396,6 +400,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         artworkFetcher: (any DulcetArtworkFetching)? = nil,
         serverSearch: (any DulcetServerSearching)? = nil,
         playbackController: (any DulcetPlaybackControlling)? = nil,
+        downloadController: (any DulcetDownloadControlling)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty,
         searchDebounce: Duration = .milliseconds(250),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
@@ -406,6 +411,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         self.artworkFetcher = artworkFetcher
         self.serverSearch = serverSearch
         self.playbackController = playbackController
+        self.downloadController = downloadController
         self.searchDebounce = searchDebounce
         self.providerInstanceIDFactory = providerInstanceIDFactory
         do {
@@ -439,6 +445,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         playbackController?.setPresentationHandler { [weak self] presentation in
             self?.receivePlaybackPresentation(presentation)
+        }
+        downloadController?.setStatusHandler { [weak self] id, state in
+            self?.receiveDownloadState(state, for: id)
         }
     }
 
@@ -533,6 +542,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 startIndex: index,
                 shuffle: false
             ))
+        case let .downloadTrack(id):
+            guard let track = libraryAlbums.lazy.flatMap(\.tracks).first(where: { $0.id == id }),
+                  downloadController?.downloadsEnabled == true else { return }
+            downloadController?.requestDownload(track)
         case let .playbackControl(intent):
             playbackController?.send(intent)
         case let .submitAccountConnection(request):
@@ -771,8 +784,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             case let .loaded(musicFolders, artists, albums):
                 self.libraryMusicFolders = musicFolders
                 self.libraryArtists = artists
-                self.libraryAlbums = albums
-                self.playbackController?.restorePersistedQueue(with: albums.flatMap(\.tracks))
+                self.libraryAlbums = albums.map { self.applyingDownloadStates(to: $0) }
+                self.playbackController?.restorePersistedQueue(
+                    with: self.libraryAlbums.flatMap(\.tracks)
+                )
                 if let selection {
                     if self.presentLibrarySelection(selection) {
                         return
@@ -795,7 +810,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: self.currentSnapshot.accountConnection,
                     musicFolders: musicFolders,
                     artists: artists,
-                    albums: albums
+                    albums: self.libraryAlbums
                 )
             case let .failed(failure):
                 self.publish(
@@ -1113,6 +1128,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalTask = nil
         providerInstanceID = nil
         playbackController?.disconnect()
+        downloadController?.disconnect()
         libraryMusicFolders = []
         libraryArtists = []
         libraryAlbums = []
@@ -1140,7 +1156,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             normalizedServerURL: account.normalizedServerURL,
             username: request.username,
             password: request.password,
-            allowLocalHTTP: request.allowLocalHTTP
+            allowLocalHTTP: request.allowLocalHTTP,
+            credentialGeneration: credentialStore?.credentialGeneration ?? 0
+        ))
+        downloadController?.configure(account: DulcetPlaybackAccount(
+            providerInstanceID: providerInstanceID,
+            normalizedServerURL: account.normalizedServerURL,
+            username: request.username,
+            password: request.password,
+            allowLocalHTTP: request.allowLocalHTTP,
+            credentialGeneration: credentialStore?.credentialGeneration ?? 0
         ))
     }
 
@@ -1181,6 +1206,40 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedAlbum: currentSnapshot.selectedAlbum,
             libraryFailure: currentSnapshot.libraryFailure,
             nowPlaying: presentation.status == .ready ? presentation.nowPlaying : nil
+        )
+    }
+
+    private func applyingDownloadStates(to album: DulcetAlbum) -> DulcetAlbum {
+        guard let downloadController else { return album }
+        return album.replacingTracks(album.tracks.map { track in
+            track.replacingDownloadState(downloadController.status(for: track.id))
+        })
+    }
+
+    private func receiveDownloadState(
+        _ state: DulcetDownloadState,
+        for id: DulcetProviderItemID
+    ) {
+        libraryAlbums = libraryAlbums.map { album in
+            album.replacingTracks(album.tracks.map { track in
+                track.id == id ? track.replacingDownloadState(state) : track
+            })
+        }
+        let selectedAlbum = currentSnapshot.selectedAlbum.flatMap { selected in
+            libraryAlbums.first(where: { $0.id == selected.id })
+        }
+        publish(
+            state: currentSnapshot.state,
+            destination: currentSnapshot.selectedDestination,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection,
+            musicFolders: currentSnapshot.musicFolders,
+            artists: currentSnapshot.artists,
+            albums: libraryAlbums,
+            selectedAlbum: selectedAlbum,
+            selectedArtist: currentSnapshot.selectedArtist,
+            libraryFailure: currentSnapshot.libraryFailure,
+            nowPlaying: currentSnapshot.nowPlaying
         )
     }
 

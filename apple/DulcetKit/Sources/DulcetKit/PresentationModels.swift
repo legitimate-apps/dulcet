@@ -338,6 +338,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
     public let artwork: DulcetArtwork
     public let availability: DulcetMediaAvailability
     public let isFavorite: Bool
+    public let downloadState: DulcetDownloadState
 
     public init(
         id: DulcetProviderItemID,
@@ -351,7 +352,8 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         mediaSourceID: String?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        downloadState: DulcetDownloadState = .notDownloaded
     ) {
         self.id = id
         self.title = title
@@ -365,6 +367,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         self.artwork = artwork
         self.availability = availability
         self.isFavorite = isFavorite
+        self.downloadState = downloadState
     }
 
     public var artistNames: [String] {
@@ -458,6 +461,41 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
             mediaSourceID: nil,
             artwork: artwork,
             tracks: tracks
+        )
+    }
+}
+
+extension DulcetAlbum {
+    func replacingTracks(_ tracks: [DulcetTrack]) -> Self {
+        Self(
+            id: id,
+            title: title,
+            credits: credits,
+            year: year,
+            duration: duration,
+            mediaSourceID: mediaSourceID,
+            artwork: artwork,
+            tracks: tracks
+        )
+    }
+}
+
+extension DulcetTrack {
+    func replacingDownloadState(_ state: DulcetDownloadState) -> Self {
+        Self(
+            id: id,
+            title: title,
+            credits: credits,
+            albumTitle: albumTitle,
+            discNumber: discNumber,
+            trackNumber: trackNumber,
+            duration: duration,
+            sourceContainer: sourceContainer,
+            mediaSourceID: mediaSourceID,
+            artwork: artwork,
+            availability: availability,
+            isFavorite: isFavorite,
+            downloadState: state
         )
     }
 }

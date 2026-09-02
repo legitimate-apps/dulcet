@@ -416,10 +416,15 @@ struct DulcetTrackRow: View {
     var surface: DulcetTrackRowSurface = .window
     var isCurrent = false
     var onActivate: (() -> Void)?
+    var onDownload: (() -> Void)?
+
+    private var unavailableOffline: Bool {
+        offline && !track.downloadState.isLocallyPlayable
+    }
 
     @ViewBuilder
     var body: some View {
-        if offline {
+        if unavailableOffline {
             rowContent
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
@@ -462,7 +467,7 @@ struct DulcetTrackRow: View {
     private var rowContent: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
                 Group {
-                    if offline {
+                    if unavailableOffline {
                         Image(systemName: "cloud.slash")
                             .dulcetForeground(surface.offlinePair)
                     } else if isCurrent {
@@ -480,7 +485,7 @@ struct DulcetTrackRow: View {
                 DulcetArtworkView(
                     artwork: track.artwork,
                     size: DulcetMetrics.denseRowArtworkSize,
-                    muted: offline
+                    muted: unavailableOffline
                 )
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -496,7 +501,7 @@ struct DulcetTrackRow: View {
 
                 Spacer(minLength: DulcetSpacing.xs)
 
-                if offline {
+                if unavailableOffline {
                     Text(DulcetStrings.offlineUnavailable)
                         .font(.caption.weight(.medium))
                         .dulcetForeground(surface.offlinePair)
@@ -507,6 +512,12 @@ struct DulcetTrackRow: View {
                         .dulcetForeground(surface.secondaryPair)
                 }
 
+                #if os(macOS)
+                if !offline, let onDownload {
+                    downloadControl(action: onDownload)
+                }
+                #endif
+
         }
         .padding(.horizontal, DulcetSpacing.xs)
         .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
@@ -514,7 +525,7 @@ struct DulcetTrackRow: View {
     }
 
     private func performActivation() {
-        guard !offline, let onActivate else { return }
+        guard !unavailableOffline, let onActivate else { return }
         onActivate()
     }
 
@@ -530,7 +541,7 @@ struct DulcetTrackRow: View {
     }
 
     private var accessibilityLabel: String {
-        if offline {
+        if unavailableOffline {
             return DulcetStrings.unavailableTrackAccessibility(
                 title: track.title,
                 subtitle: trackSubtitle,
@@ -547,6 +558,41 @@ struct DulcetTrackRow: View {
     private var rowAccessibilityLabel: String {
         isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
     }
+
+    #if os(macOS)
+    @ViewBuilder
+    private func downloadControl(action: @escaping () -> Void) -> some View {
+        switch track.downloadState {
+        case .notDownloaded:
+            Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: action)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help(DulcetStrings.download)
+                .accessibilityLabel(DulcetStrings.download)
+        case .queued, .downloading:
+            ProgressView()
+                .controlSize(.small)
+                .help(DulcetStrings.downloading)
+                .accessibilityLabel(DulcetStrings.downloading)
+        case .interrupted, .failed:
+            Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: action)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help(DulcetStrings.retryDownload)
+                .accessibilityLabel(DulcetStrings.retryDownload)
+        case .downloaded:
+            Image(systemName: "checkmark.circle.fill")
+                .dulcetForeground(surface.secondaryPair)
+                .help(DulcetStrings.downloaded)
+                .accessibilityLabel(DulcetStrings.downloaded)
+        case .stale:
+            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                .dulcetForeground(surface.secondaryPair)
+                .help(DulcetStrings.downloadUpdateAvailable)
+                .accessibilityLabel(DulcetStrings.downloadUpdateAvailable)
+        }
+    }
+    #endif
 }
 
 struct DulcetAlbumDetailView: View {
@@ -555,6 +601,7 @@ struct DulcetAlbumDetailView: View {
     var onPlay: () -> Void = {}
     var onShuffle: () -> Void = {}
     var onActivateTrack: (DulcetTrack) -> Void = { _ in }
+    var onDownloadTrack: ((DulcetTrack) -> Void)?
 
     var body: some View {
         ScrollView {
@@ -575,7 +622,10 @@ struct DulcetAlbumDetailView: View {
                                     showAlbum: false,
                                     index: index + 1,
                                     surface: .window,
-                                    onActivate: { onActivateTrack(track) }
+                                    onActivate: { onActivateTrack(track) },
+                                    onDownload: onDownloadTrack.map { handler in
+                                        { handler(track) }
+                                    }
                                 )
                                 if track.id != tracks.last?.id {
                                     Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
@@ -714,6 +764,7 @@ extension DulcetAlbum {
 struct DulcetOfflineLibraryView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let snapshot: DulcetSnapshot
+    var onActivateTrack: (DulcetTrack) -> Void = { _ in }
 
     var body: some View {
         // This reader consumes the outer proposal before the vertical ScrollView,
@@ -777,7 +828,10 @@ struct DulcetOfflineLibraryView: View {
                                 showAlbum: true,
                                 index: index + 1,
                                 offline: true,
-                                surface: .control
+                                surface: .control,
+                                onActivate: track.downloadState.isLocallyPlayable
+                                    ? { onActivateTrack(track) }
+                                    : nil
                             )
                             if track.id != tracks.last?.id {
                                 Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
