@@ -313,9 +313,27 @@ looking for an approval nothing asked you for. **Do not "fix" a blocked pull req
 required reviews.**
 
 **Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
-commit to the *pull request's* author, not to the commit author. Opening from an account whose
-address is not a `noreply` one writes that address into a public commit on `main` — it happened once,
-commit `0e3566e`. **Open pull requests as `legitimate-apps`.**
+commit to the *pull request's* author, not to the commit author, and it uses that account's **profile
+email** — the `noreply` address only when the account has email privacy enabled. **Open pull requests
+as `legitimate-apps`.**
+
+🚨 **Corrected 2026-09-01. This previously said the exposure "happened once, commit `0e3566e`". That
+is wrong, and understating it is what let it persist.** Measured on `origin/main` with
+`git log --format='%ae'`: **31 of the last 40 commits** carry the opening account's profile address
+rather than its `noreply` one, spanning **2026-08-26 to 2026-09-01** — that is *every squash merge in
+the repository's active history*, not an isolated slip. Our own direct commits are unaffected and
+correctly carry the `noreply` address, which is why the per-command identity convention in *Identity*
+looked like it was working.
+
+**The convention cannot fix this, and that is the point.** A squash merge does not preserve the
+authorship of the commits it squashes — GitHub synthesises a new commit and sets the author itself.
+So no amount of care at `git commit` time changes the result. The two things that do are enabling
+email privacy on the opening account, or merging with **rebase** (which replays the original commits
+with their original authorship) instead of squash. Both are repository-policy decisions; neither is
+something a commit-time convention can substitute for.
+
+**Re-measure before restating any figure here.** The count above is dated because it grows with every
+merge, and the previous version of this paragraph was accurate when written and wrong within days.
 
 Pull-request authorship and commit authorship are separate fields. Commits are authored
 `legitimate-apps` by the convention in *Identity* above; that is an instruction here, not something
