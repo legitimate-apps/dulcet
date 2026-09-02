@@ -816,7 +816,13 @@
       "gates": ["device:persistent-storage", "policy:downloads-enabled"],
       "conformance": ["CONF-51", "CONF-52"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"},
+        "macos": {
+          "status": "shipped",
+          "evidence": [
+            {"conformance": "CONF-51", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetMacDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"},
+            {"conformance": "CONF-52", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetMacDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose"}
+          ]
+        }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
       }
