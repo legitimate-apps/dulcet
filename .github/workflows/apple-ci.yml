@@ -68,8 +68,6 @@ jobs:
         run: python3 tools/test-string-catalog-policy-gate
       - name: Prove the iPad destination resolver rejects a non-iPad
         run: python3 tools/test-ipad-destination-resolver
-      - name: Prove simulator process readiness expires as a prerequisite failure
-        run: python3 tools/test-simulator-process-readiness
       - name: Require SwiftUI user-facing literals to use the string catalog
         run: python3 tools/verify_string_catalog_policy.py
       - name: Prove the DulcetCore build-order guard accepts a valid project and rejects ten broken ones
@@ -333,18 +331,10 @@ jobs:
             echo "::error title=iPadOS simulator prerequisite failed::CoreSimulator did not finish booting; the layout test did not run"
             exit 1
           fi
-          # `simctl spawn` treats an absolute executable path as a host path. Ask the simulated
-          # device PATH for its launchctl instead. `launchctl error 0` proves a real process ran
-          # without dumping the entire system bootstrap. A healthy attempt takes about one second,
-          # so abandon an unresponsive attempt after five seconds and keep polling. The separate
-          # 60-second total deadline bounds a genuinely unusable simulator and fails the step.
-          python3 tools/wait-for-simulator-process \
-            --udid "$IPAD_UDID" \
-            --attempt-timeout-seconds 5 \
-            --deadline-seconds 60 \
-            -- launchctl error 0
-
-          echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true process-launch=true app-launched=false"
+          # Do not add a `simctl spawn` readiness gate here. On the hosted runner it can hang after
+          # bootstatus succeeds even though XCUITest uses a different launch path. Let app.launch()
+          # provide the launch evidence so this prerequisite cannot reject a runnable destination.
+          echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Launch iPadOS shell and prove regular-width account layout
         env:
