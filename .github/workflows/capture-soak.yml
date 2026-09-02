@@ -1,0 +1,165 @@
+name: macOS capture determinism soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      pair_count:
+        description: Independent capture pairs to draw (two fresh processes per pair)
+        required: true
+        default: 30
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  capture-soak:
+    name: capture-soak (${{ inputs.pair_count }} independent pairs)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      PAIR_COUNT: ${{ inputs.pair_count }}
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # This calls the same detector used below. If a known one-pixel difference is not reported as
+      # a divergence with retained forensics, no paid capture samples are drawn.
+      - name: Prove the pair detector catches a known one-pixel delta
+        run: tools/test-design-capture-pair-detector
+
+      - name: Validate requested sample count
+        shell: bash
+        run: |
+          if ! [[ "$PAIR_COUNT" =~ ^[0-9]+$ ]]; then
+            echo "CAPTURE SOAK ERROR pair_count must be an integer: $PAIR_COUNT"
+            exit 1
+          fi
+          if (( PAIR_COUNT < 1 || PAIR_COUNT > 100 )); then
+            echo "CAPTURE SOAK ERROR pair_count must be between 1 and 100: $PAIR_COUNT"
+            exit 1
+          fi
+          echo "CAPTURE SOAK SAMPLE PLAN pairs=$PAIR_COUNT fresh-processes=$((PAIR_COUNT * 2))"
+
+      - name: Build DulcetCapture once
+        run: swift build --package-path apple/DulcetKit --product DulcetCapture
+
+      - name: Draw independent capture-pair samples
+        id: soak
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
+          test -x "$capture_binary"
+
+          results="$RUNNER_TEMP/dulcet-capture-soak-results"
+          working="$RUNNER_TEMP/dulcet-capture-soak-working"
+          mkdir -p "$results/forensics" "$working"
+          summary="$results/pairs.tsv"
+          printf 'pair\tresult\telapsed_seconds\n' > "$summary"
+
+          divergences=0
+          soak_started=$SECONDS
+          for ((pair = 1; pair <= PAIR_COUNT; pair++)); do
+            pair_id="$(printf '%03d' "$pair")"
+            pair_root="$working/pair-$pair_id"
+            run_a="$pair_root/run-a"
+            run_b="$pair_root/run-b"
+            pair_started=$SECONDS
+            mkdir -p "$pair_root"
+
+            # Each invocation is a new OS process. No render loop or long-lived capture process is
+            # shared between either side of a pair or between successive pairs.
+            if ! "$capture_binary" \
+              --output "$run_a" --state all --appearance all --include-control \
+              > "$pair_root/run-a.log" 2>&1; then
+              cat "$pair_root/run-a.log"
+              echo "CAPTURE SOAK ERROR pair=$pair_id side=run-a capture-process-failed"
+              exit 2
+            fi
+            if ! "$capture_binary" \
+              --output "$run_b" --state all --appearance all --include-control \
+              > "$pair_root/run-b.log" 2>&1; then
+              cat "$pair_root/run-b.log"
+              echo "CAPTURE SOAK ERROR pair=$pair_id side=run-b capture-process-failed"
+              exit 2
+            fi
+
+            forensics="$results/forensics/pair-$pair_id"
+            set +e
+            tools/design-capture-pair-detector \
+              "$run_a" "$run_b" --forensics-output "$forensics"
+            detector_status=$?
+            set -e
+
+            pair_elapsed=$((SECONDS - pair_started))
+            case "$detector_status" in
+              0)
+                result=match
+                ;;
+              1)
+                result=diverged
+                divergences=$((divergences + 1))
+                cp "$pair_root/run-a.log" "$forensics/run-a.log"
+                cp "$pair_root/run-b.log" "$forensics/run-b.log"
+                ;;
+              *)
+                mkdir -p "$results/detector-errors/pair-$pair_id"
+                cp "$pair_root/run-a.log" "$results/detector-errors/pair-$pair_id/run-a.log"
+                cp "$pair_root/run-b.log" "$results/detector-errors/pair-$pair_id/run-b.log"
+                echo "CAPTURE SOAK ERROR pair=$pair_id detector-exit=$detector_status"
+                exit 2
+                ;;
+            esac
+            printf '%s\t%s\t%s\n' "$pair_id" "$result" "$pair_elapsed" >> "$summary"
+            echo "CAPTURE SOAK SAMPLE pair=$pair_id/$PAIR_COUNT result=$result elapsed-seconds=$pair_elapsed"
+
+            # Matching pairs have no forensic value. Divergent bytes were copied into the retained
+            # forensics tree by the detector before this bounded temporary directory is removed.
+            rm -rf "$pair_root"
+          done
+
+          soak_elapsed=$((SECONDS - soak_started))
+          matches=$((PAIR_COUNT - divergences))
+          divergence_rate="$(DIVERGENCES="$divergences" python3 -c \
+            'import os; print(f"{int(os.environ[\"DIVERGENCES\"]) / int(os.environ[\"PAIR_COUNT\"]):.6f}")')"
+          historical_zero_probability="$(python3 -c \
+            'import os; print(f"{0.9 ** int(os.environ[\"PAIR_COUNT\"]):.6f}")')"
+
+          cat > "$results/summary.txt" <<EOF
+          CAPTURE SOAK RESULT pairs=$PAIR_COUNT fresh-processes=$((PAIR_COUNT * 2)) matches=$matches divergences=$divergences divergence-rate=$divergence_rate elapsed-seconds=$soak_elapsed
+          CAPTURE SOAK CONTEXT probability-of-zero-at-historical-10-percent-rate=$historical_zero_probability
+          EOF
+          cat "$results/summary.txt"
+          {
+            printf '%s\n' '## macOS deterministic-capture soak'
+            printf '\n'
+            printf '%s\n' "- Independent pairs: \`$PAIR_COUNT\`"
+            printf '%s\n' "- Fresh capture processes: \`$((PAIR_COUNT * 2))\`"
+            printf '%s\n' "- Matching pairs: \`$matches\`"
+            printf '%s\n' "- Divergent pairs: \`$divergences\`"
+            printf '%s\n' "- Divergence rate: \`$divergence_rate\`"
+            printf '%s\n' "- Elapsed seconds: \`$soak_elapsed\`"
+            printf '%s\n' "- Probability of zero divergences if the historical 10% pair rate still holds: \`$historical_zero_probability\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "pairs=$PAIR_COUNT" >> "$GITHUB_OUTPUT"
+          echo "divergences=$divergences" >> "$GITHUB_OUTPUT"
+          if (( divergences > 0 )); then
+            exit 1
+          fi
+
+      - name: Upload soak summary and divergence forensics
+        if: ${{ always() && steps.soak.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-capture-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-capture-soak-results
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
