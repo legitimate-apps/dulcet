@@ -485,6 +485,88 @@ def retain(path: Path, relative: Path, output: Path, run: str) -> str:
     return destination.relative_to(output).as_posix()
 
 
+def load_process_diagnostics(path: Path, output: Path, run: str) -> dict[str, Any]:
+    try:
+        diagnostics = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as error:
+        raise ForensicsError(f"cannot read {run} process diagnostics {path}: {error}") from error
+    if not isinstance(diagnostics, dict) or diagnostics.get("schemaVersion") != 1:
+        raise ForensicsError(f"{run} process diagnostics has an unsupported schema")
+    if diagnostics.get("clock") != "dispatch-monotonic-uptime":
+        raise ForensicsError(f"{run} process diagnostics does not declare the monotonic clock")
+    renders = diagnostics.get("renders")
+    if not isinstance(renders, list):
+        raise ForensicsError(f"{run} process diagnostics renders is not a list")
+    required_render_fields = {
+        "appearance",
+        "file",
+        "firstComparisonMatched",
+        "fixtureState",
+        "phase",
+        "renderStartToFirstFrameMilliseconds",
+        "renderStartToStableFrameMilliseconds",
+        "mainEntryToStableFrameMilliseconds",
+        "settleAttempts",
+        "variant",
+    }
+    for index, render in enumerate(renders):
+        if not isinstance(render, dict) or not required_render_fields <= set(render):
+            raise ForensicsError(
+                f"{run} process diagnostics render {index} is missing required fields"
+            )
+    retained = output / "retained-diagnostics" / f"{run}.json"
+    retained.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, retained)
+    return {
+        "retainedPath": retained.relative_to(output).as_posix(),
+        "data": diagnostics,
+    }
+
+
+def compare_process_diagnostics(
+    run_a: dict[str, Any],
+    run_b: dict[str, Any],
+) -> list[dict[str, Any]]:
+    def keyed(diagnostics: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+        result: dict[tuple[str, str], dict[str, Any]] = {}
+        for render in diagnostics["data"]["renders"]:
+            key = (render["phase"], render["file"])
+            if key in result:
+                raise ForensicsError(
+                    f"process diagnostics contains duplicate render key {key!r}"
+                )
+            result[key] = render
+        return result
+
+    run_a_by_key = keyed(run_a)
+    run_b_by_key = keyed(run_b)
+    comparisons = []
+    for phase, filename in sorted(set(run_a_by_key) | set(run_b_by_key)):
+        first = run_a_by_key.get((phase, filename))
+        second = run_b_by_key.get((phase, filename))
+        comparisons.append({
+            "phase": phase,
+            "file": filename,
+            "runA": first,
+            "runB": second,
+            "settleAttemptsDelta": (
+                second["settleAttempts"] - first["settleAttempts"]
+                if first is not None and second is not None
+                else None
+            ),
+            "renderStartToStableFrameMillisecondsDelta": (
+                round(
+                    second["renderStartToStableFrameMilliseconds"]
+                    - first["renderStartToStableFrameMilliseconds"],
+                    6,
+                )
+                if first is not None and second is not None
+                else None
+            ),
+        })
+    return comparisons
+
+
 def format_distribution(distribution: dict[str, list[dict[str, int]]]) -> str:
     labels = {"red": "R", "green": "G", "blue": "B"}
     channels = []
@@ -507,7 +589,13 @@ def format_bounding_box(box: dict[str, int] | None) -> str:
     )
 
 
-def build_report(run_a_root: Path, run_b_root: Path, output: Path) -> dict[str, Any]:
+def build_report(
+    run_a_root: Path,
+    run_b_root: Path,
+    output: Path,
+    run_a_diagnostics: Path | None = None,
+    run_b_diagnostics: Path | None = None,
+) -> dict[str, Any]:
     run_a_files = file_map(run_a_root)
     run_b_files = file_map(run_b_root)
     run_a_names = set(run_a_files)
@@ -597,8 +685,21 @@ def build_report(run_a_root: Path, run_b_root: Path, output: Path) -> dict[str, 
 
     differing_files.sort(key=lambda item: item["path"])
     differing_images.sort(key=lambda item: item["path"])
+    process_diagnostics = None
+    if run_a_diagnostics is not None and run_b_diagnostics is not None:
+        diagnostics_a = load_process_diagnostics(run_a_diagnostics, output, "run-a")
+        diagnostics_b = load_process_diagnostics(run_b_diagnostics, output, "run-b")
+        process_diagnostics = {
+            "runA": diagnostics_a,
+            "runB": diagnostics_b,
+            "renderComparisons": compare_process_diagnostics(
+                diagnostics_a,
+                diagnostics_b,
+            ),
+        }
+
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "comparisonPolicy": "exact-recursive-file-bytes",
         "gateDisposition": "fail-on-any-file-difference",
         "pixelCoordinateOrigin": "top-left-zero-based",
@@ -614,6 +715,7 @@ def build_report(run_a_root: Path, run_b_root: Path, output: Path) -> dict[str, 
         "differingFileCount": len(differing_files),
         "differingImageCount": len(differing_images),
         "measurementErrorCount": measurement_errors,
+        "processDiagnostics": process_diagnostics,
         "differingFiles": differing_files,
         "differingImages": differing_images,
     }
@@ -637,6 +739,59 @@ def summary_lines(report: dict[str, Any]) -> list[str]:
         f'differing-images={report["differingImageCount"]} '
         f'measurement-errors={report["measurementErrorCount"]}'
     ]
+    process_diagnostics = report.get("processDiagnostics")
+    if process_diagnostics is not None:
+        diagnostics_a = process_diagnostics["runA"]["data"]
+        diagnostics_b = process_diagnostics["runB"]["data"]
+        lines.append(
+            "DESIGN CAPTURE PROCESS TIMING clock=dispatch-monotonic-uptime "
+            f'preflight-ms-run-a={diagnostics_a["preflightDurationMilliseconds"]:.3f} '
+            f'preflight-ms-run-b={diagnostics_b["preflightDurationMilliseconds"]:.3f} '
+            "main-entry-to-first-recorded-stable-ms-run-a="
+            f'{diagnostics_a["mainEntryToFirstRecordedStableFrameMilliseconds"]:.3f} '
+            "main-entry-to-first-recorded-stable-ms-run-b="
+            f'{diagnostics_b["mainEntryToFirstRecordedStableFrameMilliseconds"]:.3f}'
+        )
+        differing_image_filenames = {
+            Path(image["path"]).name for image in report["differingImages"]
+        }
+        for comparison in process_diagnostics["renderComparisons"]:
+            first = comparison["runA"]
+            second = comparison["runB"]
+            settle_path_differs = (
+                first is None
+                or second is None
+                or first["settleAttempts"] != second["settleAttempts"]
+                or first["firstComparisonMatched"] != second["firstComparisonMatched"]
+            )
+            if (
+                comparison["phase"] != "recorded-reference"
+                or (
+                    comparison["file"] not in differing_image_filenames
+                    and not settle_path_differs
+                )
+            ):
+                continue
+            if first is None or second is None:
+                lines.append(
+                    "DESIGN CAPTURE SETTLE PATH "
+                    f'file={comparison["file"]} '
+                    f'run-a={"present" if first else "missing"} '
+                    f'run-b={"present" if second else "missing"}'
+                )
+                continue
+            lines.append(
+                "DESIGN CAPTURE SETTLE PATH "
+                f'file={comparison["file"]} '
+                f'run-a-attempts={first["settleAttempts"]} '
+                f'run-b-attempts={second["settleAttempts"]} '
+                f'run-a-first-matched={str(first["firstComparisonMatched"]).lower()} '
+                f'run-b-first-matched={str(second["firstComparisonMatched"]).lower()} '
+                f'run-a-first-frame-ms={first["renderStartToFirstFrameMilliseconds"]:.3f} '
+                f'run-b-first-frame-ms={second["renderStartToFirstFrameMilliseconds"]:.3f} '
+                f'run-a-stable-ms={first["renderStartToStableFrameMilliseconds"]:.3f} '
+                f'run-b-stable-ms={second["renderStartToStableFrameMilliseconds"]:.3f}'
+            )
     for image in report["differingImages"]:
         if "measurementError" in image:
             lines.append(
@@ -722,11 +877,22 @@ def main() -> int:
     parser.add_argument("run_a", type=Path)
     parser.add_argument("run_b", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--run-a-diagnostics", type=Path)
+    parser.add_argument("--run-b-diagnostics", type=Path)
     args = parser.parse_args()
+
+    if (args.run_a_diagnostics is None) != (args.run_b_diagnostics is None):
+        parser.error("--run-a-diagnostics and --run-b-diagnostics must be supplied together")
 
     try:
         args.output.mkdir(parents=True, exist_ok=False)
-        report = build_report(args.run_a, args.run_b, args.output)
+        report = build_report(
+            args.run_a,
+            args.run_b,
+            args.output,
+            args.run_a_diagnostics,
+            args.run_b_diagnostics,
+        )
         report_path = args.output / "report.json"
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         lines = summary_lines(report)

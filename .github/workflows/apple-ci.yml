@@ -150,9 +150,11 @@ jobs:
         run: |
           swift run --package-path apple/DulcetKit DulcetCapture \
             --output "$CAPTURE_ROOT/run-a/standard" \
+            --diagnostics-output "$CAPTURE_ROOT/diagnostics/run-a.json" \
             --state all --appearance all --include-control
           swift run --package-path apple/DulcetKit DulcetCapture \
             --output "$CAPTURE_ROOT/run-b/standard" \
+            --diagnostics-output "$CAPTURE_ROOT/diagnostics/run-b.json" \
             --state all --appearance all --include-control
           set +e
           diff -qr "$CAPTURE_ROOT/run-a" "$CAPTURE_ROOT/run-b" \
@@ -166,6 +168,8 @@ jobs:
               python3 tools/design_capture_forensics.py \
                 "$CAPTURE_ROOT/run-a" \
                 "$CAPTURE_ROOT/run-b" \
+                --run-a-diagnostics "$CAPTURE_ROOT/diagnostics/run-a.json" \
+                --run-b-diagnostics "$CAPTURE_ROOT/diagnostics/run-b.json" \
                 --output "$CAPTURE_ROOT/forensics"
               forensics_status=$?
               set -e

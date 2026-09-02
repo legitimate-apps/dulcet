@@ -277,7 +277,7 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 11,
+        "schemaVersion": 12,
         "widthPixels": CAPTURE_WIDTH_PIXELS,
         "heightPixels": CAPTURE_HEIGHT_PIXELS,
         "captureSurface": "titled-nswindow-with-standard-chrome",
@@ -289,6 +289,9 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         ),
         "layoutDiagnosticsPolicy": (
             "resolved-root-and-native-controls-after-frame-convergence"
+        ),
+        "settlePathPolicy": (
+            "per-render-comparisons-until-first-identical-consecutive-frame-pair"
         ),
         "bitmapPixelsPerPoint": CAPTURE_SCALE,
         "fontSmoothingPolicy": "disabled-explicit-bitmap-context",
@@ -431,6 +434,10 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} pinned control claims layout diagnostics"
                 )
+            if "settleAttempts" in record or "firstComparisonMatched" in record:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} pinned control claims a render settle path"
+                )
         else:
             if record.get("captureProvenance") != "rendered-current-run":
                 raise CaptureVerificationError(
@@ -492,6 +499,26 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             if any(not isinstance(key, str) or not key for key in semantic_keys):
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} native control semantic keys are invalid"
+                )
+            settle_attempts = record.get("settleAttempts")
+            if (
+                isinstance(settle_attempts, bool)
+                or not isinstance(settle_attempts, int)
+                or not 1 <= settle_attempts <= 40
+            ):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} settleAttempts is outside 1...40: "
+                    f"observed {settle_attempts!r}"
+                )
+            first_comparison_matched = record.get("firstComparisonMatched")
+            if (
+                not isinstance(first_comparison_matched, bool)
+                or first_comparison_matched != (settle_attempts == 1)
+            ):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} firstComparisonMatched contradicts "
+                    f"settleAttempts={settle_attempts}: "
+                    f"observed {first_comparison_matched!r}"
                 )
         binding = bindings_by_file[filename]
         for field, expected_value in (
