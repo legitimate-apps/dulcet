@@ -287,6 +287,9 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "appearanceResolutionPolicy": (
             "requested-appearance-current-before-host-construction"
         ),
+        "layoutDiagnosticsPolicy": (
+            "resolved-root-and-native-controls-after-frame-convergence"
+        ),
         "bitmapPixelsPerPoint": CAPTURE_SCALE,
         "fontSmoothingPolicy": "disabled-explicit-bitmap-context",
         "fontSubpixelPositioningPolicy": "disabled-explicit-bitmap-context",
@@ -484,6 +487,11 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             ):
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} native control hierarchy paths are invalid"
+                )
+            semantic_keys = [control.get("semanticKey") for control in native_controls]
+            if any(not isinstance(key, str) or not key for key in semantic_keys):
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} native control semantic keys are invalid"
                 )
         binding = bindings_by_file[filename]
         for field, expected_value in (
