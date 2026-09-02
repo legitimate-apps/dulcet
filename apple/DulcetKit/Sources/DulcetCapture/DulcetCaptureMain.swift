@@ -323,7 +323,7 @@ private struct DulcetCaptureMain {
         guard observedWindowBackingScaleFactors.count == 1,
               let observedWindowBackingScaleFactor = observedWindowBackingScaleFactors.first else {
             throw CaptureError.renderingEnvironmentMismatch(
-                "capture records do not share one positive window backing scale: observed="
+                "capture records do not share one resolved window backing scale: observed="
                     + "\(observedWindowBackingScaleFactors.sorted())"
             )
         }
@@ -609,7 +609,7 @@ private struct DulcetCaptureMain {
             pinnedControlSha256: nil,
             sha256: sha256Hex(boundJPEG),
             variant: variantName,
-            windowBackingScaleFactor: Double(window.backingScaleFactor),
+            windowBackingScaleFactor: Double(resolvedRenderingScale),
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
         )
