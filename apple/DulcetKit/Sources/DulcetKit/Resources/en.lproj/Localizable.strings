@@ -26,6 +26,11 @@
 "action.certificateHelp" = "Open CA Installation Guide";
 "action.more" = "More";
 "action.play" = "Play";
+"action.download" = "Download";
+"download.state.downloading" = "Downloading";
+"download.state.downloaded" = "Downloaded";
+"action.download.retry" = "Retry Download";
+"download.state.updateAvailable" = "Downloaded — Update Available";
 "action.pause" = "Pause";
 "action.previous" = "Previous Track";
 "action.next" = "Next Track";

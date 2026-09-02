@@ -215,6 +215,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
 
     public private(set) var currentSnapshot: DulcetSnapshot
+    public let downloadsEnabled = true
 
     public init(
         fixture: DulcetDeterministicFixture = DulcetDeterministicFixture(),
@@ -247,7 +248,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
-        case .loadMoreSearchResults, .retrySearch, .playLibrary, .playAlbum,
+        case .loadMoreSearchResults, .retrySearch, .playLibrary, .playAlbum, .downloadTrack,
              .activateTrack, .activateSearchResult, .playbackControl:
             break
         case let .selectAlbum(id):

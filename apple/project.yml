@@ -120,6 +120,7 @@ targets:
     platform: macOS
     sources:
       - DulcetPlaybackIntegrationTests
+      - DulcetAppleShared/DulcetCoreDownloads.swift
       - DulcetAppleShared/DulcetCorePlayback.swift
       - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
       - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3

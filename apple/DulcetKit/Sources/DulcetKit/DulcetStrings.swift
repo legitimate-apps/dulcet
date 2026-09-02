@@ -28,6 +28,14 @@ enum DulcetStrings {
     static let openCertificateHelp = text("action.certificateHelp", "Open CA Installation Guide")
     static let more = text("action.more", "More")
     static let play = text("action.play", "Play")
+    static let download = text("action.download", "Download")
+    static let downloading = text("download.state.downloading", "Downloading")
+    static let downloaded = text("download.state.downloaded", "Downloaded")
+    static let retryDownload = text("action.download.retry", "Retry Download")
+    static let downloadUpdateAvailable = text(
+        "download.state.updateAvailable",
+        "Downloaded — Update Available"
+    )
     static let pause = text("action.pause", "Pause")
     static let previous = text("action.previous", "Previous Track")
     static let next = text("action.next", "Next Track")

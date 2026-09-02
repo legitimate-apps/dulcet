@@ -490,6 +490,11 @@ internal class DownloadPolicyEngine(
         return store.byId(downloadId)
     }
 
+    fun record(identity: DownloadIdentity): DownloadRecord? {
+        requireReconciled()
+        return store.byIdentity(identity)
+    }
+
     private fun recoverDestination(row: DownloadRecord): Boolean {
         val bytes = files.readDestination(row)
         val validation = validateDownloadBytes(
