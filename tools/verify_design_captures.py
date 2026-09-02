@@ -93,16 +93,23 @@ def assert_states_match_swift_enum() -> None:
 
 
 APPEARANCES = ("light", "dark")
-WIDTH = 1180
-HEIGHT = 760
-LAYOUT_DISPLAY_SCALE = 2.0
-HOST_LAYER_CONTENTS_SCALE = 2.0
-BITMAP_PIXELS_PER_POINT = 1.0
+WINDOW_WIDTH_POINTS = 1180
+WINDOW_HEIGHT_POINTS = 760
+# This is deliberately one contract value. The renderer uses it for layout, layer contents, and
+# bitmap density, so the verifier must reject any manifest that claims those grids differ.
+CAPTURE_SCALE = 2.0
+CAPTURE_WIDTH_PIXELS = int(WINDOW_WIDTH_POINTS * CAPTURE_SCALE)
+CAPTURE_HEIGHT_PIXELS = int(WINDOW_HEIGHT_POINTS * CAPTURE_SCALE)
+PINNED_CONTROL_WIDTH_PIXELS = 1180
+PINNED_CONTROL_HEIGHT_PIXELS = 760
 # The window's backing scale is ambient: hosted runners can be 1x while Retina Macs are 2x. The
-# manifest records the observed positive value, and every rendered record must agree with it. The
-# workflow's exact-byte run-a/run-b diff then rejects a scale that changes between processes.
+# manifest records the resolved value, but it does not select any of the three capture grids. The
+# workflow's exact-byte run-a/run-b diff still rejects a scale that changes between processes.
 MIN_JPEG_BYTES = 5_000
-MAX_JPEG_BYTES = 350_000
+# The 2x references have four times the pixels of the former 1x raster. This retains the former
+# 350,000-byte ceiling per 1180x760 pixels rather than loosening the encoded-size density limit.
+MAX_REFERENCE_JPEG_BYTES = 1_400_000
+MAX_PINNED_CONTROL_JPEG_BYTES = 350_000
 PINNED_CONTROL_SHA256 = {
     "light": "3c46bfa842033834d417f276c43ee29ce85e1f4eefd8cbea17faedecf1d6c60f",
     "dark": "ba23a4b9b8f257a747cf9050a03b54e5fb2e1f8f18ecca97ec1db8fce2cc74f6",
@@ -273,8 +280,8 @@ def verify_set(directory: Path, expected: set[str]) -> None:
     manifest = json.loads(manifest_text)
     contract = {
         "schemaVersion": 10,
-        "widthPixels": WIDTH,
-        "heightPixels": HEIGHT,
+        "widthPixels": CAPTURE_WIDTH_PIXELS,
+        "heightPixels": CAPTURE_HEIGHT_PIXELS,
         "captureSurface": "titled-nswindow-with-standard-chrome",
         "windowTitlePolicy": "visible-centered-standard-window-title",
         "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",
@@ -282,13 +289,13 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "appearanceResolutionPolicy": (
             "requested-appearance-current-before-host-construction"
         ),
-        "bitmapPixelsPerPoint": BITMAP_PIXELS_PER_POINT,
+        "bitmapPixelsPerPoint": CAPTURE_SCALE,
         "fontSmoothingPolicy": "disabled-explicit-bitmap-context",
         "fontSubpixelPositioningPolicy": "disabled-explicit-bitmap-context",
         "fontSubpixelQuantizationPolicy": "disabled-explicit-bitmap-context",
-        "hostLayerContentsScale": HOST_LAYER_CONTENTS_SCALE,
+        "hostLayerContentsScale": CAPTURE_SCALE,
         "jpegCompression": 0.72,
-        "layoutDisplayScale": LAYOUT_DISPLAY_SCALE,
+        "layoutDisplayScale": CAPTURE_SCALE,
         "locale": "en_US_POSIX",
         "calendar": "gregorian",
         "timeZone": "UTC",
@@ -350,15 +357,26 @@ def verify_set(directory: Path, expected: set[str]) -> None:
     for filename in sorted(expected):
         path = directory / filename
         data = path.read_bytes()
-        if not MIN_JPEG_BYTES <= len(data) <= MAX_JPEG_BYTES:
+        expected_state, expected_appearance, expected_variant = expected_binding(filename)
+        if expected_variant == "deliberately-bad-control":
+            maximum_jpeg_bytes = MAX_PINNED_CONTROL_JPEG_BYTES
+            expected_dimensions = (
+                PINNED_CONTROL_WIDTH_PIXELS,
+                PINNED_CONTROL_HEIGHT_PIXELS,
+            )
+        else:
+            maximum_jpeg_bytes = MAX_REFERENCE_JPEG_BYTES
+            expected_dimensions = (CAPTURE_WIDTH_PIXELS, CAPTURE_HEIGHT_PIXELS)
+        if not MIN_JPEG_BYTES <= len(data) <= maximum_jpeg_bytes:
             raise CaptureVerificationError(
                 f"{directory.name}/{filename} size {len(data)} is outside "
-                f"{MIN_JPEG_BYTES}..{MAX_JPEG_BYTES}"
+                f"{MIN_JPEG_BYTES}..{maximum_jpeg_bytes}"
             )
         dimensions = jpeg_dimensions(data)
-        if dimensions != (WIDTH, HEIGHT):
+        if dimensions != expected_dimensions:
             raise CaptureVerificationError(
-                f"{directory.name}/{filename} dimensions mismatch: {dimensions}"
+                f"{directory.name}/{filename} dimensions mismatch: "
+                f"expected {expected_dimensions}, observed {dimensions}"
             )
         record = records_by_file[filename]
         expected_hash = hashlib.sha256(data).hexdigest()
@@ -375,12 +393,12 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 f"{directory.name}/{filename} controlActiveState is not key"
             )
         geometry_contract = {
-            "windowFrameWidthPoints": WIDTH,
-            "windowFrameHeightPoints": HEIGHT,
+            "windowFrameWidthPoints": WINDOW_WIDTH_POINTS,
+            "windowFrameHeightPoints": WINDOW_HEIGHT_POINTS,
             "captureBoundsXPoints": 0,
             "captureBoundsYPoints": 0,
-            "captureBoundsWidthPoints": WIDTH,
-            "captureBoundsHeightPoints": HEIGHT,
+            "captureBoundsWidthPoints": WINDOW_WIDTH_POINTS,
+            "captureBoundsHeightPoints": WINDOW_HEIGHT_POINTS,
         }
         for key, expected_value in geometry_contract.items():
             if record.get(key) != expected_value:
@@ -388,7 +406,6 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                     f"{directory.name}/{filename} {key} mismatch: "
                     f"expected {expected_value}, observed {record.get(key)!r}"
                 )
-        expected_state, expected_appearance, expected_variant = expected_binding(filename)
         if record.get("fixtureState") != expected_state:
             raise CaptureVerificationError(f"{directory.name}/{filename} fixtureState mismatch")
         if record.get("appearance") != expected_appearance:
@@ -419,9 +436,9 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                     f"{directory.name}/{filename} reference capture claims a pinned control hash"
                 )
             rendering_environment_contract = {
-                "layoutDisplayScale": LAYOUT_DISPLAY_SCALE,
-                "hostLayerContentsScale": HOST_LAYER_CONTENTS_SCALE,
-                "bitmapPixelsPerPoint": BITMAP_PIXELS_PER_POINT,
+                "layoutDisplayScale": CAPTURE_SCALE,
+                "hostLayerContentsScale": CAPTURE_SCALE,
+                "bitmapPixelsPerPoint": CAPTURE_SCALE,
             }
             for key, expected_value in rendering_environment_contract.items():
                 if record.get(key) != expected_value:
