@@ -522,8 +522,11 @@ def main() -> None:
     print(
         f"DESIGN CAPTURE PASS standard={verified_files} jpeg={verified_files} "
         f"current-run-references={current_run_references} pinned-controls={pinned_controls} "
-        "size=1180x760 "
-        "frame=1180x760 capture-bounds=0,0,1180x760 control-active-state=key "
+        f"reference-pixels={CAPTURE_WIDTH_PIXELS}x{CAPTURE_HEIGHT_PIXELS} "
+        f"pinned-control-pixels={PINNED_CONTROL_WIDTH_PIXELS}x{PINNED_CONTROL_HEIGHT_PIXELS} "
+        f"frame-points={WINDOW_WIDTH_POINTS}x{WINDOW_HEIGHT_POINTS} "
+        f"capture-bounds-points=0,0,{WINDOW_WIDTH_POINTS}x{WINDOW_HEIGHT_POINTS} "
+        "control-active-state=key "
         "decoded-pixels-pairwise-distinct=true "
         "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "
         "pinned-control-bytes-match-reviewed-sha256=true "
