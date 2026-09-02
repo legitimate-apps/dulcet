@@ -124,7 +124,9 @@ internal class AndroidAccountCredentialStore internal constructor(
 
             if (previousId != null && previousId != account.id) {
                 preferences.edit().remove(payloadKey(previousId)).apply()
-                cipher.delete(previousId)
+                // The new account is already committed, so old-key deletion is best-effort.
+                // A stale keystore entry is preferable to destroying the active credential.
+                runCatching { cipher.delete(previousId) }
             }
             account
         } catch (failure: Exception) {
