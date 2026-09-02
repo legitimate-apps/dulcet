@@ -299,6 +299,48 @@ They are deliberately not reproduced in this repository.**
     *occlusion* from *unreachability* — an assertion naming reachability can be reporting a dialog
     on top, with the accessibility tree looking entirely normal underneath.
 
+36. **A pinned Homebrew formula drifting upstream fails 100% of Apple CI, and presents as an unrelated
+    red on whatever pull request runs next.** The Darwin conformance closure resolves through `brew`,
+    so `brew update` + `brew fetch` install the *live* formula — a pin that disagrees with live
+    verifies nothing, and the check is right to fail closed. Four drifts so far (openssl, x265, an
+    ffmpeg revision, sdl3). Refresh the pin from `https://formulae.brew.sh/api/formula/<name>.json`,
+    not from the CI error text, and update both the url digest and the `sha256`. ➡️ **Check this
+    first when several unrelated pull requests go red together** — it looks like flakiness and is
+    deterministic. `pins.json` already records each bottle's ghcr blob digest; fetching that directly
+    would retire the whole class.
+37. **The capture step runs BEFORE the iPadOS steps, so a capture divergence SKIPS them.** Measured:
+    capture at step 25 `failure`, iPadOS boot and layout at 31-32 `skipped`. A ~20%-per-pair capture
+    flake therefore gates every later step in the job, and an iPadOS fix cannot be validated at all
+    while capture is red — regardless of whether the fix works. Read the *step* conclusions, not just
+    the job's, before concluding a downstream fix failed.
+38. **A readiness probe that gives each attempt "the remaining deadline" is not a poll.** Measured:
+    `attempts=1 elapsed=76.08s` against a 60s budget — the first attempt consumed the whole window.
+    Per-attempt timeout must be small and bounded **independently** of the total. And bound the
+    cleanup too: a `communicate()` after `SIGKILL` silently restores the unbounded wait.
+    ➡️ **Assert the attempt COUNT in the control.** Every existing control passed while the poll made
+    exactly one attempt, because they all verified the outcome and none verified the process.
+39. **`simctl spawn <udid> /usr/bin/true` runs the HOST's binary, not the simulator's** — a leading
+    `/` is a path on the host root. The iOS 26.5 runtime has `bin/launchctl` and **no**
+    `usr/bin/true`, and bare `true` is not on the device PATH either. Worse, `simctl spawn` may never
+    return on a hosted runner even after `bootstatus -b` succeeds, while XCUITest launches the app
+    fine — different paths. **Do not gate a job on a process-launch probe without evidence the runner
+    can satisfy one**; a gate that blocks runs which would otherwise pass is a false blocker, not
+    safety.
+40. **Reason about the capture flake from a SOAK, never from a single failure.** `capture-soak.yml`
+    (`workflow_dispatch`, 30 independent pairs, ~40 min) draws in one run what weeks of merges would.
+    Measured base rate is **20% per pair**, not the ~15% inferred from CI failure classification —
+    that undercounts, because runs dying earlier never reach the capture step. Two findings were
+    invisible to single-failure analysis: `dy` and the differing-region start are **perfectly
+    correlated** (`-3`↔`y=208`, `+3`↔`y=168`, 3 of 3 each), which rules out one mechanism with a
+    random direction; and at least **two distinct divergence kinds** exist — a 3-point translation
+    whose mechanism is still unknown, and a **focus/control-state** difference where glyphs do not
+    move at all and the field *background* differs. Do not average them together.
+41. **A negative control must be able to prove it fired.** Twice in one session a control passed
+    while the thing it guarded was broken — the poll that made one attempt, and an assertion
+    satisfiable by an earlier identical event. Where a control checks an outcome, add one that checks
+    the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
+    handler itself emits.
+
 ## Review and delegation
 
 **Architecture decisions and verification stay with the maintainer; implementation of a
