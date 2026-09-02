@@ -609,6 +609,73 @@ jobs:
             -Pdulcet.tvosSimulatorUdid="$tvos_conformance_sim"
           xcrun simctl shutdown "$tvos_conformance_sim" || true
           xcrun simctl delete "$tvos_conformance_sim" || true
+          # ---- iPadOS playback + scrobble evidence -------------------------------------------
+          # INSIDE this step because Navidrome's lifetime IS this step's shell: `trap cleanup EXIT`
+          # kills it, so a later step finds nothing on 127.0.0.1:4533.
+          #
+          # LAST, deliberately. This is the only UI test in the job -- it launches an app, and this
+          # file records an unexplained, still-live launch flake (runs 33420584120, 33457633113).
+          # Under `set -e` an upstream position would mean one flaked launch destroys every
+          # conformance suite's evidence too. The canary's count survives `restart_navidrome_cold`
+          # (it is in the DB), and CONF-22/23 target the 29s and 31s tracks, never this one, so
+          # running last costs the assertion nothing.
+          #
+          # The XCUITest deliberately never reads a play count -- a test that could call
+          # /rest/scrobble itself cannot evidence that the APP scrobbled. The server-side half is
+          # asserted here, either side of the run. BOTH are required: progressing media time alone
+          # does not show a scrobble was delivered, and a count change alone does not show our app
+          # caused it.
+          #
+          # `--await-seconds` on the AFTER read because scrobble delivery is asynchronous and
+          # at-least-once (spec 15.2); the count is not visible the instant the app crosses the
+          # threshold. The repo's own conformance client polls for the same reason
+          # (`awaitPlayCount`, 20 x 50ms). The BEFORE read has no wait -- a baseline must hold
+          # immediately, and waiting for it would mask a canary another actor had already moved.
+          #
+          # TEST_RUNNER_-prefixed variables must be in XCODEBUILD's OWN environment; the prefix is
+          # stripped on the way into the runner. A trailing `KEY=value` on the xcodebuild line is
+          # parsed as a BUILD SETTING and never arrives, which presents as a ~2s failure with three
+          # "Missing ..." assertions and reads like a product defect rather than a config one.
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --expect 0
+          IPAD_PLAYBACK_DESTINATION="$(python3 tools/resolve-ipad-destination)"
+          echo "iPadOS playback destination: $IPAD_PLAYBACK_DESTINATION"
+          # test-without-building: the iPadOS step above already built this scheme into this same
+          # derived-data tree. Rebuilding re-enters the Gradle run-script phase while Navidrome and
+          # three python servers are live, on a job capped at 75 minutes.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_PLAYBACK_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-playback.log"
+          # The evidence assertion comes BEFORE junit generation: under `set -e` a junit failure
+          # would otherwise abort with the evidence question unanswered.
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --expect 1 \
+            --await-seconds 15
+          # Named-test execution guard, as the three macOS invocations above use. `swift-testing-junit`
+          # cannot substitute: it writes a well-formed `tests="0"` JUnit for an empty bundle, so a
+          # renamed test or a silently-matching-nothing `-only-testing` would ship green.
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-playback-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test \
             core-conformance/build/test-results/iosSimulatorArm64Test \
@@ -617,9 +684,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit"
       # Every Apple test step here writes an .xcresult and discards it with the runner -- eight
-      # bundles, none uploaded -- along with the JUnit directories `verify-parity-evidence` consumes
+      # bundles (nine with this PR's), none uploaded -- along with the JUnit directories `verify-parity-evidence` consumes
       # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
       # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
       # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.
