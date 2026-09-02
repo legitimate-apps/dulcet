@@ -17,6 +17,10 @@ from typing import Any
 
 
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+MAX_TRANSLATION_PIXELS = 8
+TRANSLATION_COMPONENT_MINIMUM_FRACTION_REMOVED = 0.5
+INK_HORIZONTAL_EDGE_CHANNEL_DELTA = 24
+INK_MINIMUM_HORIZONTAL_EDGES_PER_ROW = 6
 
 
 class ForensicsError(RuntimeError):
@@ -113,6 +117,278 @@ def histogram(counter: Counter[int]) -> list[dict[str, int]]:
     ]
 
 
+def absolute_byte_delta(first: bytes, second: bytes) -> int:
+    return sum(abs(left - right) for left, right in zip(first, second))
+
+
+def region_residual(
+    run_a: DecodedImage,
+    run_b: DecodedImage,
+    box: dict[str, int],
+    dx: int,
+    dy: int,
+) -> int | None:
+    """Measure run-a against run-b shifted by (dx, dy) over one fixed target box.
+
+    A negative dy moves run-b upward: target row y samples run-b row y - dy. Keeping the target
+    box fixed gives every valid candidate the same pixel count and prevents a large shift from
+    winning merely by reducing its overlap.
+    """
+    source_min_x = box["minX"] - dx
+    source_max_x = box["maxX"] - dx
+    source_min_y = box["minY"] - dy
+    source_max_y = box["maxY"] - dy
+    if (
+        source_min_x < 0
+        or source_max_x >= run_b.width
+        or source_min_y < 0
+        or source_max_y >= run_b.height
+    ):
+        return None
+
+    row_bytes = box["width"] * 3
+    residual = 0
+    for y in range(box["minY"], box["maxY"] + 1):
+        run_a_start = (y * run_a.width + box["minX"]) * 3
+        run_b_start = ((y - dy) * run_b.width + source_min_x) * 3
+        residual += absolute_byte_delta(
+            run_a.rgb[run_a_start:run_a_start + row_bytes],
+            run_b.rgb[run_b_start:run_b_start + row_bytes],
+        )
+    return residual
+
+
+def measure_best_fit_translation(
+    run_a: DecodedImage,
+    run_b: DecodedImage,
+    box: dict[str, int],
+) -> dict[str, Any]:
+    residual_before = region_residual(run_a, run_b, box, dx=0, dy=0)
+    if residual_before is None:
+        raise AssertionError("unshifted differing box must be measurable")
+
+    candidates: list[tuple[int, int, int]] = []
+    for dy in range(-MAX_TRANSLATION_PIXELS, MAX_TRANSLATION_PIXELS + 1):
+        for dx in range(-MAX_TRANSLATION_PIXELS, MAX_TRANSLATION_PIXELS + 1):
+            residual = region_residual(run_a, run_b, box, dx=dx, dy=dy)
+            if residual is not None:
+                candidates.append((residual, dy, dx))
+    residual_after, dy, dx = min(
+        candidates,
+        key=lambda candidate: (
+            candidate[0],
+            abs(candidate[1]) + abs(candidate[2]),
+            abs(candidate[1]),
+            abs(candidate[2]),
+            candidate[1],
+            candidate[2],
+        ),
+    )
+    fraction_removed = (
+        (residual_before - residual_after) / residual_before
+        if residual_before
+        else 0.0
+    )
+    nonzero_shift = dx != 0 or dy != 0
+    if nonzero_shift and residual_after == 0:
+        classification = "pure-translation"
+    elif (
+        nonzero_shift
+        and fraction_removed >= TRANSLATION_COMPONENT_MINIMUM_FRACTION_REMOVED
+    ):
+        classification = "translation-component"
+    else:
+        classification = "not-translation"
+
+    return {
+        "classification": classification,
+        "shiftAppliedToRunB": {"dy": dy, "dx": dx},
+        "analysisRegionInclusive": dict(box),
+        "regionStartY": box["minY"],
+        "searchRadiusPixels": MAX_TRANSLATION_PIXELS,
+        "residualDefinition": "sum-absolute-rgb-channel-delta-over-fixed-analysis-region",
+        "residualBefore": residual_before,
+        "residualAfter": residual_after,
+        "residualFractionRemoved": round(fraction_removed, 10),
+        "translationComponentMinimumFractionRemoved": (
+            TRANSLATION_COMPONENT_MINIMUM_FRACTION_REMOVED
+        ),
+    }
+
+
+def row_residual(
+    first: DecodedImage,
+    first_y: int,
+    second: DecodedImage,
+    second_y: int,
+    min_x: int,
+    width: int,
+) -> int:
+    row_bytes = width * 3
+    first_start = (first_y * first.width + min_x) * 3
+    second_start = (second_y * second.width + min_x) * 3
+    return absolute_byte_delta(
+        first.rgb[first_start:first_start + row_bytes],
+        second.rgb[second_start:second_start + row_bytes],
+    )
+
+
+def measure_vertical_self_similarity(
+    run_a: DecodedImage,
+    run_b: DecodedImage,
+    box: dict[str, int],
+    translation: dict[str, Any],
+) -> dict[str, Any]:
+    best_dy = translation["shiftAppliedToRunB"]["dy"]
+    row_offset = max(1, abs(best_dy))
+    maximum_y = min(box["maxY"], run_a.height - row_offset - 1)
+    channel_count = box["width"] * 3
+    rows: list[dict[str, Any]] = []
+    for y in range(box["minY"], maximum_y + 1):
+        run_a_self = row_residual(
+            run_a, y, run_a, y + row_offset, box["minX"], box["width"]
+        )
+        run_b_self = row_residual(
+            run_b, y, run_b, y + row_offset, box["minX"], box["width"]
+        )
+        cross_run = row_residual(
+            run_a, y, run_b, y, box["minX"], box["width"]
+        )
+        rows.append({
+            "y": y,
+            "runComparison": (
+                "apparently-unchanged" if cross_run == 0 else "differing"
+            ),
+            "information": (
+                "no-information"
+                if run_a_self == 0 and run_b_self == 0
+                else "informative"
+            ),
+            "runASelfResidual": run_a_self,
+            "runBSelfResidual": run_b_self,
+            "crossRunResidual": cross_run,
+        })
+
+    grouped: list[list[dict[str, Any]]] = []
+    for row in rows:
+        grouping_key = (row["runComparison"], row["information"])
+        if not grouped or grouping_key != (
+            grouped[-1][-1]["runComparison"],
+            grouped[-1][-1]["information"],
+        ):
+            grouped.append([])
+        grouped[-1].append(row)
+
+    bands = []
+    for group in grouped:
+        sample_count = len(group) * channel_count
+        bands.append({
+            "minY": group[0]["y"],
+            "maxY": group[-1]["y"],
+            "height": group[-1]["y"] - group[0]["y"] + 1,
+            "runComparison": group[0]["runComparison"],
+            "information": group[0]["information"],
+            "meanAbsoluteRunASelfDifference": round(
+                sum(row["runASelfResidual"] for row in group) / sample_count,
+                10,
+            ),
+            "meanAbsoluteRunBSelfDifference": round(
+                sum(row["runBSelfResidual"] for row in group) / sample_count,
+                10,
+            ),
+            "meanAbsoluteCrossRunDifference": round(
+                sum(row["crossRunResidual"] for row in group) / sample_count,
+                10,
+            ),
+        })
+
+    return {
+        "rowOffsetPixels": row_offset,
+        "definition": (
+            "mean-absolute-rgb-row-y-versus-row-y-plus-offset-within-each-run"
+        ),
+        "informationPolicy": (
+            "no-information-only-when-both-runs-have-zero-self-difference"
+        ),
+        "analysisRegionInclusive": {
+            "minX": box["minX"],
+            "maxX": box["maxX"],
+            "minY": box["minY"],
+            "maxY": maximum_y,
+        },
+        "bands": bands,
+    }
+
+
+def horizontal_edge_count(image: DecodedImage, y: int, box: dict[str, int]) -> int:
+    edges = 0
+    for x in range(box["minX"] + 1, box["maxX"] + 1):
+        left = (y * image.width + x - 1) * 3
+        right = left + 3
+        if max(
+            abs(image.rgb[right + channel] - image.rgb[left + channel])
+            for channel in range(3)
+        ) >= INK_HORIZONTAL_EDGE_CHANNEL_DELTA:
+            edges += 1
+    return edges
+
+
+def ink_spans(image: DecodedImage, box: dict[str, int]) -> list[dict[str, int]]:
+    active_rows = [
+        y
+        for y in range(box["minY"], box["maxY"] + 1)
+        if horizontal_edge_count(image, y, box) >= INK_MINIMUM_HORIZONTAL_EDGES_PER_ROW
+    ]
+    spans: list[dict[str, int]] = []
+    for y in active_rows:
+        if not spans or y > spans[-1]["bottom"] + 1:
+            spans.append({"top": y, "bottom": y, "height": 1})
+        else:
+            spans[-1]["bottom"] = y
+            spans[-1]["height"] = y - spans[-1]["top"] + 1
+    for index, span in enumerate(spans):
+        span["index"] = index
+        span["gapFromPreviousTop"] = (
+            None if index == 0 else span["top"] - spans[index - 1]["top"]
+        )
+    return spans
+
+
+def measure_ink_row_spans(
+    run_a: DecodedImage,
+    run_b: DecodedImage,
+    box: dict[str, int],
+) -> dict[str, Any]:
+    run_a_spans = ink_spans(run_a, box)
+    run_b_spans = ink_spans(run_b, box)
+    paired = []
+    for index in range(max(len(run_a_spans), len(run_b_spans))):
+        span_a = run_a_spans[index] if index < len(run_a_spans) else None
+        span_b = run_b_spans[index] if index < len(run_b_spans) else None
+        paired.append({
+            "index": index,
+            "runA": span_a,
+            "runB": span_b,
+            "topDelta": (
+                span_b["top"] - span_a["top"] if span_a and span_b else None
+            ),
+            "heightDelta": (
+                span_b["height"] - span_a["height"] if span_a and span_b else None
+            ),
+        })
+    return {
+        "definition": (
+            "contiguous-rows-with-minimum-horizontal-rgb-edge-count"
+        ),
+        "horizontalEdgeChannelDelta": INK_HORIZONTAL_EDGE_CHANNEL_DELTA,
+        "minimumHorizontalEdgesPerRow": INK_MINIMUM_HORIZONTAL_EDGES_PER_ROW,
+        "analysisRegionInclusive": dict(box),
+        "runA": run_a_spans,
+        "runB": run_b_spans,
+        "paired": paired,
+    }
+
+
 def measure_delta(run_a: DecodedImage, run_b: DecodedImage) -> dict[str, Any]:
     if (run_a.width, run_a.height) != (run_b.width, run_b.height):
         raise ForensicsError(
@@ -152,6 +428,9 @@ def measure_delta(run_a: DecodedImage, run_b: DecodedImage) -> dict[str, Any]:
             absolute[channel][abs(delta)] += 1
 
     bounding_box = None
+    best_fit_translation = None
+    vertical_self_similarity = None
+    ink_row_spans = None
     if differing_pixels:
         bounding_box = {
             "minX": minimum_x,
@@ -161,6 +440,14 @@ def measure_delta(run_a: DecodedImage, run_b: DecodedImage) -> dict[str, Any]:
             "width": maximum_x - minimum_x + 1,
             "height": maximum_y - minimum_y + 1,
         }
+        best_fit_translation = measure_best_fit_translation(run_a, run_b, bounding_box)
+        vertical_self_similarity = measure_vertical_self_similarity(
+            run_a,
+            run_b,
+            bounding_box,
+            best_fit_translation,
+        )
+        ink_row_spans = measure_ink_row_spans(run_a, run_b, bounding_box)
 
     return {
         "widthPixels": run_a.width,
@@ -169,6 +456,9 @@ def measure_delta(run_a: DecodedImage, run_b: DecodedImage) -> dict[str, Any]:
         "differingPixels": differing_pixels,
         "differingPixelPercentage": round(differing_pixels * 100 / pixel_count, 10),
         "boundingBoxInclusive": bounding_box,
+        "bestFitTranslation": best_fit_translation,
+        "verticalSelfSimilarity": vertical_self_similarity,
+        "inkRowSpans": ink_row_spans,
         "signedChannelDeltaDistribution": {
             channel: histogram(signed[channel]) for channel in channel_names
         },
@@ -308,11 +598,17 @@ def build_report(run_a_root: Path, run_b_root: Path, output: Path) -> dict[str, 
     differing_files.sort(key=lambda item: item["path"])
     differing_images.sort(key=lambda item: item["path"])
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "comparisonPolicy": "exact-recursive-file-bytes",
         "gateDisposition": "fail-on-any-file-difference",
         "pixelCoordinateOrigin": "top-left-zero-based",
         "channelDeltaDefinition": "run-b-minus-run-a-on-differing-decoded-pixels",
+        "translationShiftDefinition": "integer-shift-applied-to-run-b-to-align-with-run-a",
+        "translationSearchRegionPolicy": "decoded-pixel-differing-bounding-box-only",
+        "verticalSelfSimilarityPolicy": (
+            "direct-row-to-vertically-offset-row-absolute-difference-never-variance"
+        ),
+        "inkRowSpanPolicy": "horizontal-edge-derived-contiguous-row-runs",
         "missingFromRunA": [path.as_posix() for path in missing_from_run_a],
         "missingFromRunB": [path.as_posix() for path in missing_from_run_b],
         "differingFileCount": len(differing_files),
@@ -365,6 +661,59 @@ def summary_lines(report: dict[str, Any]) -> list[str]:
             f'file={image["path"]} '
             f'{format_distribution(delta["absoluteChannelDeltaDistribution"])}'
         )
+        translation = delta["bestFitTranslation"]
+        shift = translation["shiftAppliedToRunB"]
+        lines.append(
+            "DESIGN CAPTURE TRANSLATION "
+            f'file={image["path"]} '
+            f'classification={translation["classification"]} '
+            f'dy={shift["dy"]} dx={shift["dx"]} '
+            f'region-start-y={translation["regionStartY"]} '
+            f'region={format_bounding_box(translation["analysisRegionInclusive"])} '
+            f'residual-before={translation["residualBefore"]} '
+            f'residual-after={translation["residualAfter"]} '
+            f'fraction-removed={translation["residualFractionRemoved"]:.10f}'
+        )
+        self_similarity = delta["verticalSelfSimilarity"]
+        for band in self_similarity["bands"]:
+            lines.append(
+                "DESIGN CAPTURE VERTICAL SELF-SIMILARITY "
+                f'file={image["path"]} '
+                f'rows={band["minY"]}..{band["maxY"]} '
+                f'offset={self_similarity["rowOffsetPixels"]} '
+                f'run-comparison={band["runComparison"]} '
+                f'information={band["information"]} '
+                f'mean-run-a={band["meanAbsoluteRunASelfDifference"]:.10f} '
+                f'mean-run-b={band["meanAbsoluteRunBSelfDifference"]:.10f} '
+                f'mean-cross-run={band["meanAbsoluteCrossRunDifference"]:.10f}'
+            )
+        for element in delta["inkRowSpans"]["paired"]:
+            span_a = element["runA"]
+            span_b = element["runB"]
+            run_a_label = (
+                "missing"
+                if span_a is None
+                else (
+                    f'{span_a["top"]}..{span_a["bottom"]}'
+                    f'(height={span_a["height"]},gap-top={span_a["gapFromPreviousTop"]})'
+                )
+            )
+            run_b_label = (
+                "missing"
+                if span_b is None
+                else (
+                    f'{span_b["top"]}..{span_b["bottom"]}'
+                    f'(height={span_b["height"]},gap-top={span_b["gapFromPreviousTop"]})'
+                )
+            )
+            lines.append(
+                "DESIGN CAPTURE INK ROW SPAN "
+                f'file={image["path"]} '
+                f'element={element["index"]} '
+                f'run-a={run_a_label} run-b={run_b_label} '
+                f'top-delta={element["topDelta"]} '
+                f'height-delta={element["heightDelta"]}'
+            )
     return lines
 
 
