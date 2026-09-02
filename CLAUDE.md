@@ -332,6 +332,21 @@ email privacy on the opening account, or merging with **rebase** (which replays 
 with their original authorship) instead of squash. Both are repository-policy decisions; neither is
 something a commit-time convention can substitute for.
 
+✅ **Rebase-merge is CONFIRMED to fix it — OBSERVED 2026-09-01 on `main`.** PR #35 was a single
+commit already authored `legitimate-apps <...noreply...>`; merging it with **rebase** replayed that
+commit unchanged, so `main` gained a commit carrying the `noreply` address, directly above two
+squash-merged commits carrying the profile address:
+
+```
+f254e2e  Promote account.connect on Android …   309192374+legitimate-apps@users.noreply.github.com   <- rebase
+c98581b  Implement the six account-connect …    <profile address>                                    <- squash
+074691f  Implement the download policy core …   <profile address>                                    <- squash
+```
+
+For a single-commit pull request, rebase produces the **same one-commit history shape** as squash
+with none of the exposure, so there is no trade-off to weigh in that case. A multi-commit branch is a
+genuine judgement call between history hygiene and exposure, and remains one.
+
 **Re-measure before restating any figure here.** The count above is dated because it grows with every
 merge, and the previous version of this paragraph was accurate when written and wrong within days.
 
