@@ -122,7 +122,7 @@ private enum CaptureRenderingPolicy {
     // One scale owns layout, layer display, and raster allocation. Keeping these as uses of one
     // value, rather than three independently configurable policies, makes a mixed-grid capture
     // unrepresentable by this renderer.
-    static let captureScale: CGFloat = 2
+    static let captureScale: CGFloat = 1
 }
 
 private enum CaptureError: Error, CustomStringConvertible {
@@ -178,6 +178,80 @@ private enum CaptureError: Error, CustomStringConvertible {
     }
 }
 
+private struct CapturePointSize: Codable {
+    let width: Double
+    let height: Double
+}
+
+private struct CapturePointRect: Codable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+private struct CaptureInsets: Codable {
+    let top: Double
+    let left: Double
+    let bottom: Double
+    let right: Double
+}
+
+private struct CaptureFontMetrics: Codable {
+    let fontName: String
+    let familyName: String?
+    let pointSize: Double
+    let ascender: Double
+    let descender: Double
+    let leading: Double
+    let capHeight: Double
+    let xHeight: Double
+    let boundingRect: CapturePointRect
+}
+
+private struct CaptureNativeControlLayoutFact: Codable {
+    let hierarchyPath: String
+    let className: String
+    let cellClassName: String?
+    let accessibilityIdentifier: String?
+    let accessibilityLabel: String?
+    let frameInCapturePoints: CapturePointRect
+    let boundsSizePoints: CapturePointSize
+    let intrinsicContentSizePoints: CapturePointSize
+    let cellSizePoints: CapturePointSize?
+    let cellDrawingRectPoints: CapturePointRect?
+    let cellTitleRectPoints: CapturePointRect?
+    let alignmentRectInsetsPoints: CaptureInsets
+    let firstBaselineOffsetFromTopPoints: Double
+    let lastBaselineOffsetFromBottomPoints: Double
+    let fontMetrics: CaptureFontMetrics?
+    let layerContentsScale: Double?
+    let effectiveLayerContentsScale: Double
+    let effectiveLayerContentsScaleSource: String
+    let isFlipped: Bool
+}
+
+private struct CaptureRootLayoutFacts: Codable {
+    let coordinateSystem: String
+    let captureViewIsFlipped: Bool
+    let windowFramePoints: CapturePointRect
+    let windowContentLayoutRectPoints: CapturePointRect
+    let captureViewFramePoints: CapturePointRect
+    let captureViewBoundsPoints: CapturePointRect
+    let hostingViewFrameInCapturePoints: CapturePointRect
+    let hostingViewBoundsPoints: CapturePointRect
+    let hostingViewIntrinsicContentSizePoints: CapturePointSize
+    let hostingViewFirstBaselineOffsetFromTopPoints: Double
+    let hostingViewLastBaselineOffsetFromBottomPoints: Double
+    let hostingViewLayerContentsScale: Double?
+}
+
+private struct CaptureLayoutDiagnostics: Codable {
+    let collectionStage: String
+    let root: CaptureRootLayoutFacts
+    let nativeControls: [CaptureNativeControlLayoutFact]
+}
+
 private struct CaptureRecord: Codable {
     let appearance: String
     let captureProvenance: String
@@ -192,6 +266,7 @@ private struct CaptureRecord: Codable {
     let jpegBytes: Int
     let layoutDisplayScale: Double?
     let bitmapPixelsPerPoint: Double?
+    let layoutDiagnostics: CaptureLayoutDiagnostics?
     let pinnedControlSha256: String?
     let sha256: String
     let variant: String
@@ -352,7 +427,7 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 10,
+            schemaVersion: 11,
             widthPixels: capturePixelWidth,
             heightPixels: capturePixelHeight,
             captureSurface: "titled-nswindow-with-standard-chrome",
@@ -576,6 +651,11 @@ private struct DulcetCaptureMain {
         // Reported on the PASS line so a within-process movement is observable without conflating
         // it with the stable cross-process fork this loop cannot repair.
         CaptureSettleStatistics.record(attempts: settledAttempts)
+        let layoutDiagnostics = collectLayoutDiagnostics(
+            window: window,
+            captureView: captureView,
+            hostingView: hostingView
+        )
 
         guard let jpeg = bitmap.representation(
             using: .jpeg,
@@ -619,6 +699,7 @@ private struct DulcetCaptureMain {
             jpegBytes: boundJPEG.count,
             layoutDisplayScale: Double(CaptureRenderingPolicy.captureScale),
             bitmapPixelsPerPoint: Double(bitmapPixelsPerPoint),
+            layoutDiagnostics: layoutDiagnostics,
             pinnedControlSha256: nil,
             sha256: sha256Hex(boundJPEG),
             variant: variantName,
@@ -626,6 +707,143 @@ private struct DulcetCaptureMain {
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
         )
+    }
+
+    @MainActor
+    private static func collectLayoutDiagnostics<Content: View>(
+        window: NSWindow,
+        captureView: NSView,
+        hostingView: NSHostingView<Content>
+    ) -> CaptureLayoutDiagnostics {
+        var nativeControls: [CaptureNativeControlLayoutFact] = []
+
+        func visit(_ view: NSView, path: String) {
+            if view is NSTextField || view is NSButton {
+                let control = view as? NSControl
+                let cell = control?.cell
+                let font: NSFont?
+                if let textField = view as? NSTextField {
+                    font = textField.font
+                } else if let button = view as? NSButton {
+                    font = button.font
+                } else {
+                    font = nil
+                }
+                let effectiveLayer = effectiveLayerContentsScale(for: view, window: window)
+                nativeControls.append(CaptureNativeControlLayoutFact(
+                    hierarchyPath: path,
+                    className: String(describing: type(of: view)),
+                    cellClassName: cell.map { String(describing: type(of: $0)) },
+                    accessibilityIdentifier: view.accessibilityIdentifier(),
+                    accessibilityLabel: view.accessibilityLabel(),
+                    frameInCapturePoints: pointRect(view.convert(view.bounds, to: captureView)),
+                    boundsSizePoints: pointSize(view.bounds.size),
+                    intrinsicContentSizePoints: pointSize(view.intrinsicContentSize),
+                    cellSizePoints: cell.map { pointSize($0.cellSize) },
+                    cellDrawingRectPoints: cell.map {
+                        pointRect($0.drawingRect(forBounds: view.bounds))
+                    },
+                    cellTitleRectPoints: cell.map {
+                        pointRect($0.titleRect(forBounds: view.bounds))
+                    },
+                    alignmentRectInsetsPoints: captureInsets(view.alignmentRectInsets),
+                    firstBaselineOffsetFromTopPoints: Double(view.firstBaselineOffsetFromTop),
+                    lastBaselineOffsetFromBottomPoints: Double(view.lastBaselineOffsetFromBottom),
+                    fontMetrics: font.map(captureFontMetrics),
+                    layerContentsScale: view.layer.map { Double($0.contentsScale) },
+                    effectiveLayerContentsScale: Double(effectiveLayer.scale),
+                    effectiveLayerContentsScaleSource: effectiveLayer.source,
+                    isFlipped: view.isFlipped
+                ))
+            }
+            for (index, subview) in view.subviews.enumerated() {
+                visit(subview, path: "\(path).\(index)")
+            }
+        }
+        visit(hostingView, path: "host")
+
+        return CaptureLayoutDiagnostics(
+            collectionStage: "after-two-identical-frames-before-jpeg-encoding",
+            root: CaptureRootLayoutFacts(
+                coordinateSystem: "appkit-capture-view-points",
+                captureViewIsFlipped: captureView.isFlipped,
+                windowFramePoints: pointRect(window.frame),
+                windowContentLayoutRectPoints: pointRect(window.contentLayoutRect),
+                captureViewFramePoints: pointRect(captureView.frame),
+                captureViewBoundsPoints: pointRect(captureView.bounds),
+                hostingViewFrameInCapturePoints: pointRect(
+                    hostingView.convert(hostingView.bounds, to: captureView)
+                ),
+                hostingViewBoundsPoints: pointRect(hostingView.bounds),
+                hostingViewIntrinsicContentSizePoints: pointSize(
+                    hostingView.intrinsicContentSize
+                ),
+                hostingViewFirstBaselineOffsetFromTopPoints: Double(
+                    hostingView.firstBaselineOffsetFromTop
+                ),
+                hostingViewLastBaselineOffsetFromBottomPoints: Double(
+                    hostingView.lastBaselineOffsetFromBottom
+                ),
+                hostingViewLayerContentsScale: hostingView.layer.map {
+                    Double($0.contentsScale)
+                }
+            ),
+            nativeControls: nativeControls
+        )
+    }
+
+    private static func pointSize(_ size: NSSize) -> CapturePointSize {
+        CapturePointSize(width: Double(size.width), height: Double(size.height))
+    }
+
+    private static func pointRect(_ rect: NSRect) -> CapturePointRect {
+        CapturePointRect(
+            x: Double(rect.origin.x),
+            y: Double(rect.origin.y),
+            width: Double(rect.size.width),
+            height: Double(rect.size.height)
+        )
+    }
+
+    private static func captureInsets(_ insets: NSEdgeInsets) -> CaptureInsets {
+        CaptureInsets(
+            top: Double(insets.top),
+            left: Double(insets.left),
+            bottom: Double(insets.bottom),
+            right: Double(insets.right)
+        )
+    }
+
+    private static func captureFontMetrics(_ font: NSFont) -> CaptureFontMetrics {
+        CaptureFontMetrics(
+            fontName: font.fontName,
+            familyName: font.familyName,
+            pointSize: Double(font.pointSize),
+            ascender: Double(font.ascender),
+            descender: Double(font.descender),
+            leading: Double(font.leading),
+            capHeight: Double(font.capHeight),
+            xHeight: Double(font.xHeight),
+            boundingRect: pointRect(font.boundingRectForFont)
+        )
+    }
+
+    @MainActor
+    private static func effectiveLayerContentsScale(
+        for view: NSView,
+        window: NSWindow
+    ) -> (scale: CGFloat, source: String) {
+        var candidate: NSView? = view
+        while let current = candidate {
+            if let layer = current.layer {
+                return (
+                    layer.contentsScale,
+                    "view:\(String(describing: type(of: current)))"
+                )
+            }
+            candidate = current.superview
+        }
+        return (window.backingScaleFactor, "window-backing-scale")
     }
 
     @MainActor
@@ -733,6 +951,7 @@ private struct DulcetCaptureMain {
             jpegBytes: data.count,
             layoutDisplayScale: nil,
             bitmapPixelsPerPoint: nil,
+            layoutDiagnostics: nil,
             pinnedControlSha256: observedHash,
             sha256: observedHash,
             variant: "deliberately-bad-control",
