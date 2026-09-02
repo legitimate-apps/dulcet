@@ -189,6 +189,18 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(inactive_root, "controlActiveState is not key")
 
+        wrong_focus_root = Path(temporary) / "wrong-focus-state"
+        shutil.copytree(args.root, wrong_focus_root)
+        manifest_path = wrong_focus_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["focusState"] = "focused-control"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(wrong_focus_root, "rendered focusState is not no-focused-control")
+
         wrong_layout_scale_root = Path(temporary) / "wrong-layout-scale"
         shutil.copytree(args.root, wrong_layout_scale_root)
         manifest_path = wrong_layout_scale_root / "standard" / "manifest.json"
@@ -223,6 +235,35 @@ def main() -> None:
         expect_rejection(
             contradictory_settle_root,
             "firstComparisonMatched contradicts settleAttempts=1",
+        )
+
+        missing_languages_root = Path(temporary) / "missing-resolved-apple-languages"
+        shutil.copytree(args.root, missing_languages_root)
+        manifest_path = missing_languages_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["resolvedAppleLanguages"] = []
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(
+            missing_languages_root,
+            "resolvedAppleLanguages is not a nonempty string array",
+        )
+
+        invalid_line_height_root = Path(temporary) / "invalid-resolved-line-height"
+        shutil.copytree(args.root, invalid_line_height_root)
+        manifest_path = invalid_line_height_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        font_metrics = next(
+            control["fontMetrics"]
+            for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+            for control in record["layoutDiagnostics"]["nativeControls"]
+            if control.get("fontMetrics") is not None
+        )
+        font_metrics["textKitDefaultLineHeightPoints"] = 0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(
+            invalid_line_height_root,
+            "native control resolved line height is missing or malformed",
         )
 
         ambient_backing_scale_root = Path(temporary) / "ambient-window-backing-scale"
@@ -310,9 +351,10 @@ def main() -> None:
         "identical-pixels-different-encoding=true "
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
-        "misframed-window=true inactive-control-state=true "
+        "misframed-window=true inactive-control-state=true wrong-focus-state=true "
         "wrong-layout-scale=true settle-attempt-range=true "
-        "settle-first-match-consistency=true ambient-window-backing-scale-accepted=true "
+        "settle-first-match-consistency=true resolved-apple-languages=true "
+        "resolved-font-line-height=true ambient-window-backing-scale-accepted=true "
         "nonpositive-window-backing-scale=true inconsistent-window-backing-scale=true "
         "substituted-pinned-control=true "
         "reencoded-pinned-control-as-reference-pixel-duplicate=true"

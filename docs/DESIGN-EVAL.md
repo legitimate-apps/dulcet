@@ -114,16 +114,22 @@ environment is fixed:
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
+- no control focused: after SwiftUI appears, the harness makes the window itself first responder and
+  asserts that identity immediately before and after every bitmap draw. The artifact enumerates
+  presentation states and appearances, not keyboard-traversal states; focusing a server field, retry
+  button, or primary action would add an arbitrary interaction narrative. Focused-control design
+  evidence belongs in a separately named interaction-state set rather than this resting baseline;
 - the standard centered AppKit window title remains visible, while each content surface carries its
   own visible state heading and debug target suffixes are excluded;
-- one discarded library-browse preflight render before recording, so first-use AppKit font, symbol,
-  and view caches have the same warmed state in both independent capture processes;
+- one discarded render of every state and appearance before recording, so first-use AppKit font,
+  symbol, and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
 
 Each capture directory includes `manifest.json` with the complete filename set, environment values,
-per-record window-frame and capture-bound coordinates, rendered control-active state, a provenance
-declaration, byte lengths, and SHA-256 digests. Current-run references carry measured geometry; pinned
-controls carry the reviewed baseline geometry. Each JPEG also carries a self-authored consistency
+per-record window-frame and capture-bound coordinates, rendered control-active and focus states, a
+provenance declaration, byte lengths, and SHA-256 digests. Current-run references carry measured
+geometry and the asserted no-focused-control state; pinned controls carry the reviewed baseline
+geometry and mark live focus as inapplicable. Each JPEG also carries a self-authored consistency
 comment with a fixture-state label, appearance, variant, and the SHA-256 of the original compressed
 payload. The verifier removes that comment, reconstructs and hashes the payload, and requires the
 embedded labels, filename, and manifest record to agree. It separately decodes every JPEG through the
@@ -146,7 +152,9 @@ by accepting a two-payload swap after both embedded comments and the manifest ar
 consistent. Further negative controls cover a byte-identical capture mislabeled as a different Dynamic
 Type treatment, translated capture bounds, an inactive rendered control state, and a substituted valid
 control JPEG whose ordinary manifest evidence was updated; the pinned digest must still reject the
-control substitution.
+control substitution. A process-level negative control deliberately installs a non-window first
+responder and proves the capture assertion rejects it before any JPEG is written; a separate manifest
+mutation proves the artifact verifier rejects a rendered record that claims a focused control.
 
 ### 1.2 Standard set: 16 JPEGs
 
