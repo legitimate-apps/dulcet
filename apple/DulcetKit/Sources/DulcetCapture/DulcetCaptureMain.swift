@@ -119,17 +119,6 @@ private enum CaptureSettleStatistics {
 }
 
 private enum CaptureRenderingPolicy {
-    static let layoutDisplayScale: CGFloat = 2
-    // NOT a fixed expectation. The hosted macOS runner presents a 1x display while a developer's
-    // Retina Mac presents 2x, so any hardcoded value is wrong on one of them -- OBSERVED in CI as
-    // `expected=2.0 observed=1.0`, which failed the capture on a machine that was behaving correctly.
-    //
-    // What must be constant is not the VALUE but its CONSISTENCY: the two capture processes the gate
-    // compares must render at the same scale. That is enforced by recording the observed scale in the
-    // manifest, which the exact-byte gate then diffs between run-a and run-b -- so a scale that moves
-    // between runs fails loudly and names itself, without this file having to guess the right number
-    // for every machine that will ever run it.
-    static let hostLayerContentsScale: CGFloat = 2
     static let bitmapPixelsPerPoint: CGFloat = 1
 }
 
@@ -338,6 +327,17 @@ private struct DulcetCaptureMain {
                     + "\(observedWindowBackingScaleFactors.sorted())"
             )
         }
+        let observedLayoutDisplayScales = Set(records.compactMap(\.layoutDisplayScale))
+        let observedHostLayerContentsScales = Set(records.compactMap(\.hostLayerContentsScale))
+        guard observedLayoutDisplayScales == [observedWindowBackingScaleFactor],
+              observedHostLayerContentsScales == [observedWindowBackingScaleFactor] else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "capture records do not use their resolved window backing scale for layout and display: "
+                    + "window=\(observedWindowBackingScaleFactor) "
+                    + "layout=\(observedLayoutDisplayScales.sorted()) "
+                    + "host-layer=\(observedHostLayerContentsScales.sorted())"
+            )
+        }
 
         let manifest = CaptureManifest(
             schemaVersion: 10,
@@ -352,9 +352,9 @@ private struct DulcetCaptureMain {
             fontSmoothingPolicy: "disabled-explicit-bitmap-context",
             fontSubpixelPositioningPolicy: "disabled-explicit-bitmap-context",
             fontSubpixelQuantizationPolicy: "disabled-explicit-bitmap-context",
-            hostLayerContentsScale: Double(CaptureRenderingPolicy.hostLayerContentsScale),
+            hostLayerContentsScale: observedWindowBackingScaleFactor,
             jpegCompression: jpegCompression,
-            layoutDisplayScale: Double(CaptureRenderingPolicy.layoutDisplayScale),
+            layoutDisplayScale: observedWindowBackingScaleFactor,
             locale: "en_US_POSIX",
             calendar: "gregorian",
             timeZone: "UTC",
@@ -373,7 +373,7 @@ private struct DulcetCaptureMain {
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "max-settle-attempts=\(CaptureSettleStatistics.maximumAttempts) "
                 + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
-                + "layout-display-scale=\(CaptureRenderingPolicy.layoutDisplayScale) "
+                + "layout-display-scale=\(observedWindowBackingScaleFactor) "
                 + "window-backing-scale=\(observedWindowBackingScaleFactor) "
                 + "bitmap-pixels-per-point=\(CaptureRenderingPolicy.bitmapPixelsPerPoint) "
                 + "font-smoothing=disabled font-subpixel-positioning=disabled "
@@ -417,10 +417,24 @@ private struct DulcetCaptureMain {
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
-        try validateRenderingEnvironment(
-            stage: "window-before-host-construction",
-            windowBackingScaleFactor: window.backingScaleFactor
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
+        let initialResolvedScale = try observeResolvedRenderingScale(
+            stage: "window-before-host-construction-initial",
+            window: window
         )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        let resolvedRenderingScale = try observeResolvedRenderingScale(
+            stage: "window-before-host-construction-settled",
+            window: window
+        )
+        guard resolvedRenderingScale == initialResolvedScale else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "window backing scale changed before host construction: "
+                    + "initial=\(initialResolvedScale) settled=\(resolvedRenderingScale)"
+            )
+        }
 
         let scene = DulcetCaptureView(store: store, variant: variant)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -429,24 +443,32 @@ private struct DulcetCaptureMain {
             .environment(\.calendar, calendar)
             .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
             .environment(\.controlActiveState, .key)
-            .environment(\.displayScale, CaptureRenderingPolicy.layoutDisplayScale)
+            .environment(\.displayScale, resolvedRenderingScale)
             .background(Color(nsColor: NSColor.windowBackgroundColor))
         let hostingView = makeHostingView(
             rootView: scene,
-            appearance: requestedAppearance
+            appearance: requestedAppearance,
+            resolvedRenderingScale: resolvedRenderingScale
         )
         window.contentView = hostingView
-        hostingView.layer?.contentsScale = CaptureRenderingPolicy.hostLayerContentsScale
-        window.makeKeyAndOrderFront(nil)
-        NSApplication.shared.activate(ignoringOtherApps: true)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
 
+        let attachedRenderingScale = try observeResolvedRenderingScale(
+            stage: "window-after-host-attachment",
+            window: window
+        )
+        guard attachedRenderingScale == resolvedRenderingScale else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "window backing scale changed across host attachment: "
+                    + "before=\(resolvedRenderingScale) after=\(attachedRenderingScale)"
+            )
+        }
         try validateRenderingEnvironment(
             stage: "window-after-host-attachment",
-            windowBackingScaleFactor: window.backingScaleFactor,
+            resolvedRenderingScale: resolvedRenderingScale,
             hostLayerContentsScale: hostingView.layer?.contentsScale,
             effectiveAppearance: hostingView.effectiveAppearance,
             requestedAppearance: appearance.appKitName
@@ -502,12 +524,10 @@ private struct DulcetCaptureMain {
         bitmapContext.cgContext.setAllowsFontSubpixelPositioning(false)
         bitmapContext.cgContext.setAllowsFontSubpixelQuantization(false)
 
-        // This loop detects within-process movement only. Cross-process determinism comes from the
-        // pinned environment above: CI proved that two processes can each converge to a different
-        // stable layout when NSHostingView first measures native fields before its backing scale is
-        // resolved. The host is now constructed only after the window has resolved a positive
-        // ambient backing scale, with the 2x SwiftUI display scale and layer contents scale already
-        // explicit.
+        // This loop detects within-process movement only. Before the host was constructed, the
+        // window was ordered on-screen and its backing scale was observed equal to its screen's
+        // scale twice. That observed value drives both SwiftUI layout and the host layer, and the
+        // scale is required to remain unchanged across host attachment.
         func renderFrame() throws -> Data {
             captureView.layoutSubtreeIfNeeded()
             captureView.displayIfNeeded()
@@ -582,9 +602,9 @@ private struct DulcetCaptureMain {
             controlActiveState: "key",
             file: filename,
             fixtureState: state.rawValue,
-            hostLayerContentsScale: Double(CaptureRenderingPolicy.hostLayerContentsScale),
+            hostLayerContentsScale: Double(resolvedRenderingScale),
             jpegBytes: boundJPEG.count,
-            layoutDisplayScale: Double(CaptureRenderingPolicy.layoutDisplayScale),
+            layoutDisplayScale: Double(resolvedRenderingScale),
             bitmapPixelsPerPoint: Double(bitmapPixelsPerPoint),
             pinnedControlSha256: nil,
             sha256: sha256Hex(boundJPEG),
@@ -598,7 +618,8 @@ private struct DulcetCaptureMain {
     @MainActor
     private static func makeHostingView<Content: View>(
         rootView: Content,
-        appearance: NSAppearance
+        appearance: NSAppearance,
+        resolvedRenderingScale: CGFloat
     ) -> NSHostingView<Content> {
         var hostingView: NSHostingView<Content>!
         appearance.performAsCurrentDrawingAppearance {
@@ -606,7 +627,7 @@ private struct DulcetCaptureMain {
             hostingView.sizingOptions = []
             hostingView.appearance = appearance
             hostingView.wantsLayer = true
-            hostingView.layer?.contentsScale = CaptureRenderingPolicy.hostLayerContentsScale
+            hostingView.layer?.contentsScale = resolvedRenderingScale
             hostingView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         }
         return hostingView
@@ -614,23 +635,16 @@ private struct DulcetCaptureMain {
 
     private static func validateRenderingEnvironment(
         stage: String,
-        windowBackingScaleFactor: CGFloat,
+        resolvedRenderingScale: CGFloat,
         hostLayerContentsScale: CGFloat? = nil,
         effectiveAppearance: NSAppearance? = nil,
         requestedAppearance: NSAppearance.Name? = nil
     ) throws {
-        // The scale is recorded, not asserted against a constant -- see the policy note above. A
-        // nonpositive scale is still a real fault: it means the window never resolved a display.
-        guard windowBackingScaleFactor > 0 else {
-            throw CaptureError.renderingEnvironmentMismatch(
-                "\(stage) window backing scale is not positive: observed=\(windowBackingScaleFactor)"
-            )
-        }
         if let hostLayerContentsScale,
-           hostLayerContentsScale != CaptureRenderingPolicy.hostLayerContentsScale {
+           hostLayerContentsScale != resolvedRenderingScale {
             throw CaptureError.renderingEnvironmentMismatch(
                 "\(stage) host layer contents scale expected="
-                    + "\(CaptureRenderingPolicy.hostLayerContentsScale) "
+                    + "\(resolvedRenderingScale) "
                     + "observed=\(hostLayerContentsScale)"
             )
         }
@@ -641,6 +655,32 @@ private struct DulcetCaptureMain {
                     + "observed=\(effectiveAppearance.name.rawValue)"
             )
         }
+    }
+
+    @MainActor
+    private static func observeResolvedRenderingScale(
+        stage: String,
+        window: NSWindow
+    ) throws -> CGFloat {
+        guard window.isVisible else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "\(stage) window is not visible"
+            )
+        }
+        guard let screen = window.screen else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "\(stage) visible window is not attached to a screen"
+            )
+        }
+        let windowScale = window.backingScaleFactor
+        let screenScale = screen.backingScaleFactor
+        guard screenScale > 0, windowScale == screenScale else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "\(stage) window backing scale is not resolved to its attached screen: "
+                    + "window=\(windowScale) screen=\(screenScale)"
+            )
+        }
+        return windowScale
     }
 
     private static func copyPinnedControl(
