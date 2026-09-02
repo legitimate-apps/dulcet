@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Darwin
+import Dispatch
 import DulcetKit
 import Foundation
 import SwiftUI
@@ -37,6 +38,7 @@ private enum CaptureAppearance: String, CaseIterable {
 
 private struct CaptureOptions {
     let outputDirectory: URL
+    let diagnosticsOutput: URL?
     let states: [DulcetPresentationState]
     let appearances: [CaptureAppearance]
     let includeControl: Bool
@@ -44,6 +46,7 @@ private struct CaptureOptions {
 
     init(arguments: [String]) throws {
         var outputDirectory: URL?
+        var diagnosticsOutput: URL?
         var states = DulcetPresentationState.allCases
         var appearances = CaptureAppearance.allCases
         var includeControl = false
@@ -58,6 +61,10 @@ private struct CaptureOptions {
                 index += 1
                 guard index < arguments.count else { throw CaptureError.missingValue(argument) }
                 outputDirectory = URL(fileURLWithPath: arguments[index], isDirectory: true)
+            case "--diagnostics-output":
+                index += 1
+                guard index < arguments.count else { throw CaptureError.missingValue(argument) }
+                diagnosticsOutput = URL(fileURLWithPath: arguments[index], isDirectory: false)
             case "--state":
                 usedCaptureSelectionOption = true
                 index += 1
@@ -98,10 +105,19 @@ private struct CaptureOptions {
         }
 
         guard let outputDirectory else { throw CaptureError.outputRequired }
+        if let diagnosticsOutput {
+            let outputPath = outputDirectory.standardizedFileURL.path
+            let diagnosticsPath = diagnosticsOutput.standardizedFileURL.path
+            if diagnosticsPath == outputPath
+                || diagnosticsPath.hasPrefix(outputPath + "/") {
+                throw CaptureError.diagnosticsInsideComparedOutput(diagnosticsPath)
+            }
+        }
         if generateControlCandidates && usedCaptureSelectionOption {
             throw CaptureError.incompatibleControlGenerationOptions
         }
         self.outputDirectory = outputDirectory
+        self.diagnosticsOutput = diagnosticsOutput
         self.states = states
         self.appearances = appearances
         self.includeControl = includeControl
@@ -133,6 +149,8 @@ private enum CaptureError: Error, CustomStringConvertible {
     case unsupportedDynamicType(String)
     case incompatibleControlGenerationOptions
     case outputExists(String)
+    case diagnosticsOutputExists(String)
+    case diagnosticsInsideComparedOutput(String)
     case geometryMismatch(String)
     case renderingEnvironmentMismatch(String)
     case bitmapAllocation
@@ -160,6 +178,10 @@ private enum CaptureError: Error, CustomStringConvertible {
             "--generate-control-candidates cannot be combined with --state, --appearance, or --include-control"
         case let .outputExists(path):
             "output directory must not exist: \(path)"
+        case let .diagnosticsOutputExists(path):
+            "diagnostics output must not exist: \(path)"
+        case let .diagnosticsInsideComparedOutput(path):
+            "diagnostics output must be outside the byte-compared capture directory: \(path)"
         case let .geometryMismatch(detail):
             "capture geometry mismatch: \(detail)"
         case let .renderingEnvironmentMismatch(detail):
@@ -272,11 +294,42 @@ private struct CaptureRecord: Codable {
     let bitmapPixelsPerPoint: Double?
     let layoutDiagnostics: CaptureLayoutDiagnostics?
     let pinnedControlSha256: String?
+    let settleAttempts: Int?
+    let firstComparisonMatched: Bool?
     let sha256: String
     let variant: String
     let windowBackingScaleFactor: Double?
     let windowFrameHeightPoints: Int
     let windowFrameWidthPoints: Int
+}
+
+private struct CaptureRenderTiming: Codable {
+    let appearance: String
+    let file: String
+    let firstComparisonMatched: Bool
+    let fixtureState: String
+    let phase: String
+    let renderStartToFirstFrameMilliseconds: Double
+    let renderStartToStableFrameMilliseconds: Double
+    let mainEntryToStableFrameMilliseconds: Double
+    let settleAttempts: Int
+    let variant: String
+}
+
+private struct CaptureProcessDiagnostics: Codable {
+    let schemaVersion: Int
+    let clock: String
+    let durationUnit: String
+    let comparedSurfacePolicy: String
+    let preflightDurationMilliseconds: Double
+    let mainEntryToFirstRecordedStableFrameMilliseconds: Double?
+    let mainEntryToDiagnosticsWriteMilliseconds: Double
+    let renders: [CaptureRenderTiming]
+}
+
+private struct RenderedCapture {
+    let record: CaptureRecord
+    let timing: CaptureRenderTiming
 }
 
 private struct CaptureManifest: Codable {
@@ -289,6 +342,7 @@ private struct CaptureManifest: Codable {
     let preflightRender: String
     let appearanceResolutionPolicy: String
     let layoutDiagnosticsPolicy: String
+    let settlePathPolicy: String
     let bitmapPixelsPerPoint: Double
     let fontSmoothingPolicy: String
     let fontSubpixelPositioningPolicy: String
@@ -326,8 +380,9 @@ private struct DulcetCaptureMain {
 
     @MainActor
     static func main() {
+        let mainEntryUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
         do {
-            try run()
+            try run(mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds)
         } catch {
             FileHandle.standardError.write(Data("DULCET CAPTURE ERROR \(error)\n".utf8))
             exit(EXIT_FAILURE)
@@ -335,11 +390,15 @@ private struct DulcetCaptureMain {
     }
 
     @MainActor
-    private static func run() throws {
+    private static func run(mainEntryUptimeNanoseconds: UInt64) throws {
         let options = try CaptureOptions(arguments: Array(CommandLine.arguments.dropFirst()))
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: options.outputDirectory.path) {
             throw CaptureError.outputExists(options.outputDirectory.path)
+        }
+        if let diagnosticsOutput = options.diagnosticsOutput,
+           fileManager.fileExists(atPath: diagnosticsOutput.path) {
+            throw CaptureError.diagnosticsOutputExists(diagnosticsOutput.path)
         }
         try fileManager.createDirectory(
             at: options.outputDirectory,
@@ -357,27 +416,43 @@ private struct DulcetCaptureMain {
         // Keep first-use resource work out of the recorded set. This cannot resolve cross-process
         // layout differences: every render below must independently establish and validate the same
         // explicit backing, layout, appearance, and bitmap context before constructing its host.
+        var renderTimings: [CaptureRenderTiming] = []
+        let preflightStarted = DispatchTime.now().uptimeNanoseconds
         for state in DulcetPresentationState.allCases {
             for appearance in CaptureAppearance.allCases {
-                _ = try render(
+                let rendered = try render(
                     state: state,
                     appearance: appearance,
                     variant: .standard,
-                    outputDirectory: preflightDirectory
+                    outputDirectory: preflightDirectory,
+                    timingPhase: "preflight",
+                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds
                 )
+                renderTimings.append(rendered.timing)
             }
         }
+        let preflightFinished = DispatchTime.now().uptimeNanoseconds
         try fileManager.removeItem(at: preflightDirectory)
 
         if options.generateControlCandidates {
             for appearance in CaptureAppearance.allCases {
-                _ = try render(
+                let rendered = try render(
                     state: .libraryBrowse,
                     appearance: appearance,
                     variant: .deliberatelyBadControl,
-                    outputDirectory: options.outputDirectory
+                    outputDirectory: options.outputDirectory,
+                    timingPhase: "control-candidate",
+                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds
                 )
+                renderTimings.append(rendered.timing)
             }
+            try writeProcessDiagnostics(
+                options: options,
+                mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds,
+                preflightStarted: preflightStarted,
+                preflightFinished: preflightFinished,
+                renderTimings: renderTimings
+            )
             print(
                 "DULCET CONTROL CANDIDATES PASS images=2 policy=review-candidates-only "
                     + "output=\(options.outputDirectory.lastPathComponent)"
@@ -388,12 +463,16 @@ private struct DulcetCaptureMain {
         var records: [CaptureRecord] = []
         for state in options.states {
             for appearance in options.appearances {
-                records.append(try render(
+                let rendered = try render(
                     state: state,
                     appearance: appearance,
                     variant: .standard,
-                    outputDirectory: options.outputDirectory
-                ))
+                    outputDirectory: options.outputDirectory,
+                    timingPhase: "recorded-reference",
+                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds
+                )
+                records.append(rendered.record)
+                renderTimings.append(rendered.timing)
             }
         }
 
@@ -432,7 +511,7 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 11,
+            schemaVersion: 12,
             widthPixels: capturePixelWidth,
             heightPixels: capturePixelHeight,
             captureSurface: "titled-nswindow-with-standard-chrome",
@@ -441,6 +520,7 @@ private struct DulcetCaptureMain {
             preflightRender: "discarded-all-states-all-appearances-before-recording",
             appearanceResolutionPolicy: "requested-appearance-current-before-host-construction",
             layoutDiagnosticsPolicy: "resolved-root-and-native-controls-after-frame-convergence",
+            settlePathPolicy: "per-render-comparisons-until-first-identical-consecutive-frame-pair",
             bitmapPixelsPerPoint: captureScale,
             fontSmoothingPolicy: "disabled-explicit-bitmap-context",
             fontSubpixelPositioningPolicy: "disabled-explicit-bitmap-context",
@@ -461,6 +541,13 @@ private struct DulcetCaptureMain {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let manifestData = try encoder.encode(manifest) + Data("\n".utf8)
         try manifestData.write(to: options.outputDirectory.appendingPathComponent("manifest.json"))
+        try writeProcessDiagnostics(
+            options: options,
+            mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds,
+            preflightStarted: preflightStarted,
+            preflightFinished: preflightFinished,
+            renderTimings: renderTimings
+        )
 
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
@@ -481,8 +568,11 @@ private struct DulcetCaptureMain {
         state: DulcetPresentationState,
         appearance: CaptureAppearance,
         variant: DulcetRenderVariant,
-        outputDirectory: URL
-    ) throws -> CaptureRecord {
+        outputDirectory: URL,
+        timingPhase: String,
+        mainEntryUptimeNanoseconds: UInt64
+    ) throws -> RenderedCapture {
+        let renderStarted = DispatchTime.now().uptimeNanoseconds
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -636,6 +726,7 @@ private struct DulcetCaptureMain {
         }
 
         var previousFrame = try renderFrame()
+        let firstFrameFinished = DispatchTime.now().uptimeNanoseconds
         var settledAttempts = 0
         let maximumSettleAttempts = 40
         var converged = false
@@ -654,6 +745,7 @@ private struct DulcetCaptureMain {
                 "\(maximumSettleAttempts) attempts at 20ms produced no two identical consecutive frames"
             )
         }
+        let stableFrameFinished = DispatchTime.now().uptimeNanoseconds
         // Reported on the PASS line so a within-process movement is observable without conflating
         // it with the stable cross-process fork this loop cannot repair.
         CaptureSettleStatistics.record(attempts: settledAttempts)
@@ -691,7 +783,7 @@ private struct DulcetCaptureMain {
         window.contentView = nil
         window.close()
 
-        return CaptureRecord(
+        let record = CaptureRecord(
             appearance: appearance.rawValue,
             captureProvenance: "rendered-current-run",
             captureBoundsHeightPoints: Int(captureBounds.height),
@@ -707,12 +799,36 @@ private struct DulcetCaptureMain {
             bitmapPixelsPerPoint: Double(bitmapPixelsPerPoint),
             layoutDiagnostics: layoutDiagnostics,
             pinnedControlSha256: nil,
+            settleAttempts: settledAttempts,
+            firstComparisonMatched: settledAttempts == 1,
             sha256: sha256Hex(boundJPEG),
             variant: variantName,
             windowBackingScaleFactor: Double(resolvedWindowBackingScale),
             windowFrameHeightPoints: Int(windowFrame.height),
             windowFrameWidthPoints: Int(windowFrame.width)
         )
+        let timing = CaptureRenderTiming(
+            appearance: appearance.rawValue,
+            file: filename,
+            firstComparisonMatched: settledAttempts == 1,
+            fixtureState: state.rawValue,
+            phase: timingPhase,
+            renderStartToFirstFrameMilliseconds: milliseconds(
+                from: renderStarted,
+                to: firstFrameFinished
+            ),
+            renderStartToStableFrameMilliseconds: milliseconds(
+                from: renderStarted,
+                to: stableFrameFinished
+            ),
+            mainEntryToStableFrameMilliseconds: milliseconds(
+                from: mainEntryUptimeNanoseconds,
+                to: stableFrameFinished
+            ),
+            settleAttempts: settledAttempts,
+            variant: variantName
+        )
+        return RenderedCapture(record: record, timing: timing)
     }
 
     @MainActor
@@ -946,6 +1062,48 @@ private struct DulcetCaptureMain {
         return windowScale
     }
 
+    private static func milliseconds(from start: UInt64, to end: UInt64) -> Double {
+        Double(end - start) / 1_000_000
+    }
+
+    private static func writeProcessDiagnostics(
+        options: CaptureOptions,
+        mainEntryUptimeNanoseconds: UInt64,
+        preflightStarted: UInt64,
+        preflightFinished: UInt64,
+        renderTimings: [CaptureRenderTiming]
+    ) throws {
+        guard let diagnosticsOutput = options.diagnosticsOutput else { return }
+        let diagnosticsWriteStarted = DispatchTime.now().uptimeNanoseconds
+        let firstRecordedStableFrame = renderTimings.first {
+            $0.phase == "recorded-reference"
+        }?.mainEntryToStableFrameMilliseconds
+        let diagnostics = CaptureProcessDiagnostics(
+            schemaVersion: 1,
+            clock: "dispatch-monotonic-uptime",
+            durationUnit: "milliseconds",
+            comparedSurfacePolicy: "external-sidecar-outside-byte-compared-capture-root",
+            preflightDurationMilliseconds: milliseconds(
+                from: preflightStarted,
+                to: preflightFinished
+            ),
+            mainEntryToFirstRecordedStableFrameMilliseconds: firstRecordedStableFrame,
+            mainEntryToDiagnosticsWriteMilliseconds: milliseconds(
+                from: mainEntryUptimeNanoseconds,
+                to: diagnosticsWriteStarted
+            ),
+            renders: renderTimings
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(diagnostics) + Data("\n".utf8)
+        try FileManager.default.createDirectory(
+            at: diagnosticsOutput.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: diagnosticsOutput, options: .atomic)
+    }
+
     private static func copyPinnedControl(
         appearance: CaptureAppearance,
         outputDirectory: URL
@@ -985,6 +1143,8 @@ private struct DulcetCaptureMain {
             bitmapPixelsPerPoint: nil,
             layoutDiagnostics: nil,
             pinnedControlSha256: observedHash,
+            settleAttempts: nil,
+            firstComparisonMatched: nil,
             sha256: observedHash,
             variant: "deliberately-bad-control",
             windowBackingScaleFactor: nil,
