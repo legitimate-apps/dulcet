@@ -618,6 +618,54 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit"
+      # Every Apple test step here writes an .xcresult and discards it with the runner -- eight
+      # bundles, none uploaded -- along with the JUnit directories `verify-parity-evidence` consumes
+      # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
+      # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
+      # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.
+      # This does not attempt to fix that flake -- two proposed causes have already been refuted.
+      #
+      # `!success()` covers BOTH failure and cancellation. A `timeout-minutes` expiry cancels the job
+      # rather than failing it, and this file's header records that as MEASURED 2026-08-30 across 12
+      # runs; the older 2026-08-27 paragraph saying a timeout "reports as a failure" is superseded by
+      # it. A `failure()`-only condition would therefore miss the long-hang case, which is the one
+      # worth the most here. `concurrency.cancel-in-progress` supersessions also land in this branch,
+      # but they are killed early and so have little on disk for the globs to match.
+      #
+      # NOTE these globs are duplicated in the inventory step below. Keep the two lists in step.
+      - name: Inventory the Apple failure diagnostics
+        if: ${{ !success() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          # Sizes, not just names: a killed `tee` leaves a partial .log and a killed xcodebuild an
+          # unfinalized .xcresult, and a name-only listing renders both exactly like healthy ones.
+          # Globs are collected into one array rather than passed to a single `ls`: `ls a/*.x b/*.y`
+          # exits non-zero when EITHER pattern fails to expand, which printed the files it found and
+          # then reported "NONE" underneath them.
+          shopt -s nullglob
+          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log)
+          echo "APPLE FAILURE DIAGNOSTICS count=${#found[@]}"
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "  NONE - nothing was written before the job stopped"
+          else
+            du -sk "${found[@]}" | sed 's/^/  /'
+          fi
+      - name: Upload Apple failure diagnostics
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-failure-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/*/logs/*.log
+          if-no-files-found: warn
+          # .xcresult payload is already-compressed media; the three sibling binary uploads in this
+          # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
+          compression-level: 0
+          retention-days: 14
       - name: Upload macosArm64 core-conformance JUnit results
         if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
