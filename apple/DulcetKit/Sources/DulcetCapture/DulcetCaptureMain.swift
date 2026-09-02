@@ -228,6 +228,7 @@ private struct CaptureFontMetrics: Codable {
     let leading: Double
     let capHeight: Double
     let xHeight: Double
+    let textKitDefaultLineHeightPoints: Double
     let boundingRect: CapturePointRect
 }
 
@@ -339,6 +340,7 @@ private struct CaptureManifest: Codable {
     let captureSurface: String
     let windowTitlePolicy: String
     let textSizingPolicy: String
+    let fontLineHeightPolicy: String
     let preflightRender: String
     let appearanceResolutionPolicy: String
     let layoutDiagnosticsPolicy: String
@@ -350,6 +352,8 @@ private struct CaptureManifest: Codable {
     let hostLayerContentsScale: Double
     let jpegCompression: Double
     let layoutDisplayScale: Double
+    let resolvedAppleLanguages: [String]
+    let resolvedAppleLanguagesCollectionStage: String
     let locale: String
     let calendar: String
     let timeZone: String
@@ -509,14 +513,25 @@ private struct DulcetCaptureMain {
                     + "bitmap=\(observedBitmapPixelsPerPoint.sorted())"
             )
         }
+        // Read this only after every rendered reference has converged. Reading AppleLanguages
+        // before font construction could itself warm or stabilize the preference path this field
+        // is intended to diagnose, changing the render rather than observing its process state.
+        guard let resolvedAppleLanguages = UserDefaults.standard.stringArray(
+            forKey: "AppleLanguages"
+        ), !resolvedAppleLanguages.isEmpty else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "AppleLanguages did not resolve to a nonempty string array after rendering"
+            )
+        }
 
         let manifest = CaptureManifest(
-            schemaVersion: 12,
+            schemaVersion: 13,
             widthPixels: capturePixelWidth,
             heightPixels: capturePixelHeight,
             captureSurface: "titled-nswindow-with-standard-chrome",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
+            fontLineHeightPolicy: "NSLayoutManager.defaultLineHeight(for:)-after-frame-convergence",
             preflightRender: "discarded-all-states-all-appearances-before-recording",
             appearanceResolutionPolicy: "requested-appearance-current-before-host-construction",
             layoutDiagnosticsPolicy: "resolved-root-and-native-controls-after-frame-convergence",
@@ -528,6 +543,8 @@ private struct DulcetCaptureMain {
             hostLayerContentsScale: captureScale,
             jpegCompression: jpegCompression,
             layoutDisplayScale: captureScale,
+            resolvedAppleLanguages: resolvedAppleLanguages,
+            resolvedAppleLanguagesCollectionStage: "after-all-rendered-references-converged",
             locale: "en_US_POSIX",
             calendar: "gregorian",
             timeZone: "UTC",
@@ -962,6 +979,9 @@ private struct DulcetCaptureMain {
             leading: Double(font.leading),
             capHeight: Double(font.capHeight),
             xHeight: Double(font.xHeight),
+            textKitDefaultLineHeightPoints: Double(
+                NSLayoutManager().defaultLineHeight(for: font)
+            ),
             boundingRect: pointRect(font.boundingRectForFont)
         )
     }
