@@ -324,7 +324,31 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
             DulcetKitIOSTests
+      - name: Boot iPadOS simulator before the layout launch
+        id: ipados_layout_destination
+        run: |
+          set -o pipefail
+          IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          echo "iPadOS simulator prerequisite: udid=$IPAD_UDID"
+
+          # bootstatus -b turns simulator readiness from hidden work inside Xcode's application-
+          # launch budget into an explicit prerequisite. Do not install or launch Dulcet here: the
+          # UI test must still exercise a cold product launch, and a product launch failure must
+          # remain a failure rather than being disguised by an app warm-up.
+          if ! xcrun simctl bootstatus "$IPAD_UDID" -b; then
+            echo "::error title=iPadOS simulator prerequisite failed::CoreSimulator did not finish booting; the layout test did not run"
+            exit 1
+          fi
+          if ! xcrun simctl spawn "$IPAD_UDID" /usr/bin/true; then
+            echo "::error title=iPadOS simulator prerequisite failed::The booted simulator could not launch a probe process; the layout test did not run"
+            exit 1
+          fi
+
+          echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true process-launch=true app-launched=false"
+          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Launch iPadOS shell and prove regular-width account layout
+        env:
+          IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
           set -o pipefail
           # The model name is NOT the thing being proved -- the UI test asserts regular width itself
@@ -332,8 +356,9 @@ jobs:
           # rotated to M5 models, so resolve whatever iPad this image actually ships. The resolver
           # fails loudly rather than falling back to an iPhone, which would keep CI green while
           # proving nothing.
-          IPAD_DESTINATION="$(python3 tools/resolve-ipad-destination)"
+          IPAD_DESTINATION="platform=iOS Simulator,id=$IPAD_UDID"
           echo "iPadOS destination: $IPAD_DESTINATION"
+          set +e
           xcodebuild test \
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetiOS \
@@ -344,6 +369,26 @@ jobs:
             -parallel-testing-enabled NO \
             -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
+          xcode_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$xcode_status" -ne 0 ]]; then
+            if grep -Fq \
+              "DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true" \
+              "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"; then
+              echo "::error title=iPadOS layout assertion failed::Dulcet launched successfully; the regular-width layout proof failed after launch"
+            elif grep -Eiq \
+              'failed to launch .* via Xcode|timed out while launching application via Xcode' \
+              "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"; then
+              echo "::error title=Dulcet application launch failed::The simulator prerequisite passed, but Xcode could not launch Dulcet; layout assertions did not run"
+            else
+              echo "::error title=iPadOS test setup failed::The test command failed before confirming app launch; layout assertions did not run"
+            fi
+            exit "$xcode_status"
+          fi
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testAccountConnectUsesRegularWidthSplitLayout
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit/TEST-DulcetiOSUITests.xml" \
