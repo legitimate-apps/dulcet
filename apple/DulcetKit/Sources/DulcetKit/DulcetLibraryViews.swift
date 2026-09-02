@@ -510,6 +510,7 @@ struct DulcetTrackRow: View {
         }
         .padding(.horizontal, DulcetSpacing.xs)
         .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
+        .contentShape(Rectangle())
     }
 
     private func performActivation() {
