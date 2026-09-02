@@ -256,6 +256,48 @@ They are deliberately not reproduced in this repository.**
     direct-plays instead of erroring, so transcode tests would report green while measuring nothing.
     Every test depending on a server-side capability asserts that capability first and **fails, never
     skips** (spec §20.2.2).
+29. **A zero result is not a finding until the query has been validated against a known positive.**
+    A search that must find nothing should first be run once where it *should* find something.
+    Every expensive wrong turn in this project's history has this shape — a correct instrument
+    answering a question nobody asked, returning a clean-looking negative. Grepping `/rest/stream`
+    against a server that logs `msg="Streaming file"`; filtering by `--include='*.py'` when the
+    tools are extensionless; querying SpringBoard for a dialog another process owns.
+30. **Two queries that share a root are one instrument.** Ask what two attempts have in *common* —
+    process, substrate, transport, endpoint — not what differs. Changing `alerts` to `buttons` while
+    keeping the same application root is not a second opinion; it is the same probe twice.
+31. **Ask what the previous run left behind before crediting a change with a pass.** The thing under
+    test can mutate the environment it runs in: a failing run may connect and store a credential, so
+    the next run passes because a prompt no longer appears and the fix under test never executes.
+    Pooled simulators, warm DerivedData, persisted databases and populated caches all carry this.
+    ➡️ **A test whose purpose is to handle a condition must prove it encountered that condition** —
+    a marker the handler itself emits, asserted as part of the pass. "It passed" is not evidence the
+    handled path ran, and the more plausible the fix looks, the less a bare pass tells you.
+32. **Assertions that check the experiment is the one you think you are running earn the most.**
+    Destination, device class, server identity, fixture identity. `("402.0") is not > 700` — an
+    iPhone where an iPad was required — turned a meaningless run into an obviously-invalid one
+    instead of a plausible refutation. A failure that names *why the setup was wrong* is worth far
+    more than one that says the test did not pass.
+33. **The iOS save-password dialog belongs to `com.apple.AuthenticationServicesUI`, not SpringBoard.**
+    `springboard.alerts` and `springboard.buttons` both return nothing while it is plainly on screen,
+    and querying the owning bundle from XCUITest does not reach it either. Do not spend time
+    dismissing it: a UI test that needs an account should configure it through the `#if DEBUG`
+    launch-argument hook in `DulcetiOSApp` instead, so no password is ever typed and the dialog
+    cannot occur. That hook drives `submitAccountConnection()` — the real connector and Keychain
+    store — so it skips the typing, never the connecting.
+34. **Env vars reach an XCUITest runner only as `TEST_RUNNER_*` in xcodebuild's own environment.**
+    Trailing `KEY=value` on the `xcodebuild` line is consumed by the build-settings parser and never
+    arrives. ⚠️ The failure shape is the trap: **fast, confident, several assertions at once**. A run
+    that dies in under two seconds with three "Missing …" failures is missing variables, not a broken
+    product. (A process under `simctl spawn` needs `SIMCTL_CHILD_` instead — same idea, not
+    interchangeable.)
+35. **`xcodebuild` often idles 8+ minutes in "Finalize test log" AFTER the test has finished.** You
+    do not have to wait: the full transcript is already plain text at
+    `$BUNDLE/Staging/StandardOutputAndStandardError*` (use `grep -a`). Screen recordings in these
+    bundles have broken timestamps, so `-ss` and `-sseof` silently produce nothing — use
+    `ffmpeg -fflags +genpts -i <mp4> -vf scale=740:-1 -update 1 out.png`. ⚠️ Killing a hung
+    `xcodebuild` destroys the recording, which is frequently the only instrument that distinguishes
+    *occlusion* from *unreachability* — an assertion naming reachability can be reporting a dialog
+    on top, with the accessibility tree looking entirely normal underneath.
 
 ## Review and delegation
 
