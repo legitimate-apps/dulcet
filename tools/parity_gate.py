@@ -228,6 +228,32 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                             "to executed-test verification"
                         )
 
+                # One test may not stand as evidence for more than one conformance id on the
+                # same platform. The loop above checks that a cited test EXISTS in the tree,
+                # which is not the same as checking that it exercises the id it is cited for --
+                # so one unrelated test could be pasted against every declared id and every
+                # check above would pass. That produces a row which LOOKS evidenced, which is
+                # worse than an unevidenced one because it stops anybody looking further.
+                #
+                # A distinct conformance requirement generally warrants its own test. Where one
+                # genuinely covers two, split it or widen this rule deliberately -- do not leave
+                # the duplication implicit.
+                #
+                # OBSERVED 2026-09-02: zero violations across all 144 evidence rows then on
+                # main, so this codifies existing practice rather than imposing a new one.
+                if schema_version == 2:
+                    cited_by: dict[str, list[str]] = {}
+                    for entry in entries:
+                        cited_by.setdefault(entry["test"], []).append(entry["conformance"])
+                    for cited_test, ids in sorted(cited_by.items()):
+                        if len(ids) > 1:
+                            fail(
+                                f"{source}: {feature_id}/{platform} cites one test for "
+                                f"{len(ids)} conformance ids ({', '.join(sorted(ids))}): "
+                                f"{cited_test}. A test that exists is not a test that "
+                                "exercises the id it is cited for; give each id its own evidence."
+                            )
+
                 if schema_version == 2:
                     declared_conformance = feature.get("conformance", [])
                     if (
