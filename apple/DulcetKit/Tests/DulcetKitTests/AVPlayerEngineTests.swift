@@ -122,6 +122,34 @@ struct AVPlayerEngineTests {
     }
 
     @Test
+    func waitFailureDiagnosticsDistinguishProductFailuresFromCoreAudioHostOverload() {
+        let responsive = classifiedWaitFailureDiagnostic(
+            "interruption begin was not emitted",
+            waitBudget: 20,
+            waited: 20.025,
+            queueProbeTimeout: 1,
+            liveness: .responsive(turnaroundSeconds: 0.012)
+        )
+        let overloaded = classifiedWaitFailureDiagnostic(
+            "interruption begin was not emitted",
+            waitBudget: 20,
+            waited: 20.025,
+            queueProbeTimeout: 1,
+            liveness: .notResponsive(waitedSeconds: 1.056)
+        )
+
+        #expect(responsive != overloaded)
+        #expect(responsive.contains("failure_classification=DULCET_EXPECTATION_NOT_EMITTED"))
+        #expect(responsive.contains("expected condition was not emitted despite a responsive engine queue"))
+        #expect(!responsive.contains("DULCET_COREAUDIO_HOST_OVERLOAD"))
+        #expect(overloaded.contains("failure_classification=DULCET_COREAUDIO_HOST_OVERLOAD"))
+        #expect(overloaded.contains("cause=CoreAudio/host overload"))
+        #expect(overloaded.contains("probe_timeout_seconds=1.000"))
+        #expect(overloaded.contains("engine queue not responsive; probe_wait_seconds=1.056"))
+        #expect(overloaded.contains("HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to overload"))
+    }
+
+    @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
         #if os(macOS)
         let engine = DulcetAVPlayerEngine()
@@ -831,12 +859,43 @@ private func waitFailureDiagnostic(
     queueProbeTimeout: TimeInterval = 1
 ) async -> String {
     let liveness = await engine.probeQueueLivenessForTesting(timeout: queueProbeTimeout)
-    return [
+    return classifiedWaitFailureDiagnostic(
+        failure,
+        waitBudget: waitBudget,
+        waited: waited,
+        queueProbeTimeout: queueProbeTimeout,
+        liveness: liveness
+    )
+}
+
+private func classifiedWaitFailureDiagnostic(
+    _ failure: String,
+    waitBudget: TimeInterval,
+    waited: TimeInterval,
+    queueProbeTimeout: TimeInterval,
+    liveness: DulcetAVPlayerEngineQueueLiveness
+) -> String {
+    let classification: [String]
+    switch liveness {
+    case .responsive:
+        classification = [
+            "failure_classification=DULCET_EXPECTATION_NOT_EMITTED",
+            "cause=expected condition was not emitted despite a responsive engine queue",
+        ]
+    case .notResponsive:
+        classification = [
+            "failure_classification=DULCET_COREAUDIO_HOST_OVERLOAD",
+            "cause=CoreAudio/host overload prevented the engine queue from servicing its liveness probe",
+            "probe_timeout_seconds=\(formatSeconds(queueProbeTimeout))",
+            "overload_evidence=engine queue not responsive; CoreAudio signature=HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to overload",
+        ]
+    }
+
+    return ([
         failure,
         "wait_budget_seconds=\(formatSeconds(waitBudget))",
         "waited_seconds=\(formatSeconds(waited))",
-        liveness.diagnosticDescription,
-    ].joined(separator: "; ")
+    ] + classification + [liveness.diagnosticDescription]).joined(separator: "; ")
 }
 
 private func durationSeconds(_ duration: Duration) -> TimeInterval {
