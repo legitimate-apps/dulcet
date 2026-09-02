@@ -193,9 +193,37 @@ def main() -> None:
         shutil.copytree(args.root, wrong_layout_scale_root)
         manifest_path = wrong_layout_scale_root / "standard" / "manifest.json"
         manifest = json.loads(manifest_path.read_text())
-        manifest["layoutDisplayScale"] = 1.0
+        manifest["layoutDisplayScale"] = 2.0
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(wrong_layout_scale_root, "manifest layoutDisplayScale mismatch")
+
+        invalid_settle_root = Path(temporary) / "invalid-settle-attempts"
+        shutil.copytree(args.root, invalid_settle_root)
+        manifest_path = invalid_settle_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["settleAttempts"] = 0
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(invalid_settle_root, "settleAttempts is outside 1...40")
+
+        contradictory_settle_root = Path(temporary) / "contradictory-settle-path"
+        shutil.copytree(args.root, contradictory_settle_root)
+        manifest_path = contradictory_settle_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["settleAttempts"] = 1
+        reference["firstComparisonMatched"] = False
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(
+            contradictory_settle_root,
+            "firstComparisonMatched contradicts settleAttempts=1",
+        )
 
         ambient_backing_scale_root = Path(temporary) / "ambient-window-backing-scale"
         shutil.copytree(args.root, ambient_backing_scale_root)
@@ -283,7 +311,8 @@ def main() -> None:
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true "
         "misframed-window=true inactive-control-state=true "
-        "wrong-layout-scale=true ambient-window-backing-scale-accepted=true "
+        "wrong-layout-scale=true settle-attempt-range=true "
+        "settle-first-match-consistency=true ambient-window-backing-scale-accepted=true "
         "nonpositive-window-backing-scale=true inconsistent-window-backing-scale=true "
         "substituted-pinned-control=true "
         "reencoded-pinned-control-as-reference-pixel-duplicate=true"
