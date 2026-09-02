@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+
+"""Prove the soak detector catches a known one-pixel capture divergence."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+
+DETECTOR = Path(__file__).with_name("design-capture-pair-detector")
+
+
+def write_bmp(
+    path: Path,
+    width: int,
+    height: int,
+    pixels: list[tuple[int, int, int]],
+) -> None:
+    stride = (width * 3 + 3) & ~3
+    pixel_bytes = bytearray()
+    for y in reversed(range(height)):
+        row = bytearray()
+        for red, green, blue in pixels[y * width:(y + 1) * width]:
+            row.extend((blue, green, red))
+        row.extend(b"\0" * (stride - len(row)))
+        pixel_bytes.extend(row)
+
+    pixel_offset = 14 + 40
+    header = struct.pack(
+        "<2sIHHI",
+        b"BM",
+        pixel_offset + len(pixel_bytes),
+        0,
+        0,
+        pixel_offset,
+    )
+    dib = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        height,
+        1,
+        24,
+        0,
+        len(pixel_bytes),
+        2835,
+        2835,
+        0,
+        0,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(header + dib + pixel_bytes)
+
+
+def detect(run_a: Path, run_b: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(DETECTOR),
+            str(run_a),
+            str(run_b),
+            "--forensics-output",
+            str(output),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+def assert_equal(observed: object, expected: object, label: str) -> None:
+    if observed != expected:
+        raise SystemExit(f"{label} mismatch: expected {expected!r}, observed {observed!r}")
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-capture-pair-detector-") as temporary:
+        root = Path(temporary)
+        run_a = root / "run-a"
+        run_b = root / "run-b"
+        fixture = Path("fixtures") / "known-one-pixel-delta.bmp"
+        pixels_a = [(20, 40, 60)] * 12
+        pixels_b = list(pixels_a)
+        pixels_b[6] = (21, 40, 60)
+        write_bmp(run_a / fixture, 4, 3, pixels_a)
+        write_bmp(run_b / fixture, 4, 3, pixels_b)
+
+        divergent_output = root / "divergent-forensics"
+        divergent = detect(run_a, run_b, divergent_output)
+        if divergent.returncode != 1:
+            raise SystemExit(
+                "pair detector did not fire on the known one-pixel delta: "
+                f"exit={divergent.returncode} output={divergent.stdout!r}"
+            )
+        report = json.loads((divergent_output / "report.json").read_text())
+        assert_equal(report["differingFileCount"], 1, "self-test differing file count")
+        assert_equal(report["differingImageCount"], 1, "self-test differing image count")
+        assert_equal(report["measurementErrorCount"], 0, "self-test measurement errors")
+        delta = report["differingImages"][0]["decodedPixelDelta"]
+        assert_equal(delta["differingPixels"], 1, "self-test differing pixels")
+        assert_equal(
+            delta["boundingBoxInclusive"],
+            {"minX": 2, "minY": 1, "maxX": 2, "maxY": 1, "width": 1, "height": 1},
+            "self-test differing bounding box",
+        )
+        if "DESIGN CAPTURE PAIR DIVERGED" not in divergent.stdout:
+            raise SystemExit(
+                "pair detector omitted its divergence verdict: "
+                f"{divergent.stdout!r}"
+            )
+        if not (divergent_output / "recursive-byte-diff.txt").is_file():
+            raise SystemExit("pair detector did not retain the recursive byte diff")
+
+        shutil.copyfile(run_a / fixture, run_b / fixture)
+        identical_output = root / "identical-forensics"
+        identical = detect(run_a, run_b, identical_output)
+        if identical.returncode != 0:
+            raise SystemExit(
+                "pair detector rejected identical inputs: "
+                f"exit={identical.returncode} output={identical.stdout!r}"
+            )
+        if identical_output.exists():
+            raise SystemExit("pair detector created forensics for identical inputs")
+
+    print(
+        "DESIGN CAPTURE PAIR DETECTOR SELF-TEST PASS "
+        "known-delta-pixels=1 divergence-detected=true forensics-retained=true "
+        "identical-control=match"
+    )
+
+
+if __name__ == "__main__":
+    main()
