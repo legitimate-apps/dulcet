@@ -76,6 +76,8 @@ jobs:
         run: python3 tools/test-string-catalog-policy-gate
       - name: Prove the iPad destination resolver rejects a non-iPad
         run: python3 tools/test-ipad-destination-resolver
+      - name: Prove simulator process readiness expires as a prerequisite failure
+        run: python3 tools/test-simulator-process-readiness
       - name: Require SwiftUI user-facing literals to use the string catalog
         run: python3 tools/verify_string_catalog_policy.py
       - name: Prove the DulcetCore build-order guard accepts a valid project and rejects ten broken ones
@@ -339,10 +341,14 @@ jobs:
             echo "::error title=iPadOS simulator prerequisite failed::CoreSimulator did not finish booting; the layout test did not run"
             exit 1
           fi
-          if ! xcrun simctl spawn "$IPAD_UDID" /usr/bin/true; then
-            echo "::error title=iPadOS simulator prerequisite failed::The booted simulator could not launch a probe process; the layout test did not run"
-            exit 1
-          fi
+          # `simctl spawn` treats an absolute executable path as a host path. Ask the simulated
+          # device PATH for launchctl instead, then prove both process launch and access to the
+          # device's system bootstrap. A loaded runner may finish bootstatus before those services
+          # accept launches, so poll for up to 60 seconds. The deadline covers a hung attempt too.
+          python3 tools/wait-for-simulator-process \
+            --udid "$IPAD_UDID" \
+            --deadline-seconds 60 \
+            -- launchctl print system
 
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true process-launch=true app-launched=false"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
