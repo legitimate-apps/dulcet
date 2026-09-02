@@ -318,12 +318,25 @@ email** — the `noreply` address only when the account has email privacy enable
 as `legitimate-apps`.**
 
 🚨 **Corrected 2026-09-01. This previously said the exposure "happened once, commit `0e3566e`". That
-is wrong, and understating it is what let it persist.** Measured on `origin/main` with
-`git log --format='%ae'`: **31 of the last 40 commits** carry the opening account's profile address
-rather than its `noreply` one, spanning **2026-08-26 to 2026-09-01** — that is *every squash merge in
-the repository's active history*, not an isolated slip. Our own direct commits are unaffected and
-correctly carry the `noreply` address, which is why the per-command identity convention in *Identity*
-looked like it was working.
+is wrong, and understating it is what let it persist.** Measured across **all** of `origin/main`:
+
+```
+72 commits   ...@users.noreply.github.com     committer = us          ok
+31 commits   the account's profile address    committer = GitHub      exposed
+----
+103 total
+```
+
+**31 of 103, not one** — and the correlation is total: *every* exposed commit is GitHub-synthesized
+(committer `GitHub`), and *zero* of our own commits are affected. That is not an isolated slip, it is
+an ongoing systematic exposure that has been described here as a one-off, which is why nobody treated
+it as live.
+
+🚨 **The remedy stated below is necessary and NOT sufficient, which is worse than a wrong fact.**
+"Open pull requests as `legitimate-apps`" is already being followed — and the exposure still happens,
+because a squash merge attributes to the pull request author's *account commit email*, which is the
+profile address unless that account has email privacy enabled. **A control that reads as sufficient
+and is not will not be questioned when it fails.**
 
 **The convention cannot fix this, and that is the point.** A squash merge does not preserve the
 authorship of the commits it squashes — GitHub synthesises a new commit and sets the author itself.
@@ -345,7 +358,14 @@ c98581b  Implement the six account-connect …    <profile address>             
 
 For a single-commit pull request, rebase produces the **same one-commit history shape** as squash
 with none of the exposure, so there is no trade-off to weigh in that case. A multi-commit branch is a
-genuine judgement call between history hygiene and exposure, and remains one.
+genuine judgement call between history hygiene and exposure, and remains one — the value here is that
+the *no-trade-off* case is now identified precisely, not that rebase always wins.
+
+**The durable fix is an account setting, not a merge habit.** Enabling "Keep my email addresses
+private" on the account that opens pull requests makes squash merges use the `noreply` address
+automatically and retires this whole class. That is an account-owner action; it cannot be done from a
+repository, and a token needs `user` scope even to read the current state. Until it is done, choose
+the merge method deliberately.
 
 **Re-measure before restating any figure here.** The count above is dated because it grows with every
 merge, and the previous version of this paragraph was accurate when written and wrong within days.
