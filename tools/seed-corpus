@@ -304,6 +304,7 @@ def main() -> None:
     )
     boundary_29 = root / "Threshold Boundary" / "01 - Twenty Nine Seconds.flac"
     boundary_31 = root / "Threshold Boundary" / "02 - Thirty One Seconds.flac"
+    ui_playback_canary = root / "Threshold Boundary" / "03 - UI Playback Canary.flac"
     encode(
         tools, boundary_29, duration=29.0, frequency=0, title="Twenty Nine Seconds",
         album="Threshold Boundary", track="1", silence=True,
@@ -311,6 +312,10 @@ def main() -> None:
     encode(
         tools, boundary_31, duration=31.0, frequency=0, title="Thirty One Seconds",
         album="Threshold Boundary", track="2", silence=True,
+    )
+    encode(
+        tools, ui_playback_canary, duration=31.0, frequency=0, title="UI Playback Canary",
+        album="Threshold Boundary", track="3", silence=True,
     )
 
     template = root / ".templates" / "paging-template.mp3"
@@ -428,6 +433,12 @@ def main() -> None:
         expected_tags={"title": "Thirty One Seconds"},
         duration=31.0,
     )
+    ui_playback_tags, observed_ui_playback_duration, _ = assert_media(
+        tools,
+        ui_playback_canary,
+        expected_tags={"title": "UI Playback Canary"},
+        duration=31.0,
+    )
 
     observed_paging_ffprobe_tracks: list[int] = []
     for index in (1, 150, 300):
@@ -448,8 +459,8 @@ def main() -> None:
         path for path in root.rglob("*")
         if path.is_file() and path.suffix.lower() in FORMATS and ".templates" not in path.parts
     ]
-    if len(scanner_files) != 313:
-        raise SystemExit(f"expected 313 scanner-visible media files, generated {len(scanner_files)}")
+    if len(scanner_files) != 314:
+        raise SystemExit(f"expected 314 scanner-visible media files, generated {len(scanner_files)}")
     scanner_extensions = sorted({path.suffix.lower() for path in scanner_files})
     if scanner_extensions != sorted(FORMATS):
         raise SystemExit(f"generated file-extension set mismatch: {scanner_extensions}")
@@ -505,6 +516,11 @@ def main() -> None:
                 "ffprobe_verified_tracks": observed_paging_ffprobe_tracks,
             },
             "threshold_durations_seconds": [round(observed_29), round(observed_31)],
+            "ui_playback_canary": {
+                "title": ui_playback_tags["title"],
+                "duration_seconds": round(observed_ui_playback_duration),
+                "silent": True,
+            },
         },
         "verification": "ffprobe-plus-id3v24-round-trip",
     }

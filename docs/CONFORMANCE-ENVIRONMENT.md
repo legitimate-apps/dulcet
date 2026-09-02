@@ -69,7 +69,7 @@ on the host JVM; it does not start an emulator or claim device-runtime coverage.
 
 `up` is cold by default: it stops the named disposable container, deletes only the marker-guarded
 `data` and `cache` directories, then starts and health-checks the pinned image. The generated music
-corpus is retained, so a subsequent cold start does not rebuild 313 fixtures. To clear only a warmed
+corpus is retained, so a subsequent cold start does not rebuild 314 fixtures. To clear only a warmed
 transcode cache and restart the same disposable container against its retained database and corpus,
 run:
 
@@ -128,10 +128,11 @@ root and process rather than joining this lifecycle; `new-class-root` remains th
 
 ## Generated corpus
 
-`tools/seed-corpus` invokes the leg's selected ffmpeg and creates 313 scanner-visible files. It covers
+`tools/seed-corpus` invokes the leg's selected ffmpeg and creates 314 scanner-visible files. It covers
 FLAC, MP3, Ogg, and M4A; Unicode metadata; two discs; a semicolon-delimited album-artist set; a track
 with no album or album-artist tag; a title longer than 300 characters; a 300-track paging album; and
-29- and 31-second threshold tracks. All samples are synthesized tone or silence. No audio file or
+29- and 31-second threshold tracks plus a dedicated silent UI playback canary. All samples are
+synthesized tone or silence. No audio file or
 copyrighted recording is committed.
 
 The generator runs `ffprobe` against every non-paging awkward fixture and validates the probed
