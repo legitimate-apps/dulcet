@@ -391,43 +391,99 @@ struct AVPlayerEngineTests {
     @Test
     func interruptionsAndNoisyRoutesPauseWithExplicitResumptionPolicy() async throws {
         let audioSession = RecordingAudioSession()
-        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let clock = ManualAVPlayerEngineClock()
+        let mediaControls = RecordingSystemMediaControls()
+        let player = AVQueuePlayer()
+        let resource = InMemoryPlaybackResource(data: makePCMWave(duration: 2))
+        // Dedicated integration tests cover real AVFoundation loading and media progression. This
+        // policy test keeps the production engine queue and event handler, but inserts no player
+        // item; the empty-item and zero-request assertions below guard that boundary.
+        let engine = DulcetAVPlayerEngine(
+            player: player,
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession,
+            systemMediaControls: mediaControls
+        )
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(resource: resource)
 
-        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
-        try await waitUntil(
-            "AVPlayer did not become ready",
-            engine: engine,
-            timeout: realAVFoundationProgressTimeout
-        ) { events.containsReady(seekability: .seekable) }
-        _ = await execute(engine, .play(commandID: .init("play")))
-        try await waitUntil(
-            "playback did not progress before interruption",
-            engine: engine,
-            timeout: realAVFoundationProgressTimeout
-        ) { events.containsProgressBegan }
+        let prepare = await execute(
+            engine,
+            .prepare(commandID: .init("prepare"), plan: playbackPlan)
+        )
+        #expect(prepare == .accepted(commandID: .init("prepare")))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        #expect(events.containsReady(seekability: .seekable))
 
+        let play = await execute(engine, .play(commandID: .init("play")))
+        #expect(play == .accepted(commandID: .init("play")))
+        clock.tick(
+            isPlaying: true,
+            mediaPosition: 0.5,
+            monotonicUptimeNanoseconds: 500_000_000
+        )
+        #expect(events.containsProgressBegan)
+        #expect(player.items().isEmpty)
+        #expect(resource.requests.isEmpty)
+
+        let interruptionBeganIndex = events.snapshot.count
         audioSession.publish(.interruptionBegan)
         try await waitUntil("interruption begin was not emitted", engine: engine) {
-            events.snapshot.contains { if case .interruptionBegan(_, false) = $0 { true } else { false } }
+            events.snapshot.count > interruptionBeganIndex
         }
+        #expect(Array(events.snapshot.dropFirst(interruptionBeganIndex)) == [
+            .interruptionBegan(attemptID: playbackPlan.attemptID, shouldResume: false),
+        ])
+
+        let interruptionEndedIndex = events.snapshot.count
         audioSession.publish(.interruptionEnded(systemAllowsResume: true))
         try await waitUntil("eligible interruption did not resume", engine: engine) {
-            events.snapshot.contains { if case .interruptionEnded(_, true) = $0 { true } else { false } }
+            events.snapshot.count >= interruptionEndedIndex + 2
         }
-        try await waitUntil(
-            "transport did not resume after the system-authorized interruption",
-            engine: engine
-        ) {
-            events.snapshot.contains { if case .resumed = $0 { true } else { false } }
-        }
+        #expect(Array(events.snapshot.dropFirst(interruptionEndedIndex)) == [
+            .interruptionEnded(attemptID: playbackPlan.attemptID, shouldResume: true),
+            .resumed(attemptID: playbackPlan.attemptID, position: 0),
+        ])
+
+        let routeChangedIndex = events.snapshot.count
         audioSession.publish(.routeChanged(old: .bluetooth, new: .builtIn, becomingNoisy: true))
         try await waitUntil("becoming-noisy route did not pause", engine: engine) {
-            events.snapshot.contains {
-                if case .routeChanged(_, .bluetooth, .builtIn, true) = $0 { true } else { false }
-            }
+            events.snapshot.count > routeChangedIndex
         }
+        #expect(Array(events.snapshot.dropFirst(routeChangedIndex)) == [
+            .routeChanged(
+                attemptID: playbackPlan.attemptID,
+                old: .bluetooth,
+                new: .builtIn,
+                didPause: true
+            ),
+        ])
+        #expect(mediaControls.transportPlayingStates == [true, true, false, true, false])
+
+        let replay = await execute(engine, .play(commandID: .init("replay")))
+        #expect(replay == .accepted(commandID: .init("replay")))
+        let disallowedInterruptionIndex = events.snapshot.count
+        audioSession.publish(.interruptionBegan)
+        try await waitUntil("second interruption begin was not emitted", engine: engine) {
+            events.snapshot.count > disallowedInterruptionIndex
+        }
+        #expect(Array(events.snapshot.dropFirst(disallowedInterruptionIndex)) == [
+            .interruptionBegan(attemptID: playbackPlan.attemptID, shouldResume: false),
+        ])
+
+        let disallowedEndIndex = events.snapshot.count
+        audioSession.publish(.interruptionEnded(systemAllowsResume: false))
+        try await waitUntil("system-disallowed interruption end was not emitted", engine: engine) {
+            events.snapshot.count > disallowedEndIndex
+        }
+        #expect(Array(events.snapshot.dropFirst(disallowedEndIndex)) == [
+            .interruptionEnded(attemptID: playbackPlan.attemptID, shouldResume: false),
+        ])
+        #expect(mediaControls.transportPlayingStates == [
+            true, true, false, true, false, true, false,
+        ])
 
         _ = await execute(engine, .release(commandID: .init("release")))
     }
@@ -969,6 +1025,12 @@ private final class RecordingSystemMediaControls: DulcetSystemMediaControlling,
         lock.lock()
         defer { lock.unlock() }
         return publicationStorage
+    }
+
+    var transportPlayingStates: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return transportStorage.map { $0.3 }
     }
 
     func setCommandHandler(
