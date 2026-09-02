@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Controls for report_main_health.py.
+
+The tool's whole purpose is to break a silence, so the failure that matters is it exiting 0 while
+reporting nothing. These controls assert it refuses rather than degrades.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+TOOL = Path(__file__).resolve().parent / "report_main_health.py"
+
+FULL = {
+    "GITHUB_TOKEN": "not-a-real-token",
+    "GITHUB_REPOSITORY": "owner/repo",
+    "FAILED_WORKFLOW": "apple-ci",
+    "FAILED_CONCLUSION": "failure",
+    "FAILED_RUN_URL": "https://example.invalid/run/1",
+    "FAILED_HEAD_SHA": "0123456789abcdef",
+}
+
+
+def run(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    child = dict(os.environ)
+    for key in FULL:
+        child.pop(key, None)
+    child.update(env)
+    return subprocess.run(
+        [sys.executable, str(TOOL)], capture_output=True, text=True, env=child, timeout=60
+    )
+
+
+failures: list[str] = []
+
+
+def expect_refusal(label: str, env: dict[str, str], expected: str) -> None:
+    result = run(env)
+    combined = result.stdout + result.stderr
+    if result.returncode == 0:
+        failures.append(f"{label}: exited 0 -- it must refuse, not degrade. output={combined!r}")
+    elif expected not in combined:
+        failures.append(f"{label}: expected {expected!r}, got {combined!r}")
+
+
+# Every required variable, one at a time. A reporter that runs with a missing field would report a
+# health state it cannot establish -- which is indistinguishable from silence.
+for missing in sorted(FULL):
+    partial = {k: v for k, v in FULL.items() if k != missing}
+    expect_refusal(f"missing {missing}", partial, "missing required environment")
+
+expect_refusal("no environment at all", {}, "missing required environment")
+
+# With a complete but invalid token the tool must still fail loudly rather than pretend success.
+result = run(FULL)
+if result.returncode == 0:
+    failures.append(
+        "invalid token: exited 0. A reporter that cannot reach the API must not look like one "
+        "that found nothing to report."
+    )
+
+# The marker must be stable: idempotency depends on finding it again next time.
+source = TOOL.read_text()
+if source.count('MARKER = "<!-- dulcet-main-health -->"') != 1:
+    failures.append("the issue marker must be defined exactly once and be a literal")
+if "auto-close" in source or "state\": \"closed\"" in source:
+    failures.append("the tool must not close issues; a self-closing report restores the silence")
+
+if failures:
+    for line in failures:
+        print(f"FAIL: {line}")
+    raise SystemExit(1)
+print(f"report-main-health controls pass ({len(FULL) + 3} checks)")
