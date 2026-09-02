@@ -43,6 +43,7 @@ private struct CaptureOptions {
     let appearances: [CaptureAppearance]
     let includeControl: Bool
     let generateControlCandidates: Bool
+    let deliberatelyFocusNegativeControl: Bool
 
     init(arguments: [String]) throws {
         var outputDirectory: URL?
@@ -51,6 +52,7 @@ private struct CaptureOptions {
         var appearances = CaptureAppearance.allCases
         var includeControl = false
         var generateControlCandidates = false
+        var deliberatelyFocusNegativeControl = false
         var usedCaptureSelectionOption = false
         var index = 0
 
@@ -98,6 +100,8 @@ private struct CaptureOptions {
                 includeControl = true
             case "--generate-control-candidates":
                 generateControlCandidates = true
+            case "--negative-control-focused-responder":
+                deliberatelyFocusNegativeControl = true
             default:
                 throw CaptureError.unknownArgument(argument)
             }
@@ -122,6 +126,7 @@ private struct CaptureOptions {
         self.appearances = appearances
         self.includeControl = includeControl
         self.generateControlCandidates = generateControlCandidates
+        self.deliberatelyFocusNegativeControl = deliberatelyFocusNegativeControl
     }
 }
 
@@ -152,6 +157,7 @@ private enum CaptureError: Error, CustomStringConvertible {
     case diagnosticsOutputExists(String)
     case diagnosticsInsideComparedOutput(String)
     case geometryMismatch(String)
+    case focusStateMismatch(String)
     case renderingEnvironmentMismatch(String)
     case bitmapAllocation
     case jpegEncoding
@@ -184,6 +190,8 @@ private enum CaptureError: Error, CustomStringConvertible {
             "diagnostics output must be outside the byte-compared capture directory: \(path)"
         case let .geometryMismatch(detail):
             "capture geometry mismatch: \(detail)"
+        case let .focusStateMismatch(detail):
+            "capture focus state mismatch: \(detail)"
         case let .renderingEnvironmentMismatch(detail):
             "capture rendering environment mismatch: \(detail)"
         case .bitmapAllocation:
@@ -228,6 +236,7 @@ private struct CaptureFontMetrics: Codable {
     let leading: Double
     let capHeight: Double
     let xHeight: Double
+    let textKitDefaultLineHeightPoints: Double
     let boundingRect: CapturePointRect
 }
 
@@ -286,6 +295,7 @@ private struct CaptureRecord: Codable {
     let captureBoundsXPoints: Int
     let captureBoundsYPoints: Int
     let controlActiveState: String
+    let focusState: String
     let file: String
     let fixtureState: String
     let hostLayerContentsScale: Double?
@@ -339,10 +349,12 @@ private struct CaptureManifest: Codable {
     let captureSurface: String
     let windowTitlePolicy: String
     let textSizingPolicy: String
+    let fontLineHeightPolicy: String
     let preflightRender: String
     let appearanceResolutionPolicy: String
     let layoutDiagnosticsPolicy: String
     let settlePathPolicy: String
+    let focusStatePolicy: String
     let bitmapPixelsPerPoint: Double
     let fontSmoothingPolicy: String
     let fontSubpixelPositioningPolicy: String
@@ -350,6 +362,8 @@ private struct CaptureManifest: Codable {
     let hostLayerContentsScale: Double
     let jpegCompression: Double
     let layoutDisplayScale: Double
+    let resolvedAppleLanguages: [String]
+    let resolvedAppleLanguagesCollectionStage: String
     let locale: String
     let calendar: String
     let timeZone: String
@@ -426,7 +440,8 @@ private struct DulcetCaptureMain {
                     variant: .standard,
                     outputDirectory: preflightDirectory,
                     timingPhase: "preflight",
-                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds
+                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds,
+                    deliberatelyFocusNegativeControl: options.deliberatelyFocusNegativeControl
                 )
                 renderTimings.append(rendered.timing)
             }
@@ -442,7 +457,8 @@ private struct DulcetCaptureMain {
                     variant: .deliberatelyBadControl,
                     outputDirectory: options.outputDirectory,
                     timingPhase: "control-candidate",
-                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds
+                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds,
+                    deliberatelyFocusNegativeControl: options.deliberatelyFocusNegativeControl
                 )
                 renderTimings.append(rendered.timing)
             }
@@ -469,7 +485,8 @@ private struct DulcetCaptureMain {
                     variant: .standard,
                     outputDirectory: options.outputDirectory,
                     timingPhase: "recorded-reference",
-                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds
+                    mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds,
+                    deliberatelyFocusNegativeControl: options.deliberatelyFocusNegativeControl
                 )
                 records.append(rendered.record)
                 renderTimings.append(rendered.timing)
@@ -509,18 +526,30 @@ private struct DulcetCaptureMain {
                     + "bitmap=\(observedBitmapPixelsPerPoint.sorted())"
             )
         }
+        // Read this only after every rendered reference has converged. Reading AppleLanguages
+        // before font construction could itself warm or stabilize the preference path this field
+        // is intended to diagnose, changing the render rather than observing its process state.
+        guard let resolvedAppleLanguages = UserDefaults.standard.stringArray(
+            forKey: "AppleLanguages"
+        ), !resolvedAppleLanguages.isEmpty else {
+            throw CaptureError.renderingEnvironmentMismatch(
+                "AppleLanguages did not resolve to a nonempty string array after rendering"
+            )
+        }
 
         let manifest = CaptureManifest(
-            schemaVersion: 12,
+            schemaVersion: 13,
             widthPixels: capturePixelWidth,
             heightPixels: capturePixelHeight,
             captureSurface: "titled-nswindow-with-standard-chrome",
             windowTitlePolicy: "visible-centered-standard-window-title",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
+            fontLineHeightPolicy: "NSLayoutManager.defaultLineHeight(for:)-after-frame-convergence",
             preflightRender: "discarded-all-states-all-appearances-before-recording",
             appearanceResolutionPolicy: "requested-appearance-current-before-host-construction",
             layoutDiagnosticsPolicy: "resolved-root-and-native-controls-after-frame-convergence",
             settlePathPolicy: "per-render-comparisons-until-first-identical-consecutive-frame-pair",
+            focusStatePolicy: "rendered-hierarchy-no-focused-control-window-first-responder-asserted-every-bitmap-draw",
             bitmapPixelsPerPoint: captureScale,
             fontSmoothingPolicy: "disabled-explicit-bitmap-context",
             fontSubpixelPositioningPolicy: "disabled-explicit-bitmap-context",
@@ -528,6 +557,8 @@ private struct DulcetCaptureMain {
             hostLayerContentsScale: captureScale,
             jpegCompression: jpegCompression,
             layoutDisplayScale: captureScale,
+            resolvedAppleLanguages: resolvedAppleLanguages,
+            resolvedAppleLanguagesCollectionStage: "after-all-rendered-references-converged",
             locale: "en_US_POSIX",
             calendar: "gregorian",
             timeZone: "UTC",
@@ -558,6 +589,7 @@ private struct DulcetCaptureMain {
                 + "bitmap-pixels-per-point=\(captureScale) "
                 + "font-smoothing=disabled font-subpixel-positioning=disabled "
                 + "control-active-state=key "
+                + "focus-state=no-focused-control assertion=every-bitmap-draw "
                 + "control-baseline=pinned-resource "
                 + "output=\(options.outputDirectory.lastPathComponent)"
         )
@@ -570,7 +602,8 @@ private struct DulcetCaptureMain {
         variant: DulcetRenderVariant,
         outputDirectory: URL,
         timingPhase: String,
-        mainEntryUptimeNanoseconds: UInt64
+        mainEntryUptimeNanoseconds: UInt64,
+        deliberatelyFocusNegativeControl: Bool
     ) throws -> RenderedCapture {
         let renderStarted = DispatchTime.now().uptimeNanoseconds
         var calendar = Calendar(identifier: .gregorian)
@@ -649,6 +682,11 @@ private struct DulcetCaptureMain {
                     + "before=\(resolvedWindowBackingScale) after=\(attachedRenderingScale)"
             )
         }
+        try pinCaptureFocusState(
+            in: window,
+            hostingView: hostingView,
+            deliberatelyFocusNegativeControl: deliberatelyFocusNegativeControl
+        )
         try validateRenderingEnvironment(
             stage: "window-after-host-attachment",
             captureScale: CaptureRenderingPolicy.captureScale,
@@ -713,12 +751,14 @@ private struct DulcetCaptureMain {
         // scale does not drive rendering: one fixed capture scale owns SwiftUI layout, the host
         // layer, and bitmap pixels-per-point so layout and rasterization share the same grid.
         func renderFrame() throws -> Data {
+            try assertCaptureFocusState(in: window, stage: "before-bitmap-draw")
             captureView.layoutSubtreeIfNeeded()
             captureView.displayIfNeeded()
             bitmapContext.cgContext.setShouldSmoothFonts(false)
             bitmapContext.cgContext.setShouldSubpixelPositionFonts(false)
             bitmapContext.cgContext.setShouldSubpixelQuantizeFonts(false)
             captureView.displayIgnoringOpacity(captureView.bounds, in: bitmapContext)
+            try assertCaptureFocusState(in: window, stage: "after-bitmap-draw")
             guard let tiff = bitmap.representation(using: .tiff, properties: [:]) else {
                 throw CaptureError.bitmapAllocation
             }
@@ -791,6 +831,7 @@ private struct DulcetCaptureMain {
             captureBoundsXPoints: Int(captureBounds.origin.x),
             captureBoundsYPoints: Int(captureBounds.origin.y),
             controlActiveState: "key",
+            focusState: "no-focused-control",
             file: filename,
             fixtureState: state.rawValue,
             hostLayerContentsScale: Double(CaptureRenderingPolicy.captureScale),
@@ -962,6 +1003,9 @@ private struct DulcetCaptureMain {
             leading: Double(font.leading),
             capHeight: Double(font.capHeight),
             xHeight: Double(font.xHeight),
+            textKitDefaultLineHeightPoints: Double(
+                NSLayoutManager().defaultLineHeight(for: font)
+            ),
             boundingRect: pointRect(font.boundingRectForFont)
         )
     }
@@ -1010,6 +1054,49 @@ private struct DulcetCaptureMain {
             hostingView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         }
         return hostingView
+    }
+
+    @MainActor
+    private static func pinCaptureFocusState(
+        in window: NSWindow,
+        hostingView: NSView,
+        deliberatelyFocusNegativeControl: Bool
+    ) throws {
+        // The reference artifact represents a resting presentation state, not an arbitrary point in
+        // keyboard traversal. AppKit represents "no focused control" by making the window itself the
+        // first responder. Clear focus only once: the assertions around every bitmap draw must catch
+        // any later SwiftUI/AppKit attempt to reacquire it instead of repeatedly hiding that fault.
+        guard window.makeFirstResponder(nil) else {
+            throw CaptureError.focusStateMismatch(
+                "stage=pin expected=no-focused-control/window-first-responder "
+                    + "observed=clear-first-responder-rejected"
+            )
+        }
+
+        if deliberatelyFocusNegativeControl {
+            // Use a real native text control so the negative control exercises the same field-editor
+            // first-responder path as the divergence that motivated this policy.
+            let focusedView = NSTextField(frame: .zero)
+            hostingView.addSubview(focusedView)
+            guard window.makeFirstResponder(focusedView) else {
+                throw CaptureError.focusStateMismatch(
+                    "stage=negative-control-setup expected=focused-responder "
+                        + "observed=focus-request-rejected"
+                )
+            }
+        }
+
+        try assertCaptureFocusState(in: window, stage: "after-pinning")
+    }
+
+    @MainActor
+    private static func assertCaptureFocusState(in window: NSWindow, stage: String) throws {
+        guard window.firstResponder === window else {
+            throw CaptureError.focusStateMismatch(
+                "stage=\(stage) expected=no-focused-control/window-first-responder "
+                    + "observed=non-window-first-responder"
+            )
+        }
     }
 
     private static func validateRenderingEnvironment(
@@ -1135,6 +1222,7 @@ private struct DulcetCaptureMain {
             captureBoundsXPoints: 0,
             captureBoundsYPoints: 0,
             controlActiveState: "key",
+            focusState: "not-applicable-bundled-resource",
             file: filename,
             fixtureState: DulcetPresentationState.libraryBrowse.rawValue,
             hostLayerContentsScale: nil,

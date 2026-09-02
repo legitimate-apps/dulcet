@@ -102,6 +102,8 @@ CAPTURE_WIDTH_PIXELS = int(WINDOW_WIDTH_POINTS * CAPTURE_SCALE)
 CAPTURE_HEIGHT_PIXELS = int(WINDOW_HEIGHT_POINTS * CAPTURE_SCALE)
 PINNED_CONTROL_WIDTH_PIXELS = 1180
 PINNED_CONTROL_HEIGHT_PIXELS = 760
+RENDERED_FOCUS_STATE = "no-focused-control"
+PINNED_RESOURCE_FOCUS_STATE = "not-applicable-bundled-resource"
 # The window's backing scale is ambient: hosted runners can be 1x while Retina Macs are 2x. The
 # manifest records the resolved value, but it does not select any of the three capture grids. The
 # workflow's exact-byte run-a/run-b diff still rejects a scale that changes between processes.
@@ -277,12 +279,15 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 12,
+        "schemaVersion": 13,
         "widthPixels": CAPTURE_WIDTH_PIXELS,
         "heightPixels": CAPTURE_HEIGHT_PIXELS,
         "captureSurface": "titled-nswindow-with-standard-chrome",
         "windowTitlePolicy": "visible-centered-standard-window-title",
         "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",
+        "fontLineHeightPolicy": (
+            "NSLayoutManager.defaultLineHeight(for:)-after-frame-convergence"
+        ),
         "preflightRender": "discarded-all-states-all-appearances-before-recording",
         "appearanceResolutionPolicy": (
             "requested-appearance-current-before-host-construction"
@@ -293,6 +298,9 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "settlePathPolicy": (
             "per-render-comparisons-until-first-identical-consecutive-frame-pair"
         ),
+        "focusStatePolicy": (
+            "rendered-hierarchy-no-focused-control-window-first-responder-asserted-every-bitmap-draw"
+        ),
         "bitmapPixelsPerPoint": CAPTURE_SCALE,
         "fontSmoothingPolicy": "disabled-explicit-bitmap-context",
         "fontSubpixelPositioningPolicy": "disabled-explicit-bitmap-context",
@@ -300,6 +308,9 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         "hostLayerContentsScale": CAPTURE_SCALE,
         "jpegCompression": 0.72,
         "layoutDisplayScale": CAPTURE_SCALE,
+        "resolvedAppleLanguagesCollectionStage": (
+            "after-all-rendered-references-converged"
+        ),
         "locale": "en_US_POSIX",
         "calendar": "gregorian",
         "timeZone": "UTC",
@@ -313,6 +324,20 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 f"{directory.name} manifest {key} mismatch: "
                 f"expected {expected_value!r}, observed {manifest.get(key)!r}"
             )
+
+    resolved_apple_languages = manifest.get("resolvedAppleLanguages")
+    if (
+        not isinstance(resolved_apple_languages, list)
+        or not resolved_apple_languages
+        or any(
+            not isinstance(language, str) or not language
+            for language in resolved_apple_languages
+        )
+    ):
+        raise CaptureVerificationError(
+            f"{directory.name} manifest resolvedAppleLanguages is not a nonempty string array: "
+            f"observed {resolved_apple_languages!r}"
+        )
 
     window_backing_scale_factor = manifest.get("windowBackingScaleFactor")
     if (
@@ -417,6 +442,10 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         if record.get("variant") != expected_variant:
             raise CaptureVerificationError(f"{directory.name}/{filename} variant mismatch")
         if expected_variant == "deliberately-bad-control":
+            if record.get("focusState") != PINNED_RESOURCE_FOCUS_STATE:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} pinned resource focusState mismatch"
+                )
             if record.get("captureProvenance") != "bundled-pinned-resource":
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} pinned control provenance declaration mismatch"
@@ -439,6 +468,11 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                     f"{directory.name}/{filename} pinned control claims a render settle path"
                 )
         else:
+            if record.get("focusState") != RENDERED_FOCUS_STATE:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} rendered focusState is not "
+                    f"{RENDERED_FOCUS_STATE}"
+                )
             if record.get("captureProvenance") != "rendered-current-run":
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} reference provenance declaration mismatch"
@@ -500,6 +534,44 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} native control semantic keys are invalid"
                 )
+            line_heights_by_font: dict[tuple[str, float], float] = {}
+            for control in native_controls:
+                font_metrics = control.get("fontMetrics")
+                if font_metrics is None:
+                    continue
+                if not isinstance(font_metrics, dict):
+                    raise CaptureVerificationError(
+                        f"{directory.name}/{filename} native control font metrics are malformed"
+                    )
+                font_name = font_metrics.get("fontName")
+                point_size = font_metrics.get("pointSize")
+                line_height = font_metrics.get("textKitDefaultLineHeightPoints")
+                if (
+                    not isinstance(font_name, str)
+                    or not font_name
+                    or isinstance(point_size, bool)
+                    or not isinstance(point_size, (int, float))
+                    or not math.isfinite(point_size)
+                    or point_size <= 0
+                    or isinstance(line_height, bool)
+                    or not isinstance(line_height, (int, float))
+                    or not math.isfinite(line_height)
+                    or line_height <= 0
+                ):
+                    raise CaptureVerificationError(
+                        f"{directory.name}/{filename} native control resolved line height "
+                        f"is missing or malformed: observed {font_metrics!r}"
+                    )
+                font_key = (font_name, float(point_size))
+                previous_line_height = line_heights_by_font.setdefault(
+                    font_key,
+                    float(line_height),
+                )
+                if previous_line_height != float(line_height):
+                    raise CaptureVerificationError(
+                        f"{directory.name}/{filename} distinct font {font_key!r} resolved "
+                        f"inconsistent line heights: {previous_line_height} and {line_height}"
+                    )
             settle_attempts = record.get("settleAttempts")
             if (
                 isinstance(settle_attempts, bool)
@@ -595,6 +667,7 @@ def main() -> None:
         f"frame-points={WINDOW_WIDTH_POINTS}x{WINDOW_HEIGHT_POINTS} "
         f"capture-bounds-points=0,0,{WINDOW_WIDTH_POINTS}x{WINDOW_HEIGHT_POINTS} "
         "control-active-state=key "
+        "focus-state=no-focused-control focus-assertion=every-bitmap-draw "
         "decoded-pixels-pairwise-distinct=true "
         "filename-manifest-embedded-labels-consistent=true dynamic-type-claim=absent "
         "pinned-control-bytes-match-reviewed-sha256=true "

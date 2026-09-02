@@ -3302,6 +3302,22 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 88 (2026-09-02)** — deterministic captures gained an asserted resting focus state.
+
+1. A 30-pair soak observed a second divergence class distinct from the unresolved three-point
+   translation: identical text geometry with one field's control fill changing between focused and
+   unfocused rendering. `controlActiveState: key` pins window activity, not first responder.
+2. The deterministic artifact now represents no focused control, expressed by the AppKit window
+   itself being first responder. This is the neutral baseline for a set that enumerates presentation
+   states and appearances rather than keyboard-traversal states; any future focused-field evidence
+   must be a separately named interaction-state set.
+3. The harness clears focus once after SwiftUI appears, then asserts the window remains first
+   responder immediately before and after every bitmap draw for every preflight and recorded
+   state/appearance. It does not repeatedly clear focus and hide reacquisition. A process-level
+   negative control installs a non-window responder and must fail before a JPEG is written.
+4. This change makes no claim about the separate translation mechanism or whether focus affects it;
+   that relationship remains unmeasured.
+
 **Revision 87 (2026-08-31)** — the common conformance controls gained an Android host execution leg.
 
 1. `core-conformance` now uses the same Google Kotlin Multiplatform Android library target and

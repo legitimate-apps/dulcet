@@ -143,6 +143,25 @@ jobs:
           echo "DYNAMIC TYPE NEGATIVE CONTROL PASS setup=binary-built exact-diagnostic=true label=accessibility5 rejected=true output-created=false"
       - name: Prove deterministic capture mismatch forensics measure a known delta
         run: python3 tools/test-design-capture-forensics
+      - name: Prove macOS capture rejects a focused responder
+        run: |
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
+          test -x "$capture_binary"
+          set +e
+          capture_output="$("$capture_binary" \
+            --output "$RUNNER_TEMP/rejected-focused-responder" \
+            --state empty-library-no-account --appearance light \
+            --negative-control-focused-responder 2>&1)"
+          capture_exit_code=$?
+          set -e
+          printf '%s\n' "$capture_output"
+          test "$capture_exit_code" -eq 1
+          grep -Fq \
+            'DULCET CAPTURE ERROR capture focus state mismatch: stage=after-pinning expected=no-focused-control/window-first-responder observed=non-window-first-responder' \
+            <<< "$capture_output"
+          test ! -e "$RUNNER_TEMP/rejected-focused-responder/manifest.json"
+          test -z "$(find "$RUNNER_TEMP/rejected-focused-responder" -name '*.jpg' -print -quit)"
+          echo "FOCUS STATE NEGATIVE CONTROL PASS wrong-responder=created assertion=rejected-before-bitmap-write"
       - name: Capture deterministic macOS design evidence twice
         id: deterministic_design_capture
         env:
