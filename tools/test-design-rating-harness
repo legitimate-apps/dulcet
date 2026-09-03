@@ -245,9 +245,14 @@ with tempfile.TemporaryDirectory(prefix="dulcet-design-rating-") as directory:
     root = Path(directory)
     run = prepare(root)
     plan = rating.read_json(run / "plan.json")
-    if len(plan["requests"]) != 14:
-        raise AssertionError("prepare did not produce exactly 14 request plans")
-    if len({request["request_nonce"] for request in plan["requests"]}) != 14:
+    if len(plan["requests"]) != rating.STANDARD_RECORD_COUNT:
+        raise AssertionError(
+            f"prepare did not produce exactly {rating.STANDARD_RECORD_COUNT} request plans"
+        )
+    if (
+        len({request["request_nonce"] for request in plan["requests"]})
+        != rating.STANDARD_RECORD_COUNT
+    ):
         raise AssertionError("prepare reused a request nonce")
     for request in plan["requests"]:
         expected_inputs = 2 if request["state"] == "library-browse" else 1

@@ -92,15 +92,18 @@ evidence. The manifest also enumerates every successful capture and any missing 
 the executable never fills a gap with `DulcetCaptureView`. This reference set is valid for design
 rating and visual review of the shipping composition, but not for pixel parity, regression testing,
 or run-to-run diff claims. The two artifacts are independent evidence sets and their claims must not
-be merged. The first hosted reference artifact, run `32555697776`, contained all seven states in both
-light and dark at 1180 × 760 plus both hash-pinned control images, with no missing captures.
+be merged. The first hosted reference artifact, run `32555697776`, contained all seven states that
+existed at the time in both light and dark at 1180 × 760 plus both hash-pinned control images, with
+no missing captures.
 
 Each deterministic current-run reference is a compressed JPEG of the `NSHostingView` content at
 exactly 1180 × 728 pixels. The 32-point standard AppKit title bar, system title, traffic-light
 controls, and theme-frame material are outside that compared pixel boundary. The separately produced
-shipping-reference images and the two reviewed, byte-pinned control resources remain complete titled
-windows at 1180 × 760. Only that titled shipping-reference artifact is eligible to calibrate the
-native-macOS lens; content-only renders are not. The deterministic render environment is fixed:
+shipping-reference images remain complete titled windows at 1180 × 760. The two reviewed,
+byte-pinned controls are 1180 × 728 content-only peers of the deterministic references they
+calibrate. Only the titled shipping-reference artifact is eligible to establish product-level
+native-macOS evidence; content-only renders make no window-chrome claim. The deterministic render
+environment is fixed:
 
 - macOS runner image and Swift toolchain selected by `apple-ci`;
 - light or dark appearance set explicitly rather than inherited from the runner;
@@ -109,13 +112,15 @@ native-macOS lens; content-only renders are not. The deterministic render enviro
 - macOS system semantic fonts at their platform size;
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
-- a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome as the layout,
-  appearance, backing-scale, key-control-state, and focus host; that chrome is not drawn into the
-  deterministic reference bitmap;
+- a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome as the fixed
+  layout and resolved-screen-backing-scale host; the requested appearance is applied explicitly and
+  validated on the hosting view, while key control-active state and no-focused-control state are
+  established independently; the window chrome is not drawn into the deterministic reference bitmap;
 - a capture-only `NSWindow` subclass that declines AppKit's visible-screen frame constraint, so the
-  1180 × 760 host window does not shrink to the hosted desktop; content is installed and the window
-  ordered before the fixed frame is applied, followed by a runtime geometry guard requiring both an
-  1180 × 760 window frame and a zero-origin 1180 × 728 hosting-view capture boundary;
+  1180 × 760 host window does not shrink to the hosted desktop; the fixed frame is applied first,
+  the window is then ordered, and the hosting content is installed afterward, followed by a runtime
+  geometry guard requiring both an 1180 × 760 window frame and a zero-origin 1180 × 728
+  hosting-view capture boundary;
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
@@ -137,8 +142,8 @@ Each capture directory includes `manifest.json` with the complete filename set, 
 and pinned-control dimensions, environment values, per-record window-frame and capture-bound
 coordinates, rendered control-active and focus states, a provenance declaration, byte lengths, and
 SHA-256 digests. Current-run references carry measured 1180 × 728 content geometry and the asserted
-no-focused-control state; pinned controls carry their reviewed 1180 × 760 baseline geometry and mark
-live focus as inapplicable. Each JPEG also carries a self-authored consistency
+no-focused-control state; pinned controls carry their reviewed 1180 × 728 content-capture geometry
+and mark live focus as inapplicable. Each JPEG also carries a self-authored consistency
 comment with a fixture-state label, appearance, variant, and the SHA-256 of the original compressed
 payload. The verifier removes that comment, reconstructs and hashes the payload, and requires the
 embedded labels, filename, and manifest record to agree. It separately decodes every JPEG through the
@@ -153,9 +158,9 @@ the visible content remains the external semantic check.
 `tools/verify_design_captures.py` rejects a missing, extra,
 renamed, oversized, wrong-dimension, non-JPEG, or hash-mismatched image. The verifier also requires
 the deliberately bad control. `tools/test-design-capture-gates` proves those checks reject a missing
-control, a mutated JPEG, an extra JPEG, extra media with another extension, an artifact whose 16 JPEGs
+control, a mutated JPEG, an extra JPEG, extra media with another extension, an artifact whose 70 JPEGs
 were replaced by one image while every manifest hash and byte count was updated, two payloads swapped
-without updating their embedded labels, one payload rebound to 16 distinct consistent labels, and two
+without updating their embedded labels, one payload rebound to 70 distinct consistent labels, and two
 different JPEG encodings that decode to identical pixels. It also demonstrates the semantic boundary
 by accepting a two-payload swap after both embedded comments and the manifest are made internally
 consistent. Further negative controls cover a byte-identical capture mislabeled as a different Dynamic
@@ -165,17 +170,44 @@ control substitution. A process-level negative control deliberately installs a n
 responder and proves the capture assertion rejects it before any JPEG is written; a separate manifest
 mutation proves the artifact verifier rejects a rendered record that claims a focused control.
 
-### 1.2 Standard set: 16 JPEGs
+### 1.2 Standard set: 70 JPEGs
 
-Each reference state appears in light and dark:
+Each of the 34 reference states appears in light and dark, producing 68 current-run references:
 
-1. `empty-library-no-account`
-2. `library-browse`
-3. `album-detail-multi-disc`
-4. `now-playing`
-5. `search-mixed-sources`
-6. `error-tls-untrusted`
-7. `offline-metadata-only`
+1. `account-connect-idle`
+2. `account-connect-empty`
+3. `account-connecting`
+4. `account-connected`
+5. `account-removing`
+6. `account-removal-error`
+7. `account-saved-disconnected`
+8. `account-error-input`
+9. `account-error-transport`
+10. `account-error-security`
+11. `account-error-protocol`
+12. `account-error-server`
+13. `account-error-authentication`
+14. `account-error-capability`
+15. `account-error-persistence`
+16. `empty-library-no-account`
+17. `empty-library-connected`
+18. `library-loading`
+19. `library-error`
+20. `library-browse`
+21. `album-detail-multi-disc`
+22. `artist-detail`
+23. `now-playing`
+24. `now-playing-preparing`
+25. `now-playing-failed`
+26. `now-playing-unavailable`
+27. `search-idle`
+28. `search-loading`
+29. `search-results`
+30. `search-empty`
+31. `search-error`
+32. `error-tls-untrusted`
+33. `error-tls-untrusted-populated-form`
+34. `offline-metadata-only`
 
 For the checked-in deterministic fixture, `error-tls-untrusted` constructs a
 `DulcetConnectionFailure.tlsUntrusted` value containing the failure detail used by the current views;
@@ -193,7 +225,7 @@ the 40-point artwork and result identity. The table presents substantially more 
 evidence frame while retaining title, subtitle, refresh status, kind, and source; the remaining rows
 stay available through the table's native scroll surface.
 
-The two negative-control files are:
+The remaining two JPEGs are the negative controls:
 
 - `macos-CONTROL-DELIBERATELY-BAD-library-browse-light.jpg`
 - `macos-CONTROL-DELIBERATELY-BAD-library-browse-dark.jpg`
@@ -209,7 +241,7 @@ The two bad-control JPEGs are reviewed, checked-in resources under
 `--include-control` does not render `DulcetDeliberatelyBadControlView`; it copies those bundled bytes
 verbatim. The capture executable and artifact verifier each hold the reviewed SHA-256 values, the
 workflow compares the artifact controls byte-for-byte with the checked-in resources, and manifest
-schema 8 records `controlBaselinePolicy` and `pinnedControlSha256`. The verifier rejects a substituted
+schema 14 records `controlBaselinePolicy` and `pinnedControlSha256`. The verifier rejects a substituted
 valid JPEG even when its ordinary manifest hash and byte count have been updated. Decoded-pixel
 distinctness also rejects an attempt to place the pinned control pixels in a reference slot while the
 required pinned control remains in the artifact, including when the reference uses a different JPEG
@@ -236,9 +268,10 @@ Control regeneration is an explicit candidate-producing act:
 tools/regenerate-design-control-baseline <new-candidate-directory>
 ```
 
-The command renders both appearances, prints pinned and candidate SHA-256 values, and never modifies
-the checked-in resources. Accepting a change requires reviewing both candidate images, replacing both
-resources as one reviewable commit, and updating the expected hashes in `DulcetCapture` and
+The command renders both appearances, requires each candidate to be exactly 1180 × 728 before
+printing pinned and candidate SHA-256 values, and never modifies the checked-in resources. Accepting
+a change requires reviewing both candidate images, replacing both resources as one reviewable commit,
+and updating the expected hashes in `DulcetCapture`, `DulcetShippingReferenceCapture`, and
 `tools/verify_design_captures.py`. **Any accepted control change creates a new calibration baseline:
 every previously recorded score must be re-run with two fresh raters. Scores from before and after the
 control change must never be compared, averaged, or presented as a trend.**
@@ -273,15 +306,15 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   became the desktop's active application;
 - visible focus and contrast cues;
 - the standard AppKit window frame and chrome surrounding the separately produced shipping-reference
-  content and the reviewed pinned controls. The deterministic current-run references make no chrome
-  claim because their compared surface begins at the hosting view.
+  content. The deterministic current-run references and reviewed pinned controls make no chrome claim
+  because their captured surface begins at the hosting view.
 
 `OBSERVED` from CI or source evidence, but not from pixels alone:
 
 - Swift package tests, app build success, capture-verifier negative controls;
 - sampled rendered-pixel [WCAG 2.2 contrast ratios](https://www.w3.org/WAI/WCAG22/Techniques/general/G18)
   for every entry in the explicit `DulcetRegisteredContrastPair` registry in Aqua and Dark Aqua. A
-  SwiftUI preference records which registry entries the seven fixture views reach; one test requires
+  SwiftUI preference records which registry entries the 34 fixture views reach; one test requires
   that observed set to equal the registry's `allCases`, and another tests each registered foreground
   and declared background stack. A source policy rejects direct `.foregroundStyle` and
   `.foregroundColor` calls unless they are the registry applier or carry one of the fixed decorative/
@@ -325,7 +358,7 @@ A valid rating run requires two independent external evaluation models from diff
 Two samples from the same model are not two raters.
 
 Every product rating uses one artifact class consistently: the complete
-`dulcet-macos-shipping-reference-<run>-<attempt>` set, containing all 14 successful shipping
+`dulcet-macos-shipping-reference-<run>-<attempt>` set, containing all 68 successful shipping
 state/appearance captures, both hash-pinned controls, and a manifest with an empty
 `missingCaptures` list. A rater must not substitute the deterministic `run-a` sibling or combine
 category scores from the two artifact classes.
@@ -334,7 +367,7 @@ The artifact-to-claim mapping is:
 
 | Claim or lens | Eligible artifact | Ineligible evidence |
 |---|---|---|
-| `platform_idiom` | Shipping-reference good images and the matching pinned controls in that artifact | Deterministic `DulcetCaptureView` `run-a`, content-only renders, or mixed-artifact scores |
+| `platform_idiom` | Shipping-reference good images and the matching pinned controls in that artifact | Deterministic `DulcetCaptureView` current-run references or mixed-artifact scores |
 | `information_design` | The same complete shipping-reference set and matching pinned controls | A product aggregate derived from `run-a`, or categories combined across artifacts |
 | Per-state taste, light/dark deltas, and `product_taste_score` | The same shipping-reference set used for both calibrated lenses | Any aggregate that replaces one appearance or category with a deterministic-sibling score |
 | Pixel-level accessibility observations | Shipping-reference pixels; source, interaction, and CI evidence remain separately classified under §2 | Treating either screenshot class as an interaction trace |
@@ -358,11 +391,11 @@ contains the matching-appearance pinned control so the same response can establi
 No request contains the opposite appearance, an earlier response, an earlier score, or an aggregate.
 Thus light and dark are derived without access to one another's result. Each `rate-one` invocation
 makes exactly one provider request, so it can run as one small `secret exec` child without placing a
-14-request batch inside the broker's execution deadline.
+68-request batch inside the broker's execution deadline.
 
 Each request carries a harness-generated nonce and the filenames and SHA-256 digests of its image
 inputs. The rater copies those values into the appearance record in §7 and supplies appearance-specific
-observations before a later mechanical step assembles the 14 records. The raw per-request responses
+observations before a later mechanical step assembles the 68 records. The raw per-request responses
 are part of the rating evidence; an aggregate JSON reconstructed without them is invalid. This makes
 failure to derive an appearance independently visible in the rater's own output rather than relying
 on an unexplained final delta.
@@ -410,9 +443,10 @@ request, measured 3.72 and 5.14. All exceed the 1.0 threshold, so the shipping-r
 real titled-window calibration was required; it is not superseded as though it never happened.
 
 The same run exposed a separate measurement defect: both whole-set raters returned identical light
-and dark category vectors for all seven product states. Those reported zero deltas are unmeasured,
-not evidence that the appearances are equal. The isolated-request contract in §3 applies to future
-product appearance scores; it does not erase the independently observed control-gate calibration.
+and dark category vectors for all seven product states present at the time. Those reported zero deltas
+are unmeasured, not evidence that the appearances are equal. The isolated-request contract in §3
+applies to future product appearance scores; it does not erase the independently observed control-gate
+calibration.
 
 A lens is calibrated only when, for every rater and appearance, its normalized good-browse score is
 at least 1.0 point above its deliberately bad control score. If either lens is uncalibrated, the run
@@ -423,7 +457,7 @@ diagnostics, but they are not scores.
 Score every reference JPEG separately, then compute:
 
 1. the mean of light and dark for each state;
-2. the mean of the seven state means as `product_taste_score`;
+2. the mean of the 34 state means as `product_taste_score`;
 3. the light/dark delta for each state.
 
 A light/dark delta is always computed mechanically from two valid appearance records; a rater never
@@ -450,7 +484,7 @@ window, or belongs to a different rater, both `light_dark_delta` and
 inconsistency.” This delta-evidence failure does not alter §6's independent control gate or null an
 otherwise valid product score.
 
-The declared evidence manifest was chosen instead of automatically doubling all 14 product-image
+The declared evidence manifest was chosen instead of automatically doubling all 68 product-image
 requests. Identical-image repeats can be measured and refreshed on their own cadence, while the
 assembler still owns every consequential derived number and fails closed when the evidence is not
 usable. The manifest retains image and prompt SHA-256 values, exact rater identity, validity dates,
@@ -674,8 +708,8 @@ Each rater returns JSON plus a concise evidence narrative. The JSON shape is:
 }
 ```
 
-All seven state keys, both appearance records under each state, and all five category scores are
-required for a valid run. The 14 request nonces must be unique. Each filename and digest must match
+All 34 state keys, both appearance records under each state, and all five category scores are
+required for a valid run. The 68 request nonces must be unique. Each filename and digest must match
 the artifact manifest; each normal record must list exactly its one standard image, and each browse
 record must additionally list only its matching-appearance pinned control. Opposite-appearance input,
 a repeated nonce, a missing raw response, a digest mismatch, or generic observations that do not
@@ -726,12 +760,12 @@ swift run --package-path apple/DulcetKit DulcetShippingReferenceCapture \
     apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls
 ```
 
-Before rating, its manifest must enumerate all 14 state/appearance captures and both controls, with
+Before rating, its manifest must enumerate all 68 state/appearance captures and both controls, with
 an empty `missingCaptures` list. It remains design-rating-only and is never accepted as deterministic
 regression evidence.
 
 Prepare one run in a new output directory. Preparation verifies the manifest and every required input
-digest, creates 14 unique nonces, and records the exact one- or two-image request scope:
+digest, creates 68 unique nonces, and records the exact one- or two-image request scope:
 
 ```sh
 python3 tools/design_rating.py prepare \
@@ -755,7 +789,7 @@ is read only from `SECRET`; it is not written to the retained request, raw respo
 ```sh
 repository="$(pwd)"
 rating_run="$(cd "$RATING_ROOT/gemini" && pwd)"
-for index in $(seq 0 13); do
+for index in $(seq 0 67); do
   secret exec "Google Gen AI API key (Gemini eval — design + coach harnesses)" -- \
     /usr/bin/python3 "$repository/tools/design_rating.py" rate-one \
       --run "$rating_run" --index "$index"
@@ -765,7 +799,7 @@ python3 tools/design_rating.py assemble --run "$rating_run"
 
 Prepare a second independent family in a different new directory. For example, an OpenAI-family
 model available through OpenRouter uses `--provider openrouter`, its exact provider model identifier,
-and `--model-family OpenAI`; run its 14 isolated requests through the matching broker entry and
+and `--model-family OpenAI`; run its 68 isolated requests through the matching broker entry and
 assemble it in the same way. Only then reveal the reports together:
 
 ```sh

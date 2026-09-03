@@ -3302,17 +3302,33 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 91 (2026-09-03)** — pinned controls migrated to the content-only capture contract.
+
+1. The control-candidate mode renders `.libraryBrowse` with the `.deliberatelyBadControl` variant
+   through the same zero-origin 1180 × 728 `NSHostingView` bitmap path as current-run references.
+   Keeping the old 1180 × 760 resources would therefore make regenerated controls incompatible with
+   the verifier and unlike the deterministic surface they calibrate.
+2. Both pinned resources are regenerated together from that candidate mode. The capture executable,
+   shipping-reference copier, verifier, copied-record geometry, and maintainer guide all require the
+   new exact 1180 × 728 control dimensions and reviewed hashes. The regeneration command rejects a
+   wrong-size candidate before printing a hash; no tolerance or optional dimension path exists.
+3. The shared fixture metric and contrast-registry coverage layout now use the real 1180 × 728
+   deterministic content frame. The host window remains exactly 1180 × 760 where window geometry is
+   intentional.
+
 **Revision 90 (2026-09-03)** — deterministic captures excluded OS-drawn window chrome.
 
 1. A 15-pair soak observed zero translation divergences after the layout fix, but one remaining
    cross-process difference was confined to the title bar: the system-drawn window title was present
    in one render and absent in the other. The application-owned content had no translation delta.
-2. The titled 1180 × 760 `NSWindow` remains the appearance, layout, backing-scale, key-control-state,
-   and focus host. The exact-byte reference surface is now its zero-origin 1180 × 728
-   `NSHostingView`, excluding the 32-point title bar, title, traffic lights, and theme-frame material.
+2. The titled 1180 × 760 `NSWindow` remains the fixed-layout and resolved-screen-backing-scale host.
+   Requested appearance is applied explicitly and validated on the hosting view; rendered key
+   control-active state and the no-focused-control contract are established independently. The
+   exact-byte reference surface is the zero-origin 1180 × 728 `NSHostingView`, excluding the 32-point
+   title bar, title, traffic lights, and theme-frame material.
 3. Manifest schema 14 names the content-only reference surface, declares the configured title outside
-   the compared surface, and separates 1180 × 728 rendered-reference dimensions from the immutable
-   1180 × 760 pinned-control dimensions. The verifier enforces both geometries without a tolerance.
+   the compared surface, and records exact 1180 × 728 dimensions for both rendered references and the
+   reviewed controls. The verifier enforces both declarations without a tolerance.
 4. This strengthens deterministic evidence for application-owned content but deliberately removes
    window-chrome evidence from that artifact. Native-window calibration remains the responsibility of
    the separately produced, non-deterministic shipping-reference artifact.

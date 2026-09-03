@@ -368,7 +368,12 @@ func renderedFixtureStatesExerciseEveryRegisteredContrastPair() {
         )
         let view = NSHostingView(rootView: DulcetCaptureView(store: store)
             .onDulcetRegisteredContrastPairs { observed.formUnion($0) })
-        view.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: DulcetMetrics.captureWidth,
+            height: DulcetMetrics.captureHeight
+        )
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))

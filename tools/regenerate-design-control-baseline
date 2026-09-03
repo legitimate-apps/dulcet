@@ -20,6 +20,20 @@ swift run --package-path apple/DulcetKit DulcetCapture \
   --output "$candidate_directory" \
   --generate-control-candidates
 
+expected_width=1180
+expected_height=728
+for appearance in light dark; do
+  filename="macos-CONTROL-DELIBERATELY-BAD-library-browse-${appearance}.jpg"
+  candidate="$candidate_directory/$filename"
+  dimensions=$(sips -g pixelWidth -g pixelHeight "$candidate")
+  observed_width=$(awk '/pixelWidth:/ {print $2}' <<< "$dimensions")
+  observed_height=$(awk '/pixelHeight:/ {print $2}' <<< "$dimensions")
+  if [[ "$observed_width" != "$expected_width" || "$observed_height" != "$expected_height" ]]; then
+    echo "control candidate dimensions mismatch: $filename expected=${expected_width}x${expected_height} observed=${observed_width}x${observed_height}" >&2
+    exit 1
+  fi
+done
+
 for appearance in light dark; do
   filename="macos-CONTROL-DELIBERATELY-BAD-library-browse-${appearance}.jpg"
   pinned="apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls/$filename"
@@ -30,7 +44,7 @@ for appearance in light dark; do
   if [[ "$pinned_hash" == "$candidate_hash" ]]; then
     status=UNCHANGED
   fi
-  echo "CONTROL BASELINE CANDIDATE appearance=$appearance status=$status pinned=$pinned_hash candidate=$candidate_hash"
+  echo "CONTROL BASELINE CANDIDATE appearance=$appearance status=$status dimensions=${expected_width}x${expected_height} pinned=$pinned_hash candidate=$candidate_hash"
 done
 
 echo "Candidates only: this command did not modify the pinned resources."
