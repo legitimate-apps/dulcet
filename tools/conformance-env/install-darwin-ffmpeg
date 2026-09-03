@@ -11,6 +11,7 @@ import re
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
@@ -366,90 +367,362 @@ def expected_runtime_dependencies(entry: dict, by_name: dict[str, dict]) -> dict
     }
 
 
-def bottle_formula_shape(path: Path, entry: dict) -> tuple[dict, int]:
-    """Evaluate only the verified bottle's embedded formula and report index accesses."""
-    ruby = (
-        "formula_index_accesses = 0; "
-        "formulary_singleton = Formulary.singleton_class; "
-        "original_formula_path = formulary_singleton.instance_method(:path); "
-        "formulary_singleton.define_method(:path) do |*arguments, **keywords| "
-        "formula_index_accesses += 1; "
-        "original_formula_path.bind_call(Formulary, *arguments, **keywords); "
-        "end; "
-        "begin; "
-        "bottle = Pathname(ARGV.fetch(0)); "
-        "name = ARGV.fetch(1); "
-        "pkg_version = ARGV.fetch(2); "
-        "contents = Utils::Bottles.formula_contents(bottle, name: name); "
-        "formula_path = HOMEBREW_CELLAR/name/pkg_version/'.brew'/\"#{name}.rb\"; "
-        "formula = Formulary.from_contents(name, formula_path, contents, force_bottle: true); "
-        "shape = {"
-        "formula: formula.name, "
-        "version: formula.stable.version.to_s, "
-        "revision: formula.revision, "
-        "version_scheme: formula.version_scheme, "
-        "dependencies: formula.deps.select(&:required?).map(&:name).sort"
-        "}; "
-        "result = {ok: true, shape: shape}; "
-        "rescue StandardError => error; "
-        "result = {ok: false, error_class: error.class.name, error: error.message}; "
-        "end; "
-        "result[:formula_index_accesses] = formula_index_accesses; "
-        "puts JSON.generate(result)"
-    )
-    try:
-        result = json.loads(
-            run(
-                [
-                    "brew",
-                    "ruby",
-                    "-rformulary",
-                    "-rjson",
-                    "-e",
-                    ruby,
-                    str(path),
-                    entry["formula"],
-                    keg_version(entry),
-                ],
-                capture=True,
-                local_homebrew_package=True,
-            )
+MAX_BOTTLE_METADATA_BYTES = 2 * 1024 * 1024
+
+
+class BottleMetadataError(ValueError):
+    """The authenticated archive cannot supply an unambiguous metadata shape."""
+
+
+def _read_bottle_metadata_member(
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    *,
+    label: str,
+) -> bytes:
+    if not member.isfile():
+        raise BottleMetadataError(f"{label} is not a regular file: {member.name}")
+    if member.size > MAX_BOTTLE_METADATA_BYTES:
+        raise BottleMetadataError(
+            f"{label} exceeds {MAX_BOTTLE_METADATA_BYTES} bytes: {member.name}"
         )
-    except (KeyError, json.JSONDecodeError) as error:
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        raise BottleMetadataError(f"cannot read {label}: {member.name}")
+    payload = extracted.read(MAX_BOTTLE_METADATA_BYTES + 1)
+    if len(payload) != member.size:
+        raise BottleMetadataError(f"truncated {label}: {member.name}")
+    return payload
+
+
+def _strip_ruby_comment(line: str) -> str:
+    """Remove a Ruby comment without treating # inside a quoted string as a comment."""
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quote is not None and character == "\\":
+            escaped = True
+            continue
+        if character in {'"', "'"}:
+            if quote == character:
+                quote = None
+            elif quote is None:
+                quote = character
+            continue
+        if character == "#" and quote is None:
+            return line[:index].rstrip()
+    return line.rstrip()
+
+
+def _dependency_condition_applies(condition: str, bottle_tag: str) -> bool:
+    """Evaluate the small platform predicate subset used by authenticated declarations."""
+    fixed_predicates = {
+        "OS.mac?": True,
+        "OS.linux?": False,
+        "Hardware::CPU.arm?": True,
+        "Hardware::CPU.intel?": False,
+    }
+    if condition in fixed_predicates:
+        return fixed_predicates[condition]
+
+    # The x264 formula retains a compiler fallback for pre-Xcode-10 hosts. An arm64 Tahoe bottle
+    # cannot have been authored for that toolchain. Keep this narrow and fail closed if the formula
+    # changes the predicate or if a different bottle platform ever needs it.
+    if (
+        condition == "DevelopmentTools.clang_build_version <= 902"
+        and bottle_tag == "arm64_tahoe"
+    ):
+        return False
+    raise BottleMetadataError(f"unsupported conditional dependency predicate: {condition!r}")
+
+
+def _formula_declarations(source: str, bottle_tag: str) -> dict:
+    """Statically read declarative formula facts without evaluating Ruby or loading Homebrew."""
+    revision: int | None = None
+    version_scheme: int | None = None
+    explicit_version: str | None = None
+    dependencies: set[str] = set()
+    class_scope: str | None = None
+    formula_class_open = False
+    formula_class_closed = False
+
+    for line_number, original_line in enumerate(source.splitlines(), start=1):
+        line = _strip_ruby_comment(original_line)
+        stripped = line.strip()
+        if not stripped:
+            continue
+        indentation = len(line) - len(line.lstrip(" "))
+        if original_line.startswith("\t"):
+            raise BottleMetadataError(f"tab-indented formula declaration at line {line_number}")
+
+        formula_class = re.fullmatch(
+            r"class\s+[A-Z][A-Za-z0-9]*(?:::[A-Z][A-Za-z0-9]*)*\s*<\s*Formula",
+            stripped,
+        )
+        if indentation == 0 and formula_class is not None:
+            if formula_class_open or formula_class_closed:
+                raise BottleMetadataError("formula source has multiple Formula classes")
+            formula_class_open = True
+            continue
+        if indentation == 0 and stripped == "end" and formula_class_open:
+            formula_class_open = False
+            formula_class_closed = True
+            class_scope = None
+            continue
+
+        if indentation == 2 and stripped == "end":
+            class_scope = None
+            continue
+        if indentation == 2:
+            block = re.fullmatch(
+                r"([a-z_][a-z0-9_!?]*)(?:\s+.*?)?\s+do(?:\s+\|.*\|)?",
+                stripped,
+            )
+            if block is not None:
+                class_scope = block.group(1)
+
+        if indentation == 2 and stripped.startswith("revision "):
+            if not formula_class_open:
+                raise BottleMetadataError(f"revision outside Formula class at line {line_number}")
+            match = re.fullmatch(r"revision\s+([0-9]+)", stripped)
+            if match is None or revision is not None:
+                raise BottleMetadataError(f"ambiguous revision declaration at line {line_number}")
+            revision = int(match.group(1))
+            continue
+        if indentation == 2 and stripped.startswith("version_scheme "):
+            if not formula_class_open:
+                raise BottleMetadataError(
+                    f"version_scheme outside Formula class at line {line_number}"
+                )
+            match = re.fullmatch(r"version_scheme\s+([0-9]+)", stripped)
+            if match is None or version_scheme is not None:
+                raise BottleMetadataError(
+                    f"ambiguous version_scheme declaration at line {line_number}"
+                )
+            version_scheme = int(match.group(1))
+            continue
+        if indentation == 2 and stripped.startswith("version "):
+            if not formula_class_open:
+                raise BottleMetadataError(f"version outside Formula class at line {line_number}")
+            match = re.fullmatch(r'version\s+(["\'])([^"\']+)\1', stripped)
+            if match is None or explicit_version is not None:
+                raise BottleMetadataError(f"ambiguous version declaration at line {line_number}")
+            explicit_version = match.group(2)
+            continue
+
+        if "depends_on" not in stripped:
+            continue
+        if not stripped.startswith("depends_on"):
+            raise BottleMetadataError(
+                f"unsupported dependency expression at line {line_number}: {stripped!r}"
+            )
+        if not formula_class_open:
+            raise BottleMetadataError(f"dependency outside Formula class at line {line_number}")
+        match = re.fullmatch(r'depends_on\s+(["\'])([^"\']+)\1(.*)', stripped)
+        if match is None:
+            raise BottleMetadataError(
+                f"unsupported dependency declaration at line {line_number}: {stripped!r}"
+            )
+        name = match.group(2)
+        remainder = match.group(3).strip()
+
+        if indentation == 2:
+            if class_scope is not None:
+                raise BottleMetadataError(
+                    f"dependency declaration has ambiguous scope at line {line_number}: "
+                    f"{class_scope}"
+                )
+            scope_applies = True
+        elif indentation == 4 and class_scope in {
+            "head",
+            "on_arm",
+            "on_intel",
+            "on_linux",
+            "on_macos",
+        }:
+            scope_applies = class_scope in {"on_arm", "on_macos"}
+        else:
+            raise BottleMetadataError(
+                f"dependency declaration has unsupported scope at line {line_number}: "
+                f"{class_scope!r}"
+            )
+
+        condition_applies = True
+        conditional = re.fullmatch(r"(?:(.*?)\s+)?(if|unless)\s+(.+)", remainder)
+        if conditional is not None:
+            remainder, keyword, expression = conditional.groups()
+            remainder = (remainder or "").strip()
+            condition_applies = _dependency_condition_applies(expression, bottle_tag)
+            if keyword == "unless":
+                condition_applies = not condition_applies
+
+        tags: set[str] = set()
+        if remainder:
+            tag_match = re.fullmatch(r"=>\s*:(build|test|no_linkage)", remainder)
+            tag_list_match = re.fullmatch(
+                r"=>\s*\[\s*((?::(?:build|test|no_linkage)\s*,?\s*)+)\]",
+                remainder,
+            )
+            if tag_match is not None:
+                tags = {tag_match.group(1)}
+            elif tag_list_match is not None:
+                tags = set(re.findall(r":(build|test|no_linkage)", tag_list_match.group(1)))
+            else:
+                raise BottleMetadataError(
+                    f"unsupported dependency tags at line {line_number}: {remainder!r}"
+                )
+
+        if scope_applies and condition_applies and not tags.intersection({"build", "test"}):
+            if name in dependencies:
+                raise BottleMetadataError(
+                    f"duplicate runtime dependency at line {line_number}: {name}"
+                )
+            dependencies.add(name)
+
+    if formula_class_open or not formula_class_closed:
+        raise BottleMetadataError("formula source has no complete Formula class")
+
+    return {
+        "revision": revision or 0,
+        "version_scheme": version_scheme or 0,
+        "explicit_version": explicit_version,
+        "dependencies": sorted(dependencies),
+    }
+
+
+def bottle_archive_shape(path: Path, entry: dict) -> tuple[dict, int]:
+    """Read identity and graph facts only from authenticated bottle archive members."""
+    formula_index_accesses = 0
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+            if not members:
+                raise BottleMetadataError("archive is empty")
+            member_paths: list[tuple[str, ...]] = []
+            for member in members:
+                if member.name.startswith("/") or "\\" in member.name:
+                    raise BottleMetadataError(f"unsafe archive member path: {member.name!r}")
+                parts = tuple(part for part in member.name.rstrip("/").split("/") if part)
+                if len(parts) < 2 or any(part in {".", ".."} for part in parts):
+                    raise BottleMetadataError(f"invalid archive member path: {member.name!r}")
+                member_paths.append(parts)
+
+            keg_roots = {(parts[0], parts[1]) for parts in member_paths}
+            if len(keg_roots) != 1:
+                raise BottleMetadataError(f"archive has ambiguous keg roots: {sorted(keg_roots)!r}")
+            archive_formula, archive_keg_version = next(iter(keg_roots))
+            metadata_root = f"{archive_formula}/{archive_keg_version}"
+            expected_members = {
+                "SPDX metadata": f"{metadata_root}/sbom.spdx.json",
+                "formula declarations": (
+                    f"{metadata_root}/.brew/{archive_formula}.rb"
+                ),
+            }
+            selected: dict[str, tarfile.TarInfo] = {}
+            for label, member_name in expected_members.items():
+                matches = [member for member in members if member.name == member_name]
+                if len(matches) != 1:
+                    raise BottleMetadataError(
+                        f"archive requires exactly one {label} member {member_name!r}; "
+                        f"observed={len(matches)}"
+                    )
+                selected[label] = matches[0]
+
+            sbom = json.loads(
+                _read_bottle_metadata_member(
+                    archive, selected["SPDX metadata"], label="SPDX metadata"
+                ).decode("utf-8")
+            )
+            if not isinstance(sbom, dict) or sbom.get("spdxVersion") != "SPDX-2.3":
+                raise BottleMetadataError("archive has no SPDX-2.3 document")
+            packages = sbom.get("packages")
+            document_describes = sbom.get("documentDescribes")
+            if not isinstance(packages, list) or not isinstance(document_describes, list):
+                raise BottleMetadataError("SPDX document omits packages or documentDescribes")
+            described = [
+                package
+                for package in packages
+                if isinstance(package, dict) and package.get("SPDXID") in document_describes
+            ]
+            if len(described) != 1:
+                raise BottleMetadataError(
+                    f"SPDX document must describe exactly one source package; observed={len(described)}"
+                )
+            package_name = described[0].get("name")
+            package_version = described[0].get("versionInfo")
+            if not isinstance(package_name, str) or not package_name:
+                raise BottleMetadataError("SPDX source package has no name")
+            if not isinstance(package_version, str) or not package_version:
+                raise BottleMetadataError("SPDX source package has no versionInfo")
+            if package_name != archive_formula:
+                raise BottleMetadataError(
+                    f"SPDX/path formula disagreement: spdx={package_name!r} "
+                    f"path={archive_formula!r}"
+                )
+
+            if archive_keg_version == package_version:
+                archive_revision = 0
+            else:
+                revised = re.fullmatch(
+                    re.escape(package_version) + r"_([1-9][0-9]*)",
+                    archive_keg_version,
+                )
+                if revised is None:
+                    raise BottleMetadataError(
+                        f"SPDX/path version disagreement: spdx={package_version!r} "
+                        f"path={archive_keg_version!r}"
+                    )
+                archive_revision = int(revised.group(1))
+
+            formula_source = _read_bottle_metadata_member(
+                archive,
+                selected["formula declarations"],
+                label="formula declarations",
+            ).decode("utf-8")
+            declarations = _formula_declarations(formula_source, entry["bottle_tag"])
+            if (
+                declarations["explicit_version"] is not None
+                and declarations["explicit_version"] != package_version
+            ):
+                raise BottleMetadataError(
+                    f"SPDX/formula version disagreement: spdx={package_version!r} "
+                    f"formula={declarations['explicit_version']!r}"
+                )
+            if declarations["revision"] != archive_revision:
+                raise BottleMetadataError(
+                    f"path/formula revision disagreement: path={archive_revision} "
+                    f"formula={declarations['revision']}"
+                )
+    except (
+        BottleMetadataError,
+        KeyError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        tarfile.TarError,
+    ) as error:
         raise SystemExit(
-            f"Homebrew returned invalid embedded formula metadata for {path}"
+            f"unusable authenticated metadata in pinned bottle {entry['formula']}: "
+            f"{type(error).__name__}: {error}; "
+            f"formula_index_accesses={formula_index_accesses}"
         ) from error
 
-    if not isinstance(result, dict):
-        raise SystemExit(
-            f"Homebrew returned invalid embedded formula metadata for {path}"
-        )
-    formula_index_accesses = result.get("formula_index_accesses")
-    if not isinstance(formula_index_accesses, int) or isinstance(
-        formula_index_accesses, bool
-    ):
-        raise SystemExit(f"Homebrew omitted the formula-index access count for {path}")
-    if formula_index_accesses != 0:
-        raise SystemExit(
-            f"embedded formula evaluation consulted the Homebrew formula index for "
-            f"{entry['formula']}: formula_index_accesses={formula_index_accesses}"
-        )
-    if result.get("ok") is not True:
-        error_class = result.get("error_class", "unknown")
-        detail = result.get("error", "unknown error")
-        raise SystemExit(
-            f"unusable embedded formula in pinned bottle {entry['formula']}: "
-            f"{error_class}: {detail}; formula_index_accesses={formula_index_accesses}"
-        )
-    shape = result.get("shape")
-    if not isinstance(shape, dict):
-        raise SystemExit(
-            f"Homebrew returned invalid embedded formula metadata for {path}"
-        )
-    return shape, formula_index_accesses
+    return (
+        {
+            "formula": package_name,
+            "version": package_version,
+            "revision": archive_revision,
+            "version_scheme": declarations["version_scheme"],
+            "dependencies": declarations["dependencies"],
+        },
+        formula_index_accesses,
+    )
 
 
-def assert_bottle_formula_shape(path: Path, entry: dict) -> int:
+def assert_bottle_archive_shape(path: Path, entry: dict) -> int:
     expected = {
         "formula": entry["formula"],
         "version": entry["version"],
@@ -457,10 +730,10 @@ def assert_bottle_formula_shape(path: Path, entry: dict) -> int:
         "version_scheme": entry["version_scheme"],
         "dependencies": sorted(entry["dependencies"]),
     }
-    observed, formula_index_accesses = bottle_formula_shape(path, entry)
+    observed, formula_index_accesses = bottle_archive_shape(path, entry)
     if observed != expected:
         raise SystemExit(
-            f"embedded formula drift in pinned bottle {entry['formula']}: "
+            f"authenticated archive metadata drift in pinned bottle {entry['formula']}: "
             f"expected {expected}, observed {observed}"
         )
     return formula_index_accesses
@@ -644,14 +917,14 @@ def main(pins_path: Path | None = None) -> None:
     for expected in closure:
         name = expected["formula"]
         bottle_path, observed_sha256, cache_hit = fetch_pinned_bottle(expected, bottle_cache)
-        observed_formula_index_accesses += assert_bottle_formula_shape(
+        observed_formula_index_accesses += assert_bottle_archive_shape(
             bottle_path, expected
         )
         bottle_paths[name] = bottle_path
         observed_bottle_sha256s[name] = observed_sha256
         print(
             f"DARWIN BOTTLE VERIFIED formula={name} sha256={observed_sha256} "
-            f"cache_hit={str(cache_hit).lower()} embedded_formula_matches_pin=true "
+            f"cache_hit={str(cache_hit).lower()} authenticated_archive_metadata_matches_pin=true "
             "formula_index_accesses=0"
         )
 
@@ -677,8 +950,8 @@ def main(pins_path: Path | None = None) -> None:
             f"fresh-pour absence checkpoint retained locked kegs: {','.join(retained)}"
         )
 
-    # Pour every local bottle in the validated dependency order. The fail-closed embedded-formula
-    # check above rejects the missing/unreadable cases where Homebrew's bottle loader can fall back;
+    # Pour every local bottle in the validated dependency order. The fail-closed archive metadata
+    # check above rejects missing, ambiguous or inconsistent SPDX/path/formula declaration data;
     # this final hash binds the exact checked archive to the immediately following install attempt.
     for name in names:
         verify_bottle_checksum(bottle_paths[name], by_name[name])
@@ -813,8 +1086,8 @@ def main(pins_path: Path | None = None) -> None:
         f"expected_encoders={','.join(sorted(ffmpeg['required_encoders']))} "
         f"observed_encoders={','.join(observed_required_encoders)} "
         f"expected_closure_sha256={expected_closure_digest} "
-        f"embedded_formulas_matching_pin={len(bottle_paths)} "
-        f"embedded_formula_index_accesses={observed_formula_index_accesses} "
+        f"authenticated_archive_metadata_matching_pin={len(bottle_paths)} "
+        f"formula_index_accesses={observed_formula_index_accesses} "
         f"installed_receipts_matching_pin={len(installed_receipts)} "
         f"live_shape_status={live_shape_status} "
         f"observed_live_closure_sha256={observed_live_closure_digest} "

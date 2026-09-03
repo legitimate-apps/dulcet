@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-"""Prove embedded-formula evaluation fails closed without formula-index access."""
+"""Prove authenticated bottle metadata fails closed without formula-index access."""
 
 from importlib.machinery import SourceFileLoader
 import io
+import json
 from pathlib import Path
 import re
 import sys
@@ -25,104 +26,210 @@ def add_regular_file(archive: tarfile.TarFile, name: str, payload: bytes) -> Non
     archive.addfile(member, io.BytesIO(payload))
 
 
+def sbom(name: str = "negative-control", version: str = "1.0") -> bytes:
+    identifier = f"SPDXRef-Archive-{name}-src"
+    return json.dumps(
+        {
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "spdxVersion": "SPDX-2.3",
+            "name": f"SBOM-SPDX-{name}-{version}",
+            "documentDescribes": [identifier],
+            "packages": [
+                {
+                    "SPDXID": identifier,
+                    "name": name,
+                    "versionInfo": version,
+                    "filesAnalyzed": False,
+                }
+            ],
+        }
+    ).encode()
+
+
+def write_bottle(
+    path: Path,
+    formula: bytes,
+    *,
+    include_formula: bool = True,
+    include_sbom: bool = True,
+) -> None:
+    root = "negative-control/1.0_1"
+    with tarfile.open(path, "w:gz") as archive:
+        if include_formula:
+            add_regular_file(
+                archive,
+                f"{root}/.brew/negative-control.rb",
+                formula,
+            )
+        if include_sbom:
+            add_regular_file(archive, f"{root}/sbom.spdx.json", sbom())
+
+
+def rejected(callable_under_test) -> str:
+    try:
+        callable_under_test()
+    except SystemExit as error:
+        return str(error)
+    raise SystemExit("mutated bottle metadata was accepted")
+
+
+def formula_index_accesses(detail: str) -> int:
+    match = re.search(r"formula_index_accesses=(\d+)", detail)
+    if match is None:
+        raise SystemExit(
+            "authenticated metadata failure omitted formula-index accesses: "
+            f"detail={detail!r}"
+        )
+    return int(match.group(1))
+
+
 def main() -> None:
     entry = {
         "formula": "negative-control",
         "version": "1.0",
-        "revision": 0,
-        "version_scheme": 0,
-        "dependencies": [],
+        "revision": 1,
+        "version_scheme": 2,
+        "dependencies": ["darwin-no-linkage", "runtime-dependency"],
         "bottle_tag": "arm64_tahoe",
         "bottle_rebuild": 0,
         "url": f"https://ghcr.io/v2/homebrew/core/negative-control/blobs/sha256:{'1' * 64}",
         "sha256": "1" * 64,
     }
-    formula = b"""class NegativeControl < Formula
-  desc "Dulcet embedded-formula gate fixture"
+    formula = b'''class NegativeControl < Formula
+  desc "Dulcet authenticated archive metadata fixture"
   homepage "https://example.invalid/negative-control"
   url "https://example.invalid/negative-control-1.0.tar.gz"
   version "1.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  revision 1
+  version_scheme 2
+
+  depends_on "build-only" => :build
+  depends_on "runtime-dependency"
+
+  on_linux do
+    depends_on "linux-only"
+  end
+
+  on_macos do
+    depends_on "darwin-no-linkage" => :no_linkage
+  end
+
+  post_install_steps do
+    symlink "{{etc}}/source", "{{pkgetc}}/target", overwrite: true
+  end
 end
-"""
+'''
 
     with tempfile.TemporaryDirectory() as temporary_directory:
         root = Path(temporary_directory)
-        valid_bottle = root / "negative-control--1.0.arm64_tahoe.bottle.tar.gz"
-        with tarfile.open(valid_bottle, "w:gz") as archive:
-            add_regular_file(
-                archive,
-                "negative-control/1.0/.brew/negative-control.rb",
-                formula,
-            )
+        valid_bottle = root / "negative-control--1.0_1.arm64_tahoe.bottle.tar.gz"
+        write_bottle(valid_bottle, formula)
 
-        observed_shape, valid_formula_index_accesses = installer.bottle_formula_shape(
-            valid_bottle, entry
-        )
-        expected_shape = {
-            "formula": "negative-control",
-            "version": "1.0",
-            "revision": 0,
-            "version_scheme": 0,
-            "dependencies": [],
-        }
-        if observed_shape != expected_shape or valid_formula_index_accesses != 0:
-            raise SystemExit(
-                "valid embedded formula did not use the fail-closed index-free path: "
-                f"shape={observed_shape} formula_index_accesses={valid_formula_index_accesses}"
-            )
+        external_calls = 0
+        original_run = installer.run
+        original_urlopen = installer.urllib.request.urlopen
 
-        missing_bottle = (
-            root / "negative-control--missing-formula.arm64_tahoe.bottle.tar.gz"
-        )
-        with tarfile.open(missing_bottle, "w:gz") as archive:
-            add_regular_file(
-                archive,
-                "negative-control/1.0/INSTALL_RECEIPT.json",
-                b"{}\n",
-            )
+        def reject_external_access(*_args, **_kwargs):
+            nonlocal external_calls
+            external_calls += 1
+            raise AssertionError("authenticated archive reader attempted external access")
 
-        observed_detail = ""
-        missing_formula_rejected = False
+        installer.run = reject_external_access
+        installer.urllib.request.urlopen = reject_external_access
         try:
-            installer.bottle_formula_shape(missing_bottle, entry)
-        except SystemExit as error:
-            missing_formula_rejected = True
-            observed_detail = str(error)
-        else:
-            raise SystemExit("bottle without an embedded formula was accepted")
+            observed_shape, valid_formula_index_accesses = installer.bottle_archive_shape(
+                valid_bottle, entry
+            )
+            expected_shape = {
+                "formula": "negative-control",
+                "version": "1.0",
+                "revision": 1,
+                "version_scheme": 2,
+                "dependencies": ["darwin-no-linkage", "runtime-dependency"],
+            }
+            if observed_shape != expected_shape or valid_formula_index_accesses != 0:
+                raise SystemExit(
+                    "valid authenticated archive did not use the index-free path: "
+                    f"shape={observed_shape} formula_index_accesses="
+                    f"{valid_formula_index_accesses}"
+                )
 
-        if (
-            "unusable embedded formula in pinned bottle negative-control"
-            not in observed_detail
-        ):
-            raise SystemExit(
-                "missing embedded formula was rejected for the wrong reason: "
-                f"detail={observed_detail!r}"
+            missing_formula = root / "negative-control--missing-formula.tar.gz"
+            write_bottle(missing_formula, formula, include_formula=False)
+            missing_formula_detail = rejected(
+                lambda: installer.bottle_archive_shape(missing_formula, entry)
             )
-        if "BottleFormulaUnavailableError" not in observed_detail:
-            raise SystemExit(
-                f"missing embedded formula diagnostic lost its cause: {observed_detail}"
+            if "formula declarations" not in missing_formula_detail:
+                raise SystemExit(
+                    "missing formula declarations were rejected for the wrong reason: "
+                    f"{missing_formula_detail}"
+                )
+
+            missing_sbom = root / "negative-control--missing-sbom.tar.gz"
+            write_bottle(missing_sbom, formula, include_sbom=False)
+            missing_sbom_detail = rejected(
+                lambda: installer.bottle_archive_shape(missing_sbom, entry)
             )
-        match = re.search(r"formula_index_accesses=(\d+)", observed_detail)
-        if match is None:
-            raise SystemExit(
-                "missing embedded formula did not report its formula-index accesses: "
-                f"detail={observed_detail!r}"
+            if "SPDX metadata" not in missing_sbom_detail:
+                raise SystemExit(
+                    "missing SPDX metadata was rejected for the wrong reason: "
+                    f"{missing_sbom_detail}"
+                )
+
+            drifted_entry = {**entry, "dependencies": ["runtime-dependency"]}
+            dependency_drift_detail = rejected(
+                lambda: installer.assert_bottle_archive_shape(valid_bottle, drifted_entry)
             )
-        missing_formula_index_accesses = int(match.group(1))
-        if missing_formula_index_accesses != 0:
+            if "authenticated archive metadata drift" not in dependency_drift_detail:
+                raise SystemExit(
+                    "dependency mutation was rejected for the wrong reason: "
+                    f"{dependency_drift_detail}"
+                )
+
+            unsupported_formula = formula.replace(
+                b'  depends_on "runtime-dependency"',
+                b"  depends_on computed_dependency",
+            )
+            unsupported_bottle = root / "negative-control--unsupported-dependency.tar.gz"
+            write_bottle(unsupported_bottle, unsupported_formula)
+            unsupported_detail = rejected(
+                lambda: installer.bottle_archive_shape(unsupported_bottle, entry)
+            )
+            if "unsupported dependency declaration" not in unsupported_detail:
+                raise SystemExit(
+                    "unsupported dependency syntax was rejected for the wrong reason: "
+                    f"{unsupported_detail}"
+                )
+        finally:
+            installer.run = original_run
+            installer.urllib.request.urlopen = original_urlopen
+
+        failure_details = [
+            missing_formula_detail,
+            missing_sbom_detail,
+            unsupported_detail,
+        ]
+        observed_failure_accesses = [
+            formula_index_accesses(detail) for detail in failure_details
+        ]
+        if observed_failure_accesses != [0, 0, 0]:
             raise SystemExit(
-                "missing embedded formula consulted the formula index: "
-                f"formula_index_accesses={missing_formula_index_accesses}"
+                "authenticated archive failure reached the formula index: "
+                f"{observed_failure_accesses}"
+            )
+        if external_calls != 0:
+            raise SystemExit(
+                f"authenticated archive reader made {external_calls} external calls"
             )
 
         print(
-            "NEGATIVE CONTROL PASS darwin_embedded_formula "
+            "NEGATIVE CONTROL PASS darwin_authenticated_archive_metadata "
             f"valid_formula_index_accesses={valid_formula_index_accesses} "
-            f"missing_formula_rejected={str(missing_formula_rejected).lower()} "
-            f"missing_formula_index_accesses={missing_formula_index_accesses} "
-            f"detail={observed_detail}"
+            f"failure_formula_index_accesses={','.join(map(str, observed_failure_accesses))} "
+            "missing_formula_rejected=true missing_sbom_rejected=true "
+            "dependency_drift_rejected=true unsupported_dependency_rejected=true "
+            "overwrite_keyword_accepted=true "
+            f"external_calls={external_calls}"
         )
 
 
