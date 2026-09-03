@@ -1,0 +1,84 @@
+countRowsForServer:
+SELECT sum(row_count) FROM (
+  SELECT count(*) AS row_count FROM mutation_outbox WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM download WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM download_policy_state WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM resume_position WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM scrobble_outbox WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM queue_state WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM active_queue WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM queue_entry WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM music_folder WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM artist WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM album WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM track WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM credit WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM playlist WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM playlist_entry WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM library_starred WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM genre WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM sync_checkpoint WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM sync_seen WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM sync_generation WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM deletion_reconciliation WHERE server_id = :server_id
+);
+
+deleteMutationOutboxForServer:
+DELETE FROM mutation_outbox WHERE server_id = ?;
+
+deleteDownloadsForServer:
+DELETE FROM download WHERE server_id = ?;
+
+deleteResumePositionsForServer:
+DELETE FROM resume_position WHERE server_id = ?;
+
+deleteScrobblesForServer:
+DELETE FROM scrobble_outbox WHERE server_id = ?;
+
+deleteQueueEntriesForServer:
+DELETE FROM queue_entry WHERE server_id = ?;
+
+deleteActiveQueueForServer:
+DELETE FROM active_queue WHERE server_id = ?;
+
+deleteQueueStateForServer:
+DELETE FROM queue_state WHERE server_id = ?;
+
+deleteMusicFoldersForServer:
+DELETE FROM music_folder WHERE server_id = ?;
+
+deleteArtistsForServer:
+DELETE FROM artist WHERE server_id = ?;
+
+deleteAlbumsForServer:
+DELETE FROM album WHERE server_id = ?;
+
+deleteTracksForServer:
+DELETE FROM track WHERE server_id = ?;
+
+deleteCreditsForServer:
+DELETE FROM credit WHERE server_id = ?;
+
+deletePlaylistsForServer:
+DELETE FROM playlist WHERE server_id = ?;
+
+deletePlaylistEntriesForServer:
+DELETE FROM playlist_entry WHERE server_id = ?;
+
+deleteStarredForServer:
+DELETE FROM library_starred WHERE server_id = ?;
+
+deleteGenresForServer:
+DELETE FROM genre WHERE server_id = ?;
+
+deleteSyncCheckpointsForServer:
+DELETE FROM sync_checkpoint WHERE server_id = ?;
+
+deleteSyncSeenForServer:
+DELETE FROM sync_seen WHERE server_id = ?;
+
+deleteSyncGenerationsForServer:
+DELETE FROM sync_generation WHERE server_id = ?;
+
+deleteDeletionReconciliationsForServer:
+DELETE FROM deletion_reconciliation WHERE server_id = ?;

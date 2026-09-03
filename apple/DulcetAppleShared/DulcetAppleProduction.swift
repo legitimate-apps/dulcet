@@ -7,12 +7,11 @@ import ImageIO
 @MainActor
 enum DulcetAppleProduction {
     static func makePresentationStore() -> DulcetPresentationStore {
-        let credentialStore = DulcetKeychainCredentialStore()
         #if os(macOS)
-        let downloads = DulcetCoreDownloadController.production()
+        return makeMacComposition().store
         #else
+        let credentialStore = DulcetKeychainCredentialStore()
         let downloads: (any DulcetDownloadControlling)? = nil
-        #endif
         return DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
@@ -29,8 +28,41 @@ enum DulcetAppleProduction {
                 }
             )
         )
+        #endif
     }
+
+    #if os(macOS)
+    static func makeMacComposition() -> DulcetMacProductionComposition {
+        let credentialStore = DulcetKeychainCredentialStore()
+        let downloads = DulcetCoreDownloadController.production()
+        let store = DulcetPresentationStore(
+            source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(),
+                credentialStore: credentialStore,
+                libraryBrowser: DulcetCoreLibraryBrowser(),
+                artworkFetcher: DulcetCoreArtworkFetcher(),
+                serverSearch: DulcetCoreServerSearch(),
+                playbackController: DulcetCorePlaybackController(
+                    downloadController: downloads
+                ),
+                downloadController: downloads,
+                providerInstanceIDFactory: {
+                    credentialStore.activeAccountID ?? UUID().uuidString
+                }
+            )
+        )
+        return DulcetMacProductionComposition(store: store, downloads: downloads)
+    }
+    #endif
 }
+
+#if os(macOS)
+@MainActor
+struct DulcetMacProductionComposition {
+    let store: DulcetPresentationStore
+    let downloads: DulcetCoreDownloadController?
+}
+#endif
 
 @MainActor
 final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing {

@@ -300,6 +300,17 @@ internal class DownloadPolicyEngine(
         )
     }
 
+    fun nextRetryNotBefore(serverId: String): Long? {
+        requireReconciled()
+        require(serverId.isNotBlank())
+        return store.forServer(serverId)
+            .asSequence()
+            .filter { it.state == DownloadState.Queued || it.state == DownloadState.Interrupted }
+            .mapNotNull(DownloadRecord::retryNotBeforeWallClock)
+            .filter { it != Long.MAX_VALUE }
+            .minOrNull()
+    }
+
     fun temporaryFilePath(downloadId: DownloadId): String {
         requireReconciled()
         return store.byId(downloadId)?.let(files::temporaryPath)?.toString()
@@ -483,6 +494,46 @@ internal class DownloadPolicyEngine(
             }
         }
         return evicted
+    }
+
+    /**
+     * Deletes every durable artifact owned by one account.
+     *
+     * File deletion intentionally precedes the database transaction. If the process stops between
+     * the two phases, the rows retain enough identity to retry the idempotent removal on relaunch;
+     * deleting the rows first would orphan private media with no durable owner.
+     */
+    fun removeAccountData(serverId: String) {
+        require(serverId.isNotBlank())
+        val rows = store.forServer(serverId)
+        rows.forEach { row ->
+            files.deleteTemporary(row)
+            files.deleteDestination(row)
+        }
+        val queries = database.serverDataQueries
+        database.transaction {
+            queries.deleteMutationOutboxForServer(serverId)
+            queries.deleteDownloadsForServer(serverId)
+            queries.deleteResumePositionsForServer(serverId)
+            queries.deleteScrobblesForServer(serverId)
+            queries.deleteQueueEntriesForServer(serverId)
+            queries.deleteActiveQueueForServer(serverId)
+            queries.deleteQueueStateForServer(serverId)
+            queries.deletePlaylistEntriesForServer(serverId)
+            queries.deletePlaylistsForServer(serverId)
+            queries.deleteStarredForServer(serverId)
+            queries.deleteCreditsForServer(serverId)
+            queries.deleteTracksForServer(serverId)
+            queries.deleteAlbumsForServer(serverId)
+            queries.deleteArtistsForServer(serverId)
+            queries.deleteMusicFoldersForServer(serverId)
+            queries.deleteGenresForServer(serverId)
+            queries.deleteSyncSeenForServer(serverId)
+            queries.deleteSyncCheckpointsForServer(serverId)
+            queries.deleteDeletionReconciliationsForServer(serverId)
+            queries.deleteSyncGenerationsForServer(serverId)
+        }
+        check(queries.countRowsForServer(serverId).executeAsOne().sum == 0L)
     }
 
     fun record(downloadId: DownloadId): DownloadRecord? {
