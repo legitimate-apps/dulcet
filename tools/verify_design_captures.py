@@ -95,11 +95,13 @@ def assert_states_match_swift_enum() -> None:
 APPEARANCES = ("light", "dark")
 WINDOW_WIDTH_POINTS = 1180
 WINDOW_HEIGHT_POINTS = 760
+REFERENCE_CAPTURE_WIDTH_POINTS = 1180
+REFERENCE_CAPTURE_HEIGHT_POINTS = 728
 # This is deliberately one contract value. The renderer uses it for layout, layer contents, and
 # bitmap density, so the verifier must reject any manifest that claims those grids differ.
 CAPTURE_SCALE = 1.0
-CAPTURE_WIDTH_PIXELS = int(WINDOW_WIDTH_POINTS * CAPTURE_SCALE)
-CAPTURE_HEIGHT_PIXELS = int(WINDOW_HEIGHT_POINTS * CAPTURE_SCALE)
+CAPTURE_WIDTH_PIXELS = int(REFERENCE_CAPTURE_WIDTH_POINTS * CAPTURE_SCALE)
+CAPTURE_HEIGHT_PIXELS = int(REFERENCE_CAPTURE_HEIGHT_POINTS * CAPTURE_SCALE)
 PINNED_CONTROL_WIDTH_PIXELS = 1180
 PINNED_CONTROL_HEIGHT_PIXELS = 760
 RENDERED_FOCUS_STATE = "no-focused-control"
@@ -279,11 +281,15 @@ def verify_set(directory: Path, expected: set[str]) -> None:
         raise CaptureVerificationError(f"manifest contains a machine-specific path: {directory.name}")
     manifest = json.loads(manifest_text)
     contract = {
-        "schemaVersion": 13,
-        "widthPixels": CAPTURE_WIDTH_PIXELS,
-        "heightPixels": CAPTURE_HEIGHT_PIXELS,
-        "captureSurface": "titled-nswindow-with-standard-chrome",
-        "windowTitlePolicy": "visible-centered-standard-window-title",
+        "schemaVersion": 14,
+        "referenceWidthPixels": CAPTURE_WIDTH_PIXELS,
+        "referenceHeightPixels": CAPTURE_HEIGHT_PIXELS,
+        "pinnedControlWidthPixels": PINNED_CONTROL_WIDTH_PIXELS,
+        "pinnedControlHeightPixels": PINNED_CONTROL_HEIGHT_PIXELS,
+        "captureSurface": "ns-hosting-view-content-only-rendered-references",
+        "windowTitlePolicy": (
+            "configured-visible-but-excluded-from-rendered-reference-surface"
+        ),
         "textSizingPolicy": "macos-system-semantic-fonts-no-dynamic-type-claim",
         "fontLineHeightPolicy": (
             "NSLayoutManager.defaultLineHeight(for:)-after-frame-convergence"
@@ -422,13 +428,19 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             raise CaptureVerificationError(
                 f"{directory.name}/{filename} controlActiveState is not key"
             )
+        if expected_variant == "deliberately-bad-control":
+            expected_capture_width_points = PINNED_CONTROL_WIDTH_PIXELS
+            expected_capture_height_points = PINNED_CONTROL_HEIGHT_PIXELS
+        else:
+            expected_capture_width_points = REFERENCE_CAPTURE_WIDTH_POINTS
+            expected_capture_height_points = REFERENCE_CAPTURE_HEIGHT_POINTS
         geometry_contract = {
             "windowFrameWidthPoints": WINDOW_WIDTH_POINTS,
             "windowFrameHeightPoints": WINDOW_HEIGHT_POINTS,
             "captureBoundsXPoints": 0,
             "captureBoundsYPoints": 0,
-            "captureBoundsWidthPoints": WINDOW_WIDTH_POINTS,
-            "captureBoundsHeightPoints": WINDOW_HEIGHT_POINTS,
+            "captureBoundsWidthPoints": expected_capture_width_points,
+            "captureBoundsHeightPoints": expected_capture_height_points,
         }
         for key, expected_value in geometry_contract.items():
             if record.get(key) != expected_value:
@@ -512,10 +524,58 @@ def verify_set(directory: Path, expected: set[str]) -> None:
                 )
             root_layout = layout_diagnostics.get("root")
             if not isinstance(root_layout, dict) or root_layout.get("coordinateSystem") != (
-                "appkit-capture-view-points"
+                "appkit-hosting-view-content-points"
             ):
                 raise CaptureVerificationError(
                     f"{directory.name}/{filename} root layout facts are missing or malformed"
+                )
+            expected_root_rects = {
+                "windowFramePoints": {
+                    "x": 0,
+                    "y": 0,
+                    "width": WINDOW_WIDTH_POINTS,
+                    "height": WINDOW_HEIGHT_POINTS,
+                },
+                "windowContentLayoutRectPoints": {
+                    "x": 0,
+                    "y": 0,
+                    "width": REFERENCE_CAPTURE_WIDTH_POINTS,
+                    "height": REFERENCE_CAPTURE_HEIGHT_POINTS,
+                },
+                "captureViewFramePoints": {
+                    "x": 0,
+                    "y": 0,
+                    "width": REFERENCE_CAPTURE_WIDTH_POINTS,
+                    "height": REFERENCE_CAPTURE_HEIGHT_POINTS,
+                },
+                "captureViewBoundsPoints": {
+                    "x": 0,
+                    "y": 0,
+                    "width": REFERENCE_CAPTURE_WIDTH_POINTS,
+                    "height": REFERENCE_CAPTURE_HEIGHT_POINTS,
+                },
+                "hostingViewFrameInCapturePoints": {
+                    "x": 0,
+                    "y": 0,
+                    "width": REFERENCE_CAPTURE_WIDTH_POINTS,
+                    "height": REFERENCE_CAPTURE_HEIGHT_POINTS,
+                },
+                "hostingViewBoundsPoints": {
+                    "x": 0,
+                    "y": 0,
+                    "width": REFERENCE_CAPTURE_WIDTH_POINTS,
+                    "height": REFERENCE_CAPTURE_HEIGHT_POINTS,
+                },
+            }
+            for key, expected_rect in expected_root_rects.items():
+                if root_layout.get(key) != expected_rect:
+                    raise CaptureVerificationError(
+                        f"{directory.name}/{filename} root {key} mismatch: "
+                        f"expected {expected_rect!r}, observed {root_layout.get(key)!r}"
+                    )
+            if root_layout.get("captureViewIsFlipped") is not True:
+                raise CaptureVerificationError(
+                    f"{directory.name}/{filename} captureViewIsFlipped is not true"
                 )
             native_controls = layout_diagnostics.get("nativeControls")
             if not isinstance(native_controls, list):
@@ -666,7 +726,9 @@ def main() -> None:
         f"reference-pixels={CAPTURE_WIDTH_PIXELS}x{CAPTURE_HEIGHT_PIXELS} "
         f"pinned-control-pixels={PINNED_CONTROL_WIDTH_PIXELS}x{PINNED_CONTROL_HEIGHT_PIXELS} "
         f"frame-points={WINDOW_WIDTH_POINTS}x{WINDOW_HEIGHT_POINTS} "
-        f"capture-bounds-points=0,0,{WINDOW_WIDTH_POINTS}x{WINDOW_HEIGHT_POINTS} "
+        "reference-capture-surface=ns-hosting-view-content-only "
+        f"capture-bounds-points=0,0,{REFERENCE_CAPTURE_WIDTH_POINTS}x"
+        f"{REFERENCE_CAPTURE_HEIGHT_POINTS} "
         "control-active-state=key "
         "focus-state=no-focused-control focus-assertion=every-bitmap-draw "
         "decoded-pixels-pairwise-distinct=true "

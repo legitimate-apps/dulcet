@@ -3302,6 +3302,21 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 90 (2026-09-03)** — deterministic captures excluded OS-drawn window chrome.
+
+1. A 15-pair soak observed zero translation divergences after the layout fix, but one remaining
+   cross-process difference was confined to the title bar: the system-drawn window title was present
+   in one render and absent in the other. The application-owned content had no translation delta.
+2. The titled 1180 × 760 `NSWindow` remains the appearance, layout, backing-scale, key-control-state,
+   and focus host. The exact-byte reference surface is now its zero-origin 1180 × 728
+   `NSHostingView`, excluding the 32-point title bar, title, traffic lights, and theme-frame material.
+3. Manifest schema 14 names the content-only reference surface, declares the configured title outside
+   the compared surface, and separates 1180 × 728 rendered-reference dimensions from the immutable
+   1180 × 760 pinned-control dimensions. The verifier enforces both geometries without a tolerance.
+4. This strengthens deterministic evidence for application-owned content but deliberately removes
+   window-chrome evidence from that artifact. Native-window calibration remains the responsibility of
+   the separately produced, non-deterministic shipping-reference artifact.
+
 **Revision 89 (2026-09-02)** — deterministic captures stopped requesting account-control focus.
 
 1. Hosted CI observed the revision-88 assertion reject a non-window first responder immediately

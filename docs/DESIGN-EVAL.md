@@ -39,14 +39,16 @@ path therefore omits the sidebar. Reusing the sidebar and state-surface componen
 contents, but it does not make the two root containers visually or behaviorally equivalent.
 
 The captures are evidence for the pixels produced by those shared content components **as embedded
-in `DulcetCaptureView`**, together with the fixed fixture payload, appearance, capture-window chrome,
-and geometry recorded by the manifest. They are **not** evidence for:
+in `DulcetCaptureView`**, together with the fixed fixture payload, appearance, and content-view
+geometry recorded by the manifest. They are **not** evidence for:
 
 - the end-to-end pixels produced by the shipping `DulcetRootView` composition;
 - `NavigationSplitView` sidebar material, backdrop, selection appearance, divider, column allocation,
   collapse, or resizing behavior;
 - window, toolbar, navigation-title, or compositor integration that depends on the shipping
   `NavigationSplitView` hierarchy; or
+- the title bar, system window title, traffic-light controls, window material, or any other
+  OS-drawn chrome surrounding the hosting view; or
 - pixel parity between the design artifact and the shipping macOS application.
 
 This boundary is a measured limitation, not an untried assumption. Hosted `apple-ci` experiments on
@@ -93,10 +95,12 @@ or run-to-run diff claims. The two artifacts are independent evidence sets and t
 be merged. The first hosted reference artifact, run `32555697776`, contained all seven states in both
 light and dark at 1180 × 760 plus both hash-pinned control images, with no missing captures.
 
-Every image is a compressed JPEG of the complete titled `NSWindow` at exactly 1180 × 760 pixels.
-The standard AppKit title bar, title, and traffic-light controls are inside the evidence boundary;
-content-only or borderless renders are not eligible to calibrate the native-macOS lens. The render
-environment is fixed:
+Each deterministic current-run reference is a compressed JPEG of the `NSHostingView` content at
+exactly 1180 × 728 pixels. The 32-point standard AppKit title bar, system title, traffic-light
+controls, and theme-frame material are outside that compared pixel boundary. The separately produced
+shipping-reference images and the two reviewed, byte-pinned control resources remain complete titled
+windows at 1180 × 760. Only that titled shipping-reference artifact is eligible to calibrate the
+native-macOS lens; content-only renders are not. The deterministic render environment is fixed:
 
 - macOS runner image and Swift toolchain selected by `apple-ci`;
 - light or dark appearance set explicitly rather than inherited from the runner;
@@ -105,12 +109,13 @@ environment is fixed:
 - macOS system semantic fonts at their platform size;
 - no network-backed data source, downloaded artwork, audio decode, or animation;
 - procedural artwork generated from stable fixture identifiers;
-- a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome;
-- a capture-only `NSWindow` subclass that retains standard titled chrome but declines AppKit's
-  visible-screen frame constraint, so the 1180 × 760 evidence surface does not shrink to the hosted
-  desktop; content is installed and the window ordered before the fixed frame is applied, followed by
-  a runtime geometry guard requiring an 1180 × 760 window frame and a zero-origin 1180 × 760 AppKit
-  theme-frame capture boundary;
+- a titled, closable, miniaturizable, resizable `NSWindow` with standard AppKit chrome as the layout,
+  appearance, backing-scale, key-control-state, and focus host; that chrome is not drawn into the
+  deterministic reference bitmap;
+- a capture-only `NSWindow` subclass that declines AppKit's visible-screen frame constraint, so the
+  1180 × 760 host window does not shrink to the hosted desktop; content is installed and the window
+  ordered before the fixed frame is applied, followed by a runtime geometry guard requiring both an
+  1180 × 760 window frame and a zero-origin 1180 × 728 hosting-view capture boundary;
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
@@ -121,21 +126,23 @@ environment is fixed:
   presentation states and appearances, not keyboard-traversal states; focusing a server field, retry
   button, or primary action would add an arbitrary interaction narrative. Focused-control design
   evidence belongs in a separately named interaction-state set rather than this resting baseline;
-- the standard centered AppKit window title remains visible, while each content surface carries its
-  own visible state heading and debug target suffixes are excluded;
+- the standard centered AppKit window title is configured on the host window but excluded from the
+  rendered-reference surface; each captured content surface carries its own visible state heading and
+  debug target suffixes are excluded;
 - one discarded render of every state and appearance before recording, so first-use AppKit font,
   symbol, and view caches have the same warmed state in both independent capture processes;
 - JPEG compression factor 0.72.
 
-Each capture directory includes `manifest.json` with the complete filename set, environment values,
-per-record window-frame and capture-bound coordinates, rendered control-active and focus states, a
-provenance declaration, byte lengths, and SHA-256 digests. Current-run references carry measured
-geometry and the asserted no-focused-control state; pinned controls carry the reviewed baseline
-geometry and mark live focus as inapplicable. Each JPEG also carries a self-authored consistency
+Each capture directory includes `manifest.json` with the complete filename set, separate reference
+and pinned-control dimensions, environment values, per-record window-frame and capture-bound
+coordinates, rendered control-active and focus states, a provenance declaration, byte lengths, and
+SHA-256 digests. Current-run references carry measured 1180 × 728 content geometry and the asserted
+no-focused-control state; pinned controls carry their reviewed 1180 × 760 baseline geometry and mark
+live focus as inapplicable. Each JPEG also carries a self-authored consistency
 comment with a fixture-state label, appearance, variant, and the SHA-256 of the original compressed
 payload. The verifier removes that comment, reconstructs and hashes the payload, and requires the
 embedded labels, filename, and manifest record to agree. It separately decodes every JPEG through the
-platform image decoder and requires all 16 normalized pixel rasters to be pairwise distinct.
+platform image decoder and requires all normalized pixel rasters to be pairwise distinct.
 
 This is **internal consistency plus pixel distinctness**, not proof that the pixels depict the named
 fixture state. An artifact author can swap two compressed payloads, regenerate each embedded comment,
@@ -259,13 +266,15 @@ Every evaluation claim must be marked `OBSERVED` or `ASSUMED`.
   differentiation;
 - that the named JPEGs and bad controls exist;
 - manifest fields, checksums, and byte identity between the two CI render runs;
-- actual AppKit window-frame size and zero-origin theme-frame capture bounds for the 14 current-run
+- actual AppKit host-window frame size and zero-origin hosting-view capture bounds for the current-run
   reference JPEGs, plus reviewed baseline geometry and a pinned-resource provenance declaration for
   the two controls;
 - the explicitly rendered key control state. This is not a claim that the hosted command-line process
   became the desktop's active application;
 - visible focus and contrast cues;
-- the standard AppKit window frame and chrome surrounding both reference and control content.
+- the standard AppKit window frame and chrome surrounding the separately produced shipping-reference
+  content and the reviewed pinned controls. The deterministic current-run references make no chrome
+  claim because their compared surface begins at the hosting view.
 
 `OBSERVED` from CI or source evidence, but not from pixels alone:
 

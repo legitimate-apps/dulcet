@@ -181,6 +181,29 @@ def main() -> None:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         expect_rejection(misframed_root, "captureBoundsYPoints mismatch")
 
+        stale_reference_height_root = Path(temporary) / "stale-reference-height"
+        shutil.copytree(args.root, stale_reference_height_root)
+        manifest_path = stale_reference_height_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["captureBoundsHeightPoints"] = verifier.WINDOW_HEIGHT_POINTS
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(
+            stale_reference_height_root,
+            "captureBoundsHeightPoints mismatch",
+        )
+
+        stale_title_policy_root = Path(temporary) / "stale-title-policy"
+        shutil.copytree(args.root, stale_title_policy_root)
+        manifest_path = stale_title_policy_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["windowTitlePolicy"] = "visible-centered-standard-window-title"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(stale_title_policy_root, "manifest windowTitlePolicy mismatch")
+
         inactive_root = Path(temporary) / "inactive-control-state"
         shutil.copytree(args.root, inactive_root)
         manifest_path = inactive_root / "standard" / "manifest.json"
@@ -350,8 +373,9 @@ def main() -> None:
         "all-identical=true rebound-identical-visuals=true swapped-labels=true "
         "identical-pixels-different-encoding=true "
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
-        "byte-identical-dynamic-type=true "
-        "misframed-window=true inactive-control-state=true wrong-focus-state=true "
+        "byte-identical-dynamic-type=true translated-capture-bound=true "
+        "stale-reference-height=true stale-window-title-policy=true "
+        "inactive-control-state=true wrong-focus-state=true "
         "wrong-layout-scale=true settle-attempt-range=true "
         "settle-first-match-consistency=true resolved-apple-languages=true "
         "resolved-font-line-height=true ambient-window-backing-scale-accepted=true "
