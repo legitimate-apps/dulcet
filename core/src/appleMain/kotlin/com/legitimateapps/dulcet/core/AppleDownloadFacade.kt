@@ -44,6 +44,7 @@ public class AppleDownloadPreparationOutcomeDto internal constructor(
     /** `downloaded`, `queued`, or null. */
     public val terminalState: String?,
     public val errorKind: String?,
+    public val retryNotBeforeWallClock: Long?,
 )
 
 /** Closed result after the platform executor has closed and delivered its response body. */
@@ -83,6 +84,11 @@ public class AppleLocalPlaybackPlanOutcomeDto internal constructor(
 public class AppleDownloadStatusOutcomeDto internal constructor(
     /** `notDownloaded`, `queued`, `downloading`, `interrupted`, `downloaded`, or `stale`. */
     public val state: String,
+    public val errorKind: String?,
+    public val retryNotBeforeWallClock: Long?,
+)
+
+public class AppleDownloadAccountRemovalOutcomeDto internal constructor(
     public val errorKind: String?,
 )
 
@@ -158,7 +164,9 @@ public class AppleDownloadClient(
             )
             val existing = policy.record(identity)
             if (existing?.state == DownloadState.Complete || existing?.state == DownloadState.Stale) {
-                AppleDownloadPreparationOutcomeDto(null, "downloaded", null)
+                AppleDownloadPreparationOutcomeDto(null, "downloaded", null, null)
+            } else if (existing?.state == DownloadState.Downloading) {
+                AppleDownloadPreparationOutcomeDto(null, "downloading", null, null)
             } else {
                 policy.enqueue(
                     DownloadRequest(
@@ -173,31 +181,47 @@ public class AppleDownloadClient(
                         wallClockMilliseconds = wallClockMilliseconds,
                     ),
                 )
-                when (
-                    val scheduled = policy.schedule(
-                        DownloadSchedulingContext(
-                            serverId = account.providerInstanceId,
-                            wallClockMilliseconds = wallClockMilliseconds,
-                            diskBudgetBytes = diskBudgetBytes,
-                            unknownLengthReservationBytes = unknownLengthReservationBytes,
-                            activeTranscodes = ActiveTranscodeCounts(),
-                            playbackSessionActive = false,
-                        ),
-                    )
-                ) {
-                    is DownloadScheduleResult.Start -> prepare(scheduled)
-                    DownloadScheduleResult.NothingQueued ->
-                        AppleDownloadPreparationOutcomeDto(null, "queued", null)
-                    DownloadScheduleResult.DiskBudgetExceeded ->
-                        AppleDownloadPreparationOutcomeDto(null, null, "diskBudgetExceeded")
-                    DownloadScheduleResult.TranscodeBudgetReservedForPlayback ->
-                        AppleDownloadPreparationOutcomeDto(null, "queued", null)
-                }
+                prepareScheduled(
+                    policy,
+                    schedulingContext(
+                        wallClockMilliseconds,
+                        diskBudgetBytes,
+                        unknownLengthReservationBytes,
+                    ),
+                )
             }
         } catch (_: CancellationException) {
-            AppleDownloadPreparationOutcomeDto(null, null, "cancelled")
+            AppleDownloadPreparationOutcomeDto(null, null, "cancelled", null)
         } catch (_: Throwable) {
-            AppleDownloadPreparationOutcomeDto(null, null, "persistence")
+            AppleDownloadPreparationOutcomeDto(null, null, "persistence", null)
+        }
+        try {
+            completion(outcome)
+        } catch (_: Throwable) {
+            // A presentation callback cannot escape into or abort the core operation.
+        }
+    }
+
+    public fun startPrepareNextDownload(
+        wallClockMilliseconds: Long,
+        diskBudgetBytes: Long,
+        unknownLengthReservationBytes: Long,
+        completion: (AppleDownloadPreparationOutcomeDto) -> Unit,
+    ): AppleDownloadOperation = AppleDownloadOperationImpl(scope) {
+        val outcome = try {
+            requireReconciled()
+            prepareScheduled(
+                requireNotNull(engine),
+                schedulingContext(
+                    wallClockMilliseconds,
+                    diskBudgetBytes,
+                    unknownLengthReservationBytes,
+                ),
+            )
+        } catch (_: CancellationException) {
+            AppleDownloadPreparationOutcomeDto(null, null, "cancelled", null)
+        } catch (_: Throwable) {
+            AppleDownloadPreparationOutcomeDto(null, null, "persistence", null)
         }
         try {
             completion(outcome)
@@ -267,14 +291,14 @@ public class AppleDownloadClient(
         wallClockMilliseconds: Long,
     ): AppleDownloadStatusOutcomeDto = try {
         requireReconciled()
-        requireNotNull(engine).recordFailure(
+        val retry = requireNotNull(engine).recordFailure(
             DownloadId(downloadIdentifier),
             DomainError.Transport.Unreachable,
             wallClockMilliseconds,
         )
-        AppleDownloadStatusOutcomeDto("interrupted", null)
+        AppleDownloadStatusOutcomeDto("interrupted", null, retry?.retryAtWallClock)
     } catch (_: Throwable) {
-        AppleDownloadStatusOutcomeDto("interrupted", "persistence")
+        AppleDownloadStatusOutcomeDto("interrupted", "persistence", null)
     }
 
     @OptIn(ExperimentalForeignApi::class)
@@ -284,14 +308,21 @@ public class AppleDownloadClient(
         wallClockMilliseconds: Long,
     ): AppleDownloadStatusOutcomeDto = try {
         requireReconciled()
-        requireNotNull(engine).recordResumeData(
-            DownloadId(downloadIdentifier),
+        val policy = requireNotNull(engine)
+        val downloadId = DownloadId(downloadIdentifier)
+        policy.recordResumeData(
+            downloadId,
             data.toDownloadByteArray(),
             wallClockMilliseconds,
         )
-        AppleDownloadStatusOutcomeDto("interrupted", null)
+        val retry = policy.recordFailure(
+            downloadId,
+            DomainError.Transport.Unreachable,
+            wallClockMilliseconds,
+        )
+        AppleDownloadStatusOutcomeDto("interrupted", null, retry?.retryAtWallClock)
     } catch (_: Throwable) {
-        AppleDownloadStatusOutcomeDto("interrupted", "persistence")
+        AppleDownloadStatusOutcomeDto("interrupted", "persistence", null)
     }
 
     @OptIn(ExperimentalForeignApi::class)
@@ -321,17 +352,17 @@ public class AppleDownloadClient(
     public fun rejectResumeData(downloadIdentifier: String): AppleDownloadStatusOutcomeDto = try {
         requireReconciled()
         requireNotNull(engine).rejectResumeData(DownloadId(downloadIdentifier))
-        AppleDownloadStatusOutcomeDto("queued", null)
+        AppleDownloadStatusOutcomeDto("queued", null, null)
     } catch (_: Throwable) {
-        AppleDownloadStatusOutcomeDto("interrupted", "persistence")
+        AppleDownloadStatusOutcomeDto("interrupted", "persistence", null)
     }
 
     public fun status(rawId: String): AppleDownloadStatusOutcomeDto = try {
         requireReconciled()
         val record = requireNotNull(engine).record(originalIdentity(rawId))
-        AppleDownloadStatusOutcomeDto(record?.state.appleState(), null)
+        AppleDownloadStatusOutcomeDto(record?.state.appleState(), null, record?.retryNotBeforeWallClock)
     } catch (_: Throwable) {
-        AppleDownloadStatusOutcomeDto("notDownloaded", "persistence")
+        AppleDownloadStatusOutcomeDto("notDownloaded", "persistence", null)
     }
 
     public fun fileTarget(downloadIdentifier: String): AppleDownloadFileTargetOutcomeDto = try {
@@ -398,6 +429,13 @@ public class AppleDownloadClient(
         AppleLocalPlaybackPlanOutcomeDto(null, "notDownloaded", "persistence")
     }
 
+    public fun removeAccountData(): AppleDownloadAccountRemovalOutcomeDto = try {
+        openPolicy().removeAccountData(account.providerInstanceId)
+        AppleDownloadAccountRemovalOutcomeDto(null)
+    } catch (_: Throwable) {
+        AppleDownloadAccountRemovalOutcomeDto("persistence")
+    }
+
     public fun close() {
         try {
             requestClient?.close()
@@ -456,6 +494,7 @@ public class AppleDownloadClient(
 
     private suspend fun prepare(
         scheduled: DownloadScheduleResult.Start,
+        failureWallClockMilliseconds: Long,
     ): AppleDownloadPreparationOutcomeDto {
         val row = scheduled.record
         val sessionId = PlaybackSessionId("download-session:${secureRandomBytes(16).toLowerHex()}")
@@ -473,15 +512,16 @@ public class AppleDownloadClient(
             ),
         )
         if (resolution is PlaybackResolutionResult.Failed) {
-            requireNotNull(engine).recordFailure(
+            val retry = requireNotNull(engine).recordFailure(
                 row.downloadId,
                 resolution.error,
-                row.updatedAtWallClock,
+                failureWallClockMilliseconds,
             )
             return AppleDownloadPreparationOutcomeDto(
                 null,
-                null,
+                "interrupted",
                 resolution.error.appleDownloadKind(),
+                retry?.retryAtWallClock,
             )
         }
         val plan = (resolution as PlaybackResolutionResult.Resolved).plan
@@ -499,8 +539,39 @@ public class AppleDownloadClient(
             ),
             terminalState = null,
             errorKind = null,
+            retryNotBeforeWallClock = null,
         )
     }
+
+    private suspend fun prepareScheduled(
+        policy: DownloadPolicyEngine,
+        context: DownloadSchedulingContext,
+    ): AppleDownloadPreparationOutcomeDto = when (val scheduled = policy.schedule(context)) {
+        is DownloadScheduleResult.Start -> prepare(scheduled, context.wallClockMilliseconds)
+        DownloadScheduleResult.NothingQueued -> AppleDownloadPreparationOutcomeDto(
+            null,
+            "queued",
+            null,
+            policy.nextRetryNotBefore(account.providerInstanceId),
+        )
+        DownloadScheduleResult.DiskBudgetExceeded ->
+            AppleDownloadPreparationOutcomeDto(null, null, "diskBudgetExceeded", null)
+        DownloadScheduleResult.TranscodeBudgetReservedForPlayback ->
+            AppleDownloadPreparationOutcomeDto(null, "queued", null, null)
+    }
+
+    private fun schedulingContext(
+        wallClockMilliseconds: Long,
+        diskBudgetBytes: Long,
+        unknownLengthReservationBytes: Long,
+    ): DownloadSchedulingContext = DownloadSchedulingContext(
+        serverId = account.providerInstanceId,
+        wallClockMilliseconds = wallClockMilliseconds,
+        diskBudgetBytes = diskBudgetBytes,
+        unknownLengthReservationBytes = unknownLengthReservationBytes,
+        activeTranscodes = ActiveTranscodeCounts(),
+        playbackSessionActive = false,
+    )
 
     private fun originalIdentity(rawId: String): DownloadIdentity = DownloadIdentity(
         account.providerInstanceId,

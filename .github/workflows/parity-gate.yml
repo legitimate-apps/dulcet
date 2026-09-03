@@ -36,6 +36,8 @@ jobs:
         run: python3 tools/test-design-rating-harness
       - name: Prove partial evidence defects are rejected
         run: python3 tools/test-parity-gate
+      - name: Prove macOS download review regressions stay closed
+        run: python3 tools/test-downloads-macos-review-regressions
       - name: Prove xcresult evidence rejects incomplete individual results
         run: python3 tools/test-swift-testing-junit
       - name: Prove the shared Linux conformance lifecycle is disposable and pin-derived
