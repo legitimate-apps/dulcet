@@ -41,6 +41,8 @@ public protocol DulcetDownloadControlling: AnyObject {
     func requestDownload(_ track: DulcetTrack)
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset?
+    /// Cancels account-owned tasks and deletes its downloaded files and durable rows.
+    func removeAccountData() async -> Bool
     func disconnect()
 }
 

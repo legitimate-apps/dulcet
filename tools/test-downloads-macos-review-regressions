@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Static backstops for PR #56's cross-layer adversarial-review fixes."""
+
+from pathlib import Path
+import json
+
+
+ROOT = Path(__file__).resolve().parent.parent
+controller = (ROOT / "apple/DulcetAppleShared/DulcetCoreDownloads.swift").read_text()
+app = (ROOT / "apple/DulcetMac/DulcetMacApp.swift").read_text()
+presentation = (
+    ROOT / "apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift"
+).read_text()
+features = json.loads((ROOT / "FEATURES.yml").read_text())
+
+assert "urlSessionDidFinishEvents(forBackgroundURLSession" in controller
+assert ".backgroundTask(.urlSession(" in app
+assert "scheduleNextDownload" in controller
+assert "removeAccountData" in presentation
+
+resume_branch_start = controller.index("if rejectedResumeData {")
+resume_branch_end = controller.index("} else if let resumeData", resume_branch_start)
+resume_branch = controller[resume_branch_start:resume_branch_end]
+assert "rejectResumeData" in resume_branch
+assert "recordFailure" not in resume_branch
+assert "scheduleNextDownload()" in resume_branch
+
+downloads = next(feature for feature in features["features"] if feature["id"] == "downloads.offline")
+macos = downloads["platforms"]["macos"]
+assert macos["status"] == "partial"
+reason = macos.get("reason", "")
+assert "relaunch" in reason.lower()
+assert "evidenc" in reason.lower()
+
+print("macOS downloads adversarial-review regression contracts valid")
