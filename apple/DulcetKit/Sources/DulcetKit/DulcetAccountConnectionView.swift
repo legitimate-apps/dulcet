@@ -22,13 +22,18 @@ struct DulcetAccountConnectionView: View {
 #endif
     @State private var showingSignOutConfirmation = false
 
+    // Deterministic presentation captures opt out because their artifact contract represents a
+    // resting surface, while the shipping view keeps automatic keyboard focus enabled by default.
+    private let allowsProgrammaticFocus: Bool
     private let focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)?
 
     init(
         store: DulcetPresentationStore,
+        allowsProgrammaticFocus: Bool = true,
         focusDidChange: (@MainActor (DulcetAccountConnectionFocus?) -> Void)? = nil
     ) {
         self.store = store
+        self.allowsProgrammaticFocus = allowsProgrammaticFocus
         self.focusDidChange = focusDidChange
     }
 
@@ -69,7 +74,7 @@ struct DulcetAccountConnectionView: View {
             }
         }
         .onAppear {
-            if focusedControl == nil {
+            if allowsProgrammaticFocus, focusedControl == nil {
                 let initialFocus = preferredFocus(for: store.snapshot.accountConnection)
                 focusedControl = initialFocus
                 // `onChange` observes later focus-engine movement but does not replay the
@@ -80,6 +85,7 @@ struct DulcetAccountConnectionView: View {
             }
         }
         .onChange(of: store.snapshot.accountConnection) { previous, current in
+            guard allowsProgrammaticFocus else { return }
             switch (previous, current) {
             case (_, .connecting):
                 // The primary action keeps both its view and focus identity while its behavior

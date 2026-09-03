@@ -299,7 +299,8 @@ def verify_set(directory: Path, expected: set[str]) -> None:
             "per-render-comparisons-until-first-identical-consecutive-frame-pair"
         ),
         "focusStatePolicy": (
-            "rendered-hierarchy-no-focused-control-window-first-responder-asserted-every-bitmap-draw"
+            "capture-fixture-programmatic-focus-disabled-window-first-responder-"
+            "asserted-every-bitmap-draw"
         ),
         "bitmapPixelsPerPoint": CAPTURE_SCALE,
         "fontSmoothingPolicy": "disabled-explicit-bitmap-context",

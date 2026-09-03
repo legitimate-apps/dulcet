@@ -3302,6 +3302,26 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 89 (2026-09-02)** — deterministic captures stopped requesting account-control focus.
+
+1. Hosted CI observed the revision-88 assertion reject a non-window first responder immediately
+   before a bitmap draw in one of two otherwise identical capture processes. Local
+   source-correlated tracing of the same binary identified the account surface's initial
+   `@FocusState` assignment as the only observed non-`nil` acquisition path: the `serverAddress`
+   request was immediately followed by SwiftUI `AppKitTextField` and
+   `_SystemTextFieldFieldEditor` first-responder requests. No responder request preceded the
+   `@FocusState` assignment, and the window was made key before host attachment rather than after
+   focus pinning. The local run did not reproduce CI's post-pin timing; attributing that timing to
+   delayed completion of this observed path remains an inference until hosted CI runs this revision.
+2. `DulcetCaptureView` now disables programmatic account-control focus at the fixture surface. The
+   shipping composition retains its automatic initial and status-transition focus behavior. The
+   harness still clears focus once after host attachment and asserts the window remains first
+   responder around every bitmap draw; it does not clear focus inside the settle loop.
+3. With fixture programmatic focus disabled, a complete all-state/all-appearance preflight plus a
+   targeted idle account capture produced no non-`nil` first-responder request. The deliberately
+   wrong native responder remains a process-level negative control, and assertion failures now name
+   the responder class, fixture state, and appearance.
+
 **Revision 88 (2026-09-02)** — deterministic captures gained an asserted resting focus state.
 
 1. A 30-pair soak observed a second divergence class distinct from the unresolved three-point
