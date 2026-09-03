@@ -15,7 +15,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-internal data class StoredAccount(
+public data class StoredAccount(
     val id: String,
     val serverName: String,
     val serverUrl: String,
@@ -26,7 +26,7 @@ internal data class StoredAccount(
     override fun toString(): String = "StoredAccount(id=$id, <redacted>)"
 }
 
-internal interface AccountCredentialStore {
+public interface AccountCredentialStore {
     fun load(): StoredAccount?
     fun save(
         serverName: String,
@@ -38,7 +38,7 @@ internal interface AccountCredentialStore {
     fun delete()
 }
 
-internal class CredentialStoreException(
+public class CredentialStoreException(
     val reason: Reason,
     cause: Throwable? = null,
 ) : Exception(reason.name, cause) {
@@ -56,13 +56,13 @@ internal class CredentialStoreException(
  * that the production record store fails closed. There is deliberately no plaintext implementation
  * and no recovery branch that can persist the encoded account without this boundary succeeding.
  */
-internal interface AccountCredentialCipher {
+public interface AccountCredentialCipher {
     fun encrypt(id: String, plaintext: ByteArray): ByteArray
     fun decrypt(id: String, payload: ByteArray): ByteArray
     fun delete(id: String)
 }
 
-internal class AndroidAccountCredentialStore internal constructor(
+public class AndroidAccountCredentialStore public constructor(
     context: Context,
     private val cipher: AccountCredentialCipher,
 ) : AccountCredentialStore {
@@ -160,13 +160,13 @@ internal class AndroidAccountCredentialStore internal constructor(
         }
     }
 
-    internal fun hasActiveAccountPointer(): Boolean = preferences.contains(ACTIVE_ACCOUNT_KEY)
+    public fun hasActiveAccountPointer(): Boolean = preferences.contains(ACTIVE_ACCOUNT_KEY)
 
-    internal fun storedEntryCount(): Int = preferences.all.size
+    public fun storedEntryCount(): Int = preferences.all.size
 
     private fun payloadKey(id: String): String = "account.$id"
 
-    internal companion object {
+    public companion object {
         const val PREFERENCES_NAME = "dulcet.account"
         private const val ACTIVE_ACCOUNT_KEY = "activeAccountId"
     }
