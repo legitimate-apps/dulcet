@@ -64,6 +64,10 @@ jobs:
         run: python3 tools/test-darwin-fresh-pour-gate
       - name: Prove Darwin bottle integrity gate rejects a tampered blob
         run: python3 tools/test-darwin-bottle-integrity-gate
+      - name: Prove every Darwin bottle pin is validated before any download
+        run: python3 tools/test-darwin-pin-prevalidation-gate
+      - name: Prove missing embedded formulae fail closed without formula-index access
+        run: python3 tools/test-darwin-embedded-formula-gate
       - name: Prove Darwin live-shape drift and outage remain advisory
         run: python3 tools/test-darwin-live-shape-advisory
       - name: Prove app-hosted execution guard rejects a missing control

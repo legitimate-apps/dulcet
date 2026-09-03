@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+
+"""Prove embedded-formula evaluation fails closed without formula-index access."""
+
+from importlib.machinery import SourceFileLoader
+import io
+from pathlib import Path
+import re
+import sys
+import tarfile
+import tempfile
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg_embedded_formula_gate",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+def add_regular_file(archive: tarfile.TarFile, name: str, payload: bytes) -> None:
+    member = tarfile.TarInfo(name)
+    member.mode = 0o644
+    member.size = len(payload)
+    archive.addfile(member, io.BytesIO(payload))
+
+
+def main() -> None:
+    entry = {
+        "formula": "negative-control",
+        "version": "1.0",
+        "revision": 0,
+        "version_scheme": 0,
+        "dependencies": [],
+        "bottle_tag": "arm64_tahoe",
+        "bottle_rebuild": 0,
+        "url": f"https://ghcr.io/v2/homebrew/core/negative-control/blobs/sha256:{'1' * 64}",
+        "sha256": "1" * 64,
+    }
+    formula = b"""class NegativeControl < Formula
+  desc "Dulcet embedded-formula gate fixture"
+  homepage "https://example.invalid/negative-control"
+  url "https://example.invalid/negative-control-1.0.tar.gz"
+  version "1.0"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+end
+"""
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        valid_bottle = root / "negative-control--1.0.arm64_tahoe.bottle.tar.gz"
+        with tarfile.open(valid_bottle, "w:gz") as archive:
+            add_regular_file(
+                archive,
+                "negative-control/1.0/.brew/negative-control.rb",
+                formula,
+            )
+
+        observed_shape, valid_formula_index_accesses = installer.bottle_formula_shape(
+            valid_bottle, entry
+        )
+        expected_shape = {
+            "formula": "negative-control",
+            "version": "1.0",
+            "revision": 0,
+            "version_scheme": 0,
+            "dependencies": [],
+        }
+        if observed_shape != expected_shape or valid_formula_index_accesses != 0:
+            raise SystemExit(
+                "valid embedded formula did not use the fail-closed index-free path: "
+                f"shape={observed_shape} formula_index_accesses={valid_formula_index_accesses}"
+            )
+
+        missing_bottle = (
+            root / "negative-control--missing-formula.arm64_tahoe.bottle.tar.gz"
+        )
+        with tarfile.open(missing_bottle, "w:gz") as archive:
+            add_regular_file(
+                archive,
+                "negative-control/1.0/INSTALL_RECEIPT.json",
+                b"{}\n",
+            )
+
+        observed_detail = ""
+        missing_formula_rejected = False
+        try:
+            installer.bottle_formula_shape(missing_bottle, entry)
+        except SystemExit as error:
+            missing_formula_rejected = True
+            observed_detail = str(error)
+        else:
+            raise SystemExit("bottle without an embedded formula was accepted")
+
+        if (
+            "unusable embedded formula in pinned bottle negative-control"
+            not in observed_detail
+        ):
+            raise SystemExit(
+                "missing embedded formula was rejected for the wrong reason: "
+                f"detail={observed_detail!r}"
+            )
+        if "BottleFormulaUnavailableError" not in observed_detail:
+            raise SystemExit(
+                f"missing embedded formula diagnostic lost its cause: {observed_detail}"
+            )
+        match = re.search(r"formula_index_accesses=(\d+)", observed_detail)
+        if match is None:
+            raise SystemExit(
+                "missing embedded formula did not report its formula-index accesses: "
+                f"detail={observed_detail!r}"
+            )
+        missing_formula_index_accesses = int(match.group(1))
+        if missing_formula_index_accesses != 0:
+            raise SystemExit(
+                "missing embedded formula consulted the formula index: "
+                f"formula_index_accesses={missing_formula_index_accesses}"
+            )
+
+        print(
+            "NEGATIVE CONTROL PASS darwin_embedded_formula "
+            f"valid_formula_index_accesses={valid_formula_index_accesses} "
+            f"missing_formula_rejected={str(missing_formula_rejected).lower()} "
+            f"missing_formula_index_accesses={missing_formula_index_accesses} "
+            f"detail={observed_detail}"
+        )
+
+
+if __name__ == "__main__":
+    main()

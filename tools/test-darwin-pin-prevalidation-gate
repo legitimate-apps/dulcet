@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+
+"""Prove a late pin mismatch stops main before any closure download begins."""
+
+from importlib.machinery import SourceFileLoader
+import json
+from pathlib import Path
+import sys
+import tempfile
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg_pin_prevalidation_gate",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+class NetworkObserved(Exception):
+    """Stop immediately if main reaches any network entry point."""
+
+
+def entry(
+    name: str, digest: str, *, url_digest: str | None = None, dependencies=None
+) -> dict:
+    url_digest = url_digest or digest
+    return {
+        "formula": name,
+        "version": "1.0",
+        "revision": 0,
+        "version_scheme": 0,
+        "dependencies": dependencies or [],
+        "bottle_tag": "arm64_tahoe",
+        "bottle_rebuild": 0,
+        "url": f"https://ghcr.io/v2/homebrew/core/{name}/blobs/sha256:{url_digest}",
+        "sha256": digest,
+    }
+
+
+def main() -> None:
+    first = entry("valid-first", "1" * 64)
+    late = entry(
+        "late-mismatch",
+        "2" * 64,
+        url_digest="3" * 64,
+        dependencies=[first["formula"]],
+    )
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        pins_path = root / "pins.json"
+        pins_path.write_text(
+            json.dumps(
+                {
+                    "ffmpeg": {
+                        "darwin": {
+                            "formula": late["formula"],
+                            "version": late["version"],
+                            "path": "/stub/ffmpeg",
+                            "required_encoders": [],
+                            "closure": [first, late],
+                        }
+                    }
+                }
+            )
+        )
+
+        network_calls: list[str] = []
+        originals = {
+            "run": installer.run,
+            "ghcr_pull_token": installer.ghcr_pull_token,
+            "urlopen": installer.urllib.request.urlopen,
+            "platform_system": installer.platform.system,
+            "platform_machine": installer.platform.machine,
+        }
+
+        def stub_run(arguments: list[str], **_kwargs) -> str:
+            if arguments == ["brew", "--cache"]:
+                return str(root / "cache")
+            raise AssertionError(
+                f"unexpected command before pin rejection: {arguments}"
+            )
+
+        def network_observed(label: str):
+            def observe(*_args, **_kwargs):
+                network_calls.append(label)
+                raise NetworkObserved(label)
+
+            return observe
+
+        installer.run = stub_run
+        installer.ghcr_pull_token = network_observed("ghcr-token")
+        installer.urllib.request.urlopen = network_observed("urlopen")
+        installer.platform.system = lambda: "Darwin"
+        installer.platform.machine = lambda: "arm64"
+        observed_detail = ""
+        try:
+            try:
+                installer.main(pins_path)
+            except SystemExit as error:
+                observed_detail = str(error)
+            except NetworkObserved as error:
+                observed_detail = f"network reached before late mismatch: {error}"
+            else:
+                raise SystemExit("late pin mismatch was accepted")
+        finally:
+            installer.run = originals["run"]
+            installer.ghcr_pull_token = originals["ghcr_pull_token"]
+            installer.urllib.request.urlopen = originals["urlopen"]
+            installer.platform.system = originals["platform_system"]
+            installer.platform.machine = originals["platform_machine"]
+
+        expected_detail = (
+            f"bottle digest pin disagreement for {late['formula']}: "
+            f"url={late['url'].rsplit(':', 1)[1]} sha256={late['sha256']}"
+        )
+        if observed_detail != expected_detail:
+            raise SystemExit(
+                "late pin mismatch was not rejected for the expected reason: "
+                f"expected={expected_detail!r} observed={observed_detail!r}"
+            )
+        if network_calls:
+            raise SystemExit(
+                f"late pin mismatch followed network calls: {network_calls}"
+            )
+
+        print(
+            "NEGATIVE CONTROL PASS darwin_pin_prevalidation "
+            f"closure_entries={len([first, late])} network_calls={len(network_calls)} "
+            f"detail={observed_detail}"
+        )
+
+
+if __name__ == "__main__":
+    main()

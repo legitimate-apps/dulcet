@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
-"""Prove Homebrew live-shape drift and API failure cannot gate the pinned install."""
+"""Drive main and prove live drift/outage cannot block pinned install preparation."""
 
 import contextlib
+import hashlib
 from importlib.machinery import SourceFileLoader
 import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 from urllib.error import URLError
 
 
@@ -26,9 +28,13 @@ class JsonResponse(io.StringIO):
         self.close()
 
 
-def main() -> None:
-    digest = "1" * 64
-    expected = {
+class InstallObserved(Exception):
+    """Stop the stubbed installer once main attempts the pinned local install."""
+
+
+def pinned_entry(payload: bytes) -> dict:
+    digest = hashlib.sha256(payload).hexdigest()
+    return {
         "formula": "negative-control",
         "version": "1.0",
         "revision": 0,
@@ -36,11 +42,16 @@ def main() -> None:
         "dependencies": [],
         "bottle_tag": "arm64_tahoe",
         "bottle_rebuild": 0,
-        "url": f"https://ghcr.io/v2/homebrew/core/negative-control/blobs/sha256:{digest}",
+        "url": (
+            f"https://ghcr.io/v2/homebrew/core/negative-control/blobs/sha256:{digest}"
+        ),
         "sha256": digest,
     }
-    live = {
-        "name": "negative-control",
+
+
+def live_formula(entry: dict) -> dict:
+    return {
+        "name": entry["formula"],
         "versions": {"stable": "2.0"},
         "revision": 0,
         "version_scheme": 0,
@@ -49,53 +60,146 @@ def main() -> None:
             "stable": {
                 "rebuild": 0,
                 "files": {
-                    "arm64_tahoe": {
-                        "url": expected["url"],
-                        "sha256": digest,
+                    entry["bottle_tag"]: {
+                        "url": entry["url"],
+                        "sha256": entry["sha256"],
                     }
                 },
             }
         },
     }
 
-    original_urlopen = installer.urllib.request.urlopen
-    try:
-        installer.urllib.request.urlopen = lambda *_args, **_kwargs: JsonResponse(
-            json.dumps(live)
+
+def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
+    payload = b"known pinned advisory-control bottle"
+    entry = pinned_entry(payload)
+    bottle = root / f"{mode}-{installer.bottle_cache_filename(entry)}"
+    bottle.write_bytes(payload)
+    pins_path = root / f"{mode}-pins.json"
+    pins_path.write_text(
+        json.dumps(
+            {
+                "ffmpeg": {
+                    "darwin": {
+                        "formula": entry["formula"],
+                        "version": entry["version"],
+                        "path": "/stub/ffmpeg",
+                        "required_encoders": [],
+                        "closure": [entry],
+                    }
+                }
+            }
         )
-        drift_stderr = io.StringIO()
-        with contextlib.redirect_stderr(drift_stderr):
-            drift_status, observed = installer.advise_live_shape([expected])
-        if drift_status != "refresh-available" or len(observed) != 1:
-            raise SystemExit(
-                "live-shape drift did not remain advisory: "
-                f"status={drift_status} observed={observed}"
-            )
-        if "advisory_only=true installation_continues=true" not in drift_stderr.getvalue():
-            raise SystemExit("live-shape drift omitted its non-fatal diagnostic")
+    )
 
-        def fail_api(*_args, **_kwargs):
-            raise URLError("negative-control outage")
+    events: list[str] = []
+    original_urlopen = installer.urllib.request.urlopen
+    originals = {
+        "run": installer.run,
+        "fetch_pinned_bottle": installer.fetch_pinned_bottle,
+        "assert_bottle_formula_shape": installer.assert_bottle_formula_shape,
+        "advise_live_shape": installer.advise_live_shape,
+        "installed_formula_versions": installer.installed_formula_versions,
+        "observe_keg": installer.observe_keg,
+        "platform_system": installer.platform.system,
+        "platform_machine": installer.platform.machine,
+    }
 
-        installer.urllib.request.urlopen = fail_api
-        outage_stderr = io.StringIO()
-        with contextlib.redirect_stderr(outage_stderr):
-            outage_status, outage_observed = installer.advise_live_shape([expected])
-        if outage_status != "unavailable" or outage_observed:
+    def stub_run(arguments: list[str], **_kwargs) -> str:
+        if arguments == ["brew", "--cache"]:
+            return str(root / "cache")
+        if arguments == ["brew", "--cellar"]:
+            return str(root / "cellar")
+        if arguments == ["brew", "--prefix"]:
+            return str(root / "prefix")
+        if arguments[:2] == ["brew", "install"]:
+            events.append("brew-install")
+            raise InstallObserved
+        raise AssertionError(
+            f"unexpected command before install observation: {arguments}"
+        )
+
+    def stub_urlopen(*_args, **_kwargs):
+        events.append(f"live-api-{mode}")
+        if mode == "drift":
+            return JsonResponse(json.dumps(live_formula(entry)))
+        raise URLError("negative-control outage")
+
+    observed_statuses: list[str] = []
+
+    def recorded_advisory(closure: list[dict]) -> tuple[str, list[dict]]:
+        status, observed = originals["advise_live_shape"](closure)
+        observed_statuses.append(status)
+        events.append(f"advisory-status-{status}")
+        return status, observed
+
+    installer.run = stub_run
+    installer.fetch_pinned_bottle = lambda _entry, _cache: (
+        bottle,
+        entry["sha256"],
+        True,
+    )
+    installer.assert_bottle_formula_shape = lambda _path, _entry: 0
+    installer.advise_live_shape = recorded_advisory
+    installer.installed_formula_versions = lambda _name: []
+    installer.observe_keg = lambda _path: None
+    installer.platform.system = lambda: "Darwin"
+    installer.platform.machine = lambda: "arm64"
+    installer.urllib.request.urlopen = stub_urlopen
+    stderr = io.StringIO()
+    stdout = io.StringIO()
+    try:
+        try:
+            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+                installer.main(pins_path)
+        except InstallObserved:
+            pass
+        except SystemExit as error:
             raise SystemExit(
-                "live-shape API outage did not remain advisory: "
-                f"status={outage_status} observed={outage_observed}"
-            )
-        if "installation_uses_live_shape=false" not in outage_stderr.getvalue():
-            raise SystemExit("live-shape API outage omitted its non-fatal diagnostic")
+                f"live-shape {mode} blocked main before pinned install preparation: {error}"
+            ) from error
+        else:
+            raise SystemExit(f"live-shape {mode} main run never reached brew install")
     finally:
+        installer.run = originals["run"]
+        installer.fetch_pinned_bottle = originals["fetch_pinned_bottle"]
+        installer.assert_bottle_formula_shape = originals["assert_bottle_formula_shape"]
+        installer.advise_live_shape = originals["advise_live_shape"]
+        installer.installed_formula_versions = originals["installed_formula_versions"]
+        installer.observe_keg = originals["observe_keg"]
+        installer.platform.system = originals["platform_system"]
+        installer.platform.machine = originals["platform_machine"]
         installer.urllib.request.urlopen = original_urlopen
 
-    print(
-        "NEGATIVE CONTROL PASS darwin_live_shape "
-        "upstream_drift_non_fatal=true api_outage_non_fatal=true "
-        "installation_uses_live_shape=false"
-    )
+    expected_status = "refresh-available" if mode == "drift" else "unavailable"
+    diagnostic = stderr.getvalue()
+    if observed_statuses != [expected_status]:
+        raise SystemExit(
+            f"live-shape {mode} returned the wrong status through main: {observed_statuses}"
+        )
+    if f"advisory_status={expected_status}" not in diagnostic:
+        raise SystemExit(
+            f"live-shape {mode} omitted its advisory status: stderr={diagnostic!r}"
+        )
+    if events.count(f"live-api-{mode}") != 1 or events.count("brew-install") != 1:
+        raise SystemExit(f"live-shape {mode} event counts are wrong: {events}")
+    return events, observed_statuses[0]
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        drift_events, drift_status = drive_main(root, mode="drift")
+        outage_events, outage_status = drive_main(root, mode="outage")
+        print(
+            "NEGATIVE CONTROL PASS darwin_live_shape "
+            f"drift_status={drift_status} "
+            f"drift_install_attempts={drift_events.count('brew-install')} "
+            f"outage_status={outage_status} "
+            f"outage_install_attempts={outage_events.count('brew-install')} "
+            f"drift_events={','.join(drift_events)} "
+            f"outage_events={','.join(outage_events)}"
+        )
 
 
 if __name__ == "__main__":
