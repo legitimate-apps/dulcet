@@ -147,7 +147,11 @@ struct DulcetAccountConnectionView: View {
         tvConnectionForm
 #else
         GroupBox(DulcetStrings.accountDetails) {
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: DulcetSpacing.md, verticalSpacing: DulcetSpacing.sm) {
+            Grid(
+                alignment: .leadingFirstTextBaseline,
+                horizontalSpacing: DulcetSpacing.md,
+                verticalSpacing: DulcetSpacing.sm
+            ) {
                 GridRow {
                     Text(DulcetStrings.serverAddress)
                     TextField(
@@ -196,6 +200,11 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .allowLocalHTTP)
                 }
             }
+            // The surrounding ScrollView owns vertical overflow. Preserve the grid's ideal vertical
+            // size so an undersized proposal scrolls the form instead of distributing a deficit into
+            // an arbitrary equal-priority row. This deliberately does not name a point height: each
+            // field's native intrinsic size remains the source of truth at every content size.
+            .fixedSize(horizontal: false, vertical: true)
             .disabled(isConnecting)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, DulcetSpacing.xxs)
