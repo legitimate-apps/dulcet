@@ -55,4 +55,9 @@
     <string name="error_capability_recovery">Update the server or use a compatible OpenSubsonic endpoint.</string>
     <string name="error_persistence_title">The account could not be saved</string>
     <string name="error_persistence_body">Dulcet left the account disconnected because Android Keystore persistence failed.</string>
+    <string name="search_title">Search</string>
+    <string name="search_hint">Artists, albums, and tracks</string>
+    <string name="search_loading">Searching…</string>
+    <string name="search_empty">No matching music</string>
+    <string name="search_failed">Search could not be completed.</string>
 </resources>

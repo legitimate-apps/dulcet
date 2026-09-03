@@ -24,32 +24,52 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
+import com.legitimateapps.dulcet.search.SearchHostDependencies
+import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AccountConnectViewModel by viewModels()
+    private val searchDependencies: SearchHostDependencies by lazy {
+        (application as? SearchHostDependencyOwner)?.searchHostDependencies
+            ?: ProductionSearchHostDependencies
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             DulcetTheme {
-                AccountConnectScreen(viewModel)
+                AccountConnectScreen(viewModel, searchDependencies)
             }
         }
     }
 }
 
 @Composable
-internal fun AccountConnectScreen(viewModel: AccountConnectViewModel) {
+internal fun AccountConnectScreen(
+    viewModel: AccountConnectViewModel,
+    searchDependencies: SearchHostDependencies,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val storedAccount = remember(state.status) {
+        runCatching { searchDependencies.loadAccount(context) }.getOrNull()
+    }
+    if (storedAccount != null) {
+        MobileSearchRoute(storedAccount, searchDependencies)
+        return
+    }
     AccountConnectContent(
         state = state,
         onServerUrlChanged = viewModel::updateServerUrl,
