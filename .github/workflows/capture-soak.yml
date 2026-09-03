@@ -20,7 +20,18 @@ jobs:
   capture-soak:
     name: capture-soak (${{ inputs.pair_count }} independent pairs)
     runs-on: macos-latest
-    timeout-minutes: 60
+    # MEASURED 2026-09-03: a 30-pair soak on pre-instrumentation `main` finished in ~40 minutes.
+    # The same 30 pairs after the layout diagnostics landed reached 58.7 minutes with no artifact
+    # written, and the job was lost to this timeout -- the per-control frame and font-metric
+    # collection runs for every one of ~70 references in each of 60 processes, and that cost is
+    # real. A soak that cannot finish produces nothing, and the failure is silent: `if: always()`
+    # cannot upload from a job the runner has already killed.
+    #
+    # Raised rather than trimming the default pair count, because the pair count is the statistical
+    # power: at the measured 20% per-pair divergence rate, 30 pairs give P(zero | unfixed) = 0.12%
+    # while 15 give 3.5%. Losing that resolution to fit a budget would defeat the instrument.
+    # This workflow is `workflow_dispatch` only and never competes with `apple-ci` for a slot.
+    timeout-minutes: 150
     env:
       PAIR_COUNT: ${{ inputs.pair_count }}
       TZ: UTC
