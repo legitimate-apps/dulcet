@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Negative control proving a tampered cached Darwin bottle is rejected before use."""
+"""Mutation-sensitive control for the final Darwin bottle hash/install boundary."""
 
 import hashlib
 from importlib.machinery import SourceFileLoader
@@ -17,10 +17,13 @@ installer = SourceFileLoader(
 ).load_module()
 
 
-def main() -> None:
-    original = b"known pinned bottle bytes"
-    expected_sha256 = hashlib.sha256(original).hexdigest()
-    entry = {
+class InstallObserved(Exception):
+    """Stop the stubbed installer immediately after observing its install attempt."""
+
+
+def pinned_entry(payload: bytes) -> dict:
+    digest = hashlib.sha256(payload).hexdigest()
+    return {
         "formula": "negative-control",
         "version": "1.0",
         "revision": 0,
@@ -29,76 +32,269 @@ def main() -> None:
         "bottle_tag": "arm64_tahoe",
         "bottle_rebuild": 0,
         "url": (
-            "https://ghcr.io/v2/homebrew/core/negative-control/blobs/"
-            f"sha256:{expected_sha256}"
+            f"https://ghcr.io/v2/homebrew/core/negative-control/blobs/sha256:{digest}"
         ),
-        "sha256": expected_sha256,
+        "sha256": digest,
     }
 
-    with tempfile.TemporaryDirectory() as temporary_directory:
-        cache_directory = Path(temporary_directory)
-        bottle = cache_directory / installer.bottle_cache_filename(entry)
 
-        def reject_network_attempt(_: str) -> str:
-            raise AssertionError("cache hit attempted GHCR authentication")
-
-        installer.ghcr_pull_token = reject_network_attempt
-        bottle.write_bytes(original)
-        cached_path, observed_sha256, cache_hit = installer.fetch_pinned_bottle(
-            entry, cache_directory
+def write_pins(path: Path, entry: dict) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "ffmpeg": {
+                    "darwin": {
+                        "formula": entry["formula"],
+                        "version": entry["version"],
+                        "path": "/stub/ffmpeg",
+                        "required_encoders": [],
+                        "closure": [entry],
+                    }
+                }
+            }
         )
-        if cached_path != bottle or observed_sha256 != expected_sha256 or cache_hit is not True:
+    )
+
+
+def exercise_cache_and_receipt_helpers(root: Path) -> dict[str, int | bool]:
+    payload = b"known pinned cache-control bottle"
+    entry = pinned_entry(payload)
+    cache = root / "helper-cache"
+    cache.mkdir()
+    bottle = cache / installer.bottle_cache_filename(entry)
+    bottle.write_bytes(payload)
+    network_calls = 0
+    original_ghcr_pull_token = installer.ghcr_pull_token
+
+    def observe_network(_repository: str) -> str:
+        nonlocal network_calls
+        network_calls += 1
+        raise AssertionError("cached bottle attempted GHCR authentication")
+
+    installer.ghcr_pull_token = observe_network
+    try:
+        cached_path, observed_sha256, cache_hit = installer.fetch_pinned_bottle(
+            entry, cache
+        )
+        authentic_accepted = (
+            cached_path == bottle
+            and observed_sha256 == entry["sha256"]
+            and cache_hit is True
+        )
+        if not authentic_accepted:
             raise SystemExit(
                 "authentic cached bottle was not accepted as an offline cache hit: "
                 f"path={cached_path} sha256={observed_sha256} cache_hit={cache_hit}"
             )
 
-        bottle.write_bytes(original + b"\ntampered")
-        observed_tampered_sha256 = installer.file_sha256(bottle)
+        bottle.write_bytes(payload + b"\ntampered cache entry")
         expected_detail = (
-            "pinned bottle checksum mismatch for negative-control: "
-            f"expected {expected_sha256}, observed {observed_tampered_sha256}"
+            f"pinned bottle checksum mismatch for {entry['formula']}: "
+            f"expected {entry['sha256']}, observed {installer.file_sha256(bottle)}"
         )
+        tampered_rejected = False
         try:
-            installer.fetch_pinned_bottle(entry, cache_directory)
+            installer.fetch_pinned_bottle(entry, cache)
         except SystemExit as error:
-            observed_detail = str(error)
-            if observed_detail != expected_detail:
+            if str(error) != expected_detail:
                 raise SystemExit(
-                    "bottle integrity negative control rejected for the wrong reason: "
-                    f"expected_detail={expected_detail!r} observed_detail={observed_detail!r}"
+                    "tampered cache entry was rejected for the wrong reason: "
+                    f"expected={expected_detail!r} observed={str(error)!r}"
                 ) from error
+            tampered_rejected = True
         else:
-            raise SystemExit("bottle integrity negative control failed open")
+            raise SystemExit("tampered cache entry was accepted")
+    finally:
+        installer.ghcr_pull_token = original_ghcr_pull_token
 
-        receipt_path = cache_directory / "INSTALL_RECEIPT.json"
-        receipt_path.write_text(
-            json.dumps(
-                {
-                    "source": {"versions": {"stable": "1.0", "version_scheme": 0}},
-                    "built_as_bottle": True,
-                    "poured_from_bottle": True,
-                    "runtime_dependencies": [{"full_name": "live-drift"}],
-                }
+    receipt_path = root / "INSTALL_RECEIPT.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "source": {"versions": {"stable": "1.0", "version_scheme": 0}},
+                "built_as_bottle": True,
+                "poured_from_bottle": True,
+                "runtime_dependencies": [{"full_name": "live-drift"}],
+            }
+        )
+    )
+    normalized = installer.normalize_runtime_receipt(
+        receipt_path, entry, {entry["formula"]: entry}
+    )
+    installer.assert_receipt_shape(
+        normalized,
+        entry,
+        {entry["formula"]: entry},
+        context="negative-control installed keg",
+        require_poured=True,
+    )
+    receipt_drift_replaced = normalized["runtime_dependencies"] == []
+    if not receipt_drift_replaced:
+        raise SystemExit(f"live receipt drift survived normalization: {normalized}")
+
+    return {
+        "authentic_accepted": authentic_accepted,
+        "tampered_rejected": tampered_rejected,
+        "network_calls": network_calls,
+        "receipt_drift_replaced": receipt_drift_replaced,
+    }
+
+
+def drive_main(root: Path, *, tamper_after_shape: bool) -> tuple[list[str], str]:
+    payload = b"known pinned bottle bytes"
+    entry = pinned_entry(payload)
+    bottle = root / installer.bottle_cache_filename(entry)
+    bottle.write_bytes(payload)
+    pins_path = root / (
+        "tampered-pins.json" if tamper_after_shape else "authentic-pins.json"
+    )
+    write_pins(pins_path, entry)
+
+    events: list[str] = []
+    observed_outcome = ""
+    original_verify = installer.verify_bottle_checksum
+    originals = {
+        "run": installer.run,
+        "fetch_pinned_bottle": installer.fetch_pinned_bottle,
+        "assert_bottle_formula_shape": installer.assert_bottle_formula_shape,
+        "advise_live_shape": installer.advise_live_shape,
+        "installed_formula_versions": installer.installed_formula_versions,
+        "observe_keg": installer.observe_keg,
+        "verify_bottle_checksum": installer.verify_bottle_checksum,
+        "platform_system": installer.platform.system,
+        "platform_machine": installer.platform.machine,
+    }
+
+    def stub_run(arguments: list[str], **_kwargs) -> str:
+        if arguments == ["brew", "--cache"]:
+            events.append("brew-cache")
+            return str(root / "cache")
+        if arguments == ["brew", "--cellar"]:
+            events.append("brew-cellar")
+            return str(root / "cellar")
+        if arguments == ["brew", "--prefix"]:
+            events.append("brew-prefix")
+            return str(root / "prefix")
+        if arguments[:2] == ["brew", "install"]:
+            events.append("brew-install")
+            raise InstallObserved
+        raise AssertionError(
+            f"unexpected command before install observation: {arguments}"
+        )
+
+    def stub_fetch(_entry: dict, _cache: Path) -> tuple[Path, str, bool]:
+        events.append("fetch")
+        return bottle, entry["sha256"], True
+
+    def stub_shape(_path: Path, _entry: dict) -> int:
+        events.append("embedded-formula")
+        if tamper_after_shape:
+            bottle.write_bytes(payload + b"\ntampered after embedded-formula check")
+            events.append("tamper")
+        return 0
+
+    def recorded_verify(path: Path, expected: dict) -> str:
+        events.append("final-hash-start")
+        observed = original_verify(path, expected)
+        events.append("final-hash-pass")
+        return observed
+
+    def stub_advisory(_closure: list[dict]) -> tuple[str, list[dict]]:
+        events.append("live-shape-advisory")
+        return "unavailable", []
+
+    def stub_installed_versions(_name: str) -> list[str]:
+        events.append("installed-versions")
+        return []
+
+    def stub_observe_keg(_path: Path) -> None:
+        events.append("observe-keg")
+        return None
+
+    try:
+        installer.run = stub_run
+        installer.fetch_pinned_bottle = stub_fetch
+        installer.assert_bottle_formula_shape = stub_shape
+        installer.advise_live_shape = stub_advisory
+        installer.installed_formula_versions = stub_installed_versions
+        installer.observe_keg = stub_observe_keg
+        installer.verify_bottle_checksum = recorded_verify
+        installer.platform.system = lambda: "Darwin"
+        installer.platform.machine = lambda: "arm64"
+
+        try:
+            installer.main(pins_path)
+        except InstallObserved:
+            observed_outcome = "install-observed"
+        except SystemExit as error:
+            observed_outcome = str(error)
+        else:
+            raise SystemExit(
+                "stubbed main returned before reaching or rejecting brew install"
             )
-        )
-        normalized = installer.normalize_runtime_receipt(
-            receipt_path, entry, {entry["formula"]: entry}
-        )
-        installer.assert_receipt_shape(
-            normalized,
-            entry,
-            {entry["formula"]: entry},
-            context="negative-control installed keg",
-            require_poured=True,
-        )
+    finally:
+        installer.run = originals["run"]
+        installer.fetch_pinned_bottle = originals["fetch_pinned_bottle"]
+        installer.assert_bottle_formula_shape = originals["assert_bottle_formula_shape"]
+        installer.advise_live_shape = originals["advise_live_shape"]
+        installer.installed_formula_versions = originals["installed_formula_versions"]
+        installer.observe_keg = originals["observe_keg"]
+        installer.verify_bottle_checksum = originals["verify_bottle_checksum"]
+        installer.platform.system = originals["platform_system"]
+        installer.platform.machine = originals["platform_machine"]
+
+    return events, observed_outcome
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        helper = exercise_cache_and_receipt_helpers(root)
+        authentic_events, authentic_outcome = drive_main(root, tamper_after_shape=False)
+        expected_authentic_suffix = [
+            "final-hash-start",
+            "final-hash-pass",
+            "brew-install",
+        ]
+        if (
+            authentic_outcome != "install-observed"
+            or authentic_events[-3:] != expected_authentic_suffix
+        ):
+            raise SystemExit(
+                "main did not bind the final successful hash to the next brew install attempt: "
+                f"outcome={authentic_outcome!r} events={authentic_events}"
+            )
+
+        tampered_events, tampered_outcome = drive_main(root, tamper_after_shape=True)
+        if (
+            "pinned bottle checksum mismatch for negative-control"
+            not in tampered_outcome
+        ):
+            raise SystemExit(
+                "main did not reject a bottle changed after its embedded-formula check: "
+                f"outcome={tampered_outcome!r} events={tampered_events}"
+            )
+        if tampered_events.count("final-hash-start") != 1:
+            raise SystemExit(
+                f"tampered scenario did not reach exactly one final hash: {tampered_events}"
+            )
+        if "final-hash-pass" in tampered_events or "brew-install" in tampered_events:
+            raise SystemExit(
+                f"tampered bottle reached a successful hash or install: {tampered_events}"
+            )
 
         print(
             "NEGATIVE CONTROL PASS darwin_bottle_integrity "
-            "authentic_blob_accepted=true tampered_blob_rejected=true "
-            "network_attempted=false install_attempted=false "
-            "live_receipt_drift_replaced_from_pin=true "
-            f"expected_sha256={expected_sha256} observed_tampered_sha256={observed_tampered_sha256}"
+            f"authentic_final_hash_calls={authentic_events.count('final-hash-start')} "
+            f"authentic_install_attempts={authentic_events.count('brew-install')} "
+            f"tampered_final_hash_calls={tampered_events.count('final-hash-start')} "
+            f"tampered_install_attempts={tampered_events.count('brew-install')} "
+            f"cache_network_calls={helper['network_calls']} "
+            f"authentic_cache_accepted={str(helper['authentic_accepted']).lower()} "
+            f"tampered_cache_rejected={str(helper['tampered_rejected']).lower()} "
+            f"receipt_drift_replaced={str(helper['receipt_drift_replaced']).lower()} "
+            f"authentic_events={','.join(authentic_events)} "
+            f"tampered_events={','.join(tampered_events)}"
         )
 
 

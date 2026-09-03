@@ -12,21 +12,26 @@ Both legs run Navidrome 0.63.2 and the same generated corpus:
 | Linux/amd64 | `deluan/navidrome` manifest digest in `tools/conformance-env/pins.json` | ffmpeg 6.1.1 inside that immutable image filesystem |
 | Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, immutable GHCR blob URL, and SHA-256 is locked |
 
-The Darwin installer does not perform a name-only resolution. It validates that every URL is an
-immutable `ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and that the URL digest equals
-the separate SHA-256 pin. Public GHCR pulls still require authentication, so the installer obtains an
-anonymous repository-scoped pull token before downloading a missing blob. A previously cached blob
-can be used without a token or network request, but is re-hashed before every use; a corrupt cache
-entry fails closed rather than being silently replaced. Newly downloaded bytes are written to a
-temporary file, verified, and only then atomically promoted into the cache.
+The Darwin installer does not perform a name-only resolution. Before any closure member is fetched,
+it validates the complete closure: every URL must be an immutable
+`ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and its digest must equal the separate
+SHA-256 pin. Public GHCR pulls still require authentication, so the installer obtains an anonymous
+repository-scoped pull token before downloading a missing blob. A previously cached blob can be used
+without a token or network request, but is re-hashed before every use; a corrupt cache entry fails
+closed rather than being silently replaced. Newly downloaded bytes are written to a temporary file,
+verified, and only then atomically promoted into the cache.
 
 Current Homebrew bottles do not embed an `INSTALL_RECEIPT.json`; they do embed the formula source.
-The installer evaluates that source through Homebrew's local bottle loader and checks the formula
-name, stable version, revision, version scheme, and direct runtime dependency graph against the pin.
-This binds the locked graph to the checksum-verified archive without fetching an unpinned bottle
-manifest or formula index. The live formula API comparison remains as an advisory refresh signal: it
-reports all changed formulae when available, but upstream drift or an API outage cannot stop the
-digest-pinned install.
+The installer extracts that source with Homebrew's bottle utility and evaluates the returned contents
+directly, rather than using `FromBottleLoader#get_formula`, whose missing/unreadable-formula recovery
+can load a separate formula. The evaluation instruments `Formulary.path` and requires zero accesses,
+then checks the formula name, stable version, revision, version scheme, and direct runtime dependency
+graph against the pin. A missing or unreadable embedded formula fails before `brew install` is
+attempted. This does not claim that Homebrew's later bottle-install code contains no fallback; the
+installer rejects the fallback's missing/unreadable preconditions first and re-hashes the same archive
+immediately before handing it to Homebrew. The live formula API comparison remains an advisory refresh
+signal: the main-path controls observe that both drift and an API outage still reach pinned install
+preparation.
 
 Homebrew remains responsible for pouring each verified local bottle, relocating its paths and Mach-O
 install names, running applicable post-install handling, creating receipts, and linking active `opt`
@@ -54,8 +59,9 @@ receipt and payload while changing its inode, so placing one after the absence c
 those observations without tying its bytes to the checksum-verified bottle. Homebrew's relocation
 means the installed bytes also cannot be compared soundly with the archive or pinned across runners.
 The fresh-pour negative control proves only that an untouched retained keg is rejected. The separate
-bottle-integrity negative control proves that a cached blob changed after its authentic hash was
-recorded is rejected before any network or install attempt. This narrower post-pour result is
+bottle-integrity control drives the installer main path, changes a blob after its embedded-formula
+check, and observes a final failed hash with zero install attempts; its authentic case observes the
+ordered final-hash-success then `brew install` events. This narrower post-pour result is
 sufficient for a standard ephemeral hosted runner, whose job state is discarded rather than carried
 forward as an adversarial keg cache; no stronger provenance claim is made. The checks run before
 either the resource-loader fixture encoder or the corpus encoder, so both use the same installed
