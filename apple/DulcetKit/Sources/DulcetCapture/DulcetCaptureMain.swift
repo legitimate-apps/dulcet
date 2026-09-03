@@ -344,8 +344,10 @@ private struct RenderedCapture {
 
 private struct CaptureManifest: Codable {
     let schemaVersion: Int
-    let widthPixels: Int
-    let heightPixels: Int
+    let referenceWidthPixels: Int
+    let referenceHeightPixels: Int
+    let pinnedControlWidthPixels: Int
+    let pinnedControlHeightPixels: Int
     let captureSurface: String
     let windowTitlePolicy: String
     let textSizingPolicy: String
@@ -382,14 +384,18 @@ private final class CaptureWindow: NSWindow {
 
 @main
 private struct DulcetCaptureMain {
-    private static let width = 1180
-    private static let height = 760
+    private static let windowWidth = 1180
+    private static let windowHeight = 760
+    private static let referenceCaptureWidth = 1180
+    private static let referenceCaptureHeight = 728
+    private static let pinnedControlWidth = 1180
+    private static let pinnedControlHeight = 760
     private static let jpegCompression = 0.72
     private static var capturePixelWidth: Int {
-        Int(CGFloat(width) * CaptureRenderingPolicy.captureScale)
+        Int(CGFloat(referenceCaptureWidth) * CaptureRenderingPolicy.captureScale)
     }
     private static var capturePixelHeight: Int {
-        Int(CGFloat(height) * CaptureRenderingPolicy.captureScale)
+        Int(CGFloat(referenceCaptureHeight) * CaptureRenderingPolicy.captureScale)
     }
 
     @MainActor
@@ -538,11 +544,13 @@ private struct DulcetCaptureMain {
         }
 
         let manifest = CaptureManifest(
-            schemaVersion: 13,
-            widthPixels: capturePixelWidth,
-            heightPixels: capturePixelHeight,
-            captureSurface: "titled-nswindow-with-standard-chrome",
-            windowTitlePolicy: "visible-centered-standard-window-title",
+            schemaVersion: 14,
+            referenceWidthPixels: capturePixelWidth,
+            referenceHeightPixels: capturePixelHeight,
+            pinnedControlWidthPixels: pinnedControlWidth,
+            pinnedControlHeightPixels: pinnedControlHeight,
+            captureSurface: "ns-hosting-view-content-only-rendered-references",
+            windowTitlePolicy: "configured-visible-but-excluded-from-rendered-reference-surface",
             textSizingPolicy: "macos-system-semantic-fonts-no-dynamic-type-claim",
             fontLineHeightPolicy: "NSLayoutManager.defaultLineHeight(for:)-after-frame-convergence",
             preflightRender: "discarded-all-states-all-appearances-before-recording",
@@ -583,7 +591,8 @@ private struct DulcetCaptureMain {
         print(
             "DULCET CAPTURE PASS images=\(records.count) "
                 + "max-settle-attempts=\(CaptureSettleStatistics.maximumAttempts) "
-                + "frame=\(width)x\(height) capture-bounds=0,0,\(width)x\(height) "
+                + "frame=\(windowWidth)x\(windowHeight) "
+                + "capture-bounds=0,0,\(referenceCaptureWidth)x\(referenceCaptureHeight) "
                 + "layout-display-scale=\(captureScale) "
                 + "window-backing-scale=\(observedWindowBackingScaleFactor) "
                 + "bitmap-pixels-per-point=\(captureScale) "
@@ -632,7 +641,10 @@ private struct DulcetCaptureMain {
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
-        window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
+        window.setFrame(
+            NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
+            display: false
+        )
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
@@ -697,20 +709,27 @@ private struct DulcetCaptureMain {
             requestedAppearance: appearance.appKitName
         )
 
-        guard let captureView = hostingView.superview else {
-            throw CaptureError.bitmapAllocation
-        }
+        // The titled window remains the rendering host so AppKit appearance, key-control state,
+        // focus, and backing-scale behavior stay realistic. The compared pixels begin at the
+        // application-owned hosting view: its theme-frame superview also contains OS-drawn titlebar
+        // material, traffic lights, and title text whose cross-process timing is outside our control.
+        let captureView: NSView = hostingView
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
 
         let windowFrame = window.frame
         let captureBounds = captureView.bounds
-        let expectedSize = NSSize(width: width, height: height)
-        guard windowFrame.size == expectedSize,
+        let expectedWindowSize = NSSize(width: windowWidth, height: windowHeight)
+        let expectedCaptureSize = NSSize(
+            width: referenceCaptureWidth,
+            height: referenceCaptureHeight
+        )
+        guard windowFrame.size == expectedWindowSize,
               captureBounds.origin == .zero,
-              captureBounds.size == expectedSize else {
+              captureBounds.size == expectedCaptureSize else {
             throw CaptureError.geometryMismatch(
-                "expected window=\(width)x\(height) capture-bounds=0,0,\(width)x\(height); "
+                "expected window=\(windowWidth)x\(windowHeight) "
+                    + "capture-bounds=0,0,\(referenceCaptureWidth)x\(referenceCaptureHeight); "
                     + "observed window=\(windowFrame.width)x\(windowFrame.height) "
                     + "capture-bounds=\(captureBounds.origin.x),\(captureBounds.origin.y),"
                     + "\(captureBounds.width)x\(captureBounds.height)"
@@ -731,7 +750,7 @@ private struct DulcetCaptureMain {
         ) else {
             throw CaptureError.bitmapAllocation
         }
-        bitmap.size = NSSize(width: width, height: height)
+        bitmap.size = expectedCaptureSize
         let bitmapPixelsPerPoint = CGFloat(bitmap.pixelsWide) / bitmap.size.width
         guard bitmapPixelsPerPoint == CaptureRenderingPolicy.captureScale else {
             throw CaptureError.renderingEnvironmentMismatch(
@@ -956,7 +975,7 @@ private struct DulcetCaptureMain {
         return CaptureLayoutDiagnostics(
             collectionStage: "after-two-identical-frames-before-jpeg-encoding",
             root: CaptureRootLayoutFacts(
-                coordinateSystem: "appkit-capture-view-points",
+                coordinateSystem: "appkit-hosting-view-content-points",
                 captureViewIsFlipped: captureView.isFlipped,
                 windowFramePoints: pointRect(window.frame),
                 windowContentLayoutRectPoints: pointRect(window.contentLayoutRect),
@@ -1247,8 +1266,8 @@ private struct DulcetCaptureMain {
         return CaptureRecord(
             appearance: appearance.rawValue,
             captureProvenance: "bundled-pinned-resource",
-            captureBoundsHeightPoints: height,
-            captureBoundsWidthPoints: width,
+            captureBoundsHeightPoints: pinnedControlHeight,
+            captureBoundsWidthPoints: pinnedControlWidth,
             captureBoundsXPoints: 0,
             captureBoundsYPoints: 0,
             controlActiveState: "key",
@@ -1266,8 +1285,8 @@ private struct DulcetCaptureMain {
             sha256: observedHash,
             variant: "deliberately-bad-control",
             windowBackingScaleFactor: nil,
-            windowFrameHeightPoints: height,
-            windowFrameWidthPoints: width
+            windowFrameHeightPoints: pinnedControlHeight,
+            windowFrameWidthPoints: pinnedControlWidth
         )
     }
 
