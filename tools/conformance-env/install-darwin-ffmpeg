@@ -102,6 +102,12 @@ def pinned_ghcr_repository(entry: dict) -> str:
     return repository
 
 
+def validate_pinned_bottle_closure(closure: list[dict]) -> None:
+    """Validate every immutable URL/checksum pair before any closure member is fetched."""
+    for entry in closure:
+        pinned_ghcr_repository(entry)
+
+
 def bottle_filename(entry: dict) -> str:
     rebuild = entry["bottle_rebuild"]
     rebuild_suffix = f".{rebuild}" if rebuild else ""
@@ -360,32 +366,90 @@ def expected_runtime_dependencies(entry: dict, by_name: dict[str, dict]) -> dict
     }
 
 
-def bottle_formula_shape(path: Path) -> dict:
-    """Evaluate the formula embedded in a verified bottle without consulting a formula index."""
+def bottle_formula_shape(path: Path, entry: dict) -> tuple[dict, int]:
+    """Evaluate only the verified bottle's embedded formula and report index accesses."""
     ruby = (
-        "formula = Formulary.factory(ARGV.fetch(0)); "
-        "dependencies = formula.deps.select(&:required?).map(&:name).sort; "
-        "puts JSON.generate({"
+        "formula_index_accesses = 0; "
+        "formulary_singleton = Formulary.singleton_class; "
+        "original_formula_path = formulary_singleton.instance_method(:path); "
+        "formulary_singleton.define_method(:path) do |*arguments, **keywords| "
+        "formula_index_accesses += 1; "
+        "original_formula_path.bind_call(Formulary, *arguments, **keywords); "
+        "end; "
+        "begin; "
+        "bottle = Pathname(ARGV.fetch(0)); "
+        "name = ARGV.fetch(1); "
+        "pkg_version = ARGV.fetch(2); "
+        "contents = Utils::Bottles.formula_contents(bottle, name: name); "
+        "formula_path = HOMEBREW_CELLAR/name/pkg_version/'.brew'/\"#{name}.rb\"; "
+        "formula = Formulary.from_contents(name, formula_path, contents, force_bottle: true); "
+        "shape = {"
         "formula: formula.name, "
         "version: formula.stable.version.to_s, "
         "revision: formula.revision, "
         "version_scheme: formula.version_scheme, "
-        "dependencies: dependencies"
-        "})"
+        "dependencies: formula.deps.select(&:required?).map(&:name).sort"
+        "}; "
+        "result = {ok: true, shape: shape}; "
+        "rescue StandardError => error; "
+        "result = {ok: false, error_class: error.class.name, error: error.message}; "
+        "end; "
+        "result[:formula_index_accesses] = formula_index_accesses; "
+        "puts JSON.generate(result)"
     )
     try:
-        return json.loads(
+        result = json.loads(
             run(
-                ["brew", "ruby", "-rformulary", "-rjson", "-e", ruby, str(path)],
+                [
+                    "brew",
+                    "ruby",
+                    "-rformulary",
+                    "-rjson",
+                    "-e",
+                    ruby,
+                    str(path),
+                    entry["formula"],
+                    keg_version(entry),
+                ],
                 capture=True,
                 local_homebrew_package=True,
             )
         )
-    except json.JSONDecodeError as error:
-        raise SystemExit(f"Homebrew returned invalid embedded formula metadata for {path}") from error
+    except (KeyError, json.JSONDecodeError) as error:
+        raise SystemExit(
+            f"Homebrew returned invalid embedded formula metadata for {path}"
+        ) from error
+
+    if not isinstance(result, dict):
+        raise SystemExit(
+            f"Homebrew returned invalid embedded formula metadata for {path}"
+        )
+    formula_index_accesses = result.get("formula_index_accesses")
+    if not isinstance(formula_index_accesses, int) or isinstance(
+        formula_index_accesses, bool
+    ):
+        raise SystemExit(f"Homebrew omitted the formula-index access count for {path}")
+    if formula_index_accesses != 0:
+        raise SystemExit(
+            f"embedded formula evaluation consulted the Homebrew formula index for "
+            f"{entry['formula']}: formula_index_accesses={formula_index_accesses}"
+        )
+    if result.get("ok") is not True:
+        error_class = result.get("error_class", "unknown")
+        detail = result.get("error", "unknown error")
+        raise SystemExit(
+            f"unusable embedded formula in pinned bottle {entry['formula']}: "
+            f"{error_class}: {detail}; formula_index_accesses={formula_index_accesses}"
+        )
+    shape = result.get("shape")
+    if not isinstance(shape, dict):
+        raise SystemExit(
+            f"Homebrew returned invalid embedded formula metadata for {path}"
+        )
+    return shape, formula_index_accesses
 
 
-def assert_bottle_formula_shape(path: Path, entry: dict) -> None:
+def assert_bottle_formula_shape(path: Path, entry: dict) -> int:
     expected = {
         "formula": entry["formula"],
         "version": entry["version"],
@@ -393,12 +457,13 @@ def assert_bottle_formula_shape(path: Path, entry: dict) -> None:
         "version_scheme": entry["version_scheme"],
         "dependencies": sorted(entry["dependencies"]),
     }
-    observed = bottle_formula_shape(path)
+    observed, formula_index_accesses = bottle_formula_shape(path, entry)
     if observed != expected:
         raise SystemExit(
             f"embedded formula drift in pinned bottle {entry['formula']}: "
             f"expected {expected}, observed {observed}"
         )
+    return formula_index_accesses
 
 
 def observed_runtime_dependencies(receipt: dict, context: str) -> dict[str, dict]:
@@ -523,8 +588,8 @@ def advise_live_shape(closure: list[dict]) -> tuple[str, list[dict]]:
             observed_live_closure.append(live)
     except Exception as error:
         print(
-            "DARWIN FFMPEG PIN ADVISORY unavailable=true "
-            f"detail={str(error)!r} installation_uses_live_shape=false",
+            "DARWIN FFMPEG PIN ADVISORY advisory_status=unavailable "
+            f"detail={str(error)!r}",
             file=sys.stderr,
         )
         return "unavailable", []
@@ -532,7 +597,7 @@ def advise_live_shape(closure: list[dict]) -> tuple[str, list[dict]]:
     if drift:
         print(
             f"DARWIN FFMPEG PIN REFRESH AVAILABLE formulas={len(drift)}/{len(closure)} "
-            "advisory_only=true installation_continues=true",
+            "advisory_status=refresh-available",
             file=sys.stderr,
         )
         for name, expected, live in drift:
@@ -549,14 +614,15 @@ def advise_live_shape(closure: list[dict]) -> tuple[str, list[dict]]:
         return "refresh-available", observed_live_closure
 
     print(
-        f"DARWIN FFMPEG PIN ADVISORY live_shape_matches=true formulas={len(closure)}",
+        f"DARWIN FFMPEG PIN ADVISORY advisory_status=matches formulas={len(closure)}",
         file=sys.stderr,
     )
     return "matches", observed_live_closure
 
 
-def main() -> None:
-    pins = json.loads((Path(__file__).parent / "pins.json").read_text())
+def main(pins_path: Path | None = None) -> None:
+    pins_path = pins_path or Path(__file__).parent / "pins.json"
+    pins = json.loads(pins_path.read_text())
     ffmpeg = pins["ffmpeg"]["darwin"]
     closure = ffmpeg["closure"]
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -565,23 +631,28 @@ def main() -> None:
             f"{platform.system()}/{platform.machine()}"
         )
     assert_locked_graph(closure, ffmpeg["formula"])
+    validate_pinned_bottle_closure(closure)
 
     names = [entry["formula"] for entry in closure]
     by_name = {entry["formula"]: entry for entry in closure}
     observed_keg_hashes: dict[str, str] = {}
     observed_bottle_sha256s: dict[str, str] = {}
+    observed_formula_index_accesses = 0
     bottle_paths: dict[str, Path] = {}
     brew_cache = Path(run(["brew", "--cache"], capture=True))
     bottle_cache = brew_cache / "dulcet" / "darwin-conformance-bottles"
     for expected in closure:
         name = expected["formula"]
         bottle_path, observed_sha256, cache_hit = fetch_pinned_bottle(expected, bottle_cache)
-        assert_bottle_formula_shape(bottle_path, expected)
+        observed_formula_index_accesses += assert_bottle_formula_shape(
+            bottle_path, expected
+        )
         bottle_paths[name] = bottle_path
         observed_bottle_sha256s[name] = observed_sha256
         print(
             f"DARWIN BOTTLE VERIFIED formula={name} sha256={observed_sha256} "
-            f"cache_hit={str(cache_hit).lower()} embedded_formula_matches_pin=true"
+            f"cache_hit={str(cache_hit).lower()} embedded_formula_matches_pin=true "
+            "formula_index_accesses=0"
         )
 
     live_shape_status, observed_live_closure = advise_live_shape(closure)
@@ -606,9 +677,9 @@ def main() -> None:
             f"fresh-pour absence checkpoint retained locked kegs: {','.join(retained)}"
         )
 
-    # Pour every checksum-verified local bottle in dependency order. Ignoring dependency resolution
-    # is safe here because the complete graph was validated above and every member is installed
-    # explicitly; importantly, it keeps the live Homebrew resolver out of the install path.
+    # Pour every local bottle in the validated dependency order. The fail-closed embedded-formula
+    # check above rejects the missing/unreadable cases where Homebrew's bottle loader can fall back;
+    # this final hash binds the exact checked archive to the immediately following install attempt.
     for name in names:
         verify_bottle_checksum(bottle_paths[name], by_name[name])
         run(
@@ -743,6 +814,7 @@ def main() -> None:
         f"observed_encoders={','.join(observed_required_encoders)} "
         f"expected_closure_sha256={expected_closure_digest} "
         f"embedded_formulas_matching_pin={len(bottle_paths)} "
+        f"embedded_formula_index_accesses={observed_formula_index_accesses} "
         f"installed_receipts_matching_pin={len(installed_receipts)} "
         f"live_shape_status={live_shape_status} "
         f"observed_live_closure_sha256={observed_live_closure_digest} "
