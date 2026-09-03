@@ -10,38 +10,57 @@ Both legs run Navidrome 0.63.2 and the same generated corpus:
 | leg | Navidrome pin | ffmpeg pin |
 |---|---|---|
 | Linux/amd64 | `deluan/navidrome` manifest digest in `tools/conformance-env/pins.json` | ffmpeg 6.1.1 inside that immutable image filesystem |
-| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, URL, and SHA-256 is locked |
+| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, immutable GHCR blob URL, and SHA-256 is locked |
 
-The Darwin installer does not accept a name-only resolution. It first compares the complete current
-official formula API graph to the lock. Only after that succeeds does it update Homebrew's possibly
-stale runner metadata, and the refreshed local resolver must match the same lock before any bottle is
-fetched or installed. It hashes every bottle and fails on any extra, missing, or changed dependency.
-It records every locked keg's pre-install filesystem and receipt observation, removes the complete
-closure in reverse dependency order, and requires an observed absence checkpoint for every locked keg.
-It then asks Homebrew to install every locked formula from a bottle in dependency order and records
-the post-install filesystem and receipt observation. Installing only the root is insufficient because
-Homebrew can leave an already-installed nested dependency at an older version, while accepting an
-existing matching-version keg would not bind its payload to the verified archive.
-After installation it verifies every active keg, every bottle receipt, ffmpeg's recorded runtime
-closure, and the `libmp3lame` and `libopus` encoders used by the corpus. The installer also computes a
-hash of every installed keg payload, requires an absent-after-uninstall checkpoint and a
-present-after-install observation with a readable receipt, and re-hashes the payloads before
-reporting one aggregate. Installed payload hashes are deliberately not treated as cross-run pins:
-Homebrew's post-pour relocation and signing made all 15 payload hashes differ across two fresh
-standard hosted runners while their checksum-verified source archives remained identical.
+The Darwin installer does not perform a name-only resolution. It validates that every URL is an
+immutable `ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and that the URL digest equals
+the separate SHA-256 pin. Public GHCR pulls still require authentication, so the installer obtains an
+anonymous repository-scoped pull token before downloading a missing blob. A previously cached blob
+can be used without a token or network request, but is re-hashed before every use; a corrupt cache
+entry fails closed rather than being silently replaced. Newly downloaded bytes are written to a
+temporary file, verified, and only then atomically promoted into the cache.
 
-**Limit — these observations do not establish bottle-to-installed-payload provenance.** They say
-that the keg was absent after uninstall, present after install with a readable receipt, different from
-the retained pre-install filesystem/receipt observation, and unchanged across two payload hashes in
-this run. A copied keg can preserve its receipt and payload while changing its inode, so placing one
-after the absence checkpoint can satisfy those observations without tying its bytes to the
-checksum-verified bottle. Homebrew's relocation means the installed bytes also cannot be compared
-soundly with the archive or pinned across runners. The negative control proves only that an untouched
-retained keg is rejected. This narrower result is sufficient for a standard ephemeral hosted runner,
-whose job state is discarded rather than carried forward as an adversarial keg cache; no stronger
-provenance claim is made. The checks run before either the resource-loader fixture encoder or the
-corpus encoder, so both use the same installed closure that passed the version, receipt, runtime,
-encoder, and two-read payload checks.
+Current Homebrew bottles do not embed an `INSTALL_RECEIPT.json`; they do embed the formula source.
+The installer evaluates that source through Homebrew's local bottle loader and checks the formula
+name, stable version, revision, version scheme, and direct runtime dependency graph against the pin.
+This binds the locked graph to the checksum-verified archive without fetching an unpinned bottle
+manifest or formula index. The live formula API comparison remains as an advisory refresh signal: it
+reports all changed formulae when available, but upstream drift or an API outage cannot stop the
+digest-pinned install.
+
+Homebrew remains responsible for pouring each verified local bottle, relocating its paths and Mach-O
+install names, running applicable post-install handling, creating receipts, and linking active `opt`
+prefixes. It is not allowed to resolve or upgrade dependencies: the installer pours all 15 local
+bottle paths explicitly in pinned topological order with dependency resolution and installed-dependent
+upgrades disabled. Each archive is re-hashed immediately before its pour. Homebrew derives mutable
+runtime receipt fields from its local formula metadata, which may itself have moved ahead; after the
+pour, the installer replaces only that dependency list with the graph already proven from the
+immutable bottles and then verifies the complete receipt.
+
+The installer records every locked keg's pre-install filesystem and receipt observation, removes the
+complete closure in reverse dependency order, and requires an observed absence checkpoint for every
+locked keg. It records the post-install observation, verifies every active keg and bottle receipt, and
+checks the `libmp3lame` and `libopus` encoders used by the corpus. It also computes a hash of every
+installed keg payload and re-hashes the payloads before reporting one aggregate. Installed payload
+hashes are deliberately not treated as cross-run pins: Homebrew's post-pour relocation and signing
+made all 15 payload hashes differ across two fresh standard hosted runners while their
+checksum-verified source archives remained identical.
+
+**Limit — the post-pour observations do not establish byte-for-byte bottle-to-installed-payload
+provenance.** They say that the keg was absent after uninstall, present after a local-bottle pour with
+a readable pinned-graph receipt, different from the retained pre-install filesystem/receipt
+observation, and unchanged across two payload hashes in this run. A copied keg can preserve its
+receipt and payload while changing its inode, so placing one after the absence checkpoint can satisfy
+those observations without tying its bytes to the checksum-verified bottle. Homebrew's relocation
+means the installed bytes also cannot be compared soundly with the archive or pinned across runners.
+The fresh-pour negative control proves only that an untouched retained keg is rejected. The separate
+bottle-integrity negative control proves that a cached blob changed after its authentic hash was
+recorded is rejected before any network or install attempt. This narrower post-pour result is
+sufficient for a standard ephemeral hosted runner, whose job state is discarded rather than carried
+forward as an adversarial keg cache; no stronger provenance claim is made. The checks run before
+either the resource-loader fixture encoder or the corpus encoder, so both use the same installed
+closure that passed the archive checksum, embedded-formula graph, version, receipt, encoder, and
+two-read payload checks.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external

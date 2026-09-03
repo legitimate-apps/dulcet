@@ -62,6 +62,10 @@ jobs:
         run: python3 tools/test-seed-corpus-gates
       - name: Prove fresh-pour gate rejects a retained keg
         run: python3 tools/test-darwin-fresh-pour-gate
+      - name: Prove Darwin bottle integrity gate rejects a tampered blob
+        run: python3 tools/test-darwin-bottle-integrity-gate
+      - name: Prove Darwin live-shape drift and outage remain advisory
+        run: python3 tools/test-darwin-live-shape-advisory
       - name: Prove app-hosted execution guard rejects a missing control
         run: python3 tools/test-xcode-test-execution-guard
       - name: Prove uncataloged SwiftUI copy fails the source policy
