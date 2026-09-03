@@ -69,6 +69,8 @@ jobs:
           mkdir -p "$results/forensics" "$working"
           summary="$results/pairs.tsv"
           printf 'pair\tresult\telapsed_seconds\n' > "$summary"
+          observations="$results/variant-observations.tsv"
+          tools/design-capture-variant-census initialize "$observations"
 
           divergences=0
           soak_started=$SECONDS
@@ -89,6 +91,10 @@ jobs:
               echo "CAPTURE SOAK ERROR pair=$pair_id side=run-a capture-process-failed"
               exit 2
             fi
+            # DulcetCapture already hashes the exact JPEG bytes into its manifest. Record that
+            # evidence before the temporary capture tree is removed; do not read each JPEG again.
+            tools/design-capture-variant-census record \
+              "$observations" "pair-$pair_id/run-a" "$run_a/manifest.json"
             if ! "$capture_binary" \
               --output "$run_b" --state all --appearance all --include-control \
               > "$pair_root/run-b.log" 2>&1; then
@@ -96,6 +102,8 @@ jobs:
               echo "CAPTURE SOAK ERROR pair=$pair_id side=run-b capture-process-failed"
               exit 2
             fi
+            tools/design-capture-variant-census record \
+              "$observations" "pair-$pair_id/run-b" "$run_b/manifest.json"
 
             forensics="$results/forensics/pair-$pair_id"
             set +e
@@ -136,12 +144,26 @@ jobs:
           # Capture or detector failures above use 2. Disable ERR only around this deliberate
           # final status handoff so the measurement trap cannot rewrite the classification.
           set +e
-          DIVERGENCES="$divergences" tools/run-capture-soak-summary \
-            --results "$results" \
-            --pair-count "$PAIR_COUNT" \
-            --divergences "$divergences" \
-            --elapsed-seconds "$soak_elapsed"
-          result_status=$?
+          tools/design-capture-variant-census summarize "$observations" "$results"
+          census_status=$?
+          if (( census_status != 0 )); then
+            echo "CAPTURE SOAK ERROR variant-census-summarizer-failed" >&2
+            result_status=3
+          else
+            DIVERGENCES="$divergences" tools/run-capture-soak-summary \
+              --results "$results" \
+              --pair-count "$PAIR_COUNT" \
+              --divergences "$divergences" \
+              --elapsed-seconds "$soak_elapsed"
+            result_status=$?
+            if ! {
+              printf '\n'
+              cat "$results/variant-census.md"
+            } >> "$GITHUB_STEP_SUMMARY"; then
+              echo "CAPTURE SOAK ERROR variant-census-summary-output-failed" >&2
+              result_status=3
+            fi
+          fi
           set -e
           trap - ERR
           exit "$result_status"
