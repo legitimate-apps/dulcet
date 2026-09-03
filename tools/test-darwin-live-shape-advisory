@@ -97,7 +97,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     originals = {
         "run": installer.run,
         "fetch_pinned_bottle": installer.fetch_pinned_bottle,
-        "assert_bottle_formula_shape": installer.assert_bottle_formula_shape,
+        "assert_bottle_archive_shape": installer.assert_bottle_archive_shape,
         "advise_live_shape": installer.advise_live_shape,
         "installed_formula_versions": installer.installed_formula_versions,
         "observe_keg": installer.observe_keg,
@@ -139,7 +139,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
         entry["sha256"],
         True,
     )
-    installer.assert_bottle_formula_shape = lambda _path, _entry: 0
+    installer.assert_bottle_archive_shape = lambda _path, _entry: 0
     installer.advise_live_shape = recorded_advisory
     installer.installed_formula_versions = lambda _name: []
     installer.observe_keg = lambda _path: None
@@ -163,7 +163,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     finally:
         installer.run = originals["run"]
         installer.fetch_pinned_bottle = originals["fetch_pinned_bottle"]
-        installer.assert_bottle_formula_shape = originals["assert_bottle_formula_shape"]
+        installer.assert_bottle_archive_shape = originals["assert_bottle_archive_shape"]
         installer.advise_live_shape = originals["advise_live_shape"]
         installer.installed_formula_versions = originals["installed_formula_versions"]
         installer.observe_keg = originals["observe_keg"]

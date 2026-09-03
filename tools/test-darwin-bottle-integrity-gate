@@ -156,7 +156,7 @@ def drive_main(root: Path, *, tamper_after_shape: bool) -> tuple[list[str], str]
     originals = {
         "run": installer.run,
         "fetch_pinned_bottle": installer.fetch_pinned_bottle,
-        "assert_bottle_formula_shape": installer.assert_bottle_formula_shape,
+        "assert_bottle_archive_shape": installer.assert_bottle_archive_shape,
         "advise_live_shape": installer.advise_live_shape,
         "installed_formula_versions": installer.installed_formula_versions,
         "observe_keg": installer.observe_keg,
@@ -187,9 +187,9 @@ def drive_main(root: Path, *, tamper_after_shape: bool) -> tuple[list[str], str]
         return bottle, entry["sha256"], True
 
     def stub_shape(_path: Path, _entry: dict) -> int:
-        events.append("embedded-formula")
+        events.append("archive-metadata")
         if tamper_after_shape:
-            bottle.write_bytes(payload + b"\ntampered after embedded-formula check")
+            bottle.write_bytes(payload + b"\ntampered after archive-metadata check")
             events.append("tamper")
         return 0
 
@@ -214,7 +214,7 @@ def drive_main(root: Path, *, tamper_after_shape: bool) -> tuple[list[str], str]
     try:
         installer.run = stub_run
         installer.fetch_pinned_bottle = stub_fetch
-        installer.assert_bottle_formula_shape = stub_shape
+        installer.assert_bottle_archive_shape = stub_shape
         installer.advise_live_shape = stub_advisory
         installer.installed_formula_versions = stub_installed_versions
         installer.observe_keg = stub_observe_keg
@@ -235,7 +235,7 @@ def drive_main(root: Path, *, tamper_after_shape: bool) -> tuple[list[str], str]
     finally:
         installer.run = originals["run"]
         installer.fetch_pinned_bottle = originals["fetch_pinned_bottle"]
-        installer.assert_bottle_formula_shape = originals["assert_bottle_formula_shape"]
+        installer.assert_bottle_archive_shape = originals["assert_bottle_archive_shape"]
         installer.advise_live_shape = originals["advise_live_shape"]
         installer.installed_formula_versions = originals["installed_formula_versions"]
         installer.observe_keg = originals["observe_keg"]
@@ -271,7 +271,7 @@ def main() -> None:
             not in tampered_outcome
         ):
             raise SystemExit(
-                "main did not reject a bottle changed after its embedded-formula check: "
+                "main did not reject a bottle changed after its archive-metadata check: "
                 f"outcome={tampered_outcome!r} events={tampered_events}"
             )
         if tampered_events.count("final-hash-start") != 1:

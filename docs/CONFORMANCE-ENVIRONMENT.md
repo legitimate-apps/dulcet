@@ -21,17 +21,29 @@ without a token or network request, but is re-hashed before every use; a corrupt
 closed rather than being silently replaced. Newly downloaded bytes are written to a temporary file,
 verified, and only then atomically promoted into the cache.
 
-Current Homebrew bottles do not embed an `INSTALL_RECEIPT.json`; they do embed the formula source.
-The installer extracts that source with Homebrew's bottle utility and evaluates the returned contents
-directly, rather than using `FromBottleLoader#get_formula`, whose missing/unreadable-formula recovery
-can load a separate formula. The evaluation instruments `Formulary.path` and requires zero accesses,
-then checks the formula name, stable version, revision, version scheme, and direct runtime dependency
-graph against the pin. A missing or unreadable embedded formula fails before `brew install` is
-attempted. This does not claim that Homebrew's later bottle-install code contains no fallback; the
-installer rejects the fallback's missing/unreadable preconditions first and re-hashes the same archive
-immediately before handing it to Homebrew. The live formula API comparison remains an advisory refresh
-signal: the main-path controls observe that both drift and an API outage still reach pinned install
-preparation.
+The 15 pinned Homebrew bottles do not embed an `INSTALL_RECEIPT.json`. They do embed an SPDX 2.3
+document, a single formula/version keg directory, and the formula source. The SPDX document supplies
+source identity but not dependency edges, revision, or version scheme. GHCR's tagged OCI index also
+publishes `sh.brew.tab` runtime metadata, but that index is outside the checksum-pinned layer bytes and
+is not used as an integrity oracle. The installer reads the archive members directly with Python's
+standard archive and JSON libraries; it does not invoke Homebrew or evaluate
+the formula Ruby. Name and stable version come from the SPDX-described source package and must agree
+with the keg path. Revision comes from the keg-version suffix and must agree with the formula's static
+`revision` declaration (both default to zero). Version scheme and the direct Darwin/arm64 runtime
+dependency declarations are read by a deliberately narrow, non-executing declaration parser. It
+understands the dependency forms and platform scopes present in the authenticated closure and fails
+closed on ambiguous or unsupported dependency syntax; unrelated formula DSL such as install methods
+and post-install keywords is never interpreted.
+
+Every derived fact is checked against the pin. Missing, duplicate, non-regular, oversized, malformed,
+or mutually inconsistent metadata fails before `brew install` is attempted. The metadata path cannot
+access the formula index by construction, and its mutation control replaces both command and network
+entry points with traps while asserting `formula_index_accesses=0` on successful and failing reads.
+This does not claim
+that Homebrew's later bottle-install code contains no fallback; the installer rejects the fallback's
+missing/unreadable preconditions first and re-hashes the same archive immediately before handing it to
+Homebrew. The live formula API comparison remains an advisory refresh signal: the main-path controls
+observe that both drift and an API outage still reach pinned install preparation.
 
 Homebrew remains responsible for pouring each verified local bottle, relocating its paths and Mach-O
 install names, running applicable post-install handling, creating receipts, and linking active `opt`
@@ -59,13 +71,13 @@ receipt and payload while changing its inode, so placing one after the absence c
 those observations without tying its bytes to the checksum-verified bottle. Homebrew's relocation
 means the installed bytes also cannot be compared soundly with the archive or pinned across runners.
 The fresh-pour negative control proves only that an untouched retained keg is rejected. The separate
-bottle-integrity control drives the installer main path, changes a blob after its embedded-formula
+bottle-integrity control drives the installer main path, changes a blob after its archive-metadata
 check, and observes a final failed hash with zero install attempts; its authentic case observes the
 ordered final-hash-success then `brew install` events. This narrower post-pour result is
 sufficient for a standard ephemeral hosted runner, whose job state is discarded rather than carried
 forward as an adversarial keg cache; no stronger provenance claim is made. The checks run before
 either the resource-loader fixture encoder or the corpus encoder, so both use the same installed
-closure that passed the archive checksum, embedded-formula graph, version, receipt, encoder, and
+closure that passed the archive checksum, authenticated metadata graph, version, receipt, encoder, and
 two-read payload checks.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
