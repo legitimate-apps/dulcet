@@ -12,7 +12,15 @@ PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
 STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
 LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
 TOP_KEYS = {"schema_version", "accepted_regressions", "features"}
-FEATURE_KEYS = {"id", "title", "spec", "gates", "conformance", "platforms"}
+FEATURE_KEYS = {
+    "id",
+    "title",
+    "spec",
+    "gates",
+    "conformance",
+    "platform_conformance",
+    "platforms",
+}
 CELL_KEYS = {"status", "evidence", "reason", "blocked_by", "promotion_condition"}
 
 
@@ -170,9 +178,42 @@ def validate(document: dict, source: str) -> dict[str, dict]:
         if not spec_path.is_file() or anchor not in spec_anchors(spec_path):
             fail(f"{source}: {feature_id} spec anchor does not resolve: {spec}")
 
-        for conf in feature.get("conformance", []):
+        universal_conformance = feature.get("conformance", [])
+        if (
+            not isinstance(universal_conformance, list)
+            or not all(isinstance(conf, str) and conf for conf in universal_conformance)
+            or len(universal_conformance) != len(set(universal_conformance))
+        ):
+            fail(f"{source}: {feature_id} conformance must be a list of unique non-empty ids")
+        for conf in universal_conformance:
             if conf not in conformance_ids:
                 fail(f"{source}: {feature_id} references unknown {conf}")
+
+        platform_conformance = feature.get("platform_conformance", {})
+        if not isinstance(platform_conformance, dict) or set(platform_conformance) - PLATFORMS:
+            fail(
+                f"{source}: {feature_id} platform_conformance must map known platforms to id lists"
+            )
+        for platform, ids in platform_conformance.items():
+            if (
+                not isinstance(ids, list)
+                or not ids
+                or not all(isinstance(conf, str) and conf for conf in ids)
+                or len(ids) != len(set(ids))
+            ):
+                fail(
+                    f"{source}: {feature_id}/{platform} platform_conformance must be a list "
+                    "of unique non-empty ids"
+                )
+            overlap = set(ids) & set(universal_conformance)
+            if overlap:
+                fail(
+                    f"{source}: {feature_id}/{platform} repeats universal conformance ids "
+                    f"{sorted(overlap)}"
+                )
+            for conf in ids:
+                if conf not in conformance_ids:
+                    fail(f"{source}: {feature_id}/{platform} references unknown {conf}")
 
         platforms = feature.get("platforms")
         if not isinstance(platforms, dict) or set(platforms) != PLATFORMS:
@@ -255,7 +296,10 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                             )
 
                 if schema_version == 2:
-                    declared_conformance = feature.get("conformance", [])
+                    declared_conformance = [
+                        *universal_conformance,
+                        *platform_conformance.get(platform, []),
+                    ]
                     if (
                         len(evidence_conformance) != len(set(evidence_conformance))
                         or set(evidence_conformance) != set(declared_conformance)
