@@ -549,7 +549,7 @@ private struct DulcetCaptureMain {
             appearanceResolutionPolicy: "requested-appearance-current-before-host-construction",
             layoutDiagnosticsPolicy: "resolved-root-and-native-controls-after-frame-convergence",
             settlePathPolicy: "per-render-comparisons-until-first-identical-consecutive-frame-pair",
-            focusStatePolicy: "rendered-hierarchy-no-focused-control-window-first-responder-asserted-every-bitmap-draw",
+            focusStatePolicy: "capture-fixture-programmatic-focus-disabled-window-first-responder-asserted-every-bitmap-draw",
             bitmapPixelsPerPoint: captureScale,
             fontSmoothingPolicy: "disabled-explicit-bitmap-context",
             fontSubpixelPositioningPolicy: "disabled-explicit-bitmap-context",
@@ -685,6 +685,8 @@ private struct DulcetCaptureMain {
         try pinCaptureFocusState(
             in: window,
             hostingView: hostingView,
+            state: state,
+            appearance: appearance,
             deliberatelyFocusNegativeControl: deliberatelyFocusNegativeControl
         )
         try validateRenderingEnvironment(
@@ -751,14 +753,24 @@ private struct DulcetCaptureMain {
         // scale does not drive rendering: one fixed capture scale owns SwiftUI layout, the host
         // layer, and bitmap pixels-per-point so layout and rasterization share the same grid.
         func renderFrame() throws -> Data {
-            try assertCaptureFocusState(in: window, stage: "before-bitmap-draw")
+            try assertCaptureFocusState(
+                in: window,
+                stage: "before-bitmap-draw",
+                state: state,
+                appearance: appearance
+            )
             captureView.layoutSubtreeIfNeeded()
             captureView.displayIfNeeded()
             bitmapContext.cgContext.setShouldSmoothFonts(false)
             bitmapContext.cgContext.setShouldSubpixelPositionFonts(false)
             bitmapContext.cgContext.setShouldSubpixelQuantizeFonts(false)
             captureView.displayIgnoringOpacity(captureView.bounds, in: bitmapContext)
-            try assertCaptureFocusState(in: window, stage: "after-bitmap-draw")
+            try assertCaptureFocusState(
+                in: window,
+                stage: "after-bitmap-draw",
+                state: state,
+                appearance: appearance
+            )
             guard let tiff = bitmap.representation(using: .tiff, properties: [:]) else {
                 throw CaptureError.bitmapAllocation
             }
@@ -1060,6 +1072,8 @@ private struct DulcetCaptureMain {
     private static func pinCaptureFocusState(
         in window: NSWindow,
         hostingView: NSView,
+        state: DulcetPresentationState,
+        appearance: CaptureAppearance,
         deliberatelyFocusNegativeControl: Bool
     ) throws {
         // The reference artifact represents a resting presentation state, not an arbitrary point in
@@ -1086,15 +1100,31 @@ private struct DulcetCaptureMain {
             }
         }
 
-        try assertCaptureFocusState(in: window, stage: "after-pinning")
+        try assertCaptureFocusState(
+            in: window,
+            stage: "after-pinning",
+            state: state,
+            appearance: appearance
+        )
     }
 
     @MainActor
-    private static func assertCaptureFocusState(in window: NSWindow, stage: String) throws {
-        guard window.firstResponder === window else {
+    private static func assertCaptureFocusState(
+        in window: NSWindow,
+        stage: String,
+        state: DulcetPresentationState,
+        appearance: CaptureAppearance
+    ) throws {
+        let observedResponder = window.firstResponder
+        guard observedResponder === window else {
+            let responderType = observedResponder.map {
+                NSStringFromClass(type(of: $0))
+            } ?? "nil"
             throw CaptureError.focusStateMismatch(
                 "stage=\(stage) expected=no-focused-control/window-first-responder "
-                    + "observed=non-window-first-responder"
+                    + "observed=non-window-first-responder "
+                    + "responder-type=\(responderType) "
+                    + "fixture-state=\(state.rawValue) appearance=\(appearance.rawValue)"
             )
         }
     }

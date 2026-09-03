@@ -110,14 +110,17 @@ public struct DulcetCaptureView: View {
                             .fixedSize(horizontal: true, vertical: false)
                             .zIndex(1)
                         Divider()
-                        DulcetStateSurface(store: store)
-                            .id(store.snapshot.state.rawValue)
-                            .frame(
-                                width: max(0, geometry.size.width - 233),
-                                height: geometry.size.height
-                            )
-                            .clipped()
-                            .zIndex(0)
+                        DulcetStateSurface(
+                            store: store,
+                            allowsProgrammaticFocus: false
+                        )
+                        .id(store.snapshot.state.rawValue)
+                        .frame(
+                            width: max(0, geometry.size.width - 233),
+                            height: geometry.size.height
+                        )
+                        .clipped()
+                        .zIndex(0)
                     }
                     .frame(
                         width: geometry.size.width,
@@ -270,13 +273,17 @@ private struct DulcetSidebar: View {
 
 private struct DulcetStateSurface: View {
     @Bindable var store: DulcetPresentationStore
+    var allowsProgrammaticFocus = true
 
     private var snapshot: DulcetSnapshot { store.snapshot }
 
     var body: some View {
         switch snapshot.selectedDestination {
         case .settings:
-            DulcetAccountConnectionView(store: store)
+            DulcetAccountConnectionView(
+                store: store,
+                allowsProgrammaticFocus: allowsProgrammaticFocus
+            )
         case .library:
             librarySurface
         case .search:

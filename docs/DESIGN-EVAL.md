@@ -114,8 +114,10 @@ environment is fixed:
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
   line process cannot become the desktop's active application;
-- no control focused: after SwiftUI appears, the harness makes the window itself first responder and
-  asserts that identity immediately before and after every bitmap draw. The artifact enumerates
+- no control focused: the capture fixture disables the account surface's programmatic `@FocusState`
+  requests at their source while the shipping surface retains them. After SwiftUI appears, the
+  harness makes the window itself first responder once and asserts that identity immediately before
+  and after every bitmap draw; it does not repair focus in the settle loop. The artifact enumerates
   presentation states and appearances, not keyboard-traversal states; focusing a server field, retry
   button, or primary action would add an arbitrary interaction narrative. Focused-control design
   evidence belongs in a separately named interaction-state set rather than this resting baseline;
