@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+"""Exercise design-capture variant census collection and aggregation."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+CENSUS = Path(__file__).with_name("design-capture-variant-census")
+
+
+def run(*arguments: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(CENSUS), *(str(argument) for argument in arguments)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+def write_manifest(path: Path, first_hash: str, second_hash: str) -> None:
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "captures": [
+            {
+                "file": "macos-first-light.jpg",
+                "fixtureState": "first",
+                "appearance": "light",
+                "variant": "reference",
+                "sha256": first_hash,
+            },
+            {
+                "file": "macos-second-dark.jpg",
+                "fixtureState": "second",
+                "appearance": "dark",
+                "variant": "reference",
+                "sha256": second_hash,
+            },
+        ]
+    }))
+
+
+def require_success(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode != 0:
+        raise SystemExit(f"{label} failed: exit={result.returncode} output={result.stdout!r}")
+
+
+def main() -> None:
+    common = "1" * 64
+    rare = "2" * 64
+    stable = "3" * 64
+    with tempfile.TemporaryDirectory(prefix="dulcet-capture-variant-census-") as temporary:
+        root = Path(temporary)
+        observations = root / "variant-observations.tsv"
+        require_success(run("initialize", observations), "initialize")
+        for process, first_hash in (
+            ("pair-001/run-a", common),
+            ("pair-001/run-b", common),
+            ("pair-002/run-a", rare),
+        ):
+            manifest = root / process / "manifest.json"
+            write_manifest(manifest, first_hash, stable)
+            require_success(
+                run("record", observations, process, manifest),
+                f"record {process}",
+            )
+
+        results = root / "results"
+        require_success(run("summarize", observations, results), "summarize")
+        census = json.loads((results / "variant-census.json").read_text())
+        if census["processCount"] != 3 or census["observationCount"] != 6:
+            raise SystemExit(f"census totals are wrong: {census!r}")
+        states = {state["file"]: state for state in census["states"]}
+        first = states["macos-first-light.jpg"]
+        if first["distinctVariantCount"] != 2 or first["variants"] != [
+            {"sha256": common, "occurrences": 2},
+            {"sha256": rare, "occurrences": 1},
+        ]:
+            raise SystemExit(f"variant distribution is wrong: {first!r}")
+        second = states["macos-second-dark.jpg"]
+        if second["distinctVariantCount"] != 1 or second["captureCount"] != 3:
+            raise SystemExit(f"stable distribution is wrong: {second!r}")
+        markdown = (results / "variant-census.md").read_text()
+        if "`11111111` × 2, `22222222` × 1" not in markdown:
+            raise SystemExit(f"markdown distribution is missing: {markdown!r}")
+        if not (results / "variant-census.tsv").is_file():
+            raise SystemExit("TSV census was not emitted")
+
+    print(
+        "DESIGN CAPTURE VARIANT CENSUS SELF-TEST PASS "
+        "processes=3 states=2 distinct-variants=2 distribution-counted=true"
+    )
+
+
+if __name__ == "__main__":
+    main()
