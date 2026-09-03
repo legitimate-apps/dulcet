@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+
+"""Collect and summarize design-capture SHA-256 variants without retaining images."""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter, defaultdict
+import csv
+import json
+from pathlib import Path
+import re
+import sys
+from typing import Any
+
+
+OBSERVATION_FIELDS = (
+    "process",
+    "file",
+    "fixture_state",
+    "appearance",
+    "capture_variant",
+    "sha256",
+)
+SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+class CensusError(RuntimeError):
+    pass
+
+
+def require_text(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\t" in value
+        or "\n" in value
+        or "\r" in value
+    ):
+        raise CensusError(f"{label} must be a non-empty single-line string")
+    return value
+
+
+def initialize(observations_path: Path) -> None:
+    if observations_path.exists():
+        raise CensusError(f"observations output already exists: {observations_path}")
+    observations_path.parent.mkdir(parents=True, exist_ok=True)
+    with observations_path.open("w", newline="") as output:
+        csv.DictWriter(output, fieldnames=OBSERVATION_FIELDS, delimiter="\t").writeheader()
+
+
+def record_manifest(observations_path: Path, process: str, manifest_path: Path) -> None:
+    process = require_text(process, "process")
+    if not observations_path.is_file():
+        raise CensusError(f"observations input does not exist: {observations_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise CensusError(f"could not read capture manifest {manifest_path}: {error}") from error
+
+    captures = manifest.get("captures")
+    if not isinstance(captures, list) or not captures:
+        raise CensusError(f"capture manifest has no capture records: {manifest_path}")
+
+    rows: list[dict[str, str]] = []
+    observed_files: set[str] = set()
+    for index, capture in enumerate(captures):
+        if not isinstance(capture, dict):
+            raise CensusError(f"capture record {index} is not an object: {manifest_path}")
+        filename = require_text(capture.get("file"), f"capture record {index} file")
+        if filename in observed_files:
+            raise CensusError(f"capture manifest repeats file {filename}: {manifest_path}")
+        observed_files.add(filename)
+        sha256 = require_text(capture.get("sha256"), f"capture record {index} sha256")
+        if not SHA256_PATTERN.fullmatch(sha256):
+            raise CensusError(
+                f"capture record {index} sha256 is not a 64-digit hexadecimal digest: "
+                f"{manifest_path}"
+            )
+        rows.append({
+            "process": process,
+            "file": filename,
+            "fixture_state": require_text(
+                capture.get("fixtureState"), f"capture record {index} fixtureState"
+            ),
+            "appearance": require_text(
+                capture.get("appearance"), f"capture record {index} appearance"
+            ),
+            "capture_variant": require_text(
+                capture.get("variant"), f"capture record {index} variant"
+            ),
+            "sha256": sha256.lower(),
+        })
+
+    with observations_path.open(newline="") as source:
+        reader = csv.DictReader(source, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != OBSERVATION_FIELDS:
+            raise CensusError(f"observations header is invalid: {observations_path}")
+        existing_processes = {row["process"] for row in reader}
+    if process in existing_processes:
+        raise CensusError(f"observations already contain process {process}")
+
+    with observations_path.open("a", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=OBSERVATION_FIELDS, delimiter="\t")
+        writer.writerows(rows)
+    print(
+        f"DESIGN CAPTURE VARIANT OBSERVATIONS process={process} references={len(rows)} "
+        f"source=manifest-sha256"
+    )
+
+
+def read_observations(observations_path: Path) -> list[dict[str, str]]:
+    try:
+        source = observations_path.open(newline="")
+    except OSError as error:
+        raise CensusError(f"could not read observations {observations_path}: {error}") from error
+    with source:
+        reader = csv.DictReader(source, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != OBSERVATION_FIELDS:
+            raise CensusError(f"observations header is invalid: {observations_path}")
+        rows = list(reader)
+    if not rows:
+        raise CensusError(f"observations contain no captures: {observations_path}")
+    return rows
+
+
+def unique_hash_prefixes(hashes: list[str], minimum_length: int = 8) -> dict[str, str]:
+    prefix_length = minimum_length
+    while prefix_length < 64:
+        prefixes = {digest[:prefix_length] for digest in hashes}
+        if len(prefixes) == len(hashes):
+            break
+        prefix_length += 1
+    return {digest: digest[:prefix_length] for digest in hashes}
+
+
+def summarize(observations_path: Path, output_directory: Path) -> None:
+    rows = read_observations(observations_path)
+    processes = sorted({row["process"] for row in rows})
+    expected_files: set[str] | None = None
+    metadata_by_file: dict[str, tuple[str, str, str]] = {}
+    counts_by_file: dict[str, Counter[str]] = defaultdict(Counter)
+    seen_process_files: set[tuple[str, str]] = set()
+
+    for process in processes:
+        process_files = {row["file"] for row in rows if row["process"] == process}
+        if expected_files is None:
+            expected_files = process_files
+        elif process_files != expected_files:
+            missing = sorted(expected_files - process_files)
+            unexpected = sorted(process_files - expected_files)
+            raise CensusError(
+                f"process {process} capture set differs: missing={missing} unexpected={unexpected}"
+            )
+
+    for row in rows:
+        key = (row["process"], row["file"])
+        if key in seen_process_files:
+            raise CensusError(f"duplicate process/file observation: {key[0]} {key[1]}")
+        seen_process_files.add(key)
+        metadata = (row["fixture_state"], row["appearance"], row["capture_variant"])
+        previous_metadata = metadata_by_file.setdefault(row["file"], metadata)
+        if metadata != previous_metadata:
+            raise CensusError(f"capture metadata changed across processes: {row['file']}")
+        digest = row["sha256"]
+        if not SHA256_PATTERN.fullmatch(digest):
+            raise CensusError(f"invalid SHA-256 in observations: {digest!r}")
+        counts_by_file[row["file"]][digest] += 1
+
+    output_directory.mkdir(parents=True, exist_ok=True)
+    json_path = output_directory / "variant-census.json"
+    tsv_path = output_directory / "variant-census.tsv"
+    markdown_path = output_directory / "variant-census.md"
+    for path in (json_path, tsv_path, markdown_path):
+        if path.exists():
+            raise CensusError(f"census output already exists: {path}")
+
+    states: list[dict[str, Any]] = []
+    for filename in sorted(counts_by_file):
+        counter = counts_by_file[filename]
+        fixture_state, appearance, capture_variant = metadata_by_file[filename]
+        variants = [
+            {"sha256": digest, "occurrences": occurrences}
+            for digest, occurrences in sorted(
+                counter.items(), key=lambda item: (-item[1], item[0])
+            )
+        ]
+        states.append({
+            "file": filename,
+            "fixtureState": fixture_state,
+            "appearance": appearance,
+            "captureVariant": capture_variant,
+            "captureCount": sum(counter.values()),
+            "distinctVariantCount": len(counter),
+            "variants": variants,
+        })
+
+    census = {
+        "schemaVersion": 1,
+        "digestAlgorithm": "sha256",
+        "digestSource": "capture-manifest-captures-sha256",
+        "processCount": len(processes),
+        "stateCount": len(states),
+        "observationCount": len(rows),
+        "states": states,
+    }
+    json_path.write_text(json.dumps(census, indent=2, sort_keys=True) + "\n")
+
+    with tsv_path.open("w", newline="") as output:
+        fields = (
+            "file",
+            "fixture_state",
+            "appearance",
+            "capture_variant",
+            "capture_count",
+            "distinct_variant_count",
+            "sha256",
+            "occurrences",
+        )
+        writer = csv.DictWriter(output, fieldnames=fields, delimiter="\t")
+        writer.writeheader()
+        for state in states:
+            for variant in state["variants"]:
+                writer.writerow({
+                    "file": state["file"],
+                    "fixture_state": state["fixtureState"],
+                    "appearance": state["appearance"],
+                    "capture_variant": state["captureVariant"],
+                    "capture_count": state["captureCount"],
+                    "distinct_variant_count": state["distinctVariantCount"],
+                    "sha256": variant["sha256"],
+                    "occurrences": variant["occurrences"],
+                })
+
+    all_hashes = sorted({variant["sha256"] for state in states for variant in state["variants"]})
+    prefixes = unique_hash_prefixes(all_hashes)
+    markdown_lines = [
+        "### Capture variant census",
+        "",
+        (
+            f"Source: each capture process's manifest SHA-256; {len(processes)} processes, "
+            f"{len(rows)} reference observations. Images are not retained for this census."
+        ),
+        "",
+        "| State | Distinct variants | Distribution |",
+        "|---|---:|---|",
+    ]
+    for state in states:
+        distribution = ", ".join(
+            f"`{prefixes[variant['sha256']]}` × {variant['occurrences']}"
+            for variant in state["variants"]
+        )
+        markdown_lines.append(
+            f"| `{state['file']}` | {state['distinctVariantCount']} | {distribution} |"
+        )
+    markdown_path.write_text("\n".join(markdown_lines) + "\n")
+
+    print(
+        f"DESIGN CAPTURE VARIANT CENSUS processes={len(processes)} states={len(states)} "
+        f"observations={len(rows)} digest-source=manifest-sha256"
+    )
+    for state in states:
+        distribution = ",".join(
+            f"{variant['sha256']}:{variant['occurrences']}"
+            for variant in state["variants"]
+        )
+        print(
+            f"DESIGN CAPTURE VARIANT STATE file={state['file']} "
+            f"distinct-variants={state['distinctVariantCount']} distribution={distribution}"
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    initialize_parser = subparsers.add_parser("initialize")
+    initialize_parser.add_argument("observations", type=Path)
+
+    record_parser = subparsers.add_parser("record")
+    record_parser.add_argument("observations", type=Path)
+    record_parser.add_argument("process")
+    record_parser.add_argument("manifest", type=Path)
+
+    summarize_parser = subparsers.add_parser("summarize")
+    summarize_parser.add_argument("observations", type=Path)
+    summarize_parser.add_argument("output_directory", type=Path)
+
+    args = parser.parse_args()
+    try:
+        if args.command == "initialize":
+            initialize(args.observations)
+        elif args.command == "record":
+            record_manifest(args.observations, args.process, args.manifest)
+        else:
+            summarize(args.observations, args.output_directory)
+    except CensusError as error:
+        print(f"DESIGN CAPTURE VARIANT CENSUS ERROR {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
