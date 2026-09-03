@@ -32,6 +32,7 @@ def materialize(root: Path) -> None:
         "core-conformance",
         "apple/DulcetKit/Tests",
         "apple/DulcetPlaybackIntegrationTests",
+        "apple/DulcetKeychainAppTests",
         "apple/DulcetiOSUITests",
         # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
         # verifies that every cited evidence test NAME exists in the tree. Without this the fixture
@@ -90,6 +91,20 @@ def macos_evidence(document: dict[str, object]) -> list[dict[str, str]]:
     macos = platforms["macos"]
     assert isinstance(macos, dict)
     evidence = macos["evidence"]
+    assert isinstance(evidence, list)
+    return evidence
+
+
+def ios_evidence(document: dict[str, object]) -> list[dict[str, str]]:
+    features = document["features"]
+    assert isinstance(features, list)
+    account = features[0]
+    assert isinstance(account, dict)
+    platforms = account["platforms"]
+    assert isinstance(platforms, dict)
+    ios = platforms["ios"]
+    assert isinstance(ios, dict)
+    evidence = ios["evidence"]
     assert isinstance(evidence, list)
     return evidence
 
@@ -169,6 +184,50 @@ expect_rejection(
     lambda document: macos_evidence(document).pop(),
     "evidence must cover each declared conformance id exactly once",
 )
+expect_rejection(
+    "missing platform-specific conformance evidence entry",
+    lambda document: ios_evidence(document).pop(),
+    "evidence must cover each declared conformance id exactly once",
+)
+
+
+def _repeat_platform_requirement_as_universal(document: dict[str, object]) -> None:
+    features = document["features"]
+    assert isinstance(features, list)
+    account = features[0]
+    assert isinstance(account, dict)
+    conformance = account["conformance"]
+    assert isinstance(conformance, list)
+    conformance.append("CONF-10e")
+
+
+expect_rejection(
+    "platform-specific id repeated as universal",
+    _repeat_platform_requirement_as_universal,
+    "repeats universal conformance ids",
+)
+
+
+def _set_ios_platform_conformance(document: dict[str, object], ids: list[str]) -> None:
+    features = document["features"]
+    assert isinstance(features, list)
+    account = features[0]
+    assert isinstance(account, dict)
+    platform_conformance = account["platform_conformance"]
+    assert isinstance(platform_conformance, dict)
+    platform_conformance["ios"] = ids
+
+
+expect_rejection(
+    "unknown platform-specific conformance id",
+    lambda document: _set_ios_platform_conformance(document, ["CONF-999"]),
+    "account.connect/ios references unknown CONF-999",
+)
+expect_rejection(
+    "empty platform-specific conformance list",
+    lambda document: _set_ios_platform_conformance(document, []),
+    "platform_conformance must be a list of unique non-empty ids",
+)
 
 # The summary count is DERIVED from the cases below, never written by hand. It used to be a
 # literal, which made it a merge-conflict magnet: every branch that adds a case had to bump the
@@ -212,6 +271,10 @@ passing_cases = """\
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testAccountConnectUsesRegularWidthSplitLayout" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
@@ -224,6 +287,8 @@ passing_cases = """\
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+  <testcase classname="DulcetKeychainTVOSTests"
+            name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"
             name="proxyChallengeFailsClosedWithoutAmbientCredentials[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.LibrarySyncConformanceTest[macosArm64]"

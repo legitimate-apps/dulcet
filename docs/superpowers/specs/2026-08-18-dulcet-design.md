@@ -1570,21 +1570,24 @@ against the legacy Keychain, never records an active-account pointer, and the co
 no matching legacy generic-password item exists. This proves the failure is loud and prevents a
 silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
 
-**ASSUMED signed-Keychain properties; no resolvable promotion condition:** the accessibility,
-non-sync, and resulting device-migration properties above remain ASSUMED. The earlier proposed
-workflow `signed-release-validation`, job `entitled-keychain`, and test
+**OBSERVED simulator-stored attributes; enforcement and macOS remain ASSUMED:** CONF-10e saves with
+the production Apple credential store inside app-hosted iOS, iPadOS, and tvOS simulator test
+processes, requires the save path's active-account marker, and then queries that exact item with
+`kSecReturnAttributes`. The query constrains neither accessibility nor synchronization: it uses
+`kSecAttrSynchronizableAny`, and the same query reads a deliberately wrong-accessibility control
+item before it asserts that the production item recorded
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and `kSecAttrSynchronizable = false`. This
+observes what the simulator Keychain stored. It does not establish that the OS enforces either
+property, that simulator data-protection semantics are device-equivalent, or that the item behaves
+as intended across migration, reboot, first unlock, or background execution.
+
+The macOS attributes remain ASSUMED. Pull-request `apple-ci` has no signing material and hosted run
+`32598531311` already established that an ad-hoc-signed macOS host carrying the production Keychain
+access group cannot launch. The earlier proposed workflow `signed-release-validation`, job
+`entitled-keychain`, and test
 `DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` do not resolve to repository
-definitions and are not a runnable promotion plan. `FEATURES.yml` therefore records
-`promotion_condition.status = blocked` on `operator-signing-identity-decision`, names no runnable
-target, and leaves `account.connect / macos` at `partial`. Pull-request workflows receive no signing
-identity, and hosted run `32598531311` already established that an ad-hoc-signed host carrying the
-production Keychain access group cannot launch. The operator must first select the signed execution
-environment and signing identity. After that decision, a real workflow, job, and test may be added;
-the machine-readable promotion condition may name them only after each resolves in the repository.
-The eventual entitled control must add, update, read, and delete the real data-protection-Keychain
-item, read back `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and
-`kSecAttrSynchronizable = false`, and observe the item absent after deletion. CONF-10a does not claim
-those properties.
+definitions and are not a runnable promotion plan. CONF-10a continues to claim only the unentitled
+fail-closed boundary; CONF-10e is separate platform-specific evidence.
 
 **ASSUMED background behavior:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is intended to
 let a background task run after the device's first post-reboot unlock while preventing migration to
@@ -2318,12 +2321,17 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
 - `status` is one of `shipped | partial | planned | blocked | n/a`.
 - `n/a` requires a `reason` (e.g. tvOS downloads, §14.5).
 - `blocked` requires `blocked_by` naming a CONF id, an open question, or an upstream issue.
+- `conformance` declares requirements shared by every platform cell. Optional
+  `platform_conformance` maps a platform to additional registered CONF ids that apply only to that
+  platform; the effective set for a cell is the union of the two lists. The lists must contain
+  unique, non-empty ids, may not overlap, and may name only ids in the conformance registry.
 
 **Evidence is a stable identity, not a run id.** Revision 1 required a CI run number in the `evidence`
 string, which is circular: a commit cannot name the run that verifies that same commit, and inserting
 the number afterwards produces a commit nobody verified. Evidence is therefore a non-empty list of
-`{conformance, workflow, job, test}` entries, one for every conformance id declared by the row and
-knowable at commit time. The PR static gate requires exact, duplicate-free conformance coverage and
+`{conformance, workflow, job, test}` entries, one for every id in that cell's effective universal
+plus platform-specific conformance set and knowable at commit time. The PR static gate requires
+exact, duplicate-free conformance coverage and
 asserts for every entry that (a) the named workflow and job exist, (b) the named test exists in the
 repo, (c) the job is named by the reviewed `.github/required-checks.json` manifest, and (d) the named
 job invokes the executed-evidence verifier. During that same job, after the named test task, the
@@ -2599,6 +2607,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-10a | when the platform-secure credential facility is unavailable to the caller, the write returns a typed failure, leaves no active-account pointer, and does not fall back to weaker storage; platform-specific secure-item properties require their own evidence |
 | CONF-10b | persisted credentials prefill the form after relaunch without a network request until explicit Connect |
 | CONF-10c | an explicitly configured HTTP forward proxy returns 407 Basic while a matching ambient credential is retrievable; account connect emits `Auth.UnsupportedAuthenticationChallenge` and no `Proxy-Authorization` reaches the fixture |
+| CONF-10e | an app-hosted simulator test saves through `DulcetKeychainCredentialStore`, requires the save-produced active-account marker, and reads the exact data-protection-Keychain item's attributes with an accessibility-unconstrained, synchronizable-any query; a deliberately wrong-accessibility control must be observed before the production item is required to report `AfterFirstUnlockThisDeviceOnly` and non-synchronizable storage; this observes stored values only, not enforcement or device-equivalent semantics |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |

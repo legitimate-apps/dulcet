@@ -22,6 +22,7 @@ the detailed assertion.
 | CONF-10b | explicit reconnect after persisted-credential prefill |
 | CONF-10c | a 407 proxy-auth challenge rejects ambient credentials |
 | CONF-10d | restricted-user permission errors map to `Auth.Forbidden` |
+| CONF-10e | a production Apple credential-store save records `AfterFirstUnlockThisDeviceOnly` accessibility and a non-synchronizable item, observed by an unconstrained attribute read-back; this does not claim protection enforcement or device-equivalent simulator semantics |
 | CONF-11 | successful stream content type and signature validation |
 | CONF-12 | legacy-stream and extension-stream error status and shape |
 | CONF-13 | raw and transcoded ranged-stream behavior |

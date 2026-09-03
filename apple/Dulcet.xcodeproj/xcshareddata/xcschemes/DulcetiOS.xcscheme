@@ -55,6 +55,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "6EAD8F3C2D2C720CBE48B856"
+               BuildableName = "DulcetKeychainIOSTests.xctest"
+               BlueprintName = "DulcetKeychainIOSTests"
+               ReferencedContainer = "container:Dulcet.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "7DB98E02CC92CB4BB4F89498"
                BuildableName = "DulcetiOSUITests.xctest"
                BlueprintName = "DulcetiOSUITests"
