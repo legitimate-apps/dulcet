@@ -295,6 +295,48 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 }
 
 #if os(macOS)
+@Test @MainActor
+func accountFieldsResolveToEqualIntrinsicHeights() {
+    let store = DulcetPresentationStore(
+        source: DulcetDeterministicDataSource(initialState: .tlsUntrusted)
+    )
+    let view = NSHostingView(rootView: DulcetAccountConnectionView(
+        store: store,
+        allowsProgrammaticFocus: false
+    ))
+    view.sizingOptions = []
+    view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
+    view.layoutSubtreeIfNeeded()
+    view.displayIfNeeded()
+
+    let fields = accountTextFields(in: view)
+    #expect(fields.count == 3)
+    let assignedHeights = fields.map(\.frame.height)
+    let intrinsicHeights = fields.map(\.intrinsicContentSize.height)
+    // The CI flake has not reproduced on this Mac, even under an exact 121-point proposal. Assert
+    // the measured product invariant rather than pretending this is a local reproduction. Runtime
+    // intrinsic values keep the test valid if native controls or accessibility sizing change.
+    #expect(Set(assignedHeights).count == 1)
+    #expect(assignedHeights == intrinsicHeights)
+}
+
+@MainActor
+private func accountTextFields(in root: NSView) -> [NSTextField] {
+    var fields: [NSTextField] = []
+    func visit(_ view: NSView) {
+        if let field = view as? NSTextField,
+           [DulcetStrings.serverAddressPlaceholder, DulcetStrings.username, DulcetStrings.password]
+            .contains(field.placeholderString) {
+            fields.append(field)
+        }
+        view.subviews.forEach(visit)
+    }
+    visit(root)
+    return fields.sorted { lhs, rhs in
+        lhs.convert(lhs.bounds, to: root).maxY > rhs.convert(rhs.bounds, to: root).maxY
+    }
+}
+
 // Deliberately `async`, and deliberately NOT `RunLoop.main.run(until:)`. SwiftUI needs a main
 // run-loop turn to publish the window title, but this test takes one per presentation state, and
 // pumping the run loop synchronously HOLDS the main actor for the whole sweep. Swift Testing runs
