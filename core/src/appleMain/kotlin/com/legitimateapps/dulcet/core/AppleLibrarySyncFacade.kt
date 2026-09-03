@@ -45,6 +45,17 @@ public class AppleLibrarySyncOutcome internal constructor(
     public val error: AppleLibrarySyncErrorDto?,
 )
 
+public class AppleCommittedLibrarySnapshotDto internal constructor(
+    public val generation: Long,
+    public val library: AppleLibraryBrowseSnapshotDto,
+)
+
+/** Exactly one of [snapshot] and [error] is populated. */
+public class AppleCommittedLibraryOutcome internal constructor(
+    public val snapshot: AppleCommittedLibrarySnapshotDto?,
+    public val error: AppleLibrarySyncErrorDto?,
+)
+
 /** Objective-C-compatible, constructible facade for `library.sync`. */
 public class AppleLibrarySyncClient(
     private val databaseName: String = "dulcet.db",
@@ -63,6 +74,34 @@ public class AppleLibrarySyncClient(
         )
         operation.start()
         return operation
+    }
+
+    /** Reads only the atomically committed generation; it performs no network request. */
+    public fun readCommitted(providerInstanceId: String): AppleCommittedLibraryOutcome {
+        var store: DulcetDatabaseStore? = null
+        return try {
+            require(databaseName.isNotBlank())
+            require(providerInstanceId.isNotBlank())
+            store = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+            val committed = LibrarySyncRepository(store).readCommittedLibrary(providerInstanceId)
+            AppleCommittedLibraryOutcome(
+                snapshot = AppleCommittedLibrarySnapshotDto(
+                    generation = committed.generation,
+                    library = committed.library.toAppleDto(),
+                ),
+                error = null,
+            )
+        } catch (failure: Throwable) {
+            AppleCommittedLibraryOutcome(
+                snapshot = null,
+                error = AppleLibrarySyncErrorDto(mapAccountConnectionFailure(failure).appleSyncKind()),
+            )
+        } finally {
+            try {
+                store?.close()
+            } catch (_: Throwable) {
+            }
+        }
     }
 }
 

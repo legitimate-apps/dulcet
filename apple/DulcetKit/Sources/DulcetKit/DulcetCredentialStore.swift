@@ -13,6 +13,13 @@ public extension DulcetCredentialStoring {
     var credentialGeneration: Int64 { 0 }
 }
 
+/// Credential stores that persist the locally minted provider-instance identity with the account.
+@MainActor
+public protocol DulcetProviderInstanceCredentialStoring: DulcetCredentialStoring {
+    var providerInstanceID: String? { get }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws
+}
+
 public enum DulcetCredentialStoreError: Error, Equatable {
     case credentialMissing
     case malformedRecord
@@ -22,7 +29,7 @@ public enum DulcetCredentialStoreError: Error, Equatable {
 
 /// One active account stored as a generic-password item keyed by a non-secret local UUID.
 @MainActor
-public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
+public final class DulcetKeychainCredentialStore: DulcetProviderInstanceCredentialStoring {
     public static let productionService = "com.legitimateapps.dulcet"
 
     private let service: String
@@ -73,8 +80,23 @@ public final class DulcetKeychainCredentialStore: DulcetCredentialStoring {
         return record
     }
 
+    public var providerInstanceID: String? {
+        defaults.string(forKey: activeAccountKey)
+    }
+
     public func save(_ request: DulcetAccountConnectRequest) throws {
-        let accountID = defaults.string(forKey: activeAccountKey) ?? UUID().uuidString
+        try save(
+            request,
+            providerInstanceID: defaults.string(forKey: activeAccountKey) ?? UUID().uuidString
+        )
+    }
+
+    public func save(
+        _ request: DulcetAccountConnectRequest,
+        providerInstanceID: String
+    ) throws {
+        precondition(!providerInstanceID.isEmpty)
+        let accountID = providerInstanceID
         let previous = try? loadRecord(accountID: accountID)
         let nextGeneration: Int64
         if previous?.request == request {
