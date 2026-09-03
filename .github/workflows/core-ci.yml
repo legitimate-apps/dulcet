@@ -56,23 +56,25 @@ jobs:
       # in `main`, and each flavour source set supplies its own `ActiveChannelDefaults` -- prod null,
       # dev the loopback dev server. Building prod alone would not prove the split holds; building
       # both means a mistake that collapses them fails here.
-      - name: Build the Android shell, both channels
+      - name: Build the Android mobile channels and TV app
         run: >-
           ./gradlew --no-daemon
           --max-workers=2
           :android:app:assembleDevDebug
           :android:app:assembleProdDebug
+          :android:tv:assembleDebug
       # BOTH variants' unit tests run. The prod test asserts PROD ships no preconfigured server URL;
       # the dev test asserts DEV still carries one. The second is the positive control for the first
       # -- a refactor collapsing both flavours onto a single null-returning implementation would leave
       # the prod assertion passing while proving nothing, and the dev test is what catches that.
-      - name: Test the Android shell, both channels
+      - name: Test the Android mobile channels and TV app
         run: >-
           ./gradlew --no-daemon
           --max-workers=2
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
-      - name: Upload Android app account-control evidence
+          :android:tv:testDebugUnitTest
+      - name: Upload Android app evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -80,6 +82,7 @@ jobs:
           path: |
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
+            android/tv/build/test-results/testDebugUnitTest
           if-no-files-found: error
           retention-days: 7
 
@@ -172,7 +175,7 @@ jobs:
         with:
           name: dulcet-core-conformance-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance-android-results
-      - name: Download Android app account-control evidence
+      - name: Download Android app evidence
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-android-app-evidence-${{ github.run_id }}-${{ github.run_attempt }}

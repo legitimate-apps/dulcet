@@ -37,6 +37,9 @@ def materialize(root: Path) -> None:
         # is missing those sources and a correct FEATURES.yml is rejected as citing tests that do
         # not exist -- a false negative that looks exactly like a bad promotion.
         "android/app/src",
+        # Android TV has its own app/runtime and evidence class; copying only the mobile sources
+        # would make this fixture reject a valid TV promotion before its mutation cases run.
+        "android/tv/src",
     ):
         shutil.copytree(REPOSITORY / relative, root / relative)
 

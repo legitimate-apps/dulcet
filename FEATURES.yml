@@ -608,30 +608,20 @@
           }
         },
         "android": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
-             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+             "test": "AndroidSearchAppConformanceTest/conf41QueryRendersMergedRankingAndActivationRoutesToDetail"}
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-search-app-integration",
-            "reason": "Promotion requires an Android app workflow that types a query through the Compose surface, renders the ranked merged results, and observes activation routing into the production playback or detail intent. The Android host control proves only the core merge and wire behavior."
-          },
-          "reason": "conformance-env-linux executes CONF-41 from the Android target against the live disposable server, proving that server rows replace matching local opaque ids without duplicates or drops. This is valid bounded wire/core evidence, but it does not run an Android device, Compose search UI, or activation path, so the feature is partial rather than shipped."
+          "reason": "The required core-ci workflow retains the Android-target CONF-41 live disposable-server control and now also executes AndroidSearchAppConformanceTest/conf41QueryRendersMergedRankingAndActivationRoutesToDetail in the Android app module. The app control types through the Material3 Compose field, observes the shared production presenter replace the local row carrying the same opaque id while preserving the ranked local positions and appending the server-only row, clicks the rendered replacement, and asserts the exact production SearchDetailIntent action, search source, result type, and unchanged opaque id. Credential canaries are absent from that intent's diagnostic form. This is host-rendered Compose/Robolectric evidence rather than a physical-device observation; the claimed search, rendering, and semantic activation path itself executes."
         },
         "androidtv": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
-             "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"}
+             "test": "AndroidTvSearchAppConformanceTest/conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail"}
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-search-app-integration",
-            "reason": "Promotion requires an Android TV workflow that enters a query with TV input, renders and traverses the ranked results with focus, and observes activation routing into playback or detail. The shared Android host control proves only the core merge and wire behavior."
-          },
-          "reason": "Android TV shares the Android core that executes CONF-41 in conformance-env-linux, so the local/server merge has bounded target evidence. The host run does not observe a TV device, focus model, remote text entry, result rendering, or activation, so the cell is partial rather than shipped."
+          "reason": "The dedicated Android TV application depends on the same production search presenter without importing mobile Material3; its UI uses androidx.tv:tv-material 1.1.0 and foundation LazyColumn. The required core-ci workflow retains the Android-target CONF-41 live disposable-server control and executes AndroidTvSearchAppConformanceTest/conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail at a TV viewport. That control enters text through the focused TV Compose field, observes the merged ranked rows, sends real DirectionDown key events, asserts focus on successive result cards, activates with DirectionCenter, and asserts the production SearchDetailIntent carries the search source and unchanged opaque artist id while carrying no credential canaries. This is host-rendered Compose/Robolectric remote-input evidence rather than a physical-TV observation; no coordinate tap stands in for focus traversal."
         }
       }
     },
