@@ -31,8 +31,8 @@ private enum CaptureAppearance: String, CaseIterable {
 
     var pinnedControlSHA256: String {
         switch self {
-        case .light: "3c46bfa842033834d417f276c43ee29ce85e1f4eefd8cbea17faedecf1d6c60f"
-        case .dark: "ba23a4b9b8f257a747cf9050a03b54e5fb2e1f8f18ecca97ec1db8fce2cc74f6"
+        case .light: "39b7219b78a17a4d8b9f5843939af7dce969151ffb976211c34cc519524299d8"
+        case .dark: "f7bdf2e0adab37f4afe82a1f7d3744d6c0e4a282f3df37148b36348f63484371"
         }
     }
 }

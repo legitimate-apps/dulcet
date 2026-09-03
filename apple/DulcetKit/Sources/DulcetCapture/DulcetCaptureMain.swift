@@ -30,8 +30,8 @@ private enum CaptureAppearance: String, CaseIterable {
 
     var pinnedControlSHA256: String {
         switch self {
-        case .light: "3c46bfa842033834d417f276c43ee29ce85e1f4eefd8cbea17faedecf1d6c60f"
-        case .dark: "ba23a4b9b8f257a747cf9050a03b54e5fb2e1f8f18ecca97ec1db8fce2cc74f6"
+        case .light: "39b7219b78a17a4d8b9f5843939af7dce969151ffb976211c34cc519524299d8"
+        case .dark: "f7bdf2e0adab37f4afe82a1f7d3744d6c0e4a282f3df37148b36348f63484371"
         }
     }
 }
@@ -389,7 +389,7 @@ private struct DulcetCaptureMain {
     private static let referenceCaptureWidth = 1180
     private static let referenceCaptureHeight = 728
     private static let pinnedControlWidth = 1180
-    private static let pinnedControlHeight = 760
+    private static let pinnedControlHeight = 728
     private static let jpegCompression = 0.72
     private static var capturePixelWidth: Int {
         Int(CGFloat(referenceCaptureWidth) * CaptureRenderingPolicy.captureScale)
@@ -709,10 +709,12 @@ private struct DulcetCaptureMain {
             requestedAppearance: appearance.appKitName
         )
 
-        // The titled window remains the rendering host so AppKit appearance, key-control state,
-        // focus, and backing-scale behavior stay realistic. The compared pixels begin at the
-        // application-owned hosting view: its theme-frame superview also contains OS-drawn titlebar
-        // material, traffic lights, and title text whose cross-process timing is outside our control.
+        // The titled window supplies the fixed AppKit layout and resolved screen backing scale. The
+        // requested appearance is applied explicitly and validated on the hosting view; the rendered
+        // key control-active state and no-focused-control state are established independently. The
+        // compared pixels begin at the application-owned hosting view: its theme-frame superview also
+        // contains OS-drawn titlebar material, traffic lights, and title text whose cross-process
+        // timing is outside our control.
         let captureView: NSView = hostingView
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
@@ -1285,8 +1287,8 @@ private struct DulcetCaptureMain {
             sha256: observedHash,
             variant: "deliberately-bad-control",
             windowBackingScaleFactor: nil,
-            windowFrameHeightPoints: pinnedControlHeight,
-            windowFrameWidthPoints: pinnedControlWidth
+            windowFrameHeightPoints: windowHeight,
+            windowFrameWidthPoints: windowWidth
         )
     }
 

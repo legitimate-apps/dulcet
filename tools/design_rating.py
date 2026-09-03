@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run and assemble isolated-per-appearance macOS design ratings.
 
-The online boundary is deliberately one request per invocation. Run ``prepare`` once,
-invoke ``rate-one`` fourteen times under ``secret exec``, then run ``assemble`` without
-credentials. Raw provider responses are retained beside the mechanically assembled report.
+The online boundary is deliberately one request per invocation. Run ``prepare`` once, invoke
+``rate-one`` once for every planned state/appearance record under ``secret exec``, then run
+``assemble`` without credentials. Raw provider responses are retained beside the mechanically
+assembled report.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sys
 from typing import Any
@@ -29,15 +31,148 @@ DERIVATION_PROTOCOL = "isolated-per-appearance-v1"
 WITHIN_IMAGE_VARIATION_PROTOCOL = "same-image-repeat-range-v1"
 CONTEXT_SCOPE = "fresh-no-prior-scores"
 STATES = (
+    "account-connect-idle",
+    "account-connect-empty",
+    "account-connecting",
+    "account-connected",
+    "account-removing",
+    "account-removal-error",
+    "account-saved-disconnected",
+    "account-error-input",
+    "account-error-transport",
+    "account-error-security",
+    "account-error-protocol",
+    "account-error-server",
+    "account-error-authentication",
+    "account-error-capability",
+    "account-error-persistence",
     "empty-library-no-account",
+    "empty-library-connected",
+    "library-loading",
+    "library-error",
     "library-browse",
     "album-detail-multi-disc",
+    "artist-detail",
     "now-playing",
+    "now-playing-preparing",
+    "now-playing-failed",
+    "now-playing-unavailable",
+    "search-idle",
+    "search-loading",
     "search-results",
+    "search-empty",
+    "search-error",
     "error-tls-untrusted",
+    "error-tls-untrusted-populated-form",
     "offline-metadata-only",
 )
 APPEARANCES = ("light", "dark")
+STANDARD_RECORD_COUNT = len(STATES) * len(APPEARANCES)
+PRESENTATION_STATE_SWIFT = Path(__file__).resolve().parent.parent / (
+    "apple/DulcetKit/Sources/DulcetKit/PresentationModels.swift"
+)
+STATE_QUESTIONS = {
+    "account-connect-idle": (
+        "Does the untouched connection form establish purpose, required inputs, and a clear primary action?"
+    ),
+    "account-connect-empty": (
+        "Does empty submission produce specific, well-placed validation without destabilizing the form?"
+    ),
+    "account-connecting": (
+        "Are in-progress status, disabled controls, and cancellation legible without visual churn?"
+    ),
+    "account-connected": (
+        "Does successful connection clearly identify the account and the next useful destination?"
+    ),
+    "account-removing": (
+        "Does account removal read as a deliberate destructive operation with unambiguous progress?"
+    ),
+    "account-removal-error": (
+        "Is the failed removal specific and recoverable while preserving the connected-account context?"
+    ),
+    "account-saved-disconnected": (
+        "Is the saved-but-disconnected state distinct from first-time setup, with reconnect as the obvious action?"
+    ),
+    "account-error-input": (
+        "Is the input failure attached to the correct field with a precise correction path?"
+    ),
+    "account-error-transport": (
+        "Does the transport failure distinguish reachability trouble and offer an actionable retry path?"
+    ),
+    "account-error-security": (
+        "Does the security failure communicate a safe limitation without presenting an unsafe bypass?"
+    ),
+    "account-error-protocol": (
+        "Is protocol incompatibility clearly different from authentication or reachability failure?"
+    ),
+    "account-error-server": (
+        "Does the server failure preserve useful specificity without overwhelming the connection task?"
+    ),
+    "account-error-authentication": (
+        "Are rejected credentials clearly identified while keeping correction and resubmission straightforward?"
+    ),
+    "account-error-capability": (
+        "Does the capability failure explain the incompatible server feature and the available remedy?"
+    ),
+    "account-error-persistence": (
+        "Does the persistence failure explain that saving failed and present a credible recovery action?"
+    ),
+    "empty-library-no-account": (
+        "Is the restraint intentional, and is connecting the unmistakable next step?"
+    ),
+    "empty-library-connected": (
+        "Is an empty connected library clearly distinct from no account, with a useful next step?"
+    ),
+    "library-loading": (
+        "Does loading preserve the library hierarchy and communicate progress without fake content?"
+    ),
+    "library-error": (
+        "Is the library failure specific, bounded, and recoverable without losing navigation context?"
+    ),
+    "library-browse": (
+        "Does density survive large, Unicode, missing, multi-artist, and long-title data without looking like demo data?"
+    ),
+    "album-detail-multi-disc": (
+        "Are disc boundaries and track-number restarts immediately legible?"
+    ),
+    "artist-detail": (
+        "Does the artist hierarchy make identity, albums, and available actions easy to scan?"
+    ),
+    "now-playing": (
+        "Do transport, progress, identity, output, and queue read in the right order?"
+    ),
+    "now-playing-preparing": (
+        "Does preparation preserve track identity while making unavailable controls and progress clear?"
+    ),
+    "now-playing-failed": (
+        "Is playback failure attached to the affected item with an obvious and credible recovery path?"
+    ),
+    "now-playing-unavailable": (
+        "Does unavailable playback clearly explain the limitation without implying that transport controls work?"
+    ),
+    "search-idle": (
+        "Does the untouched search surface explain scope and make the first interaction obvious?"
+    ),
+    "search-loading": (
+        "Does search progress remain tied to the query while preserving useful context and cancellation?"
+    ),
+    "search-results": (
+        "Are server-ranked artists, albums, and tracks easy to distinguish without type labels overwhelming relevance?"
+    ),
+    "search-empty": (
+        "Is the no-results state clearly tied to the query and helpful without becoming visually noisy?"
+    ),
+    "search-error": (
+        "Is search failure distinguishable from no results, with an actionable retry path?"
+    ),
+    "error-tls-untrusted": (
+        "Is the limitation safe, specific, actionable, and free of a bypass action?"
+    ),
+    "error-tls-untrusted-populated-form": (
+        "Does the populated form preserve corrective context while presenting the TLS limitation safely?"
+    ),
+    "offline-metadata-only": "Is it clear that browsing works while playback does not?",
+}
 CATEGORY_WEIGHTS = OrderedDict(
     (
         ("platform_idiom", 25),
@@ -63,6 +198,30 @@ PROVIDER_ENDPOINTS = {
 
 class RatingError(ValueError):
     """A rating input or derivation does not satisfy the repository contract."""
+
+
+def assert_states_match_swift_enum() -> None:
+    if not PRESENTATION_STATE_SWIFT.exists():
+        raise RatingError(
+            f"cannot verify the presentation-state mirror: {PRESENTATION_STATE_SWIFT} is absent"
+        )
+    source = PRESENTATION_STATE_SWIFT.read_text()
+    enum_body = re.search(r"enum DulcetPresentationState[^{]*\{(.*?)\n\}", source, re.S)
+    if enum_body is None:
+        raise RatingError(
+            "cannot verify the presentation-state mirror: DulcetPresentationState was not found"
+        )
+    swift_states = tuple(re.findall(r'case \w+ = "([a-z0-9-]+)"', enum_body.group(1)))
+    if swift_states != STATES:
+        missing = [state for state in swift_states if state not in STATES]
+        extra = [state for state in STATES if state not in swift_states]
+        raise RatingError(
+            "STATES no longer mirrors DulcetPresentationState. "
+            f"in Swift but not STATES={missing}; in STATES but not Swift={extra}; "
+            f"order_matches={list(swift_states) == list(STATES)}"
+        )
+    if tuple(STATE_QUESTIONS) != STATES:
+        raise RatingError("STATE_QUESTIONS no longer mirrors the ordered rating state contract")
 
 
 def sha256(path: Path) -> str:
@@ -315,6 +474,7 @@ def checked_image(
 
 
 def validate_artifact(artifact: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    assert_states_match_swift_enum()
     artifact = artifact.resolve()
     manifest_path = artifact / "manifest.json"
     manifest = read_json(manifest_path)
@@ -349,7 +509,7 @@ def validate_artifact(artifact: Path) -> tuple[dict[str, Any], list[dict[str, An
                     "input_images": inputs,
                 }
             )
-    if len({request["request_nonce"] for request in requests}) != 14:
+    if len({request["request_nonce"] for request in requests}) != STANDARD_RECORD_COUNT:
         raise RatingError("harness generated repeated request nonces")
     return manifest, requests
 
@@ -391,7 +551,7 @@ def prepare_run(args: argparse.Namespace) -> None:
             "manifest_filename": "manifest.json",
             "manifest_sha256": sha256(artifact / "manifest.json"),
             "artifact_class": manifest["artifactClass"],
-            "expected_standard_record_count": 14,
+            "expected_standard_record_count": STANDARD_RECORD_COUNT,
         },
         "rater": rater,
         "within_image_variation_evidence": variation_evidence,
@@ -401,7 +561,7 @@ def prepare_run(args: argparse.Namespace) -> None:
     (output / "raw").mkdir()
     (output / "records").mkdir()
     write_json_exclusive(output / "plan.json", plan)
-    print(f"prepared 14 isolated requests in {output}")
+    print(f"prepared {STANDARD_RECORD_COUNT} isolated requests in {output}")
 
 
 def expected_response_shape(request: dict[str, Any]) -> str:
@@ -446,15 +606,6 @@ or pass/fail verdict. The harness computes all of them.
 
 
 def build_messages(request: dict[str, Any], artifact: Path) -> list[dict[str, Any]]:
-    state_questions = {
-        "empty-library-no-account": "Is the restraint intentional, and is connecting the unmistakable next step?",
-        "library-browse": "Does density survive large, Unicode, missing, multi-artist, and long-title data without looking like demo data?",
-        "album-detail-multi-disc": "Are disc boundaries and track-number restarts immediately legible?",
-        "now-playing": "Do transport, progress, identity, output, and queue read in the right order?",
-        "search-results": "Are server-ranked artists, albums, and tracks easy to distinguish without type labels overwhelming relevance?",
-        "error-tls-untrusted": "Is the limitation safe, specific, actionable, and free of a bypass action?",
-        "offline-metadata-only": "Is it clear that browsing works while playback does not?",
-    }
     system = """You are an independent external macOS design rater. This is a fresh request with no
 prior scores or opposite-appearance image. Judge only visible evidence in the supplied image inputs.
 Be critical and literal; do not reward intent that is not visible. Accessibility interaction claims
@@ -471,7 +622,7 @@ with the identical taste rubric. Do not compare against any unseen image or appe
     text = (
         f"State: {request['state']}\n"
         f"Appearance: {request['appearance']}\n"
-        f"State-specific question: {state_questions[request['state']]}\n\n"
+        f"State-specific question: {STATE_QUESTIONS[request['state']]}\n\n"
         + expected_response_shape(request)
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
@@ -650,10 +801,10 @@ def validate_record(value: Any, request: dict[str, Any]) -> list[str]:
 
 def request_for_index(plan: dict[str, Any], index: int) -> dict[str, Any]:
     requests = plan.get("requests")
-    if not isinstance(requests, list) or len(requests) != 14:
-        raise RatingError("plan must contain exactly 14 requests")
+    if not isinstance(requests, list) or len(requests) != STANDARD_RECORD_COUNT:
+        raise RatingError(f"plan must contain exactly {STANDARD_RECORD_COUNT} requests")
     if not 0 <= index < len(requests):
-        raise RatingError(f"request index must be 0..13, got {index}")
+        raise RatingError(f"request index must be 0..{STANDARD_RECORD_COUNT - 1}, got {index}")
     request = requests[index]
     if request.get("index") != index:
         raise RatingError(f"plan request index mismatch at {index}")
@@ -725,7 +876,8 @@ def rate_one(args: argparse.Namespace) -> None:
         )
     write_json_exclusive(record_path, parsed)
     print(
-        f"rated {args.index + 1}/14 {request_plan['state']}/{request_plan['appearance']} "
+        f"rated {args.index + 1}/{STANDARD_RECORD_COUNT} "
+        f"{request_plan['state']}/{request_plan['appearance']} "
         f"nonce={request_plan['request_nonce']}"
     )
 
@@ -802,12 +954,14 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
     if plan.get("derivation_protocol") != DERIVATION_PROTOCOL:
         raise RatingError("plan has an unsupported derivation protocol")
     requests = plan.get("requests")
-    if not isinstance(requests, list) or len(requests) != 14:
-        raise RatingError("plan must contain exactly 14 requests")
+    if not isinstance(requests, list) or len(requests) != STANDARD_RECORD_COUNT:
+        raise RatingError(f"plan must contain exactly {STANDARD_RECORD_COUNT} requests")
     nonces = [request.get("request_nonce") for request in requests]
     assembly_errors: list[str] = []
-    if len(set(nonces)) != 14:
-        assembly_errors.append("the 14 planned request nonces are not unique")
+    if len(set(nonces)) != STANDARD_RECORD_COUNT:
+        assembly_errors.append(
+            f"the {STANDARD_RECORD_COUNT} planned request nonces are not unique"
+        )
 
     within_image_variation, delta_evidence_valid = derive_within_image_variation(
         plan.get("within_image_variation_evidence"),
@@ -956,10 +1110,12 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
 
     if run_valid:
         lens_scores = {
-            "platform_idiom": round_integer(sum(platform_scores) / 14),
-            "information_design": round_integer(sum(information_scores) / 14),
+            "platform_idiom": round_integer(sum(platform_scores) / STANDARD_RECORD_COUNT),
+            "information_design": round_integer(
+                sum(information_scores) / STANDARD_RECORD_COUNT
+            ),
         }
-        product_score = round_integer(sum(all_standard_scores) / 14)
+        product_score = round_integer(sum(all_standard_scores) / STANDARD_RECORD_COUNT)
         weakest = min(STATES, key=lambda state: state_raw_means[state])
         strongest = max(STATES, key=lambda state: state_raw_means[state])
     else:
@@ -978,7 +1134,7 @@ def assemble(run: Path) -> tuple[dict[str, Any], list[str]]:
         "artifact": {
             "manifest_sha256": plan["artifact"]["manifest_sha256"],
             "artifact_class": plan["artifact"]["artifact_class"],
-            "standard_record_count": 14,
+            "standard_record_count": STANDARD_RECORD_COUNT,
         },
         "derivation_protocol": DERIVATION_PROTOCOL,
         "derivation_valid": derivation_valid,
@@ -1016,7 +1172,7 @@ def assemble_run(args: argparse.Namespace) -> None:
         raise RatingError(
             f"rating run is void; null report retained at {report_path}: " + "; ".join(reasons)
         )
-    print(f"assembled valid 14-record rating at {report_path}")
+    print(f"assembled valid {STANDARD_RECORD_COUNT}-record rating at {report_path}")
 
 
 def combine_reports(args: argparse.Namespace) -> None:
@@ -1064,7 +1220,10 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
 
-    prepare = commands.add_parser("prepare", help="validate an artifact and create 14 request plans")
+    prepare = commands.add_parser(
+        "prepare",
+        help=f"validate an artifact and create {STANDARD_RECORD_COUNT} request plans",
+    )
     prepare.add_argument("artifact")
     prepare.add_argument("output")
     prepare.add_argument("--provider", choices=sorted(PROVIDER_ENDPOINTS), required=True)
@@ -1088,7 +1247,9 @@ def parser() -> argparse.ArgumentParser:
     replacement.add_argument("--index", type=int, required=True)
     replacement.set_defaults(function=replace_failed_request)
 
-    assemble_command = commands.add_parser("assemble", help="mechanically assemble 14 records")
+    assemble_command = commands.add_parser(
+        "assemble", help=f"mechanically assemble {STANDARD_RECORD_COUNT} records"
+    )
     assemble_command.add_argument("--run", required=True)
     assemble_command.set_defaults(function=assemble_run)
 
