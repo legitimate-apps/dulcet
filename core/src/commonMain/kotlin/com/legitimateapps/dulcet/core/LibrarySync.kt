@@ -417,6 +417,17 @@ internal data class LibrarySyncCommit(
     val deletionReconciliations: List<LibraryDeletionReconciliation>,
 )
 
+internal data class CommittedLibraryBrowseSnapshot(
+    val generation: Long,
+    val library: LibraryBrowseSnapshot,
+)
+
+private data class StoredLibraryCredit(
+    val ownerKind: String,
+    val ownerRawId: String,
+    val credit: Credit,
+)
+
 internal class LibrarySyncRepository(
     private val store: DulcetDatabaseStore,
     private val postCommitProbe: LibrarySyncPostCommitProbe = LibrarySyncPostCommitProbe.None,
@@ -779,6 +790,70 @@ internal class LibrarySyncRepository(
         )
     }
 
+    fun readCommittedLibrary(serverId: String): CommittedLibraryBrowseSnapshot =
+        database.transactionWithResult {
+            val generation = store.metadata().committedGeneration
+            val credits = queries.selectCreditsAtGeneration(serverId, generation) {
+                    ownerKind, ownerRawId, role, _, name, artistRawId ->
+                StoredLibraryCredit(
+                    ownerKind = ownerKind,
+                    ownerRawId = ownerRawId,
+                    credit = Credit(
+                        role = when (role) {
+                            "artist" -> CreditRole.Artist
+                            "album_artist" -> CreditRole.AlbumArtist
+                            else -> error("Unknown stored library credit role")
+                        },
+                        name = name,
+                        id = artistRawId?.let { ProviderItemId(serverId, it) },
+                    ),
+                )
+            }.executeAsList().groupBy { it.ownerKind to it.ownerRawId }
+            val tracks = queries.selectTracksAtGeneration(serverId, generation) {
+                    rawId, albumRawId, title, _, _, albumTitle, discNumber, trackNumber,
+                    durationMilliseconds, sourceContainer, mediaSourceId, artworkKey ->
+                albumRawId to LibraryTrack(
+                    id = ProviderItemId(serverId, rawId),
+                    title = title,
+                    credits = credits["track" to rawId].orEmpty().map(StoredLibraryCredit::credit),
+                    albumTitle = albumTitle,
+                    discNumber = discNumber?.toInt(),
+                    trackNumber = trackNumber?.toInt(),
+                    duration = durationMilliseconds.milliseconds,
+                    sourceContainer = sourceContainer?.let(::audioContainerFromWireName),
+                    mediaSourceId = mediaSourceId,
+                    artworkKey = artworkKey,
+                )
+            }.executeAsList().groupBy({ it.first }, { it.second })
+            CommittedLibraryBrowseSnapshot(
+                generation = generation,
+                library = LibraryBrowseSnapshot(
+                    musicFolders = queries.selectFoldersAtGeneration(serverId, generation) {
+                            rawId, name ->
+                        LibraryMusicFolder(ProviderItemId(serverId, rawId), name)
+                    }.executeAsList(),
+                    artists = queries.selectArtistsAtGeneration(serverId, generation) {
+                            rawId, name, mediaSourceId ->
+                        LibraryArtist(ProviderItemId(serverId, rawId), name, mediaSourceId)
+                    }.executeAsList(),
+                    albums = queries.selectAlbumsAtGeneration(serverId, generation) {
+                            rawId, title, _, _, year, durationMilliseconds, mediaSourceId, artworkKey ->
+                        LibraryAlbum(
+                            id = ProviderItemId(serverId, rawId),
+                            title = title,
+                            credits = credits["album" to rawId].orEmpty()
+                                .map(StoredLibraryCredit::credit),
+                            year = year?.toInt(),
+                            duration = durationMilliseconds.milliseconds,
+                            mediaSourceId = mediaSourceId,
+                            artworkKey = artworkKey,
+                            tracks = tracks[rawId].orEmpty(),
+                        )
+                    }.executeAsList(),
+                ),
+            )
+        }
+
     fun deletionReconciliations(
         serverId: String,
         generation: Long,
@@ -866,6 +941,16 @@ private fun AudioContainer.wireName(): String = when (this) {
     AudioContainer.Flac -> "flac"
     AudioContainer.Ogg -> "ogg"
     AudioContainer.AdtsAac -> "adts_aac"
+}
+
+private fun audioContainerFromWireName(value: String): AudioContainer = when (value) {
+    "mp3" -> AudioContainer.Mp3
+    "mp4" -> AudioContainer.Mp4
+    "wav" -> AudioContainer.Wav
+    "flac" -> AudioContainer.Flac
+    "ogg" -> AudioContainer.Ogg
+    "adts_aac" -> AudioContainer.AdtsAac
+    else -> error("Unknown stored audio container")
 }
 
 internal sealed interface LibrarySyncResult {

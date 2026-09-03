@@ -489,18 +489,13 @@
       "conformance": ["CONF-31", "CONF-32", "CONF-33"],
       "platforms": {
         "macos": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "macos-library-sync-app-integration",
-            "reason": "Promotion requires a macOS app workflow and test that invoke the production AppleLibrarySyncClient, browse the committed SQLDelight generation, exercise scheduled refresh, and prove saved metadata remains browsable offline. No such app integration or test exists yet."
-          },
+          "status": "shipped",
           "evidence": [
             {"conformance": "CONF-31", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
             {"conformance": "CONF-32", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
             {"conformance": "CONF-33", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
           ],
-          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the macosArm64 core-conformance runtime, proving generation-pinned reads, an atomic sync-generation commit, and the bounded stability witness in the production core. The macOS Library UI still uses the narrower read-through LibraryBrowse path: it does not start AppleLibrarySyncClient, browse the committed SQLDelight generation, schedule refreshes, or load real saved metadata offline. The durable engine is therefore present and evidenced on macOS, but the platform capability remains partial rather than shipped."
+          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the macosArm64 core-conformance runtime, retaining one exact test identity for each declared contract. In the same disposable-server job, DulcetMacAccountConnectAppTest/librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline runs inside the macOS app host and closes the former integration gap: the production DulcetCoreLibraryBrowser starts AppleLibrarySyncClient, independently reopens and displays each committed SQLDelight generation, and preserves opaque folder, artist, album and track identifiers. The test observes generations 1 and 2, with generation 2 started by the real ContinuousClock refresh scheduler at a shortened test cadence; production uses the same scheduler for a 24-hour full-import cadence. It then requires an actual connection refusal from 127.0.0.1:1 before reconstructing a saved disconnected account over the same database and provider identity, where zero connector or sync starts occur and committed generation 2 remains browsable."
         },
         "ios": {
           "status": "partial",
