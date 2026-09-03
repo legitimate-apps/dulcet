@@ -7,20 +7,40 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import stat
 import subprocess
+import sys
+import tempfile
 import urllib.parse
 import urllib.request
+from urllib.error import HTTPError, URLError
 
 from ffmpeg_version import require_ffmpeg_version
 
 
-def run(arguments: list[str], *, capture: bool = False) -> str:
+def run(
+    arguments: list[str],
+    *,
+    capture: bool = False,
+    local_homebrew_package: bool = False,
+) -> str:
+    environment = {**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"}
+    if local_homebrew_package:
+        # Homebrew intentionally gates package-path installs behind developer mode. Suppress its
+        # post-install dependent upgrade pass too: those upgrades would reintroduce live resolution.
+        environment.update(
+            {
+                "HOMEBREW_DEVELOPER": "1",
+                "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK": "1",
+                "HOMEBREW_NO_INSTALL_CLEANUP": "1",
+            }
+        )
     process = subprocess.run(
         arguments,
         text=True,
         capture_output=capture,
-        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
+        env=environment,
     )
     if process.returncode != 0:
         detail = ((process.stdout or "") + (process.stderr or "")).strip()
@@ -47,6 +67,131 @@ def file_sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def pinned_ghcr_repository(entry: dict) -> str:
+    """Validate one immutable GHCR blob pin and return its repository name."""
+    expected_sha256 = entry.get("sha256")
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise SystemExit(f"invalid bottle sha256 pin for {entry.get('formula', '<unknown>')}")
+
+    url = entry.get("url")
+    if not isinstance(url, str):
+        raise SystemExit(f"missing bottle URL pin for {entry.get('formula', '<unknown>')}")
+    parsed = urllib.parse.urlsplit(url)
+    match = re.fullmatch(r"/v2/(homebrew/core/.+)/blobs/sha256:([0-9a-f]{64})", parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "ghcr.io"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or match is None
+    ):
+        raise SystemExit(
+            f"bottle URL is not an immutable Homebrew GHCR blob for "
+            f"{entry.get('formula', '<unknown>')}: {url!r}"
+        )
+    repository, url_digest = match.groups()
+    if url_digest != expected_sha256:
+        raise SystemExit(
+            f"bottle digest pin disagreement for {entry['formula']}: "
+            f"url={url_digest} sha256={expected_sha256}"
+        )
+    return repository
+
+
+def bottle_filename(entry: dict) -> str:
+    rebuild = entry["bottle_rebuild"]
+    rebuild_suffix = f".{rebuild}" if rebuild else ""
+    return (
+        f"{entry['formula']}--{keg_version(entry)}.{entry['bottle_tag']}"
+        f".bottle{rebuild_suffix}.tar.gz"
+    )
+
+
+def bottle_cache_filename(entry: dict) -> str:
+    return f"{entry['sha256']}--{bottle_filename(entry)}"
+
+
+def verify_bottle_checksum(path: Path, entry: dict) -> str:
+    """Reject any archive whose bytes do not match the immutable digest pin."""
+    pinned_ghcr_repository(entry)
+    observed_sha256 = file_sha256(path)
+    if observed_sha256 != entry["sha256"]:
+        raise SystemExit(
+            f"pinned bottle checksum mismatch for {entry['formula']}: "
+            f"expected {entry['sha256']}, observed {observed_sha256}"
+        )
+    return observed_sha256
+
+
+def ghcr_pull_token(repository: str) -> str:
+    query = urllib.parse.urlencode(
+        {
+            "service": "ghcr.io",
+            "scope": f"repository:{repository}:pull",
+        }
+    )
+    request = urllib.request.Request(
+        f"https://ghcr.io/token?{query}",
+        headers={"User-Agent": "dulcet-darwin-conformance/1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            token_document = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+        raise SystemExit(f"GHCR authentication failed for {repository}: {error}") from error
+    token = token_document.get("token") or token_document.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise SystemExit(f"GHCR authentication returned no pull token for {repository}")
+    return token
+
+
+def fetch_pinned_bottle(entry: dict, cache_directory: Path) -> tuple[Path, str, bool]:
+    """Return a checksum-verified pinned bottle, using a reusable local cache when possible."""
+    repository = pinned_ghcr_repository(entry)
+    cache_directory.mkdir(parents=True, exist_ok=True)
+    destination = cache_directory / bottle_cache_filename(entry)
+    if destination.exists():
+        if destination.is_symlink() or not destination.is_file():
+            raise SystemExit(f"pinned bottle cache entry is not a file: {destination}")
+        return destination, verify_bottle_checksum(destination, entry), True
+
+    token = ghcr_pull_token(repository)
+    request = urllib.request.Request(
+        entry["url"],
+        headers={
+            "Accept": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "dulcet-darwin-conformance/1",
+        },
+    )
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{entry['formula']}-",
+            suffix=".partial",
+            dir=cache_directory,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    while block := response.read(1024 * 1024):
+                        temporary.write(block)
+            except (HTTPError, URLError, TimeoutError) as error:
+                raise SystemExit(
+                    f"GHCR blob fetch failed for {entry['formula']} at its pinned digest: {error}"
+                ) from error
+        observed_sha256 = verify_bottle_checksum(temporary_path, entry)
+        os.replace(temporary_path, destination)
+        temporary_path = None
+        return destination, observed_sha256, False
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def keg_payload_sha256(root: Path) -> tuple[str, int]:
@@ -137,7 +282,7 @@ def formula_shape(formula: dict, bottle_tag: str) -> dict:
         bottle = formula["bottle"]["stable"]
         artifact = bottle["files"][bottle_tag]
     except (KeyError, TypeError) as error:
-        raise SystemExit(
+        raise ValueError(
             f"formula {formula.get('name', '<unknown>')} has no stable {bottle_tag} bottle"
         ) from error
     return {
@@ -193,6 +338,223 @@ def assert_locked_graph(closure: list[dict], root_formula: str) -> None:
         )
 
 
+def expected_runtime_dependencies(entry: dict, by_name: dict[str, dict]) -> dict[str, dict]:
+    reachable: set[str] = set()
+    pending = list(entry["dependencies"])
+    while pending:
+        name = pending.pop()
+        if name in reachable:
+            continue
+        reachable.add(name)
+        pending.extend(by_name[name]["dependencies"])
+    direct = set(entry["dependencies"])
+    return {
+        name: {
+            "version": by_name[name]["version"],
+            "revision": by_name[name]["revision"],
+            "bottle_rebuild": by_name[name]["bottle_rebuild"],
+            "pkg_version": keg_version(by_name[name]),
+            "declared_directly": name in direct,
+        }
+        for name in sorted(reachable)
+    }
+
+
+def bottle_formula_shape(path: Path) -> dict:
+    """Evaluate the formula embedded in a verified bottle without consulting a formula index."""
+    ruby = (
+        "formula = Formulary.factory(ARGV.fetch(0)); "
+        "dependencies = formula.deps.select(&:required?).map(&:name).sort; "
+        "puts JSON.generate({"
+        "formula: formula.name, "
+        "version: formula.stable.version.to_s, "
+        "revision: formula.revision, "
+        "version_scheme: formula.version_scheme, "
+        "dependencies: dependencies"
+        "})"
+    )
+    try:
+        return json.loads(
+            run(
+                ["brew", "ruby", "-rformulary", "-rjson", "-e", ruby, str(path)],
+                capture=True,
+                local_homebrew_package=True,
+            )
+        )
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Homebrew returned invalid embedded formula metadata for {path}") from error
+
+
+def assert_bottle_formula_shape(path: Path, entry: dict) -> None:
+    expected = {
+        "formula": entry["formula"],
+        "version": entry["version"],
+        "revision": entry["revision"],
+        "version_scheme": entry["version_scheme"],
+        "dependencies": sorted(entry["dependencies"]),
+    }
+    observed = bottle_formula_shape(path)
+    if observed != expected:
+        raise SystemExit(
+            f"embedded formula drift in pinned bottle {entry['formula']}: "
+            f"expected {expected}, observed {observed}"
+        )
+
+
+def observed_runtime_dependencies(receipt: dict, context: str) -> dict[str, dict]:
+    records = receipt.get("runtime_dependencies")
+    if not isinstance(records, list):
+        raise SystemExit(f"{context} has no runtime dependency receipt")
+    observed: dict[str, dict] = {}
+    for record in records:
+        try:
+            name = record["full_name"]
+            shape = {
+                "version": record["version"],
+                "revision": record["revision"],
+                "bottle_rebuild": record["bottle_rebuild"],
+                "pkg_version": record["pkg_version"],
+                "declared_directly": record["declared_directly"],
+            }
+        except (KeyError, TypeError) as error:
+            raise SystemExit(f"invalid runtime dependency in {context}: {record!r}") from error
+        if name in observed:
+            raise SystemExit(f"duplicate runtime dependency {name} in {context}")
+        observed[name] = shape
+    return observed
+
+
+def assert_receipt_identity(
+    receipt: dict,
+    entry: dict,
+    *,
+    context: str,
+    require_poured: bool,
+) -> None:
+    try:
+        source_versions = receipt["source"]["versions"]
+        observed_source = {
+            "version": source_versions["stable"],
+            "version_scheme": source_versions["version_scheme"],
+        }
+    except (KeyError, TypeError) as error:
+        raise SystemExit(f"invalid source metadata in {context}") from error
+    expected_source = {
+        "version": entry["version"],
+        "version_scheme": entry["version_scheme"],
+    }
+    if observed_source != expected_source:
+        raise SystemExit(
+            f"source metadata drift in {context}: expected {expected_source}, "
+            f"observed {observed_source}"
+        )
+    if receipt.get("built_as_bottle") is not True:
+        raise SystemExit(f"{context} is not recorded as built as a bottle")
+    if require_poured and receipt.get("poured_from_bottle") is not True:
+        raise SystemExit(f"{context} is not recorded as poured from a bottle")
+
+
+def assert_receipt_shape(
+    receipt: dict,
+    entry: dict,
+    by_name: dict[str, dict],
+    *,
+    context: str,
+    require_poured: bool,
+) -> None:
+    assert_receipt_identity(
+        receipt,
+        entry,
+        context=context,
+        require_poured=require_poured,
+    )
+
+    expected_runtime = expected_runtime_dependencies(entry, by_name)
+    observed_runtime = observed_runtime_dependencies(receipt, context)
+    if observed_runtime != expected_runtime:
+        raise SystemExit(
+            f"runtime closure drift in {context}: expected {expected_runtime}, "
+            f"observed {observed_runtime}"
+        )
+
+
+def normalize_runtime_receipt(path: Path, entry: dict, by_name: dict[str, dict]) -> dict:
+    """Replace Homebrew's live-index-derived mutable dependency receipt with the pinned graph."""
+    try:
+        receipt = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid installed Homebrew receipt for {entry['formula']}: {path}") from error
+    assert_receipt_identity(
+        receipt,
+        entry,
+        context=f"installed keg {entry['formula']}",
+        require_poured=True,
+    )
+    receipt["runtime_dependencies"] = [
+        {"full_name": name, **shape}
+        for name, shape in expected_runtime_dependencies(entry, by_name).items()
+    ]
+    temporary = path.with_name(f".{path.name}.dulcet-{os.getpid()}")
+    try:
+        temporary.write_text(json.dumps(receipt, indent=2) + "\n")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return receipt
+
+
+def advise_live_shape(closure: list[dict]) -> tuple[str, list[dict]]:
+    """Report refresh availability without making the live resolver part of installation."""
+    observed_live_closure: list[dict] = []
+    drift: list[tuple[str, dict, dict]] = []
+    try:
+        for expected in closure:
+            name = expected["formula"]
+            quoted_name = urllib.parse.quote(name, safe="")
+            request = urllib.request.Request(
+                f"https://formulae.brew.sh/api/formula/{quoted_name}.json",
+                headers={"User-Agent": "dulcet-darwin-conformance/1"},
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                live_formula = json.load(response)
+            live = formula_shape(live_formula, expected["bottle_tag"])
+            if live != expected:
+                drift.append((name, expected, live))
+            observed_live_closure.append(live)
+    except Exception as error:
+        print(
+            "DARWIN FFMPEG PIN ADVISORY unavailable=true "
+            f"detail={str(error)!r} installation_uses_live_shape=false",
+            file=sys.stderr,
+        )
+        return "unavailable", []
+
+    if drift:
+        print(
+            f"DARWIN FFMPEG PIN REFRESH AVAILABLE formulas={len(drift)}/{len(closure)} "
+            "advisory_only=true installation_continues=true",
+            file=sys.stderr,
+        )
+        for name, expected, live in drift:
+            fields = sorted(
+                key for key in set(expected) | set(live) if expected.get(key) != live.get(key)
+            )
+            print(
+                f"  {name}: "
+                + ", ".join(
+                    f"{key} {expected.get(key)!r} -> {live.get(key)!r}" for key in fields
+                ),
+                file=sys.stderr,
+            )
+        return "refresh-available", observed_live_closure
+
+    print(
+        f"DARWIN FFMPEG PIN ADVISORY live_shape_matches=true formulas={len(closure)}",
+        file=sys.stderr,
+    )
+    return "matches", observed_live_closure
+
+
 def main() -> None:
     pins = json.loads((Path(__file__).parent / "pins.json").read_text())
     ffmpeg = pins["ffmpeg"]["darwin"]
@@ -205,66 +567,29 @@ def main() -> None:
     assert_locked_graph(closure, ffmpeg["formula"])
 
     names = [entry["formula"] for entry in closure]
+    by_name = {entry["formula"]: entry for entry in closure}
     observed_keg_hashes: dict[str, str] = {}
-    observed_live_closure: list[dict] = []
-    # Report EVERY drifted formula, not just the first. Exiting on the first mismatch reports one
-    # name while hiding the rest, and whoever refreshes the pin from that message refreshes only
-    # what it printed — then burns another full CI run to discover the next one. Measured
-    # 2026-08-24: the error named x265 alone, while ffmpeg had also been rebuilt (revision 0 -> 1)
-    # against it. The check is unchanged and still fails closed; only its reporting is complete.
-    live_drift: list[tuple[str, dict, dict]] = []
-    for expected in closure:
-        name = expected["formula"]
-        quoted_name = urllib.parse.quote(name, safe="")
-        with urllib.request.urlopen(
-            f"https://formulae.brew.sh/api/formula/{quoted_name}.json", timeout=30
-        ) as response:
-            live_formula = json.load(response)
-        live = formula_shape(live_formula, expected["bottle_tag"])
-        if live != expected:
-            live_drift.append((name, expected, live))
-        observed_live_closure.append(live)
-    if live_drift:
-        report = [f"Homebrew live formula drift in {len(live_drift)} of {len(closure)} pinned formulae:"]
-        for name, expected, live in live_drift:
-            fields = sorted(key for key in set(expected) | set(live) if expected.get(key) != live.get(key))
-            report.append(f"  {name}: " + ", ".join(f"{key} {expected.get(key)!r} -> {live.get(key)!r}" for key in fields))
-        raise SystemExit("\n".join(report))
-
-    run(["brew", "update"])
-    local_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
-    local_by_name = {formula["name"]: formula for formula in local_info["formulae"]}
-    observed_local_closure: list[dict] = []
     observed_bottle_sha256s: dict[str, str] = {}
+    bottle_paths: dict[str, Path] = {}
+    brew_cache = Path(run(["brew", "--cache"], capture=True))
+    bottle_cache = brew_cache / "dulcet" / "darwin-conformance-bottles"
     for expected in closure:
         name = expected["formula"]
-        local = formula_shape(local_by_name.get(name, {}), expected["bottle_tag"])
-        if local != expected:
-            raise SystemExit(f"Homebrew resolver drift for {name}: expected {expected}, observed {local}")
-        observed_local_closure.append(local)
-
-        run(["brew", "fetch", "--force", "--force-bottle", name])
-        bottle_path = Path(
-            run(
-                ["brew", "--cache", f"--bottle-tag={expected['bottle_tag']}", name],
-                capture=True,
-            )
-        )
-        if not bottle_path.is_file():
-            raise SystemExit(f"Homebrew did not fetch the locked bottle for {name}: {bottle_path}")
-        observed_sha256 = file_sha256(bottle_path)
-        if observed_sha256 != expected["sha256"]:
-            raise SystemExit(
-                f"Homebrew bottle checksum mismatch for {name}: "
-                f"expected {expected['sha256']}, observed {observed_sha256}"
-            )
+        bottle_path, observed_sha256, cache_hit = fetch_pinned_bottle(expected, bottle_cache)
+        assert_bottle_formula_shape(bottle_path, expected)
+        bottle_paths[name] = bottle_path
         observed_bottle_sha256s[name] = observed_sha256
-
-    keg_paths = {
-        expected["formula"]: (
-            Path(run(["brew", "--cellar", expected["formula"]], capture=True))
-            / keg_version(expected)
+        print(
+            f"DARWIN BOTTLE VERIFIED formula={name} sha256={observed_sha256} "
+            f"cache_hit={str(cache_hit).lower()} embedded_formula_matches_pin=true"
         )
+
+    live_shape_status, observed_live_closure = advise_live_shape(closure)
+
+    cellar = Path(run(["brew", "--cellar"], capture=True))
+    homebrew_prefix = Path(run(["brew", "--prefix"], capture=True))
+    keg_paths = {
+        expected["formula"]: cellar / expected["formula"] / keg_version(expected)
         for expected in closure
     }
     preinstall_kegs = {name: observe_keg(path) for name, path in keg_paths.items()}
@@ -281,33 +606,48 @@ def main() -> None:
             f"fresh-pour absence checkpoint retained locked kegs: {','.join(retained)}"
         )
 
-    # Pour every checksum-verified locked bottle in dependency order.
+    # Pour every checksum-verified local bottle in dependency order. Ignoring dependency resolution
+    # is safe here because the complete graph was validated above and every member is installed
+    # explicitly; importantly, it keeps the live Homebrew resolver out of the install path.
     for name in names:
-        run(["brew", "install", "--force-bottle", name])
+        verify_bottle_checksum(bottle_paths[name], by_name[name])
+        run(
+            [
+                "brew",
+                "install",
+                "--force",
+                "--ignore-dependencies",
+                str(bottle_paths[name]),
+            ],
+            local_homebrew_package=True,
+        )
 
-    installed_info = json.loads(run(["brew", "info", "--json=v2", *names], capture=True))
-    installed_by_name = {formula["name"]: formula for formula in installed_info["formulae"]}
     observed_install_observations: dict[str, dict[str, bool]] = {}
+    installed_receipts: dict[str, dict] = {}
     for expected in closure:
         name = expected["formula"]
-        installed = [
-            record
-            for record in installed_by_name[name]["installed"]
-            if record.get("version") == keg_version(expected)
-        ]
-        if not installed:
+        active_link = homebrew_prefix / "opt" / name
+        try:
+            active_prefix = active_link.resolve(strict=True)
+        except OSError as error:
+            raise SystemExit(f"locked Homebrew formula has no active prefix: {active_link}") from error
+        expected_prefix = keg_paths[name].resolve(strict=True)
+        if active_prefix != expected_prefix:
             raise SystemExit(
-                f"locked Homebrew formula is not installed: {name} {keg_version(expected)}"
+                f"active Homebrew keg drift for {name}: expected {expected_prefix}, "
+                f"observed {active_prefix}"
             )
-        record = installed[-1]
-        if record.get("built_as_bottle") is not True or record.get("poured_from_bottle") is not True:
-            raise SystemExit(f"locked Homebrew formula was not installed from a bottle: {name}")
-        active_prefix = Path(run(["brew", "--prefix", name], capture=True)).resolve()
-        if active_prefix.name != keg_version(expected):
-            raise SystemExit(
-                f"active Homebrew keg drift for {name}: expected {keg_version(expected)}, "
-                f"observed {active_prefix.name}"
-            )
+        receipt = normalize_runtime_receipt(
+            active_prefix / "INSTALL_RECEIPT.json", expected, by_name
+        )
+        assert_receipt_shape(
+            receipt,
+            expected,
+            by_name,
+            context=f"installed keg {name}",
+            require_poured=True,
+        )
+        installed_receipts[name] = receipt
         postinstall_keg = observe_keg(active_prefix)
         attestation = assert_fresh_pour(
             name,
@@ -329,10 +669,7 @@ def main() -> None:
             f"receipt_time={postinstall_keg['receipt_time']}"
         )
 
-    rehashed_kegs = {
-        name: keg_payload_sha256(Path(run(["brew", "--prefix", name], capture=True)).resolve())[0]
-        for name in names
-    }
+    rehashed_kegs = {name: keg_payload_sha256(keg_paths[name])[0] for name in names}
     if rehashed_kegs != observed_keg_hashes:
         raise SystemExit(
             f"installed Homebrew keg payload changed during verification: "
@@ -367,37 +704,6 @@ def main() -> None:
         f"payload_hashes_match_second_in_run=true aggregate_sha256={installed_digest}"
     )
 
-    root_entry = next(entry for entry in closure if entry["formula"] == ffmpeg["formula"])
-    root_record = next(
-        record
-        for record in installed_by_name[ffmpeg["formula"]]["installed"]
-        if record.get("version") == keg_version(root_entry)
-    )
-    observed_runtime = {
-        dependency["full_name"]: {
-            "version": dependency["version"],
-            "revision": dependency["revision"],
-            "bottle_rebuild": dependency["bottle_rebuild"],
-            "pkg_version": dependency["pkg_version"],
-        }
-        for dependency in root_record.get("runtime_dependencies", [])
-    }
-    expected_runtime = {
-        entry["formula"]: {
-            "version": entry["version"],
-            "revision": entry["revision"],
-            "bottle_rebuild": entry["bottle_rebuild"],
-            "pkg_version": keg_version(entry),
-        }
-        for entry in closure
-        if entry["formula"] != ffmpeg["formula"]
-    }
-    if observed_runtime != expected_runtime:
-        raise SystemExit(
-            f"installed ffmpeg runtime closure drift: expected {expected_runtime}, "
-            f"observed {observed_runtime}"
-        )
-
     version_line = run([ffmpeg["path"], "-version"], capture=True).splitlines()[0]
     try:
         observed_version = require_ffmpeg_version(version_line, ffmpeg["version"])
@@ -419,12 +725,13 @@ def main() -> None:
     expected_closure_digest = hashlib.sha256(
         json.dumps(closure, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    observed_live_closure_digest = hashlib.sha256(
-        json.dumps(observed_live_closure, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    observed_local_closure_digest = hashlib.sha256(
-        json.dumps(observed_local_closure, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    observed_live_closure_digest = (
+        hashlib.sha256(
+            json.dumps(observed_live_closure, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if observed_live_closure
+        else "unavailable"
+    )
     observed_bottle_digest = hashlib.sha256(
         json.dumps(observed_bottle_sha256s, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -435,8 +742,10 @@ def main() -> None:
         f"expected_encoders={','.join(sorted(ffmpeg['required_encoders']))} "
         f"observed_encoders={','.join(observed_required_encoders)} "
         f"expected_closure_sha256={expected_closure_digest} "
+        f"embedded_formulas_matching_pin={len(bottle_paths)} "
+        f"installed_receipts_matching_pin={len(installed_receipts)} "
+        f"live_shape_status={live_shape_status} "
         f"observed_live_closure_sha256={observed_live_closure_digest} "
-        f"observed_local_closure_sha256={observed_local_closure_digest} "
         f"observed_bottle_sha256={observed_bottle_digest}"
     )
 

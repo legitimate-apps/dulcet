@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+"""Prove Homebrew live-shape drift and API failure cannot gate the pinned install."""
+
+import contextlib
+from importlib.machinery import SourceFileLoader
+import io
+import json
+from pathlib import Path
+import sys
+from urllib.error import URLError
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg_live_shape_advisory",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+class JsonResponse(io.StringIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+def main() -> None:
+    digest = "1" * 64
+    expected = {
+        "formula": "negative-control",
+        "version": "1.0",
+        "revision": 0,
+        "version_scheme": 0,
+        "dependencies": [],
+        "bottle_tag": "arm64_tahoe",
+        "bottle_rebuild": 0,
+        "url": f"https://ghcr.io/v2/homebrew/core/negative-control/blobs/sha256:{digest}",
+        "sha256": digest,
+    }
+    live = {
+        "name": "negative-control",
+        "versions": {"stable": "2.0"},
+        "revision": 0,
+        "version_scheme": 0,
+        "dependencies": [],
+        "bottle": {
+            "stable": {
+                "rebuild": 0,
+                "files": {
+                    "arm64_tahoe": {
+                        "url": expected["url"],
+                        "sha256": digest,
+                    }
+                },
+            }
+        },
+    }
+
+    original_urlopen = installer.urllib.request.urlopen
+    try:
+        installer.urllib.request.urlopen = lambda *_args, **_kwargs: JsonResponse(
+            json.dumps(live)
+        )
+        drift_stderr = io.StringIO()
+        with contextlib.redirect_stderr(drift_stderr):
+            drift_status, observed = installer.advise_live_shape([expected])
+        if drift_status != "refresh-available" or len(observed) != 1:
+            raise SystemExit(
+                "live-shape drift did not remain advisory: "
+                f"status={drift_status} observed={observed}"
+            )
+        if "advisory_only=true installation_continues=true" not in drift_stderr.getvalue():
+            raise SystemExit("live-shape drift omitted its non-fatal diagnostic")
+
+        def fail_api(*_args, **_kwargs):
+            raise URLError("negative-control outage")
+
+        installer.urllib.request.urlopen = fail_api
+        outage_stderr = io.StringIO()
+        with contextlib.redirect_stderr(outage_stderr):
+            outage_status, outage_observed = installer.advise_live_shape([expected])
+        if outage_status != "unavailable" or outage_observed:
+            raise SystemExit(
+                "live-shape API outage did not remain advisory: "
+                f"status={outage_status} observed={outage_observed}"
+            )
+        if "installation_uses_live_shape=false" not in outage_stderr.getvalue():
+            raise SystemExit("live-shape API outage omitted its non-fatal diagnostic")
+    finally:
+        installer.urllib.request.urlopen = original_urlopen
+
+    print(
+        "NEGATIVE CONTROL PASS darwin_live_shape "
+        "upstream_drift_non_fatal=true api_outage_non_fatal=true "
+        "installation_uses_live_shape=false"
+    )
+
+
+if __name__ == "__main__":
+    main()
