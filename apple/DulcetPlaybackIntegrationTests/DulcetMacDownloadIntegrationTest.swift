@@ -9,6 +9,127 @@ final class DulcetMacDownloadIntegrationTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    func http206ExactLengthFailsClosedWithoutAValidConsistentContentRange() throws {
+        let cases: [(label: String, headers: [String: String], expected: Int64?)] = [
+            (
+                "valid-range",
+                ["Content-Range": "bytes 90-99/100", "Content-Length": "10"],
+                100
+            ),
+            ("missing-range", ["Content-Length": "10"], nil),
+            (
+                "malformed-range",
+                ["Content-Range": "definitely-not-a-range", "Content-Length": "10"],
+                nil
+            ),
+            (
+                "unknown-total",
+                ["Content-Range": "bytes 90-99/*", "Content-Length": "10"],
+                nil
+            ),
+            (
+                "total-does-not-match-file",
+                ["Content-Range": "bytes 90-99/101", "Content-Length": "10"],
+                nil
+            ),
+            (
+                "range-length-does-not-match-content-length",
+                ["Content-Range": "bytes 90-99/100", "Content-Length": "9"],
+                nil
+            ),
+        ]
+
+        for testCase in cases {
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: URL(string: "https://music.example.invalid/stream")!,
+                statusCode: 206,
+                httpVersion: "HTTP/1.1",
+                headerFields: testCase.headers
+            ))
+            XCTAssertEqual(
+                response.downloadExactContentLength(deliveredFileLength: 100),
+                testCase.expected,
+                "206-\(testCase.label)"
+            )
+        }
+    }
+
+    func downloadDelegateSecuresTemporaryFileBeforeFacadeReconciliation() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dulcet-download-inbox-\(UUID().uuidString)", isDirectory: true)
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dulcet-system-download-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("only-copy".utf8).write(to: source)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let controller = DulcetCoreDownloadController(
+            databaseName: "dulcet-inbox-\(UUID().uuidString).db",
+            downloadRootURL: root,
+            sessionConfiguration: .ephemeral
+        )
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.downloadTask(with: URL(string: "https://music.example.invalid/stream")!)
+        task.taskDescription = "download:completion-before-reconciliation"
+
+        controller.urlSession(session, downloadTask: task, didFinishDownloadingTo: source)
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: source.path),
+            "the Foundation-owned temporary URL must be moved before the delegate returns"
+        )
+        let securedFiles = try FileManager.default.contentsOfDirectory(
+            at: root.appendingPathComponent(".incoming", isDirectory: true),
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(securedFiles.filter { $0.pathExtension == "download" }.count, 1)
+        XCTAssertEqual(securedFiles.filter { $0.pathExtension == "json" }.count, 1)
+        session.invalidateAndCancel()
+        controller.disconnect()
+    }
+
+    func backgroundSessionFinishDelegateIsImplemented() {
+        let controller = DulcetCoreDownloadController(
+            databaseName: "dulcet-background-\(UUID().uuidString).db",
+            downloadRootURL: FileManager.default.temporaryDirectory,
+            sessionConfiguration: .ephemeral
+        )
+
+        XCTAssertTrue(
+            controller.responds(
+                to: #selector(URLSessionDelegate.urlSessionDidFinishEvents(forBackgroundURLSession:))
+            )
+        )
+        controller.disconnect()
+    }
+
+    func backgroundSessionHandoffWaitsUntilDelegateFinishesEvents() async throws {
+        let controller = DulcetCoreDownloadController(
+            databaseName: "dulcet-background-wait-\(UUID().uuidString).db",
+            downloadRootURL: FileManager.default.temporaryDirectory,
+            sessionConfiguration: .ephemeral
+        )
+        var handoffFinished = false
+        Task { @MainActor in
+            await controller.handleBackgroundSessionEvents()
+            handoffFinished = true
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(handoffFinished)
+
+        controller.urlSessionDidFinishEvents(forBackgroundURLSession: .shared)
+
+        try await waitUntil(
+            timeout: .seconds(1),
+            failureMessage: "the app-level background handoff did not finish"
+        ) {
+            handoffFinished
+        }
+        controller.disconnect()
+    }
+
     func downloadTriggerPromotesValidatedResponseAtomically() async throws {
         let context = try makeContext()
         defer { context.tearDown() }

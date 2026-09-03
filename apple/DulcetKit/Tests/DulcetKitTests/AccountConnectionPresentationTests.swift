@@ -514,6 +514,7 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
     let connector = ControlledAccountConnector()
     let libraryBrowser = ControlledLibraryBrowser(onCancel: { events.append("library-cancel") })
     let artworkFetcher = ControlledArtworkFetcher(onRemove: { _ in events.append("artwork-remove") })
+    let downloads = ControlledDownloadController(onRemove: { events.append("download-remove") })
     let credentials = MemoryCredentialStore(
         persisted: nil,
         deleteAction: { events.append("credential-delete") }
@@ -523,6 +524,7 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
         credentialStore: credentials,
         libraryBrowser: libraryBrowser,
         artworkFetcher: artworkFetcher,
+        downloadController: downloads,
         providerInstanceIDFactory: { "provider-instance-fixture" }
     )
     let store = DulcetPresentationStore(source: source)
@@ -548,9 +550,15 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
     #expect(store.selectedDestination == .settings)
     #expect(libraryBrowser.requests.count == 1)
 
-    await settleSearchTask(until: { events.count == 3 })
+    await settleSearchTask(until: { events.count == 4 })
 
-    #expect(events == ["credential-delete", "library-cancel", "artwork-remove"])
+    #expect(events == [
+        "credential-delete",
+        "library-cancel",
+        "download-remove",
+        "artwork-remove",
+    ])
+    #expect(downloads.removeAccountDataCount == 1)
     #expect(artworkFetcher.removedServerIDs == ["provider-instance-fixture"])
     #expect(store.snapshot.state == .accountConnectIdle)
     #expect(store.snapshot.accountRemoval == .idle)
@@ -1115,6 +1123,12 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     private var handler: (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private(set) var configuredAccount: DulcetPlaybackAccount?
     private(set) var requestedTracks: [DulcetTrack] = []
+    private(set) var removeAccountDataCount = 0
+    private let onRemove: @MainActor () -> Void
+
+    init(onRemove: @escaping @MainActor () -> Void = {}) {
+        self.onRemove = onRemove
+    }
 
     func setStatusHandler(
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
@@ -1136,6 +1150,12 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
 
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? {
         nil
+    }
+
+    func removeAccountData() async -> Bool {
+        removeAccountDataCount += 1
+        onRemove()
+        return true
     }
 
     func disconnect() {}

@@ -1116,10 +1116,21 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let removedServerID = providerInstanceID
         let cacheRemover = artworkFetcher as? any DulcetArtworkCacheRemoving
         accountRemovalTask = Task { [weak self] in
+            guard let self else { return }
+            if let downloadController,
+               !(await downloadController.removeAccountData()) {
+                accountRemovalTask = nil
+                accountRemovalStatus = .failed
+                publishAccountRemovalState(
+                    state: .accountRemovalError,
+                    status: connectedStatus
+                )
+                return
+            }
             if let removedServerID, let cacheRemover {
                 await cacheRemover.removeCachedArtwork(serverID: removedServerID)
             }
-            guard let self, !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
             finishAccountRemoval()
         }
     }
@@ -1128,7 +1139,6 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalTask = nil
         providerInstanceID = nil
         playbackController?.disconnect()
-        downloadController?.disconnect()
         libraryMusicFolders = []
         libraryArtists = []
         libraryAlbums = []

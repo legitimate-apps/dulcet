@@ -31,6 +31,7 @@ def materialize(root: Path) -> None:
         "docs",
         "core-conformance",
         "apple/DulcetKit/Tests",
+        "apple/DulcetPlaybackIntegrationTests",
         "apple/DulcetiOSUITests",
         # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
         # verifies that every cited evidence test NAME exists in the tree. Without this the fixture
@@ -261,6 +262,10 @@ passing_cases = """\
             name="conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.SearchConformanceTest[macosArm64]"
             name="conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping[macosArm64]" time="0.1" />
+  <testcase classname="DulcetMacDownloadIntegrationTest"
+            name="downloadTriggerPromotesValidatedResponseAtomically" time="0.1" />
+  <testcase classname="DulcetMacDownloadIntegrationTest"
+            name="offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
@@ -275,6 +280,14 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory
         raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
 
 execution_rejections = {
+    "download integration report omits one declared conformance test": (
+        passing_report.replace(
+            """  <testcase classname="DulcetMacDownloadIntegrationTest"
+            name="downloadTriggerPromotesValidatedResponseAtomically" time="0.1" />\n""",
+            "",
+        ),
+        "evidence test did not execute",
+    ),
     "filtered report omits one declared conformance test": (
         passing_report.replace(
             """  <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"

@@ -18,7 +18,13 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     private var pendingTracks: [DulcetTrack] = []
     private var completedTaskIdentifiers: Set<Int> = []
     private var resumedTaskIdentifiers: Set<Int> = []
+    private var removedTaskIdentifiers: Set<Int> = []
     private var redirectsByTaskIdentifier: [Int: Int] = [:]
+    private var queuePrepareOperation: (any AppleDownloadOperation)?
+    private var retryTask: Task<Void, Never>?
+    private var retryNotBeforeWallClock: Int64?
+    private var backgroundEventsContinuation: CheckedContinuation<Void, Never>?
+    private var backgroundEventsFinishedBeforeWait = false
     private var reconciliationGeneration = 0
     private var reconciled = false
 
@@ -39,6 +45,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     }()
 
     let downloadsEnabled: Bool
+
+    static var productionBackgroundSessionIdentifier: String {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.legitimateapps.dulcet"
+        return "\(bundleIdentifier).downloads.background"
+    }
 
     init(
         databaseName: String,
@@ -66,9 +77,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         let root = applicationSupport
             .appendingPathComponent("Dulcet", isDirectory: true)
             .appendingPathComponent("Downloads", isDirectory: true)
-        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.legitimateapps.dulcet"
         let configuration = URLSessionConfiguration.background(
-            withIdentifier: "\(bundleIdentifier).downloads.background"
+            withIdentifier: productionBackgroundSessionIdentifier
         )
         configuration.sessionSendsLaunchEvents = true
         configuration.isDiscretionary = false
@@ -91,6 +101,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         reconciled = false
         prepareOperations.values.forEach { $0.cancel() }
         prepareOperations = [:]
+        queuePrepareOperation?.cancel()
+        queuePrepareOperation = nil
+        cancelRetry()
         client?.close()
         self.account = account
         client = AppleDownloadClient(
@@ -141,23 +154,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 prepareOperations[track.id] = nil
-                guard let prepared = outcome.prepared,
-                      let url = URL(string: prepared.url) else {
-                    publish(
-                        outcome.terminalState.flatMap(DulcetDownloadState.init(rawValue:))
-                            ?? (outcome.errorKind == nil ? .queued : .failed),
-                        for: track.id
-                    )
-                    return
-                }
-                var request = URLRequest(url: url)
-                request.cachePolicy = .reloadIgnoringLocalCacheData
-                prepared.hostHeader.map { request.setValue($0, forHTTPHeaderField: "Host") }
-                startTask(
-                    prepared: prepared,
-                    itemID: track.id,
-                    request: request
-                )
+                handlePreparationOutcome(outcome, fallbackItemID: track.id)
             }
         }
         prepareOperations[track.id] = operation
@@ -198,10 +195,52 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         pendingTracks = []
         prepareOperations.values.forEach { $0.cancel() }
         prepareOperations = [:]
+        queuePrepareOperation?.cancel()
+        queuePrepareOperation = nil
+        cancelRetry()
         session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
         client?.close()
         client = nil
         account = nil
+    }
+
+    func removeAccountData() async -> Bool {
+        reconciliationGeneration += 1
+        reconciled = false
+        pendingTracks = []
+        prepareOperations.values.forEach { $0.cancel() }
+        prepareOperations = [:]
+        queuePrepareOperation?.cancel()
+        queuePrepareOperation = nil
+        cancelRetry()
+        let tasks = await allSessionTasks()
+        removedTaskIdentifiers.formUnion(tasks.map(\.taskIdentifier))
+        tasks.forEach { $0.cancel() }
+        guard let client else {
+            account = nil
+            removeSecuredDownloadInbox()
+            return true
+        }
+        let outcome = client.removeAccountData()
+        guard outcome.errorKind == nil else { return false }
+        removeSecuredDownloadInbox()
+        client.close()
+        self.client = nil
+        account = nil
+        return true
+    }
+
+    func handleBackgroundSessionEvents() async {
+        await withCheckedContinuation { continuation in
+            if backgroundEventsFinishedBeforeWait {
+                backgroundEventsFinishedBeforeWait = false
+                continuation.resume()
+                return
+            }
+            precondition(backgroundEventsContinuation == nil)
+            backgroundEventsContinuation = continuation
+            _ = session
+        }
     }
 
     func closeNetworkAccessForTesting() {
@@ -226,9 +265,82 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             return cancel.contains(description)
         }.forEach { $0.cancel() }
         reconciled = true
+        processSecuredDownloads()
         let queued = pendingTracks
         pendingTracks = []
         queued.forEach(requestDownload)
+        scheduleNextDownload()
+    }
+
+    private func handlePreparationOutcome(
+        _ outcome: AppleDownloadPreparationOutcomeDto,
+        fallbackItemID: DulcetProviderItemID?
+    ) {
+        if let prepared = outcome.prepared,
+           let url = URL(string: prepared.url),
+           let account {
+            var request = URLRequest(url: url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            prepared.hostHeader.map { request.setValue($0, forHTTPHeaderField: "Host") }
+            startTask(
+                prepared: prepared,
+                itemID: DulcetProviderItemID(
+                    providerInstanceID: account.providerInstanceID,
+                    rawID: prepared.rawId
+                ),
+                request: request
+            )
+            return
+        }
+        if let fallbackItemID {
+            publish(
+                outcome.terminalState.flatMap(DulcetDownloadState.init(rawValue:))
+                    ?? (outcome.errorKind == nil ? .queued : .failed),
+                for: fallbackItemID
+            )
+        }
+        scheduleRetry(at: outcome.retryNotBeforeWallClock?.int64Value)
+    }
+
+    private func scheduleNextDownload() {
+        guard reconciled, queuePrepareOperation == nil, let client else { return }
+        let operation = client.startPrepareNextDownload(
+            wallClockMilliseconds: Date().downloadWallClockMilliseconds,
+            diskBudgetBytes: diskBudgetBytes,
+            unknownLengthReservationBytes: unknownLengthReservationBytes
+        ) { [weak self] outcome in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                queuePrepareOperation = nil
+                handlePreparationOutcome(outcome, fallbackItemID: nil)
+            }
+        }
+        queuePrepareOperation = operation
+    }
+
+    private func scheduleRetry(at boundary: Int64?) {
+        guard let boundary, boundary < Int64.max else { return }
+        if let current = retryNotBeforeWallClock, current <= boundary { return }
+        cancelRetry()
+        retryNotBeforeWallClock = boundary
+        let delay = max(0, boundary - Date().downloadWallClockMilliseconds)
+        retryTask = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(for: .milliseconds(delay))
+            } else {
+                await Task.yield()
+            }
+            guard !Task.isCancelled, let self else { return }
+            retryTask = nil
+            retryNotBeforeWallClock = nil
+            scheduleNextDownload()
+        }
+    }
+
+    private func cancelRetry() {
+        retryTask?.cancel()
+        retryTask = nil
+        retryNotBeforeWallClock = nil
     }
 
     private func startTask(
@@ -257,66 +369,99 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         task: URLSessionDownloadTask,
         location: URL
     ) {
-        guard let downloadIdentifier = task.taskDescription,
-              let client else { return }
+        if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
+            try? FileManager.default.removeItem(at: location)
+            return
+        }
+        guard let secured = secureDownloadedFile(task: task, location: location) else { return }
+        completedTaskIdentifiers.insert(task.taskIdentifier)
+        _ = processSecuredDownload(secured)
+    }
+
+    @discardableResult
+    private func processSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
+        guard let downloadIdentifier = secured.downloadIdentifier,
+              let client else { return false }
         let target = client.fileTarget(downloadIdentifier: downloadIdentifier)
         guard target.errorKind == nil,
               let temporaryFilePath = target.temporaryFilePath,
               let rawID = target.rawId,
-              let account else { return }
+              let account else { return false }
         let itemID = DulcetProviderItemID(
             providerInstanceID: account.providerInstanceID,
             rawID: rawID
         )
-        guard let response = task.response as? HTTPURLResponse else {
-            _ = client.recordFailure(
-                downloadIdentifier: downloadIdentifier,
-                wallClockMilliseconds: Date().downloadWallClockMilliseconds
-            )
-            publish(.interrupted, for: itemID)
-            return
-        }
-        guard (200 ... 299).contains(response.statusCode) else {
-            let outcome = client.finishDownload(
-                downloadIdentifier: downloadIdentifier,
-                statusCode: Int32(response.statusCode),
-                contentType: response.value(forHTTPHeaderField: "Content-Type"),
-                contentLength: -1,
-                retryAfterMilliseconds: response.downloadRetryAfterMilliseconds,
-                wallClockMilliseconds: Date().downloadWallClockMilliseconds
-            )
-            publish(DulcetDownloadState(rawValue: outcome.state) ?? .interrupted, for: itemID)
-            return
-        }
         let targetURL = URL(fileURLWithPath: temporaryFilePath)
         do {
+            try FileManager.default.createDirectory(
+                at: targetURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             if FileManager.default.fileExists(atPath: targetURL.path) {
                 try FileManager.default.removeItem(at: targetURL)
             }
-            try FileManager.default.moveItem(at: location, to: targetURL)
+            try FileManager.default.moveItem(at: secured.payloadURL(in: downloadInboxURL), to: targetURL)
         } catch {
-            _ = client.recordFailure(
+            return false
+        }
+        guard let statusCode = secured.statusCode else {
+            let outcome = client.recordFailure(
                 downloadIdentifier: downloadIdentifier,
                 wallClockMilliseconds: Date().downloadWallClockMilliseconds
             )
+            try? FileManager.default.removeItem(at: targetURL)
+            removeSecuredMetadata(secured)
             publish(.interrupted, for: itemID)
-            return
+            scheduleRetry(at: outcome.retryNotBeforeWallClock?.int64Value)
+            return true
         }
-        let contentLength = response.downloadExactContentLength ?? -1
+        guard (200 ... 299).contains(statusCode) else {
+            let outcome = client.finishDownload(
+                downloadIdentifier: downloadIdentifier,
+                statusCode: Int32(statusCode),
+                contentType: secured.contentType,
+                contentLength: -1,
+                retryAfterMilliseconds: secured.retryAfterMilliseconds,
+                wallClockMilliseconds: Date().downloadWallClockMilliseconds
+            )
+            try? FileManager.default.removeItem(at: targetURL)
+            removeSecuredMetadata(secured)
+            publish(DulcetDownloadState(rawValue: outcome.state) ?? .interrupted, for: itemID)
+            scheduleNextDownload()
+            return true
+        }
+        let contentLength = secured.exactContentLength
+        if statusCode == 206, contentLength == nil {
+            let outcome = client.recordFailure(
+                downloadIdentifier: downloadIdentifier,
+                wallClockMilliseconds: Date().downloadWallClockMilliseconds
+            )
+            try? FileManager.default.removeItem(at: targetURL)
+            removeSecuredMetadata(secured)
+            publish(.interrupted, for: itemID)
+            scheduleRetry(at: outcome.retryNotBeforeWallClock?.int64Value)
+            return true
+        }
         let outcome = client.finishDownload(
             downloadIdentifier: downloadIdentifier,
-            statusCode: Int32(response.statusCode),
-            contentType: response.value(forHTTPHeaderField: "Content-Type"),
-            contentLength: contentLength,
-            retryAfterMilliseconds: response.downloadRetryAfterMilliseconds,
+            statusCode: Int32(statusCode),
+            contentType: secured.contentType,
+            contentLength: contentLength ?? -1,
+            retryAfterMilliseconds: secured.retryAfterMilliseconds,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds
         )
-        completedTaskIdentifiers.insert(task.taskIdentifier)
+        removeSecuredMetadata(secured)
         publish(DulcetDownloadState(rawValue: outcome.state) ?? .failed, for: itemID)
+        scheduleNextDownload()
+        return true
     }
 
     private func handleTaskCompletion(task: URLSessionTask, error: Error?) {
         redirectsByTaskIdentifier[task.taskIdentifier] = nil
+        if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
+            resumedTaskIdentifiers.remove(task.taskIdentifier)
+            return
+        }
         if completedTaskIdentifiers.remove(task.taskIdentifier) != nil {
             resumedTaskIdentifiers.remove(task.taskIdentifier)
             return
@@ -334,26 +479,103 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         let rejectedResumeData = resumedTaskIdentifiers.remove(task.taskIdentifier) != nil
         if rejectedResumeData {
             _ = client.rejectResumeData(downloadIdentifier: downloadIdentifier)
-        }
-        if rejectedResumeData {
-            _ = client.recordFailure(
-                downloadIdentifier: downloadIdentifier,
-                wallClockMilliseconds: Date().downloadWallClockMilliseconds
-            )
+            publish(.queued, for: itemID)
+            scheduleNextDownload()
         } else if let resumeData = (error as NSError?)?.userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
            !resumeData.isEmpty {
-            _ = client.recordResumeData(
+            let outcome = client.recordResumeData(
                 downloadIdentifier: downloadIdentifier,
                 data: resumeData,
                 wallClockMilliseconds: Date().downloadWallClockMilliseconds
             )
+            publish(.interrupted, for: itemID)
+            scheduleRetry(at: outcome.retryNotBeforeWallClock?.int64Value)
         } else {
-            _ = client.recordFailure(
+            let outcome = client.recordFailure(
                 downloadIdentifier: downloadIdentifier,
                 wallClockMilliseconds: Date().downloadWallClockMilliseconds
             )
+            publish(.interrupted, for: itemID)
+            scheduleRetry(at: outcome.retryNotBeforeWallClock?.int64Value)
         }
-        publish(.interrupted, for: itemID)
+    }
+
+    private var downloadInboxURL: URL {
+        downloadRootURL.appendingPathComponent(".incoming", isDirectory: true)
+    }
+
+    private func secureDownloadedFile(
+        task: URLSessionDownloadTask,
+        location: URL
+    ) -> DulcetSecuredDownload? {
+        let identifier = UUID().uuidString
+        let response = task.response as? HTTPURLResponse
+        let secured = DulcetSecuredDownload(
+            identifier: identifier,
+            downloadIdentifier: task.taskDescription,
+            statusCode: response?.statusCode,
+            contentType: response?.value(forHTTPHeaderField: "Content-Type"),
+            contentLength: response?.value(forHTTPHeaderField: "Content-Length"),
+            contentRange: response?.value(forHTTPHeaderField: "Content-Range"),
+            retryAfter: response?.value(forHTTPHeaderField: "Retry-After"),
+            deliveredFileLength: (
+                try? FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber
+            )?.int64Value ?? -1
+        )
+        do {
+            try FileManager.default.createDirectory(
+                at: downloadInboxURL,
+                withIntermediateDirectories: true
+            )
+            let payload = secured.payloadURL(in: downloadInboxURL)
+            try JSONEncoder().encode(secured).write(
+                to: secured.metadataURL(in: downloadInboxURL),
+                options: .atomic
+            )
+            do {
+                try FileManager.default.moveItem(at: location, to: payload)
+            } catch {
+                removeSecuredMetadata(secured)
+                throw error
+            }
+            return secured
+        } catch {
+            return nil
+        }
+    }
+
+    private func processSecuredDownloads() {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: downloadInboxURL,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        for metadataURL in files where metadataURL.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: metadataURL),
+                  let secured = try? JSONDecoder().decode(DulcetSecuredDownload.self, from: data) else {
+                continue
+            }
+            guard FileManager.default.fileExists(
+                atPath: secured.payloadURL(in: downloadInboxURL).path
+            ) else {
+                removeSecuredMetadata(secured)
+                continue
+            }
+            _ = processSecuredDownload(secured)
+        }
+    }
+
+    private func removeSecuredMetadata(_ secured: DulcetSecuredDownload) {
+        try? FileManager.default.removeItem(at: secured.metadataURL(in: downloadInboxURL))
+    }
+
+    private func removeSecuredDownloadInbox() {
+        try? FileManager.default.removeItem(at: downloadInboxURL)
+    }
+
+    private func allSessionTasks() async -> [URLSessionTask] {
+        await withCheckedContinuation { continuation in
+            session.getAllTasks { continuation.resume(returning: $0) }
+        }
     }
 
     private func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {
@@ -379,6 +601,18 @@ extension DulcetCoreDownloadController: URLSessionDownloadDelegate, URLSessionTa
     ) {
         MainActor.assumeIsolated { [weak self] in
             self?.handleTaskCompletion(task: task, error: error)
+        }
+    }
+
+    nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        MainActor.assumeIsolated { [weak self] in
+            guard let self else { return }
+            if let continuation = backgroundEventsContinuation {
+                backgroundEventsContinuation = nil
+                continuation.resume()
+            } else {
+                backgroundEventsFinishedBeforeWait = true
+            }
         }
     }
 
@@ -436,6 +670,42 @@ extension DulcetCoreDownloadController: URLSessionDownloadDelegate, URLSessionTa
     }
 }
 
+private struct DulcetSecuredDownload: Codable {
+    let identifier: String
+    let downloadIdentifier: String?
+    let statusCode: Int?
+    let contentType: String?
+    let contentLength: String?
+    let contentRange: String?
+    let retryAfter: String?
+    let deliveredFileLength: Int64
+
+    func payloadURL(in inbox: URL) -> URL {
+        inbox.appendingPathComponent("\(identifier).download")
+    }
+
+    func metadataURL(in inbox: URL) -> URL {
+        inbox.appendingPathComponent("\(identifier).json")
+    }
+
+    var exactContentLength: Int64? {
+        parsedDownloadExactContentLength(
+            statusCode: statusCode ?? -1,
+            contentRange: contentRange,
+            contentLength: contentLength,
+            deliveredFileLength: deliveredFileLength
+        )
+    }
+
+    var retryAfterMilliseconds: Int64 {
+        guard let retryAfter,
+              let seconds = Int64(retryAfter.trimmingCharacters(in: .whitespacesAndNewlines)),
+              seconds >= 0 else { return -1 }
+        let multiplied = seconds.multipliedReportingOverflow(by: 1_000)
+        return multiplied.overflow ? -1 : multiplied.partialValue
+    }
+}
+
 private struct DulcetUncheckedSendable<Value>: @unchecked Sendable {
     let value: Value
 
@@ -457,28 +727,53 @@ private extension URLRequest {
     }
 }
 
-private extension HTTPURLResponse {
-    var downloadExactContentLength: Int64? {
-        if statusCode == 206,
-           let contentRange = value(forHTTPHeaderField: "Content-Range"),
-           let totalToken = contentRange.split(separator: "/", omittingEmptySubsequences: false).last,
-           totalToken != "*",
-           let total = Int64(totalToken),
-           total >= 0 {
-            return total
-        }
-        guard let raw = value(forHTTPHeaderField: "Content-Length"),
-              let length = Int64(raw),
+extension HTTPURLResponse {
+    func downloadExactContentLength(deliveredFileLength: Int64) -> Int64? {
+        parsedDownloadExactContentLength(
+            statusCode: statusCode,
+            contentRange: value(forHTTPHeaderField: "Content-Range"),
+            contentLength: value(forHTTPHeaderField: "Content-Length"),
+            deliveredFileLength: deliveredFileLength
+        )
+    }
+}
+
+private func parsedDownloadExactContentLength(
+    statusCode: Int,
+    contentRange: String?,
+    contentLength: String?,
+    deliveredFileLength: Int64
+) -> Int64? {
+    if statusCode != 206 {
+        guard let contentLength,
+              let length = Int64(contentLength.trimmingCharacters(in: .whitespacesAndNewlines)),
               length >= 0 else { return nil }
         return length
     }
 
-    var downloadRetryAfterMilliseconds: Int64 {
-        guard let raw = value(forHTTPHeaderField: "Retry-After"),
-              let seconds = Int64(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              seconds >= 0 else { return -1 }
-        return seconds.multipliedReportingOverflow(by: 1_000).partialValue
+    guard let contentRange else { return nil }
+    let tokens = contentRange
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .split(whereSeparator: \Character.isWhitespace)
+    guard tokens.count == 2, tokens[0].lowercased() == "bytes" else { return nil }
+    let rangeAndTotal = tokens[1].split(separator: "/", omittingEmptySubsequences: false)
+    guard rangeAndTotal.count == 2,
+          rangeAndTotal[1] != "*",
+          let total = Int64(rangeAndTotal[1]),
+          total == deliveredFileLength else { return nil }
+    let bounds = rangeAndTotal[0].split(separator: "-", omittingEmptySubsequences: false)
+    guard bounds.count == 2,
+          let start = Int64(bounds[0]),
+          let end = Int64(bounds[1]),
+          start >= 0,
+          end >= start,
+          end < total else { return nil }
+    if let contentLength {
+        guard let deliveredRangeLength = Int64(
+            contentLength.trimmingCharacters(in: .whitespacesAndNewlines)
+        ), deliveredRangeLength == end - start + 1 else { return nil }
     }
+    return total
 }
 
 private extension Date {
