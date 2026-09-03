@@ -91,11 +91,11 @@
           "sha256": "8af6805a4ba6d9cb9cc74706fe55b7ae6580cfea36f6fe8322c6803be07e116e"
         },
         {
-          "formula": "sdl2-compat", "version": "2.32.70", "revision": 0,
+          "formula": "sdl2-compat", "version": "2.32.72", "revision": 0,
           "version_scheme": 0, "dependencies": ["sdl3"], "bottle_tag": "arm64_tahoe",
           "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/sdl2-compat/blobs/sha256:72e2c794f8408fba73fd0345a4eeb4cac49badc134e91c680c6aa7fd685d5492",
-          "sha256": "72e2c794f8408fba73fd0345a4eeb4cac49badc134e91c680c6aa7fd685d5492"
+          "url": "https://ghcr.io/v2/homebrew/core/sdl2-compat/blobs/sha256:fbceadf543763868897ae643c8b04377e0971dfc0e8f3d9397bd80565016ec9c",
+          "sha256": "fbceadf543763868897ae643c8b04377e0971dfc0e8f3d9397bd80565016ec9c"
         },
         {
           "formula": "svt-av1", "version": "4.2.0", "revision": 0,
