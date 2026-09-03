@@ -822,7 +822,12 @@
             {"conformance": "CONF-51", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetMacDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"},
             {"conformance": "CONF-52", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetMacDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose"}
           ],
-          "reason": "The macOS executor has executed evidence for validated atomic promotion and byte-identical local playback. The SwiftUI background-session handoff and durable completion inbox are integrated, but killed-process relaunch reconciliation does not yet have executed evidence, so background continuity is not claimed as shipped."
+          "reason": "The macOS executor has executed evidence for validated atomic promotion and byte-identical local playback. The SwiftUI background-session handoff and durable completion inbox are integrated, but killed-process relaunch reconciliation does not yet have executed evidence, so background continuity is not claimed as shipped.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "killed-process-relaunch-harness",
+            "reason": "Promotion needs executed evidence that a background URLSession completion delivered after the app process is terminated is reconciled on relaunch. No harness in this repository can terminate the app and observe OS relaunch delivery, so this names the missing capability rather than a test that does not exist."
+          }
         }, "ios": {"status": "planned"},
         "ipados": {"status": "planned"}, "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},
         "android": {"status": "planned"}, "androidtv": {"status": "planned"}
