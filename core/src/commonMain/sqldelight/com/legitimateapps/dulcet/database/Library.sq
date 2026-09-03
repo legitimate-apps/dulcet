@@ -502,6 +502,13 @@ WHERE server_id = :server_id
   AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
 ORDER BY album_title COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE, raw_id;
 
+selectCreditsAtGeneration:
+SELECT owner_kind, owner_raw_id, role, ordinal, name, artist_raw_id FROM credit
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY owner_kind, owner_raw_id, ordinal;
+
 selectPlaylistsAtGeneration:
 SELECT raw_id, name FROM playlist
 WHERE server_id = :server_id
