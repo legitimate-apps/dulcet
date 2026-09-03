@@ -320,13 +320,56 @@ func accountFieldsResolveToEqualIntrinsicHeights() {
     #expect(assignedHeights == intrinsicHeights)
 }
 
+@Test @MainActor
+func searchFieldResolvesToIntrinsicHeightAcrossFlexibleContentStates() throws {
+    for state in [DulcetPresentationState.searchIdle, .searchEmpty] {
+        let store = DulcetPresentationStore(
+            source: DulcetDeterministicDataSource(initialState: state)
+        )
+        let view = NSHostingView(rootView: DulcetSearchView(
+            snapshot: store.snapshot,
+            searchQuery: Binding(
+                get: { store.searchQuery },
+                set: { store.searchQuery = $0 }
+            ),
+            onLoadMore: { _ in },
+            onRetry: {},
+            onActivateResult: { _ in }
+        ))
+        view.sizingOptions = []
+        view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+
+        let fields = textFields(in: view, matching: [DulcetStrings.searchPrompt])
+        #expect(fields.count == 1, "\(state.rawValue) rendered \(fields.count) search fields")
+        let field = try #require(fields.first)
+        #expect(
+            field.frame.height == field.intrinsicContentSize.height,
+            "\(state.rawValue) assigned \(field.frame.height) instead of intrinsic \(field.intrinsicContentSize.height)"
+        )
+    }
+}
+
 @MainActor
 private func accountTextFields(in root: NSView) -> [NSTextField] {
+    textFields(
+        in: root,
+        matching: [
+            DulcetStrings.serverAddressPlaceholder,
+            DulcetStrings.username,
+            DulcetStrings.password,
+        ]
+    )
+}
+
+@MainActor
+private func textFields(in root: NSView, matching placeholders: Set<String>) -> [NSTextField] {
     var fields: [NSTextField] = []
     func visit(_ view: NSView) {
         if let field = view as? NSTextField,
-           [DulcetStrings.serverAddressPlaceholder, DulcetStrings.username, DulcetStrings.password]
-            .contains(field.placeholderString) {
+           let placeholder = field.placeholderString,
+           placeholders.contains(placeholder) {
             fields.append(field)
         }
         view.subviews.forEach(visit)
