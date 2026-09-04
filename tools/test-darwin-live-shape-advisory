@@ -141,7 +141,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     )
     installer.assert_bottle_archive_shape = lambda _path, _entry: 0
     installer.advise_live_shape = recorded_advisory
-    installer.installed_formula_versions = lambda _name: []
+    installer.installed_formula_versions = lambda _cellar, _name: []
     installer.observe_keg = lambda _path: None
     installer.platform.system = lambda: "Darwin"
     installer.platform.machine = lambda: "arm64"

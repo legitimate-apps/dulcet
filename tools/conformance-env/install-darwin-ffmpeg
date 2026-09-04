@@ -24,12 +24,12 @@ def run(
     arguments: list[str],
     *,
     capture: bool = False,
-    local_homebrew_package: bool = False,
+    homebrew_developer: bool = False,
 ) -> str:
     environment = {**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"}
-    if local_homebrew_package:
-        # Homebrew intentionally gates package-path installs behind developer mode. Suppress its
-        # post-install dependent upgrade pass too: those upgrades would reintroduce live resolution.
+    if homebrew_developer:
+        # Homebrew gates its Ruby command and package-path installs behind developer mode. Suppress
+        # the post-install dependent upgrade pass too: upgrades would reintroduce live resolution.
         environment.update(
             {
                 "HOMEBREW_DEVELOPER": "1",
@@ -49,17 +49,66 @@ def run(
     return process.stdout.strip() if capture else ""
 
 
-def installed_formula_versions(name: str) -> list[str]:
-    process = subprocess.run(
-        ["brew", "list", "--versions", name],
-        text=True,
-        capture_output=True,
-        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
-    )
-    if process.returncode != 0:
+def installed_formula_versions(cellar: Path, name: str) -> list[str]:
+    """List installed keg directories without loading Homebrew or formula Ruby."""
+    if not re.fullmatch(r"[A-Za-z0-9@+_.-]+", name):
+        raise SystemExit(f"invalid Homebrew formula name in pinned closure: {name!r}")
+
+    try:
+        cellar_mode = cellar.lstat().st_mode
+    except OSError as error:
+        raise SystemExit(f"cannot inspect Homebrew Cellar: {cellar}: {error}") from error
+    if not stat.S_ISDIR(cellar_mode):
+        raise SystemExit(f"Homebrew Cellar is not a directory: {cellar}")
+
+    rack = cellar / name
+    try:
+        rack_mode = rack.lstat().st_mode
+    except FileNotFoundError:
         return []
-    fields = process.stdout.split()
-    return fields[1:] if fields and fields[0] == name else []
+    except OSError as error:
+        raise SystemExit(f"cannot inspect Homebrew formula rack: {rack}: {error}") from error
+    if not stat.S_ISDIR(rack_mode):
+        raise SystemExit(f"Homebrew formula rack is not a directory: {rack}")
+
+    try:
+        entries = list(rack.iterdir())
+    except OSError as error:
+        raise SystemExit(f"cannot list Homebrew formula rack: {rack}: {error}") from error
+
+    versions: list[str] = []
+    for entry in entries:
+        try:
+            entry_mode = entry.lstat().st_mode
+        except OSError as error:
+            raise SystemExit(f"cannot inspect Homebrew keg entry: {entry}: {error}") from error
+        if not stat.S_ISDIR(entry_mode):
+            raise SystemExit(f"Homebrew keg entry is not a directory: {entry}")
+        versions.append(entry.name)
+    return sorted(versions)
+
+
+def uninstall_formula_kegs(cellar: Path, name: str, versions: list[str]) -> None:
+    """Unlink and remove exact observed kegs without resolving a formula by name."""
+    if not versions:
+        return
+    keg_paths = [cellar / name / version for version in versions]
+    ruby = (
+        "ARGV.each do |path|; "
+        "keg = Keg.new(Pathname(path)); "
+        "keg.unlink; "
+        "keg.uninstall(raise_failures: true); "
+        "end"
+    )
+    run(
+        ["brew", "ruby", "-rkeg", "-e", ruby, *map(str, keg_paths)],
+        homebrew_developer=True,
+    )
+    remaining = installed_formula_versions(cellar, name)
+    if remaining:
+        raise SystemExit(
+            f"Homebrew keg removal retained versions for {name}: {','.join(remaining)}"
+        )
 
 
 def file_sha256(path: Path) -> str:
@@ -938,11 +987,12 @@ def main(pins_path: Path | None = None) -> None:
     }
     preinstall_kegs = {name: observe_keg(path) for name, path in keg_paths.items()}
 
-    # Remove every installed member first, in reverse dependency order. The
-    # explicit absence checkpoint makes a retained pre-existing keg fail closed.
+    # Remove every installed member first, in reverse dependency order. Discover and operate on
+    # exact Cellar keg paths: resolving formula names through Homebrew would load mutable Ruby from
+    # the runner. The explicit absence checkpoint makes a retained pre-existing keg fail closed.
     for name in reversed(names):
-        if installed_formula_versions(name):
-            run(["brew", "uninstall", "--force", "--ignore-dependencies", name])
+        versions = installed_formula_versions(cellar, name)
+        uninstall_formula_kegs(cellar, name, versions)
     absent_before_pour = {name: observe_keg(path) for name, path in keg_paths.items()}
     retained = [name for name, observation in absent_before_pour.items() if observation is not None]
     if retained:
@@ -963,7 +1013,7 @@ def main(pins_path: Path | None = None) -> None:
                 "--ignore-dependencies",
                 str(bottle_paths[name]),
             ],
-            local_homebrew_package=True,
+            homebrew_developer=True,
         )
 
     observed_install_observations: dict[str, dict[str, bool]] = {}

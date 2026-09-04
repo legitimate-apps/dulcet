@@ -203,7 +203,7 @@ def drive_main(root: Path, *, tamper_after_shape: bool) -> tuple[list[str], str]
         events.append("live-shape-advisory")
         return "unavailable", []
 
-    def stub_installed_versions(_name: str) -> list[str]:
+    def stub_installed_versions(_cellar: Path, _name: str) -> list[str]:
         events.append("installed-versions")
         return []
 

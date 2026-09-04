@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+
+"""Prove installed-version observation never evaluates formula Ruby or hides bad state."""
+
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+import sys
+import tempfile
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg_cellar_observation_gate",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+def expect_rejected(cellar: Path, name: str, expected_detail: str) -> None:
+    try:
+        installer.installed_formula_versions(cellar, name)
+    except SystemExit as error:
+        if str(error) != expected_detail:
+            raise SystemExit(
+                "Cellar observation rejected malformed state for the wrong reason: "
+                f"expected={expected_detail!r} observed={str(error)!r}"
+            ) from error
+    else:
+        raise SystemExit(f"Cellar observation accepted malformed state: {expected_detail}")
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        cellar = Path(temporary_directory) / "Cellar"
+        formula = "unparseable-control"
+        keg = cellar / formula / "1.2.3_4"
+        embedded_formula = keg / ".brew" / f"{formula}.rb"
+        embedded_formula.parent.mkdir(parents=True)
+        embedded_formula.write_text("this is deliberately not valid Ruby !!!\n")
+
+        original_subprocess_run = installer.subprocess.run
+        subprocess_calls = 0
+
+        def reject_subprocess(*_args, **_kwargs):
+            nonlocal subprocess_calls
+            subprocess_calls += 1
+            raise AssertionError("installed-version observation launched a subprocess")
+
+        installer.subprocess.run = reject_subprocess
+        try:
+            observed = installer.installed_formula_versions(cellar, formula)
+            absent = installer.installed_formula_versions(cellar, "genuinely-absent")
+        finally:
+            installer.subprocess.run = original_subprocess_run
+
+        if observed != ["1.2.3_4"]:
+            raise SystemExit(f"Cellar observation returned wrong installed versions: {observed}")
+        if absent != []:
+            raise SystemExit(f"Cellar observation returned versions for absent formula: {absent}")
+        if subprocess_calls != 0:
+            raise SystemExit(
+                f"Cellar observation launched subprocesses: observed={subprocess_calls}"
+            )
+
+        missing_cellar = Path(temporary_directory) / "missing-Cellar"
+        expect_rejected(
+            missing_cellar,
+            formula,
+            f"cannot inspect Homebrew Cellar: {missing_cellar}: "
+            f"[Errno 2] No such file or directory: '{missing_cellar}'",
+        )
+
+        malformed = cellar / "malformed-control"
+        malformed.mkdir()
+        unexpected_entry = malformed / "not-a-keg"
+        unexpected_entry.write_text("broken environment\n")
+        expect_rejected(
+            cellar,
+            malformed.name,
+            f"Homebrew keg entry is not a directory: {unexpected_entry}",
+        )
+
+        print(
+            "NEGATIVE CONTROL PASS darwin_cellar_observation "
+            f"unparseable_formula_version={observed[0]} "
+            f"absent_versions={len(absent)} "
+            f"brew_subprocess_calls={subprocess_calls} "
+            "missing_cellar_rejected=true malformed_state_rejected=true"
+        )
+
+
+if __name__ == "__main__":
+    main()
