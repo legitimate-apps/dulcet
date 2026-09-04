@@ -10,6 +10,138 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    func searchQueryRanksAndActivatesTrackThroughHostedAppUI() async throws {
+        let baseURL = try XCTUnwrap(
+            ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
+            "apple-ci must supply the live conformance fixture URL"
+        )
+        XCTAssertEqual(
+            baseURL,
+            "http://127.0.0.1:4533",
+            "This control may target only the disposable loopback Navidrome"
+        )
+        XCTAssertEqual(
+            ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_DISPOSABLE"],
+            "true",
+            "The live search control must fail closed unless the server is disposable"
+        )
+
+        let playback = SearchIntentPlaybackController()
+        let source = DulcetAccountDataSource(
+            connector: DulcetCoreAccountConnector(),
+            credentialStore: SearchMemoryCredentialStore(),
+            serverSearch: DulcetCoreServerSearch(),
+            playbackController: playback,
+            providerInstanceIDFactory: { "macos-search-ui-fixture" }
+        )
+        let store = DulcetPresentationStore(source: source)
+        store.accountServerURL = baseURL
+        store.accountUsername = fixtureUsername
+        store.accountPassword = fixturePassword
+        store.accountAllowLocalHTTP = true
+        store.submitAccountConnection()
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "the disposable account did not connect before the search UI test deadline"
+        ) {
+            store.snapshot.accountConnected
+        }
+
+        let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        hostingView.layoutSubtreeIfNeeded()
+
+        let searchDestination = try await accessibilityElement(
+            identifiedBy: "dulcet.sidebar.search",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        try clickAccessibilityElement(searchDestination, in: window)
+        try await waitUntil(
+            timeout: .seconds(5),
+            failureMessage: "clicking the Search sidebar row did not navigate to Search"
+        ) {
+            store.selectedDestination == .search
+        }
+
+        hostingView.layoutSubtreeIfNeeded()
+        let searchFieldElement = try await accessibilityElement(
+            identifiedBy: "dulcet.search.field",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        try clickAccessibilityElement(searchFieldElement, in: window)
+        let query = "UI Playback Canary"
+        try sendText(query, to: window)
+        try await waitUntil(
+            timeout: .seconds(5),
+            failureMessage: "the typed query did not reach the bound search field"
+        ) {
+            store.searchQuery == query
+        }
+        XCTAssertEqual(
+            accessibilityValue(searchFieldElement) as? String,
+            query,
+            "the platform field itself must expose the query sent through key events"
+        )
+
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "the ranked live result did not render before the search deadline"
+        ) {
+            store.snapshot.state == .searchResults
+                && store.snapshot.searchResults.first?.title == query
+        }
+        hostingView.layoutSubtreeIfNeeded()
+        let firstResult = try await accessibilityElement(
+            identifiedBy: "dulcet.search.result.0",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        XCTAssertEqual(
+            accessibilityLabel(firstResult),
+            query,
+            "rank zero must be the rendered canary track, not merely a store value"
+        )
+
+        try doubleClickAccessibilityElement(firstResult, in: window)
+        try await waitUntil(
+            timeout: .seconds(10),
+            failureMessage: "double-clicking rank zero did not render its Now Playing intent"
+        ) {
+            store.snapshot.state == .nowPlaying
+                && store.snapshot.nowPlaying?.current.title == query
+        }
+
+        let intent = try XCTUnwrap(playback.lastIntent)
+        XCTAssertEqual(intent.sourceKind, .search)
+        XCTAssertNil(intent.sourceID)
+        XCTAssertEqual(intent.sourceDisplayName, "Search")
+        XCTAssertEqual(intent.startIndex, 0)
+        XCTAssertEqual(intent.tracks.first?.title, query)
+        hostingView.layoutSubtreeIfNeeded()
+        let nowPlayingTitle = try await accessibilityElement(
+            identifiedBy: "dulcet.now-playing.title",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        XCTAssertEqual(accessibilityLabel(nowPlayingTitle), query)
+        print(
+            "MACOS SEARCH UI PASS query=typed rank0=rendered"
+                + " activation=double-click source=search now-playing=\(query)"
+        )
+    }
+
     func accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction() async throws {
         guard try await assertDefaultActionShortcutBisection() else {
             return
@@ -459,6 +591,194 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             ))
             NSApp.sendEvent(event)
         }
+    }
+
+    private func sendText(_ text: String, to window: NSWindow) throws {
+        for character in text {
+            let value = String(character)
+            for eventType in [NSEvent.EventType.keyDown, .keyUp] {
+                let event = try XCTUnwrap(NSEvent.keyEvent(
+                    with: eventType,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: value,
+                    charactersIgnoringModifiers: value,
+                    isARepeat: false,
+                    keyCode: 0
+                ))
+                NSApp.sendEvent(event)
+            }
+        }
+    }
+
+    private func accessibilityElement(
+        identifiedBy identifier: String,
+        in root: NSView,
+        timeout: Duration
+    ) async throws -> Any {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        repeat {
+            root.layoutSubtreeIfNeeded()
+            if let match = accessibilityDescendants(in: root).first(where: {
+                accessibilityIdentifier($0) == identifier
+            }) {
+                return match
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        } while clock.now < deadline
+        throw SearchHostedAppTestError.missingAccessibilityElement(identifier)
+    }
+
+    private func accessibilityDescendants(in root: Any) -> [Any] {
+        var result: [Any] = [root]
+        var visited = Set<ObjectIdentifier>()
+        var pending: [Any] = [root]
+        while let current = pending.popLast() {
+            guard let object = current as AnyObject? else { continue }
+            let identity = ObjectIdentifier(object)
+            guard visited.insert(identity).inserted else { continue }
+            let children = accessibilityAttribute(.children, of: current) as? [Any] ?? []
+            result.append(contentsOf: children)
+            pending.append(contentsOf: children)
+        }
+        return result
+    }
+
+    private func accessibilityAttribute(
+        _ attribute: NSAccessibility.Attribute,
+        of element: Any
+    ) -> Any? {
+        if let view = element as? NSView {
+            return view.accessibilityAttributeValue(attribute)
+        }
+        if let accessibilityElement = element as? NSAccessibilityElement {
+            return accessibilityElement.accessibilityAttributeValue(attribute)
+        }
+        return nil
+    }
+
+    private func accessibilityIdentifier(_ element: Any) -> String? {
+        accessibilityAttribute(.identifier, of: element) as? String
+    }
+
+    private func accessibilityLabel(_ element: Any) -> String? {
+        accessibilityAttribute(.title, of: element) as? String
+            ?? accessibilityAttribute(.description, of: element) as? String
+    }
+
+    private func accessibilityValue(_ element: Any) -> Any? {
+        accessibilityAttribute(.value, of: element)
+    }
+
+    private func clickAccessibilityElement(_ element: Any, in window: NSWindow) throws {
+        try sendMouseClick(at: accessibilityWindowPoint(element, in: window), count: 1, to: window)
+    }
+
+    private func doubleClickAccessibilityElement(_ element: Any, in window: NSWindow) throws {
+        let point = try accessibilityWindowPoint(element, in: window)
+        try sendMouseClick(at: point, count: 1, to: window)
+        try sendMouseClick(at: point, count: 2, to: window)
+    }
+
+    private func accessibilityWindowPoint(_ element: Any, in window: NSWindow) throws -> NSPoint {
+        // The legacy attribute API publishes position and size separately (screen coordinates,
+        // bottom-left origin); there is no single frame attribute.
+        let origin = try XCTUnwrap(
+            accessibilityAttribute(.position, of: element) as? NSPoint,
+            "the accessibility element must publish a screen position for real pointer input"
+        )
+        let size = try XCTUnwrap(
+            accessibilityAttribute(.size, of: element) as? NSSize,
+            "the accessibility element must publish a size for real pointer input"
+        )
+        let screenFrame = NSRect(origin: origin, size: size)
+        return window.convertPoint(fromScreen: NSPoint(x: screenFrame.midX, y: screenFrame.midY))
+    }
+
+    private func sendMouseClick(at point: NSPoint, count: Int, to window: NSWindow) throws {
+        for eventType in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: eventType,
+                location: point,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: count,
+                pressure: eventType == .leftMouseDown ? 1 : 0
+            ))
+            NSApp.sendEvent(event)
+        }
+    }
+}
+
+private enum SearchHostedAppTestError: Error {
+    case missingAccessibilityElement(String)
+}
+
+@MainActor
+private final class SearchMemoryCredentialStore: DulcetCredentialStoring {
+    private(set) var credentialGeneration: Int64 = 0
+
+    func load() throws -> DulcetAccountConnectRequest? { nil }
+
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        credentialGeneration += 1
+    }
+
+    func delete() throws {
+        credentialGeneration = 0
+    }
+}
+
+@MainActor
+private final class SearchIntentPlaybackController: DulcetPlaybackControlling {
+    private var presentationHandler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
+    private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
+    private(set) var lastIntent: DulcetPlaybackQueueIntent?
+
+    func setPresentationHandler(
+        _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
+    ) {
+        presentationHandler = handler
+    }
+
+    func configure(account: DulcetPlaybackAccount) {}
+    func restorePersistedQueue(with tracks: [DulcetTrack]) {}
+
+    func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
+        lastIntent = intent
+        guard !intent.tracks.isEmpty else { return }
+        let index = intent.startIndex ?? 0
+        currentPresentation = DulcetPlaybackPresentation(
+            status: .ready,
+            nowPlaying: DulcetNowPlaying(
+                current: intent.tracks[index],
+                queue: intent.tracks,
+                currentIndex: index,
+                sourceDisplayName: intent.sourceDisplayName,
+                elapsed: .zero,
+                isPlaying: true,
+                outputName: "Hosted app intent witness",
+                volume: 1,
+                audioFormat: DulcetAudioFormat(codec: "Fixture", sampleRateKilohertz: 0),
+                phase: .ready,
+                progressBegan: false
+            )
+        )
+        presentationHandler?(currentPresentation)
+    }
+
+    func send(_ intent: DulcetPlaybackControlIntent) {}
+
+    func disconnect() {
+        currentPresentation = .unavailable
+        presentationHandler?(currentPresentation)
     }
 }
 
