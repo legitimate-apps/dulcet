@@ -54,6 +54,8 @@ jobs:
         run: python3 tools/test-capture-soak-summary
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
+      - name: Prove self-hosted runners require workflow_dispatch isolation
+        run: python3 tools/test-verify-ci-policy
       - name: Verify CI policy
         run: python3 tools/verify_ci_policy.py
       - name: Prove the project-spec path gate rejects a missing referenced file
