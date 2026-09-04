@@ -8,9 +8,9 @@ name: main-health
 # repository all day asserting it was green.
 #
 # workflow_run fires AFTER the watched workflow finishes, on the default branch, with no schedule
-# and no polling. It cannot itself be the thing nobody watches, because its output is an issue that
-# a person has to close. Success events are intentionally excluded: the issue APIs cannot close an
-# alarm atomically with the branch/check state on which that decision would depend.
+# and no polling. It cannot itself be the thing nobody watches, because its output is a durable
+# issue. A success event closes only from exact-SHA required check runs, never workflow conclusions;
+# a later failure opens a fresh issue if the prior alarm has already closed.
 
 on:
   workflow_run:
@@ -21,8 +21,10 @@ on:
     branches: [main]
 
 permissions:
+  checks: read
   contents: read
   issues: write
+  statuses: read
 
 concurrency:
   # Keyed on the TRIGGERING RUN's id, not the commit, so the group is unique per invocation and
@@ -36,19 +38,19 @@ jobs:
     name: main-health
     # `cancelled` is excluded on purpose: the watched workflows use cancel-in-progress, so a
     # superseded run on a fast-moving branch is cancelled as designed and is not a health signal.
-    # `failure` and `timed_out` raise the alarm. Success cannot safely close it because GitHub has
-    # no compare-and-swap spanning the live branch/check state and an issue-state mutation.
+    # `failure` and `timed_out` raise the alarm. Success only starts exact-SHA context reconciliation.
     if: >-
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.event != 'pull_request' &&
       github.event.workflow_run.conclusion != 'cancelled' &&
-      (github.event.workflow_run.conclusion == 'failure' ||
+      (github.event.workflow_run.conclusion == 'success' ||
+       github.event.workflow_run.conclusion == 'failure' ||
        github.event.workflow_run.conclusion == 'timed_out')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Raise or update the main-is-red issue
+      - name: Reconcile the main-is-red issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
