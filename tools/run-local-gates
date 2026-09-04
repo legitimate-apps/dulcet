@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Run every gate a workflow declares, locally, before you push.
+
+WHY THIS EXISTS. The `parity-gate` workflow runs about a dozen separate tools. Running two or three
+of them locally and reading a clean exit as "the gate passes" is a correct instrument answering a
+narrower question than CI will ask, and it costs a full CI round trip to discover. That happened:
+`parity_gate.py`, `verify_promotion_conditions.py` and `verify_ci_policy.py` all passed locally on a
+change that `test-spec-evidence-boundaries` then rejected in CI over 29 missing pinned phrases.
+
+So this does not hard-code a list. It PARSES the workflow, which means it cannot drift out of date
+when a gate is added -- a hard-coded list would silently under-report exactly like the manual subset
+it replaces.
+
+    tools/run-local-gates                      # parity-gate (the default)
+    tools/run-local-gates core-ci parity-gate  # named workflows
+    tools/run-local-gates --list               # show what would run, run nothing
+
+Baseline: CI compares against origin/main, so this does too. A stale LOCAL `main` silently changes
+what the parity gate measures, which is its own well-worn trap in this repository.
+"""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+WORKFLOWS = REPO / ".github" / "workflows"
+
+# Self-declared environment faults, not gate failures. Reported separately so a busy port never reads
+# as a broken change -- and never as a silent pass either.
+ENVIRONMENT_FAULT = re.compile(r"environment fault, not a gate failure", re.I)
+
+
+def declared_tools(workflow: str) -> list[str]:
+    path = WORKFLOWS / f"{workflow}.yml"
+    if not path.is_file():
+        raise SystemExit(f"no such workflow: {path}")
+    found = re.findall(r"tools/[A-Za-z0-9_.\-]+", path.read_text())
+    return sorted({t for t in found if (REPO / t).is_file()})
+
+
+def runnable(tool: str) -> list[str] | None:
+    """Only self-contained python gates are safe to run unattended here."""
+    path = REPO / tool
+    if tool.endswith(".py"):
+        return [sys.executable, str(path)]
+    head = path.read_bytes()[:64]
+    if head.startswith(b"#!") and b"python" in head.split(b"\n", 1)[0]:
+        return [sys.executable, str(path)]
+    return None
+
+
+def main() -> int:
+    argv = [a for a in sys.argv[1:] if a != "--list"]
+    listing = "--list" in sys.argv[1:]
+    workflows = argv or ["parity-gate"]
+
+    env = dict(os.environ)
+    # CI diffs against origin/main. Match it, or this measures a different question.
+    env.setdefault("GITHUB_BASE_REF", "origin/main")
+
+    failures: list[str] = []
+    env_faults: list[str] = []
+    skipped: list[str] = []
+    passed = 0
+
+    for workflow in workflows:
+        tools = declared_tools(workflow)
+        print(f"\n=== {workflow}: {len(tools)} declared tool(s) ===")
+        for tool in tools:
+            command = runnable(tool)
+            if command is None:
+                skipped.append(tool)
+                print(f"  SKIP  {tool}  (not a self-contained python gate)")
+                continue
+            if listing:
+                print(f"  WOULD RUN  {tool}")
+                continue
+            result = subprocess.run(
+                command, cwd=REPO, env=env, capture_output=True, text=True
+            )
+            output = (result.stdout or "") + (result.stderr or "")
+            if result.returncode == 0:
+                passed += 1
+                print(f"  PASS  {tool}")
+            elif ENVIRONMENT_FAULT.search(output):
+                env_faults.append(tool)
+                print(f"  ENV   {tool}  (self-declared environment fault, not a gate failure)")
+            else:
+                failures.append(tool)
+                detail = " ".join(output.split())[:200]
+                print(f"  FAIL  {tool}\n          {detail}")
+
+    if listing:
+        return 0
+
+    print(
+        f"\n{passed} passed, {len(failures)} failed, "
+        f"{len(env_faults)} environment fault(s), {len(skipped)} skipped"
+    )
+    if env_faults:
+        print("environment faults (fix the environment, not the change): " + ", ".join(env_faults))
+    if skipped:
+        print("not run here, so NOT covered by this result: " + ", ".join(skipped))
+    if failures:
+        print("FAILED: " + ", ".join(failures))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
