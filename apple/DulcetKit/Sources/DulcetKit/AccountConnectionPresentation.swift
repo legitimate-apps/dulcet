@@ -250,6 +250,61 @@ public protocol DulcetLibraryBrowsing: AnyObject {
     ) -> any DulcetLibraryBrowseOperation
 }
 
+@MainActor
+public protocol DulcetCommittedLibraryBrowsing: AnyObject {
+    func browseCommitted(
+        providerInstanceID: String,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation
+}
+
+@MainActor
+public protocol DulcetLibraryRefreshOperation: AnyObject {
+    func cancel()
+}
+
+@MainActor
+public protocol DulcetLibraryRefreshScheduling: AnyObject {
+    func schedule(
+        after delay: Duration,
+        action: @escaping @MainActor () -> Void
+    ) -> any DulcetLibraryRefreshOperation
+}
+
+@MainActor
+public final class DulcetMonotonicLibraryRefreshScheduler: DulcetLibraryRefreshScheduling {
+    public init() {}
+
+    public func schedule(
+        after delay: Duration,
+        action: @escaping @MainActor () -> Void
+    ) -> any DulcetLibraryRefreshOperation {
+        DulcetTaskLibraryRefreshOperation(delay: delay, action: action)
+    }
+}
+
+@MainActor
+private final class DulcetTaskLibraryRefreshOperation: DulcetLibraryRefreshOperation {
+    private var task: Task<Void, Never>?
+
+    init(delay: Duration, action: @escaping @MainActor () -> Void) {
+        task = Task {
+            do {
+                try await ContinuousClock().sleep(for: delay)
+                guard !Task.isCancelled else { return }
+                action()
+            } catch {
+                // Cancellation is the only expected failure for the monotonic cadence sleep.
+            }
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
+
 public struct DulcetSearchPageRequest: Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let providerInstanceID: String
@@ -362,6 +417,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let serverSearch: (any DulcetServerSearching)?
     private let playbackController: (any DulcetPlaybackControlling)?
     private let searchDebounce: Duration
+    private let libraryRefreshCadence: Duration
+    private let libraryRefreshScheduler: any DulcetLibraryRefreshScheduling
     private let providerInstanceIDFactory: @MainActor () -> String
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
     private var activeOperation: (any DulcetAccountConnectOperation)?
@@ -369,6 +426,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var activeSearchOperation: (any DulcetSearchOperation)?
     private var searchDebounceTask: Task<Void, Never>?
     private var accountRemovalTask: Task<Void, Never>?
+    private var libraryRefreshOperation: (any DulcetLibraryRefreshOperation)?
     private var generation = 0
     private var libraryGeneration = 0
     private var searchGeneration = 0
@@ -398,6 +456,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         playbackController: (any DulcetPlaybackControlling)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty,
         searchDebounce: Duration = .milliseconds(250),
+        libraryRefreshCadence: Duration = .seconds(86_400),
+        libraryRefreshScheduler: any DulcetLibraryRefreshScheduling =
+            DulcetMonotonicLibraryRefreshScheduler(),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
     ) {
         self.connector = connector
@@ -407,7 +468,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         self.serverSearch = serverSearch
         self.playbackController = playbackController
         self.searchDebounce = searchDebounce
+        self.libraryRefreshCadence = libraryRefreshCadence
+        self.libraryRefreshScheduler = libraryRefreshScheduler
         self.providerInstanceIDFactory = providerInstanceIDFactory
+        providerInstanceID = (credentialStore as? any DulcetProviderInstanceCredentialStoring)?
+            .providerInstanceID
         do {
             if let restoredRequest = try credentialStore?.load() {
                 let serverName = Self.savedServerName(for: restoredRequest.serverURL)
@@ -557,6 +622,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     private func submit(_ request: DulcetAccountConnectRequest) {
         cancelLibraryBrowse()
+        cancelLibraryRefresh()
         // Where the person was when they asked to connect. Reconnect is reachable from the library
         // surface now, and sending them to settings on success answers a request they did not make:
         // they pressed Reconnect on the library screen to see their library.
@@ -574,11 +640,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             switch outcome {
             case let .connected(account):
                 do {
-                    try self.credentialStore?.save(request)
+                    let instanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
+                    if let credentialStore = self.credentialStore
+                        as? any DulcetProviderInstanceCredentialStoring {
+                        try credentialStore.save(request, providerInstanceID: instanceID)
+                    } else {
+                        try self.credentialStore?.save(request)
+                    }
                     if self.credentialStore != nil {
                         self.savedServerName = account.serverName
                     }
-                    self.providerInstanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
+                    self.providerInstanceID = instanceID
                     self.configurePlayback(account: account, request: request)
                     self.publish(
                         state: .accountConnected,
@@ -715,7 +787,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     private func openLibrary(selecting selection: DulcetLibrarySelection? = nil) {
         cancelLibraryBrowse()
+        cancelLibraryRefresh()
         guard case let .connected(account) = currentSnapshot.accountConnection else {
+            if let savedServerName,
+               let providerInstanceID,
+               let committedBrowser = libraryBrowser as? any DulcetCommittedLibraryBrowsing {
+                loadCommittedLibrary(
+                    from: committedBrowser,
+                    providerInstanceID: providerInstanceID,
+                    savedServerName: savedServerName,
+                    selection: selection
+                )
+                return
+            }
             if let savedServerName {
                 publish(
                     state: .accountSavedDisconnected,
@@ -769,34 +853,15 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.activeLibraryOperation = nil
             switch outcome {
             case let .loaded(musicFolders, artists, albums):
-                self.libraryMusicFolders = musicFolders
-                self.libraryArtists = artists
-                self.libraryAlbums = albums
-                self.playbackController?.restorePersistedQueue(with: albums.flatMap(\.tracks))
-                if let selection {
-                    if self.presentLibrarySelection(selection) {
-                        return
-                    }
-                    self.publish(
-                        state: .libraryError,
-                        destination: .library,
-                        form: form,
-                        status: self.currentSnapshot.accountConnection,
-                        libraryFailure: DulcetLibraryFailure(kind: .protocol)
-                    )
-                    return
-                }
-                self.publish(
-                    state: albums.isEmpty && artists.isEmpty
-                        ? .emptyLibraryConnected
-                        : .libraryBrowse,
-                    destination: .library,
-                    form: form,
-                    status: self.currentSnapshot.accountConnection,
+                self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
-                    albums: albums
+                    albums: albums,
+                    form: form,
+                    status: self.currentSnapshot.accountConnection,
+                    selection: selection
                 )
+                self.scheduleLibraryRefresh()
             case let .failed(failure):
                 self.publish(
                     state: .libraryError,
@@ -812,6 +877,109 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         if libraryGeneration == requestGeneration,
            currentSnapshot.state == .libraryLoading {
             activeLibraryOperation = operation
+        }
+    }
+
+    private func loadCommittedLibrary(
+        from browser: any DulcetCommittedLibraryBrowsing,
+        providerInstanceID: String,
+        savedServerName: String,
+        selection: DulcetLibrarySelection?
+    ) {
+        libraryGeneration += 1
+        let requestGeneration = libraryGeneration
+        let form = currentSnapshot.accountForm
+        let status = DulcetAccountConnectionStatus.saved(serverName: savedServerName)
+        publish(
+            state: .libraryLoading,
+            destination: .library,
+            form: form,
+            status: status
+        )
+        let operation = browser.browseCommitted(providerInstanceID: providerInstanceID) {
+                [weak self] outcome in
+            guard let self,
+                  self.libraryGeneration == requestGeneration,
+                  self.currentSnapshot.selectedDestination == .library else { return }
+            self.activeLibraryOperation = nil
+            switch outcome {
+            case let .loaded(musicFolders, artists, albums):
+                self.publishLoadedLibrary(
+                    musicFolders: musicFolders,
+                    artists: artists,
+                    albums: albums,
+                    form: form,
+                    status: status,
+                    selection: selection
+                )
+            case .failed:
+                self.publish(
+                    state: .accountSavedDisconnected,
+                    destination: .library,
+                    form: form,
+                    status: status
+                )
+            case .cancelled:
+                break
+            }
+        }
+        if libraryGeneration == requestGeneration,
+           currentSnapshot.state == .libraryLoading {
+            activeLibraryOperation = operation
+        }
+    }
+
+    private func publishLoadedLibrary(
+        musicFolders: [DulcetMusicFolder],
+        artists: [DulcetArtist],
+        albums: [DulcetAlbum],
+        form: DulcetAccountConnectRequest,
+        status: DulcetAccountConnectionStatus,
+        selection: DulcetLibrarySelection?
+    ) {
+        libraryMusicFolders = musicFolders
+        libraryArtists = artists
+        libraryAlbums = albums
+        playbackController?.restorePersistedQueue(with: albums.flatMap(\.tracks))
+        if let selection {
+            if presentLibrarySelection(selection) {
+                return
+            }
+            publish(
+                state: .libraryError,
+                destination: .library,
+                form: form,
+                status: status,
+                libraryFailure: DulcetLibraryFailure(kind: .protocol)
+            )
+            return
+        }
+        publish(
+            state: albums.isEmpty && artists.isEmpty
+                ? .emptyLibraryConnected
+                : .libraryBrowse,
+            destination: .library,
+            form: form,
+            status: status,
+            musicFolders: musicFolders,
+            artists: artists,
+            albums: albums
+        )
+    }
+
+    private func scheduleLibraryRefresh() {
+        guard case .connected = currentSnapshot.accountConnection else { return }
+        libraryRefreshOperation = libraryRefreshScheduler.schedule(
+            after: libraryRefreshCadence
+        ) { [weak self] in
+            guard let self else { return }
+            self.libraryRefreshOperation = nil
+            if self.currentSnapshot.selectedDestination == .library,
+               case .connected = self.currentSnapshot.accountConnection {
+                self.openLibrary()
+            } else if case .connected = self.currentSnapshot.accountConnection {
+                self.scheduleLibraryRefresh()
+            }
         }
     }
 
@@ -850,6 +1018,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let operation = activeLibraryOperation
         activeLibraryOperation = nil
         operation?.cancel()
+    }
+
+    private func cancelLibraryRefresh() {
+        libraryRefreshOperation?.cancel()
+        libraryRefreshOperation = nil
     }
 
     private func openSearch() {
@@ -1097,6 +1270,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         activeOperation?.cancel()
         activeOperation = nil
         cancelLibraryBrowse()
+        cancelLibraryRefresh()
         cancelSearchRequest()
         let removedServerID = providerInstanceID
         let cacheRemover = artworkFetcher as? any DulcetArtworkCacheRemoving

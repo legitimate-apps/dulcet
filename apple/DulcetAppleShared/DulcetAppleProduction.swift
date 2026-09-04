@@ -21,59 +21,131 @@ enum DulcetAppleProduction {
 }
 
 @MainActor
-final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing {
-    private let client = AppleLibraryBrowseClient()
+final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing {
+    private let client: AppleLibrarySyncClient
+
+    private(set) var startedSyncCount = 0
+    private(set) var completedSyncGenerations: [Int64] = []
+    private(set) var displayedCommittedGenerations: [Int64] = []
+
+    init(databaseName: String = "dulcet.db") {
+        client = AppleLibrarySyncClient(
+            databaseName: databaseName,
+            maximumInFlightPerServer: 4
+        )
+    }
 
     func browse(
         _ request: DulcetLibraryBrowseRequest,
         completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation {
-        let coreRequest = AppleLibraryBrowseRequest(
+        startedSyncCount += 1
+        let coreRequest = AppleLibrarySyncRequest(
             providerInstanceId: request.providerInstanceID,
             normalizedBaseUrl: request.normalizedServerURL,
             username: request.username,
             password: request.password,
             allowLocalHttp: request.allowLocalHTTP
         )
-        let operation = client.startBrowse(request: coreRequest) { outcome in
-            if let snapshot = outcome.snapshot {
-                completion(.loaded(
-                    musicFolders: snapshot.musicFolders.map { folder in
-                        DulcetMusicFolder(
-                            id: DulcetProviderItemID(
-                                providerInstanceID: folder.providerInstanceId,
-                                rawID: folder.rawId
-                            ),
-                            name: folder.name
-                        )
-                    },
-                    artists: snapshot.artists.map { artist in
-                        DulcetArtist(
-                            id: DulcetProviderItemID(
-                                providerInstanceID: artist.providerInstanceId,
-                                rawID: artist.rawId
-                            ),
-                            name: artist.name,
-                            mediaSourceID: artist.mediaSourceId
-                        )
-                    },
-                    albums: snapshot.albums.map(Self.copyAlbum)
-                ))
+        let operation = client.startSync(
+            request: coreRequest,
+            restart: false,
+            progress: { _ in }
+        ) { [weak self] outcome in
+            guard let self else { return }
+            if let success = outcome.success {
+                self.completedSyncGenerations.append(success.generation)
+                self.completeFromCommitted(
+                    providerInstanceID: request.providerInstanceID,
+                    requiredGeneration: success.generation,
+                    fallbackErrorKind: nil,
+                    completion: completion
+                )
                 return
             }
             guard let error = outcome.error else {
-                preconditionFailure("A library outcome must carry a snapshot or a closed error")
+                preconditionFailure("A library sync outcome must carry success or a closed error")
             }
             if error.kind == "cancelled" {
                 completion(.cancelled)
                 return
             }
-            guard let kind = DulcetLibraryFailureKind(rawValue: error.kind) else {
-                preconditionFailure("The core exported an unmapped library error kind")
-            }
-            completion(.failed(DulcetLibraryFailure(kind: kind)))
+            self.completeFromCommitted(
+                providerInstanceID: request.providerInstanceID,
+                requiredGeneration: nil,
+                fallbackErrorKind: error.kind,
+                completion: completion
+            )
         }
         return DulcetCoreLibraryOperation(operation: operation)
+    }
+
+    func browseCommitted(
+        providerInstanceID: String,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        completeFromCommitted(
+            providerInstanceID: providerInstanceID,
+            requiredGeneration: nil,
+            fallbackErrorKind: "unreachable",
+            completion: completion
+        )
+        return DulcetCompletedLibraryOperation()
+    }
+
+    private func completeFromCommitted(
+        providerInstanceID: String,
+        requiredGeneration: Int64?,
+        fallbackErrorKind: String?,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) {
+        let outcome = client.readCommitted(providerInstanceId: providerInstanceID)
+        if let snapshot = outcome.snapshot,
+           snapshot.generation > 0,
+           requiredGeneration == nil || snapshot.generation == requiredGeneration {
+            displayedCommittedGenerations.append(snapshot.generation)
+            completion(Self.copyCommitted(snapshot.library))
+            return
+        }
+        let errorKind = outcome.error?.kind ?? fallbackErrorKind ?? "protocol"
+        guard let kind = Self.failureKind(errorKind) else {
+            preconditionFailure("The core exported an unmapped library sync error kind")
+        }
+        completion(.failed(DulcetLibraryFailure(kind: kind)))
+    }
+
+    private static func copyCommitted(
+        _ snapshot: AppleLibraryBrowseSnapshotDto
+    ) -> DulcetLibraryBrowseOutcome {
+        .loaded(
+            musicFolders: snapshot.musicFolders.map { folder in
+                DulcetMusicFolder(
+                    id: DulcetProviderItemID(
+                        providerInstanceID: folder.providerInstanceId,
+                        rawID: folder.rawId
+                    ),
+                    name: folder.name
+                )
+            },
+            artists: snapshot.artists.map { artist in
+                DulcetArtist(
+                    id: DulcetProviderItemID(
+                        providerInstanceID: artist.providerInstanceId,
+                        rawID: artist.rawId
+                    ),
+                    name: artist.name,
+                    mediaSourceID: artist.mediaSourceId
+                )
+            },
+            albums: snapshot.albums.map(copyAlbum)
+        )
+    }
+
+    private static func failureKind(_ coreKind: String) -> DulcetLibraryFailureKind? {
+        if coreKind == "unsupported" {
+            return .capability
+        }
+        return DulcetLibraryFailureKind(rawValue: coreKind)
     }
 
     private static func copyAlbum(_ album: AppleLibraryAlbumDto) -> DulcetAlbum {
@@ -429,15 +501,20 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
 
 @MainActor
 final class DulcetCoreLibraryOperation: DulcetLibraryBrowseOperation {
-    private let operation: any AppleLibraryBrowseOperation
+    private let operation: any AppleLibrarySyncOperation
 
-    init(operation: any AppleLibraryBrowseOperation) {
+    init(operation: any AppleLibrarySyncOperation) {
         self.operation = operation
     }
 
     func cancel() {
         operation.cancel()
     }
+}
+
+@MainActor
+private final class DulcetCompletedLibraryOperation: DulcetLibraryBrowseOperation {
+    func cancel() {}
 }
 
 @MainActor

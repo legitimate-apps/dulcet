@@ -164,7 +164,7 @@ private fun LibraryBrowseResult.toAppleOutcome(): AppleLibraryBrowseOutcome = wh
     )
 }
 
-private fun LibraryBrowseSnapshot.toAppleDto(): AppleLibraryBrowseSnapshotDto =
+internal fun LibraryBrowseSnapshot.toAppleDto(): AppleLibraryBrowseSnapshotDto =
     AppleLibraryBrowseSnapshotDto(
         musicFolders = musicFolders.map { folder ->
             AppleLibraryMusicFolderDto(
