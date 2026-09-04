@@ -150,6 +150,73 @@ struct AVPlayerEngineTests {
     }
 
     @Test
+    func blockedMediaSamplingDoesNotBlockReadyOrSeekableNowPlaying() async {
+        let clock = BlockingSampleAVPlayerEngineClock()
+        let mediaControls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            systemMediaControls: mediaControls
+        )
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        let sampling = Task.detached { clock.fireSampler() }
+        let samplingStarted = await Task.detached { clock.waitUntilSampleStarts() }.value
+        #expect(samplingStarted, "the negative-control media sample did not start")
+
+        let readiness = Task.detached {
+            engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        let liveness = await engine.probeQueueLivenessForTesting(timeout: 0.1)
+
+        #expect(events.containsReady(seekability: .seekable))
+        #expect(mediaControls.publications.first?.seekability == .seekable)
+        if case .responsive = liveness {
+            // Expected: media sampling is isolated from the serialized engine state machine.
+        } else {
+            #expect(Bool(false), "a blocked media sample also blocked the engine queue")
+        }
+
+        clock.unblockSample()
+        _ = await sampling.value
+        await readiness.value
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func delayedMediaSampleCannotCrossAnAttemptReplacement() async {
+        let clock = BlockingSampleAVPlayerEngineClock(mediaPosition: 0.5)
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let original = plan(session: "session", attempt: "original")
+        let replacement = plan(session: "session", attempt: "replacement")
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: original))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        let delayedSample = Task.detached { clock.fireSampler() }
+        let samplingStarted = await Task.detached { clock.waitUntilSampleStarts() }.value
+        #expect(samplingStarted, "the delayed original-attempt sample did not start")
+
+        _ = await execute(
+            engine,
+            .replaceCurrent(commandID: .init("replace"), plan: replacement)
+        )
+        _ = await execute(engine, .play(commandID: .init("replacement-play")))
+        clock.unblockSample()
+        _ = await delayedSample.value
+        #expect(events.progressBeganAttemptIDs.isEmpty)
+
+        #expect(clock.fireSampler(), "the replacement-attempt positive-control sample did not fire")
+        #expect(events.progressBeganAttemptIDs == [replacement.attemptID])
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
         #if os(macOS)
         let engine = DulcetAVPlayerEngine()
@@ -472,7 +539,7 @@ struct AVPlayerEngineTests {
         }
         #expect(Array(events.snapshot.dropFirst(interruptionEndedIndex)) == [
             .interruptionEnded(attemptID: playbackPlan.attemptID, shouldResume: true),
-            .resumed(attemptID: playbackPlan.attemptID, position: 0),
+            .resumed(attemptID: playbackPlan.attemptID, position: 0.5),
         ])
 
         let routeChangedIndex = events.snapshot.count
@@ -1552,6 +1619,12 @@ private final class PlaybackEventRecorder: @unchecked Sendable {
         snapshot.contains { if case .playbackProgressBegan = $0 { true } else { false } }
     }
 
+    var progressBeganAttemptIDs: [DulcetPlaybackAttemptID] {
+        snapshot.compactMap {
+            if case let .playbackProgressBegan(attemptID, _, _) = $0 { attemptID } else { nil }
+        }
+    }
+
     var containsReady: Bool {
         snapshot.contains { if case .ready = $0 { true } else { false } }
     }
@@ -1675,6 +1748,82 @@ private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unche
         let handler = samplerHandler
         lock.unlock()
         queue?.sync { handler?() }
+    }
+}
+
+private final class BlockingSampleAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unchecked Sendable {
+    let wallClockNow = Date(timeIntervalSince1970: 1_788_000_000)
+
+    private let lock = NSLock()
+    private let sampleStarted = DispatchSemaphore(value: 0)
+    private let sampleMayFinish = DispatchSemaphore(value: 0)
+    private let mediaPosition: TimeInterval
+    private var samplerQueue: DispatchQueue?
+    private var samplerHandler: (@Sendable () -> Void)?
+    private var shouldBlockNextSample = true
+
+    init(mediaPosition: TimeInterval = 0) {
+        self.mediaPosition = mediaPosition
+    }
+
+    func sample(player _: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample {
+        lock.lock()
+        let shouldBlock = shouldBlockNextSample
+        shouldBlockNextSample = false
+        lock.unlock()
+        if shouldBlock {
+            sampleStarted.signal()
+            sampleMayFinish.wait()
+        }
+        return DulcetAVPlayerEngineClockSample(
+            isPlaying: true,
+            mediaPosition: mediaPosition,
+            monotonicTime: DulcetMonotonicInstant(uptimeNanoseconds: 0)
+        )
+    }
+
+    func startSampler(
+        on queue: DispatchQueue,
+        interval _: TimeInterval,
+        handler: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        lock.lock()
+        samplerQueue = queue
+        samplerHandler = handler
+        lock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            samplerQueue = nil
+            samplerHandler = nil
+            lock.unlock()
+        }
+    }
+
+    func scheduleOnce(
+        on _: DispatchQueue,
+        after _: TimeInterval,
+        handler _: @escaping @Sendable () -> Void
+    ) -> @Sendable () -> Void {
+        {}
+    }
+
+    func fireSampler() -> Bool {
+        lock.lock()
+        let queue = samplerQueue
+        let handler = samplerHandler
+        lock.unlock()
+        guard let queue, let handler else { return false }
+        queue.sync(execute: handler)
+        return true
+    }
+
+    func waitUntilSampleStarts() -> Bool {
+        sampleStarted.wait(timeout: .now() + 1) == .success
+    }
+
+    func unblockSample() {
+        sampleMayFinish.signal()
     }
 }
 
