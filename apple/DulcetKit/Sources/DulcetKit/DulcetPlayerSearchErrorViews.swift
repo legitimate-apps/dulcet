@@ -294,13 +294,26 @@ struct DulcetSearchView: View {
                     .accessibilityAddTraits(.isHeader)
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .dulcetSearchFieldStyle()
+#if os(macOS)
+                    // The small AppKit field's SwiftUI ideal height differs from the hosted
+                    // NSTextField's runtime intrinsic height. Use the native regular metric so
+                    // the header invariant below can preserve the control's actual ideal size.
+                    .controlSize(.regular)
+#else
                     .controlSize(.small)
+#endif
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                 Text(DulcetStrings.searchSummary)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
             }
+#if os(macOS)
+            // The sibling result surface deliberately absorbs the remaining height. Preserve the
+            // header group's ideal vertical size so a finite deficit cannot be reassigned to its
+            // native field, while the outer stack and its table or scroll view remain flexible.
+            .fixedSize(horizontal: false, vertical: true)
+#endif
 
             searchContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
