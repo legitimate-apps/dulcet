@@ -13,7 +13,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}
+  # Keyed per ref, like every other workflow here. It was previously keyed on the workflow ALONE,
+  # which meant a soak dispatched on any branch cancelled an in-flight soak on any other branch and
+  # discarded every sample it had accumulated. That loss was silent: a concurrency cancellation and
+  # a job timeout both surface as `cancelled`, so the run read as "it ran out of time" rather than
+  # "another branch killed it", and for a workflow whose entire product is N accumulated pairs that
+  # is the most expensive failure mode available.
+  #
+  # Same-ref runs still supersede, which is correct -- same ref means the same configuration and the
+  # newest dispatch wins. `cancel-in-progress: false` would additionally protect a same-ref soak,
+  # but tools/verify_ci_policy.py currently REQUIRES `cancel-in-progress: true` in every workflow,
+  # so that is a gate change, not a workflow change.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
