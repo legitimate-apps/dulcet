@@ -53,6 +53,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          unexpected_measurement_error() {
+            status=$?
+            trap - ERR
+            echo "CAPTURE SOAK ERROR measurement-command-exit=$status"
+            exit 2
+          }
+          trap unexpected_measurement_error ERR
 
           capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
           test -x "$capture_binary"
@@ -136,8 +143,10 @@ jobs:
             exit 3
           fi
           if (( divergences > 0 )); then
+            trap - ERR
             exit 1
           fi
+          trap - ERR
 
       - name: Upload soak summary and divergence forensics
         if: ${{ always() && steps.soak.outcome != 'skipped' }}
