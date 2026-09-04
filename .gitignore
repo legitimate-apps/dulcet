@@ -10,3 +10,12 @@ xcuserdata/
 local.properties
 __pycache__/
 state/
+
+# Signing material must remain outside this public repository.
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.key
+*.csr
