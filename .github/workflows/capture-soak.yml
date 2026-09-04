@@ -132,21 +132,19 @@ jobs:
           done
 
           soak_elapsed=$((SECONDS - soak_started))
-          # Summary/output failures are status 3. Status 1 is reserved for a completed measurement
-          # that actually observed divergence; capture or detector failures above use status 2.
-          if ! python3 tools/summarize_capture_soak.py \
+          # The wrapper maps summary/output failures to 3 and a measured divergence to 1.
+          # Capture or detector failures above use 2. Disable ERR only around this deliberate
+          # final status handoff so the measurement trap cannot rewrite the classification.
+          set +e
+          DIVERGENCES="$divergences" tools/run-capture-soak-summary \
             --results "$results" \
             --pair-count "$PAIR_COUNT" \
             --divergences "$divergences" \
-            --elapsed-seconds "$soak_elapsed"; then
-            echo "CAPTURE SOAK ERROR summarizer-failed"
-            exit 3
-          fi
-          if (( divergences > 0 )); then
-            trap - ERR
-            exit 1
-          fi
+            --elapsed-seconds "$soak_elapsed"
+          result_status=$?
+          set -e
           trap - ERR
+          exit "$result_status"
 
       - name: Upload soak summary and divergence forensics
         if: ${{ always() && steps.soak.outcome != 'skipped' }}
