@@ -190,6 +190,7 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :destination string export" "$EXPORT_OPTIONS"
             /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT_OPTIONS"
             /usr/libexec/PlistBuddy -c "Add :signingCertificate string $DULCET_SIGNING_IDENTITY_SHA1" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :installerSigningCertificate string Mac Installer Distribution" "$EXPORT_OPTIONS"
             /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS"
             /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_BUNDLE_ID string $RELEASE_PROFILE_NAME" "$EXPORT_OPTIONS"
             /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$EXPORT_OPTIONS"
