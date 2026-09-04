@@ -15,8 +15,9 @@ it replaces.
     tools/run-local-gates core-ci parity-gate  # named workflows
     tools/run-local-gates --list               # show what would run, run nothing
 
-Baseline: CI compares against origin/main, so this does too. A stale LOCAL `main` silently changes
-what the parity gate measures, which is its own well-worn trap in this repository.
+Baseline: GITHUB_BASE_REF is a BRANCH NAME. parity_gate.py builds `origin/<name>` itself and falls
+back to HEAD^ when that misses, so passing a ref path silently measures the wrong baseline. This
+resolves and PRINTS the baseline, and refuses to run if it does not exist.
 """
 from __future__ import annotations
 
@@ -59,8 +60,26 @@ def main() -> int:
     workflows = argv or ["parity-gate"]
 
     env = dict(os.environ)
-    # CI diffs against origin/main. Match it, or this measures a different question.
-    env.setdefault("GITHUB_BASE_REF", "origin/main")
+    # GITHUB_BASE_REF is a BRANCH NAME, not a ref path. `parity_gate.py` builds the ref itself as
+    # f"origin/{base_ref}" and falls back to HEAD^ when that misses. So passing "origin/main" here
+    # resolves to "origin/origin/main", misses, and SILENTLY compares against HEAD^ instead -- a
+    # different question than CI asks, reported as a confident pass or a confident bogus regression.
+    # Measured: base_ref="origin/main" reported "undeclared regression: search.query/android
+    # shipped -> partial" on a branch where main already had it partial; base_ref="main" passed.
+    env.setdefault("GITHUB_BASE_REF", "main")
+
+    base_ref = env["GITHUB_BASE_REF"]
+    resolved = f"origin/{base_ref}"
+    if subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", resolved],
+        cwd=REPO, capture_output=True,
+    ).returncode != 0:
+        # Refuse to run rather than measure a baseline nobody asked for.
+        raise SystemExit(
+            f"baseline {resolved!r} does not resolve. GITHUB_BASE_REF must be a BRANCH NAME "
+            f"(e.g. 'main'), not a ref path. Try: git fetch origin"
+        )
+    print(f"baseline: {resolved} ({subprocess.run(['git','rev-parse','--short',resolved],cwd=REPO,capture_output=True,text=True).stdout.strip()})")
 
     failures: list[str] = []
     env_faults: list[str] = []
