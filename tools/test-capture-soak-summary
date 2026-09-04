@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Regression controls for capture-soak result summarization."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parent.parent
+WORKFLOW = ROOT / ".github/workflows/capture-soak.yml"
+SUMMARIZER = ROOT / "tools/summarize_capture_soak.py"
+
+
+def invoke(
+    root: Path,
+    *,
+    pairs: int,
+    divergences: int,
+    summary_target: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    results = root / "results"
+    results.mkdir()
+    step_summary = summary_target or root / "step-summary.md"
+    output = root / "github-output.txt"
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "GITHUB_STEP_SUMMARY": str(step_summary),
+            "GITHUB_OUTPUT": str(output),
+        }
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SUMMARIZER),
+            "--results",
+            str(results),
+            "--pair-count",
+            str(pairs),
+            "--divergences",
+            str(divergences),
+            "--elapsed-seconds",
+            "17",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+
+class CaptureSoakSummaryControls(unittest.TestCase):
+    def test_prominent_summary_labels_the_20_percent_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = invoke(root, pairs=30, divergences=0)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            summary = (root / "step-summary.md").read_text()
+            self.assertNotIn("historical 10% pair rate", summary)
+            self.assertIn("historical 20% pair rate", summary)
+
+    def test_probability_remains_visibly_positive_at_100_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = invoke(root, pairs=100, divergences=0)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            artifact = (root / "results/summary.txt").read_text()
+            match = re.search(r"historical-20-percent-rate=([^\s]+)", artifact)
+            self.assertIsNotNone(match)
+            rendered = match.group(1)
+            self.assertNotEqual(rendered, "0.000000")
+            self.assertGreater(float(rendered), 0.0)
+
+    def test_summary_io_failure_has_a_distinct_nondivergence_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = invoke(root, pairs=30, divergences=0, summary_target=root)
+
+            self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+            self.assertIn("CAPTURE SOAK SUMMARY ERROR", result.stderr)
+
+    def test_workflow_maps_summary_failure_and_divergence_to_different_statuses(self) -> None:
+        workflow = WORKFLOW.read_text()
+        summary_error = workflow.index("CAPTURE SOAK ERROR summarizer-failed")
+        divergence = workflow.index("if (( divergences > 0 ))")
+        self.assertIn("exit 3", workflow[summary_error:divergence])
+        self.assertIn("exit 1", workflow[divergence:])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
