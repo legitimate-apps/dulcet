@@ -254,8 +254,8 @@ keychain_created=1
   -k "$KEYCHAIN_PASSWORD" \
   "$keychain_path" >/dev/null
 
-/usr/bin/security list-keychains -d user -s "$keychain_path" "${original_keychains[@]}"
 search_list_modified=1
+/usr/bin/security list-keychains -d user -s "$keychain_path" "${original_keychains[@]}"
 
 /usr/bin/security find-identity -v -p codesigning "$keychain_path" \
   | /usr/bin/grep -Fq "$identity_sha1" \
