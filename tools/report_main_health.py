@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
-"""Keep one GitHub issue aligned with required-workflow health on `main`.
+"""Raise a durable GitHub issue when a protected-branch health signal fails on `main`.
 
-Failures and timeouts open the durable alarm or append to it. A success event closes an existing
-alarm only after every required workflow has a successful, non-cancelled run for that event's exact
-head SHA. The close comment records the SHA and the run IDs used for the decision.
-
-Idempotent by design: one open issue at a time, and partial recovery never mutates the issue. A
-flapping check must neither manufacture many issues nor turn one green workflow into a false
-all-clear.
+Failures and timeouts open the alarm or append to it. Success is deliberately non-mutating: GitHub
+does not offer an atomic operation that couples the observed branch/check state to an issue close,
+so an asynchronous success handler cannot prove that its evidence is still current at mutation
+time. Closing remains a human action after current required contexts and live protection are
+verified.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
+
+from required_checks import load_required_checks
 
 MARKER = "<!-- dulcet-main-health -->"
 API = "https://api.github.com"
-REQUIRED_WORKFLOWS = ("apple-ci", "core-ci", "parity-gate")
+MANIFEST = Path(__file__).resolve().parent.parent / ".github/required-checks.json"
+BRANCH_PROTECTION_WORKFLOW = "branch-protection-drift"
 ALARM_CONCLUSIONS = frozenset({"failure", "timed_out"})
 IGNORED_CONCLUSIONS = frozenset({"cancelled"})
 
@@ -67,152 +68,6 @@ def open_health_issue(repository: str, token: str) -> int | None:
     return number
 
 
-def workflow_runs_for_head(repository: str, head: str, token: str) -> list[dict[str, object]]:
-    """Return every completed Actions run the API associates with one exact head SHA."""
-    runs: list[dict[str, object]] = []
-    page = 1
-    while True:
-        query = urllib.parse.urlencode(
-            {
-                "branch": "main",
-                "head_sha": head,
-                "status": "completed",
-                "per_page": 100,
-                "page": page,
-            }
-        )
-        document = call("GET", f"/repos/{repository}/actions/runs?{query}", token)
-        if not isinstance(document, dict) or not isinstance(document.get("workflow_runs"), list):
-            fail("GitHub workflow-runs API returned malformed JSON")
-        batch = document["workflow_runs"]
-        if not all(isinstance(run, dict) for run in batch):
-            fail("GitHub workflow-runs API returned a malformed run")
-        runs.extend(batch)
-
-        total = document.get("total_count")
-        if isinstance(total, int) and total >= 0 and len(runs) >= total:
-            break
-        if len(batch) < 100:
-            break
-        page += 1
-        if page > 100:
-            fail("more than 10,000 workflow runs matched one head SHA")
-    return runs
-
-
-def run_id(run: dict[str, object]) -> int:
-    identifier = run.get("id")
-    if not isinstance(identifier, int) or identifier <= 0:
-        fail("GitHub workflow-runs API returned a required run without a valid id")
-    return identifier
-
-
-def effective_required_runs(
-    runs: list[dict[str, object]], head: str, current: dict[str, object]
-) -> dict[str, dict[str, object]]:
-    """Select the newest non-cancelled run per required workflow on the exact SHA."""
-    selected: dict[str, dict[str, object]] = {}
-    for run in [*runs, current]:
-        name = run.get("name")
-        if (
-            name not in REQUIRED_WORKFLOWS
-            or run.get("head_sha") != head
-            or run.get("head_branch") != "main"
-            or run.get("event") == "pull_request"
-        ):
-            continue
-        conclusion = run.get("conclusion")
-        if conclusion in IGNORED_CONCLUSIONS:
-            continue
-        if not isinstance(conclusion, str) or not conclusion:
-            fail(f"GitHub workflow-runs API omitted the conclusion for {name}")
-        identifier = run_id(run)
-        previous = selected.get(name)
-        if previous is None or identifier > run_id(previous):
-            selected[name] = run
-    return selected
-
-
-def describe_health(runs: dict[str, dict[str, object]]) -> str:
-    states = []
-    for workflow in REQUIRED_WORKFLOWS:
-        run = runs.get(workflow)
-        if run is None:
-            states.append(f"{workflow}=missing")
-        else:
-            states.append(f"{workflow}={run['conclusion']} (run {run_id(run)})")
-    return ", ".join(states)
-
-
-def current_main_head(repository: str, token: str) -> str:
-    document = call("GET", f"/repos/{repository}/branches/main", token)
-    commit = document.get("commit") if isinstance(document, dict) else None
-    head = commit.get("sha") if isinstance(commit, dict) else None
-    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", head):
-        fail("GitHub branches API omitted the current main head SHA")
-    return head
-
-
-def close_if_green(
-    repository: str,
-    token: str,
-    issue_number: int,
-    head: str,
-    current: dict[str, object],
-) -> None:
-    runs = effective_required_runs(
-        workflow_runs_for_head(repository, head, token), head, current
-    )
-    if set(runs) != set(REQUIRED_WORKFLOWS) or any(
-        run["conclusion"] != "success" for run in runs.values()
-    ):
-        print(
-            f"MAIN HEALTH: issue #{issue_number} remains open at {head[:8]}: "
-            f"{describe_health(runs)}"
-        )
-        return
-
-    # A delayed success for a superseded commit must not clear an alarm that may describe the
-    # current head. The required runs above are still resolved for the event's SHA, never by global
-    # recency; this final branch-head check only proves that SHA still represents `main`.
-    live_head = current_main_head(repository, token)
-    if live_head != head:
-        print(
-            f"MAIN HEALTH: issue #{issue_number} remains open; green SHA {head[:8]} "
-            f"was superseded by {live_head[:8]}"
-        )
-        return
-
-    evidence = []
-    for workflow in REQUIRED_WORKFLOWS:
-        run = runs[workflow]
-        identifier = run_id(run)
-        url = run.get("html_url")
-        if not isinstance(url, str) or not url:
-            url = f"https://github.com/{repository}/actions/runs/{identifier}"
-        evidence.append(f"- **{workflow}** — run [`{identifier}`]({url})")
-    evidence_text = "\n".join(evidence)
-    comment = (
-        f"All required checks are green on `main` at `{head}`.\n\n"
-        f"The same-SHA runs used for this decision were:\n\n"
-        f"{evidence_text}\n\n"
-        f"Closing this alarm automatically."
-    )
-    call(
-        "POST",
-        f"/repos/{repository}/issues/{issue_number}/comments",
-        token,
-        {"body": comment},
-    )
-    call(
-        "PATCH",
-        f"/repos/{repository}/issues/{issue_number}",
-        token,
-        {"state": "closed"},
-    )
-    print(f"MAIN HEALTH: closed issue #{issue_number} at {head[:8]}")
-
-
 def report_alarm(
     repository: str,
     token: str,
@@ -239,12 +94,14 @@ def report_alarm(
 
     body = (
         f"{MARKER}\n"
-        f"A required check failed on `main`. This issue was opened automatically because "
-        f"post-merge failures otherwise have no durable owner.\n\n"
+        f"A protected-branch health signal failed on `main`. This issue was opened "
+        f"automatically because post-merge failures otherwise have no durable owner.\n\n"
         f"{line}\n\n"
-        f"This issue closes automatically only when `apple-ci`, `core-ci`, and `parity-gate` "
-        f"are all green on the same head SHA. Further failures while it is open are appended "
-        f"as comments."
+        f"Further failures while it is open are appended as comments. Automatic closing is "
+        f"disabled because an asynchronous workflow cannot atomically prove that the observed "
+        f"branch and required-check state is still current when the issue mutation occurs. "
+        f"Close manually only after verifying the current required contexts and live branch "
+        f"protection."
     )
     created = call(
         "POST",
@@ -272,7 +129,14 @@ def main() -> None:
         )
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         fail("GITHUB_REPOSITORY is malformed")
-    if workflow not in REQUIRED_WORKFLOWS:
+    try:
+        default_branch, required_contexts = load_required_checks(MANIFEST)
+    except (OSError, ValueError) as error:
+        fail(str(error))
+    monitored_workflows = required_contexts | {BRANCH_PROTECTION_WORKFLOW}
+    if default_branch != "main":
+        fail(f"required-checks manifest default branch is {default_branch!r}, expected 'main'")
+    if workflow not in monitored_workflows:
         fail(f"unexpected workflow {workflow!r}")
     if not re.fullmatch(r"[0-9a-fA-F]{40}", head):
         fail("RUN_HEAD_SHA must be a full 40-character commit SHA")
@@ -288,37 +152,26 @@ def main() -> None:
     if conclusion not in ALARM_CONCLUSIONS | {"success"}:
         fail(f"unexpected conclusion {conclusion!r}")
 
-    issue_number = open_health_issue(repository, token)
-    if conclusion in ALARM_CONCLUSIONS:
-        report_alarm(
-            repository,
-            token,
-            issue_number,
-            workflow,
-            conclusion,
-            run_url,
-            head,
-            identifier,
+    # This is intentionally before issue lookup: success must not mutate or even inspect alarm
+    # state. There is no compare-and-swap spanning GitHub's branch/check and issue APIs, so every
+    # automatic close has an unavoidable stale-green interval.
+    if conclusion == "success":
+        print(
+            f"MAIN HEALTH: {workflow} succeeded at {head[:8]}; "
+            f"automatic alarm closing is disabled"
         )
         return
-    if issue_number is None:
-        print(f"MAIN HEALTH: {head[:8]} reported success; no open alarm")
-        return
 
-    close_if_green(
+    issue_number = open_health_issue(repository, token)
+    report_alarm(
         repository,
         token,
         issue_number,
+        workflow,
+        conclusion,
+        run_url,
         head,
-        {
-            "id": identifier,
-            "name": workflow,
-            "head_sha": head,
-            "head_branch": "main",
-            "event": "workflow_run",
-            "conclusion": conclusion,
-            "html_url": run_url,
-        },
+        identifier,
     )
 
 
