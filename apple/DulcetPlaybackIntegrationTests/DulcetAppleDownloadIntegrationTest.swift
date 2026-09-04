@@ -2,10 +2,13 @@ import DulcetCore
 import DulcetKit
 import Foundation
 import XCTest
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
-final class DulcetMacDownloadIntegrationTest: XCTestCase {
-    private let providerInstanceID = "macos-download-provider:opaque-id"
+final class DulcetAppleDownloadIntegrationTest: XCTestCase {
+    private let providerInstanceID = "apple-download-provider:opaque-id"
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
@@ -130,7 +133,37 @@ final class DulcetMacDownloadIntegrationTest: XCTestCase {
         controller.disconnect()
     }
 
+    #if os(macOS)
     func downloadTriggerPromotesValidatedResponseAtomically() async throws {
+        try await proveDownloadTriggerPromotesValidatedResponseAtomically()
+    }
+
+    func offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose() async throws {
+        try await proveOfflinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose()
+    }
+    #elseif os(iOS)
+    func downloadTriggerPromotesValidatedResponseAtomicallyOnIOS() async throws {
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .phone)
+        try await proveDownloadTriggerPromotesValidatedResponseAtomically()
+    }
+
+    func offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIOS() async throws {
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .phone)
+        try await proveOfflinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose()
+    }
+
+    func downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS() async throws {
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
+        try await proveDownloadTriggerPromotesValidatedResponseAtomically()
+    }
+
+    func offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIPadOS() async throws {
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
+        try await proveOfflinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose()
+    }
+    #endif
+
+    private func proveDownloadTriggerPromotesValidatedResponseAtomically() async throws {
         let context = try makeContext()
         defer { context.tearDown() }
         let track = try await loadLiveTrack(baseURL: context.baseURL)
@@ -140,7 +173,7 @@ final class DulcetMacDownloadIntegrationTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(60),
-            failureMessage: "the macOS executor did not reach the downloaded state"
+            failureMessage: "the \(platformLabel) executor did not reach the downloaded state"
         ) {
             context.controller.status(for: track.id) == .downloaded
         }
@@ -159,12 +192,12 @@ final class DulcetMacDownloadIntegrationTest: XCTestCase {
         XCTAssertEqual(storedByteCount, asset.exactByteLength)
 
         print(
-            "CONF-51 MACOS DOWNLOAD trigger=platform-executor"
+            "CONF-51 \(platformLabel) DOWNLOAD trigger=platform-executor"
                 + " response=validated promotion=atomic exact_bytes=\(storedByteCount)"
         )
     }
 
-    func offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose() async throws {
+    private func proveOfflinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose() async throws {
         let context = try makeContext()
         defer { context.tearDown() }
         let track = try await loadLiveTrack(baseURL: context.baseURL)
@@ -209,9 +242,17 @@ final class DulcetMacDownloadIntegrationTest: XCTestCase {
         }
 
         print(
-            "CONF-52 MACOS OFFLINE PLAYBACK network=closed"
+            "CONF-52 \(platformLabel) OFFLINE PLAYBACK network=closed"
                 + " source=local-file identical_bytes=\(expectedBytes.count)"
         )
+    }
+
+    private var platformLabel: String {
+        #if os(macOS)
+        "MACOS"
+        #elseif os(iOS)
+        UIDevice.current.userInterfaceIdiom == .pad ? "IPADOS" : "IOS"
+        #endif
     }
 
     private func makeContext() throws -> DownloadIntegrationContext {
@@ -228,10 +269,10 @@ final class DulcetMacDownloadIntegrationTest: XCTestCase {
             throw DownloadIntegrationPrecondition.invalidEnvironment
         }
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dulcet-macos-download-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("dulcet-apple-download-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let controller = DulcetCoreDownloadController(
-            databaseName: "dulcet-macos-download-\(UUID().uuidString).db",
+            databaseName: "dulcet-apple-download-\(UUID().uuidString).db",
             downloadRootURL: root,
             sessionConfiguration: .ephemeral
         )

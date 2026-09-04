@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct DulcetiOSApp: App {
     @State private var presentation: DulcetPresentationStore
+    private let downloadController: DulcetCoreDownloadController?
 
     init() {
 #if DEBUG
@@ -13,10 +14,13 @@ struct DulcetiOSApp: App {
             _presentation = State(initialValue: DulcetPresentationStore(
                 source: DulcetDeterministicDataSource(initialState: .accountConnectIdle)
             ))
+            downloadController = nil
             return
         }
 
-        let presentation = DulcetAppleProduction.makePresentationStore()
+        let composition = DulcetAppleProduction.makeIOSComposition()
+        let presentation = composition.store
+        downloadController = composition.downloads
         // 🚨 DISPOSABLE CANARY CREDENTIALS ONLY. Never point this at a real server.
         //
         // Launch arguments are not secret: xcodebuild echoes them, XCUITest records
@@ -49,7 +53,9 @@ struct DulcetiOSApp: App {
         }
         _presentation = State(initialValue: presentation)
 #else
-        _presentation = State(initialValue: DulcetAppleProduction.makePresentationStore())
+        let composition = DulcetAppleProduction.makeIOSComposition()
+        _presentation = State(initialValue: composition.store)
+        downloadController = composition.downloads
 #endif
     }
 
@@ -68,6 +74,11 @@ struct DulcetiOSApp: App {
     var body: some Scene {
         WindowGroup {
             DulcetRootView(store: presentation)
+        }
+        .backgroundTask(.urlSession(
+            DulcetCoreDownloadController.productionBackgroundSessionIdentifier
+        )) {
+            await downloadController?.handleBackgroundSessionEvents()
         }
     }
 }

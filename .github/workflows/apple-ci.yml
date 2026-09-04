@@ -628,7 +628,7 @@ jobs:
               -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetPlaybackIntegrationTests/DulcetMacDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
@@ -639,12 +639,12 @@ jobs:
             tee "$RUNNER_TEMP/dulcet-mac-download-conf51.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
-            DulcetPlaybackIntegrationTests.DulcetMacDownloadIntegrationTest \
+            DulcetPlaybackIntegrationTests.DulcetAppleDownloadIntegrationTest \
             downloadTriggerPromotesValidatedResponseAtomically
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-download-junit/TEST-CONF-51.xml" \
-            DulcetMacDownloadIntegrationTest
+            DulcetAppleDownloadIntegrationTest
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test-without-building \
@@ -655,7 +655,7 @@ jobs:
               -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-conf52.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetPlaybackIntegrationTests/DulcetMacDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
@@ -666,12 +666,98 @@ jobs:
             tee "$RUNNER_TEMP/dulcet-mac-download-conf52.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-mac-download-conf52.xcresult" \
-            DulcetPlaybackIntegrationTests.DulcetMacDownloadIntegrationTest \
+            DulcetPlaybackIntegrationTests.DulcetAppleDownloadIntegrationTest \
             offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-mac-download-conf52.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-download-junit/TEST-CONF-52.xml" \
-            DulcetMacDownloadIntegrationTest
+            DulcetAppleDownloadIntegrationTest
+          # The iOS test runner does not inherit the host shell's environment. TEST_RUNNER_
+          # variables are stripped into the runner process, where the test independently rejects
+          # anything except the disposable loopback Navidrome. Each named test gets its own
+          # xcresult because the execution guard requires exactly one individual result.
+          TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOSDownloadIntegration \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDownloadIntegrationDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-download-conf51.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSDownloadIntegrationTests/DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-download-conf51.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-download-conf51.xcresult" \
+            DulcetiOSDownloadIntegrationTests.DulcetAppleDownloadIntegrationTest \
+            downloadTriggerPromotesValidatedResponseAtomicallyOnIOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-download-conf51.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-download-junit/TEST-CONF-51.xml" \
+            DulcetAppleDownloadIntegrationTest
+          TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOSDownloadIntegration \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDownloadIntegrationDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-download-conf52.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSDownloadIntegrationTests/DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-download-conf52.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-download-conf52.xcresult" \
+            DulcetiOSDownloadIntegrationTests.DulcetAppleDownloadIntegrationTest \
+            offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-download-conf52.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-download-junit/TEST-CONF-52.xml" \
+            DulcetAppleDownloadIntegrationTest
+          IPAD_DOWNLOAD_DESTINATION="$(python3 tools/resolve-ipad-destination)"
+          echo "iPadOS download destination: $IPAD_DOWNLOAD_DESTINATION"
+          TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOSDownloadIntegration \
+              -configuration Debug \
+              -destination "$IPAD_DOWNLOAD_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDownloadIntegrationDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-download-conf51.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSDownloadIntegrationTests/DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-download-conf51.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-download-conf51.xcresult" \
+            DulcetiOSDownloadIntegrationTests.DulcetAppleDownloadIntegrationTest \
+            downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-download-conf51.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-download-junit/TEST-CONF-51.xml" \
+            DulcetAppleDownloadIntegrationTest
+          TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOSDownloadIntegration \
+              -configuration Debug \
+              -destination "$IPAD_DOWNLOAD_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDownloadIntegrationDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-download-conf52.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSDownloadIntegrationTests/DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIPadOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-download-conf52.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-download-conf52.xcresult" \
+            DulcetiOSDownloadIntegrationTests.DulcetAppleDownloadIntegrationTest \
+            offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIPadOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-download-conf52.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-download-junit/TEST-CONF-52.xml" \
+            DulcetAppleDownloadIntegrationTest
           restart_navidrome_cold
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
@@ -809,9 +895,11 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-mac-download-junit"
-      # Every Apple test step here writes an .xcresult and discards it with the runner -- eight
-      # bundles (eleven with the two download runs), none uploaded -- along with the JUnit directories `verify-parity-evidence` consumes
+            "$RUNNER_TEMP/dulcet-mac-download-junit" \
+            "$RUNNER_TEMP/dulcet-ios-download-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-download-junit"
+      # Every Apple test step here writes an .xcresult and discards it with the runner -- including
+      # the platform download runs -- along with the JUnit directories `verify-parity-evidence` consumes
       # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
       # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
       # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.

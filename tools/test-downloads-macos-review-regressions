@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static backstops for PR #56's cross-layer adversarial-review fixes."""
+"""Static backstops for the Apple download wiring and adversarial-review fixes."""
 
 from pathlib import Path
 import json
@@ -7,14 +7,22 @@ import json
 
 ROOT = Path(__file__).resolve().parent.parent
 controller = (ROOT / "apple/DulcetAppleShared/DulcetCoreDownloads.swift").read_text()
-app = (ROOT / "apple/DulcetMac/DulcetMacApp.swift").read_text()
+mac_app = (ROOT / "apple/DulcetMac/DulcetMacApp.swift").read_text()
+ios_app = (ROOT / "apple/DulcetiOS/DulcetiOSApp.swift").read_text()
+production = (ROOT / "apple/DulcetAppleShared/DulcetAppleProduction.swift").read_text()
+project = (ROOT / "apple/Dulcet.xcodeproj/project.pbxproj").read_text()
 presentation = (
     ROOT / "apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift"
 ).read_text()
 features = json.loads((ROOT / "FEATURES.yml").read_text())
 
 assert "urlSessionDidFinishEvents(forBackgroundURLSession" in controller
-assert ".backgroundTask(.urlSession(" in app
+assert controller.startswith("#if os(macOS) || os(iOS)")
+assert ".backgroundTask(.urlSession(" in mac_app
+assert ".backgroundTask(.urlSession(" in ios_app
+assert "makeIOSComposition" in production
+assert "DulcetiOSDownloadIntegrationTests" in project
+assert "DulcetCore.framework in Embed Frameworks" not in project
 assert "scheduleNextDownload" in controller
 assert "removeAccountData" in presentation
 
@@ -32,4 +40,14 @@ reason = macos.get("reason", "")
 assert "relaunch" in reason.lower()
 assert "evidenc" in reason.lower()
 
-print("macOS downloads adversarial-review regression contracts valid")
+for platform in ("ios", "ipados"):
+    cell = downloads["platforms"][platform]
+    assert cell["status"] == "partial"
+    assert {row["conformance"] for row in cell["evidence"]} == {"CONF-51", "CONF-52"}
+    assert "relaunch" in cell["reason"].lower()
+    promotion = cell["promotion_condition"]
+    assert promotion["status"] == "blocked"
+    assert promotion["blocked_on"] == "killed-process-relaunch-harness"
+    assert "process" in promotion["reason"].lower()
+
+print("Apple downloads adversarial-review regression contracts valid")

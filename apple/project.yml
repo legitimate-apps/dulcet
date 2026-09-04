@@ -198,6 +198,28 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetiOSDownloadIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest.swift
+      - DulcetAppleShared/DulcetCoreDownloads.swift
+      - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.download-integration-tests
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
   DulcetiOSUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -274,6 +296,13 @@ schemes:
       targets:
         - DulcetKitIOSTests
         - DulcetiOSUITests
+  DulcetiOSDownloadIntegration:
+    build:
+      targets:
+        DulcetiOSDownloadIntegrationTests: [test]
+    test:
+      targets:
+        - DulcetiOSDownloadIntegrationTests
   DulcetMac:
     build:
       targets:

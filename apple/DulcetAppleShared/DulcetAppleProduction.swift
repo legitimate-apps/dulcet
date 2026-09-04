@@ -9,25 +9,12 @@ enum DulcetAppleProduction {
     static func makePresentationStore() -> DulcetPresentationStore {
         #if os(macOS)
         return makeMacComposition().store
+        #elseif os(iOS)
+        return makeIOSComposition().store
         #else
         let credentialStore = DulcetKeychainCredentialStore()
         let downloads: (any DulcetDownloadControlling)? = nil
-        return DulcetPresentationStore(
-            source: DulcetAccountDataSource(
-                connector: DulcetCoreAccountConnector(),
-                credentialStore: credentialStore,
-                libraryBrowser: DulcetCoreLibraryBrowser(),
-                artworkFetcher: DulcetCoreArtworkFetcher(),
-                serverSearch: DulcetCoreServerSearch(),
-                playbackController: DulcetCorePlaybackController(
-                    downloadController: downloads
-                ),
-                downloadController: downloads,
-                providerInstanceIDFactory: {
-                    credentialStore.activeAccountID ?? UUID().uuidString
-                }
-            )
-        )
+        return makeStore(credentialStore: credentialStore, downloads: downloads)
         #endif
     }
 
@@ -35,7 +22,29 @@ enum DulcetAppleProduction {
     static func makeMacComposition() -> DulcetMacProductionComposition {
         let credentialStore = DulcetKeychainCredentialStore()
         let downloads = DulcetCoreDownloadController.production()
-        let store = DulcetPresentationStore(
+        return DulcetMacProductionComposition(
+            store: makeStore(credentialStore: credentialStore, downloads: downloads),
+            downloads: downloads
+        )
+    }
+    #endif
+
+    #if os(iOS)
+    static func makeIOSComposition() -> DulcetiOSProductionComposition {
+        let credentialStore = DulcetKeychainCredentialStore()
+        let downloads = DulcetCoreDownloadController.production()
+        return DulcetiOSProductionComposition(
+            store: makeStore(credentialStore: credentialStore, downloads: downloads),
+            downloads: downloads
+        )
+    }
+    #endif
+
+    private static func makeStore(
+        credentialStore: DulcetKeychainCredentialStore,
+        downloads: (any DulcetDownloadControlling)?
+    ) -> DulcetPresentationStore {
+        DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
                 credentialStore: credentialStore,
@@ -51,14 +60,20 @@ enum DulcetAppleProduction {
                 }
             )
         )
-        return DulcetMacProductionComposition(store: store, downloads: downloads)
     }
-    #endif
 }
 
 #if os(macOS)
 @MainActor
 struct DulcetMacProductionComposition {
+    let store: DulcetPresentationStore
+    let downloads: DulcetCoreDownloadController?
+}
+#endif
+
+#if os(iOS)
+@MainActor
+struct DulcetiOSProductionComposition {
     let store: DulcetPresentationStore
     let downloads: DulcetCoreDownloadController?
 }
