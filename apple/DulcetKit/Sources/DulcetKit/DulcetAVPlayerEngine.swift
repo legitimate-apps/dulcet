@@ -26,6 +26,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<UInt8>()
+    private let mediaSamplingQueue: DispatchQueue
     private let player: AVQueuePlayer
     private let clock: any DulcetAVPlayerEngineClock
     private let usesAVFoundationMediaStack: Bool
@@ -77,7 +78,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         systemMediaControls: any DulcetSystemMediaControlling = DulcetPlatformSystemMediaControls(),
         remoteCommandRouter: (any DulcetRemotePlaybackCommandRouting)? = nil,
         remoteCommandCapabilities: DulcetRemoteCommandCapabilities = .init(),
-        queue: DispatchQueue = DispatchQueue(label: "com.legitimateapps.dulcet.playback-engine")
+        queue: DispatchQueue = DispatchQueue(label: "com.legitimateapps.dulcet.playback-engine"),
+        mediaSamplingQueue: DispatchQueue = DispatchQueue(
+            label: "com.legitimateapps.dulcet.playback-engine.media-sampling"
+        )
     ) {
         self.player = player
         self.clock = clock
@@ -88,6 +92,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         self.remoteCommandRouter = remoteCommandRouter
         self.remoteCommandCapabilities = remoteCommandCapabilities
         self.queue = queue
+        self.mediaSamplingQueue = mediaSamplingQueue
         superInitQueue()
     }
 
@@ -115,7 +120,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             emit(
                 .observationResynced(
                     attemptID: current.plan.attemptID,
-                    snapshot: current.snapshot(player: player)
+                    snapshot: current.snapshot()
                 )
             )
         }
@@ -245,7 +250,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             player.playImmediately(atRate: desiredRate)
             updateSystemTransport(for: current, isPlaying: true)
             if current.readyEmitted && !wasRequested {
-                emit(.resumed(attemptID: current.plan.attemptID, position: currentPosition()))
+                emit(.resumed(
+                    attemptID: current.plan.attemptID,
+                    position: currentPosition(for: current)
+                ))
             }
             completion(.accepted(commandID: commandID))
         case let .pause(commandID):
@@ -302,7 +310,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             publishNowPlaying(
                 plan: plan,
                 duration: current.duration,
-                position: currentPosition(),
+                position: currentPosition(for: current),
                 seekability: current.seekability,
                 isPlaying: current.playRequested
             )
@@ -397,7 +405,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             completion(.rejected(commandID: commandID, reason: .invalidState))
             return
         }
-        let from = currentPosition()
+        let from = currentPosition(for: context)
         let requested = CMTime(seconds: position, preferredTimescale: 1_000)
         player.seek(to: requested, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] success in
             guard let self else {
@@ -435,7 +443,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             player.removeAllItems()
             return
         }
-        let position = currentPosition()
+        let position = currentPosition(for: current)
         player.pause()
         emit(.skipped(attemptID: current.plan.attemptID, position: position, reason: reason))
         current.invalidate()
@@ -738,7 +746,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 emit(
                     .bufferingEnded(
                         attemptID: current.plan.attemptID,
-                        position: currentPosition()
+                        position: currentPosition(for: current)
                     )
                 )
             }
@@ -747,7 +755,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 emit(
                     .resumed(
                         attemptID: current.plan.attemptID,
-                        position: currentPosition()
+                        position: currentPosition(for: current)
                     )
                 )
             }
@@ -757,7 +765,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 emit(
                     .paused(
                         attemptID: current.plan.attemptID,
-                        position: currentPosition()
+                        position: currentPosition(for: current)
                     )
                 )
             }
@@ -772,7 +780,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         emit(
             .buffering(
                 attemptID: context.plan.attemptID,
-                position: currentPosition()
+                position: currentPosition(for: context)
             )
         )
     }
@@ -786,7 +794,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             emit(
                 .paused(
                     attemptID: context.plan.attemptID,
-                    position: currentPosition()
+                    position: currentPosition(for: context)
                 )
             )
         }
@@ -794,11 +802,28 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func startSampler() {
         cancelSampler = clock.startSampler(
-            on: queue,
+            on: mediaSamplingQueue,
             interval: Self.sampleInterval
         ) { [weak self] in
-            self?.samplePosition()
+            guard let self else { return }
+            guard let context = contextForPositionSampling() else { return }
+            let sample = clock.sample(player: player)
+            performOnQueueSynchronously { [self] in
+                applyPositionSample(sample, for: context)
+            }
         }
+    }
+
+    /// AVFoundation media-time reads can block while the host is overloaded. Keep those reads off
+    /// the serialized state queue, and pin each result to the exact attempt that requested it so a
+    /// late sample can never mutate a replacement attempt or a new playback session.
+    private func contextForPositionSampling() -> PlayerItemContext? {
+        var context: PlayerItemContext?
+        performOnQueueSynchronously { [self] in
+            guard !released, let current, current.playRequested else { return }
+            context = current
+        }
+        return context
     }
 
     private func activateAudioSessionIfNeeded(
@@ -862,7 +887,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 if current.progressBegan {
                     emit(.resumed(
                         attemptID: current.plan.attemptID,
-                        position: currentPosition()
+                        position: currentPosition(for: current)
                     ))
                 }
                 current.pausedAfterProgress = false
@@ -903,7 +928,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         publishNowPlaying(
             plan: context.plan,
             duration: context.duration,
-            position: currentPosition(),
+            position: currentPosition(for: context),
             seekability: context.seekability,
             isPlaying: context.playRequested
         )
@@ -935,7 +960,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard let context = context ?? current, context.readyEmitted else { return }
         systemMediaControls.updateTransport(
             sessionID: context.plan.playbackSessionID,
-            position: currentPosition(),
+            position: currentPosition(for: context),
             rate: Double(desiredRate),
             isPlaying: isPlaying
         )
@@ -985,33 +1010,35 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         return handled
     }
 
-    private func samplePosition() {
-        guard let current else { return }
-        let sample = clock.sample(player: player)
+    private func applyPositionSample(
+        _ sample: DulcetAVPlayerEngineClockSample,
+        for context: PlayerItemContext
+    ) {
+        guard current === context, context.playRequested else { return }
         guard sample.isPlaying else { return }
         let position = sample.mediaPosition
-        guard position > current.lastSampledPosition + 0.000_001 else { return }
-        if !current.progressBegan {
-            current.progressBegan = true
-            current.progressStartWallClock = clock.wallClockNow
+        guard position > context.lastSampledPosition + 0.000_001 else { return }
+        if !context.progressBegan {
+            context.progressBegan = true
+            context.progressStartWallClock = clock.wallClockNow
             emit(
                 .playbackProgressBegan(
-                    attemptID: current.plan.attemptID,
-                    wallClock: current.progressStartWallClock!,
+                    attemptID: context.plan.attemptID,
+                    wallClock: context.progressStartWallClock!,
                     mediaPosition: position
                 )
             )
         }
-        current.lastSampledPosition = position
-        current.lastSampleMonotonic = sample.monotonicTime
+        context.lastSampledPosition = position
+        context.lastSampleMonotonic = sample.monotonicTime
         emit(
             .positionChanged(
-                attemptID: current.plan.attemptID,
+                attemptID: context.plan.attemptID,
                 mediaPosition: position,
                 monotonicTime: sample.monotonicTime
             )
         )
-        updateSystemTransport(for: current, isPlaying: true)
+        updateSystemTransport(for: context, isPlaying: true)
     }
 
     private func seekability(_ context: PlayerItemContext) -> DulcetPlaybackSeekability {
@@ -1023,8 +1050,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         return .notSeekable
     }
 
-    private func currentPosition() -> TimeInterval {
-        finiteSeconds(player.currentTime()) ?? 0
+    private func currentPosition(for context: PlayerItemContext) -> TimeInterval {
+        context.lastSampledPosition
     }
 
     private func finiteSeconds(_ time: CMTime) -> TimeInterval? {
@@ -1204,7 +1231,7 @@ private final class PlayerItemContext: @unchecked Sendable {
         observers.removeAll()
     }
 
-    func snapshot(player: AVQueuePlayer) -> DulcetPlaybackObservationSnapshot {
+    func snapshot() -> DulcetPlaybackObservationSnapshot {
         let status: DulcetPlaybackObservationStatus = if failureEmitted {
             .failed
         } else if buffering {
@@ -1218,10 +1245,9 @@ private final class PlayerItemContext: @unchecked Sendable {
         } else {
             .preparing
         }
-        let seconds = CMTimeGetSeconds(player.currentTime())
         return DulcetPlaybackObservationSnapshot(
             status: status,
-            mediaPosition: seconds.isFinite && seconds >= 0 ? seconds : nil,
+            mediaPosition: lastSampledPosition,
             duration: duration,
             seekability: seekability,
             rate: rate,
