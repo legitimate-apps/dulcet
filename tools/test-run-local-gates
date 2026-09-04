@@ -36,7 +36,9 @@ def command_text(item: object) -> str:
 
 class LocalGateControls(unittest.TestCase):
     def test_discovery_preserves_arguments_and_nested_tool_paths(self) -> None:
-        discover = getattr(runner, "declared_commands", runner.declared_tools)
+        discover = getattr(runner, "declared_commands", None)
+        if discover is None:
+            discover = runner.declared_tools
         commands = [command_text(item) for item in discover("core-ci")]
 
         self.assertIn("python3 tools/verify_os_floors.py --configuration-only", commands)
