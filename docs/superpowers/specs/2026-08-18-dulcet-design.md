@@ -2741,9 +2741,10 @@ PROD path additionally requires manual environment approval; the DEV path runs u
 (§22.1). No other workflow can read the secrets, so a fork PR — which cannot access secrets at all —
 has no path to them even in principle.
 
-### 21.3 OQ-1 is CLOSED — resolved by correction, do not reopen
+### 21.3 OQ-1 is CLOSED for the CI matrix — one narrow exception, in §21.3.1
 
-**Status: closed 2026-08-18. The question was malformed, not merely unanswered.**
+**Status: closed 2026-08-18 for all build and test CI. Amended 2026-09-04 by §21.3.1, which admits
+a single device-attached exception on the evidenced burden this section itself sets out below.**
 
 OQ-1 asked for a choice between attaching a self-hosted runner to a public repo — which is a known bad
 practice, since a fork PR can compromise a persistent runner — and standing up a separate private
@@ -2763,6 +2764,37 @@ If a later change proposes self-hosted Apple CI again, the burden is to show why
 are insufficient — cite this section and the two URLs in §21.1. What still binds regardless: keep
 non-Apple CI on `ubuntu-latest`, and never reach for a larger runner (§21.1 caveat 1), which is the one
 place real money can still appear.
+
+### 21.3.1 The one admitted exception: device-attached evidence, dispatch-only
+
+**Added 2026-09-04.** §21.3 sets the burden for reopening as *"show why free hosted runners are
+insufficient."* That burden is met for exactly one class of work, and for nothing else.
+
+**The showing.** A GitHub-hosted runner is an ephemeral virtual machine with no physical device
+attached. Several `FEATURES.yml` rows claim behaviour on a real iPad, and no hosted runner can
+observe a physical device at all. This is a **capability** gap, not a cost preference — which is
+precisely the distinction §21.3 was drawing when it withdrew the original question as malformed.
+
+**What is admitted:**
+
+- A self-hosted macOS runner, scoped to this repository, with a physical device attached, carrying
+  a label used by no other job.
+- 🚨 **It accepts `workflow_dispatch` runs on `main` only. Never `pull_request`, never `push`.**
+  This is the whole safety argument and is normative, not advisory: `workflow_dispatch` requires
+  write access to this repository, so a fork pull request cannot reach the runner at all. The
+  exposure §21.3 named — *a fork PR can modify the very workflow that contains the guard* — is
+  removed by the trigger, not by a guard inside the workflow that a fork could edit.
+- The runner registers `--ephemeral`, so one job never inherits another's working state.
+- Its jobs read **no release signing secrets**; signing stays in the manual-approval environment
+  described in §22.
+
+**What is NOT admitted, and stays exactly as §21.3 left it:** every ordinary Apple build and test
+job runs on hosted `macos-latest`; non-Apple CI stays on `ubuntu-latest`; no larger or premium
+runner label, ever (§21.1 caveat 1), which remains the one place real money can appear.
+
+⚠️ **If the device workflow is ever changed to accept `pull_request` or `push`, the exposure in
+§21.3 returns in full and this exception is void.** A reviewer seeing such a diff should reject it
+on this paragraph alone.
 
 ### 21.4 Building locally
 
@@ -3243,7 +3275,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 | id | decision | notes |
 |---|---|---|
-| **OQ-1** | **CLOSED by correction.** Apple CI runs on GitHub-hosted standard runners; there is no self-hosted runner in this project. | The premise was false — standard hosted runners are free on public repositories, so there was no cost reason to use self-hosted hardware and therefore no fork-PR exposure to mitigate. Reasoning and both primary sources: **§21.3**. Do not reopen. |
+| **OQ-1** | **CLOSED by correction.** Apple CI runs on GitHub-hosted standard runners; there is no self-hosted runner in this project. | The premise was false — standard hosted runners are free on public repositories, so there was no cost reason to use self-hosted hardware and therefore no fork-PR exposure to mitigate. Reasoning and both primary sources: **§21.3**. Amended 2026-09-04 by **§21.3.1**, which admits one dispatch-only, device-attached exception on §21.3's own evidenced burden; the CI matrix itself stays hosted. |
 | **OQ-2** | **Apache-2.0.** | Approved. Explicit patent grant; permissive; App Store compatible subject to the dependency licence audit, which stays a Phase-0 deliverable (§24.2). |
 | **OQ-3** | **macOS 14 / iOS 17 / tvOS 17.** ✅ **DECIDED, and re-confirmed 2026-08-18 on corrected facts.** | Apple Silicon only. ⚠️ **The original justification was half wrong** — it cited `@Observable` *and* "the modern navigation APIs", but `NavigationStack` and `NavigationSplitView` are available at iOS 16 / macOS 13 / tvOS 16, a full major version below the floor. That error was caught, flagged, and the question returned to the maintainer rather than kept silently. **Re-examined on `@Observable` alone, the floor survived:** `ObservableObject` invalidates a whole view on any published change while `@Observable` invalidates per property, which is a real difference on a screen scrolling tens of thousands of rows — the one surface that must never stutter. And the reach cost is close to nil: iOS 17 shipped September 2023 and is three OS generations old, so 16/13/16 would buy a sliver of installed base and pay for it with the coarser observation model forever. **The 16/13/16 alternative was considered and rejected.** 🚫 Do not re-derive this from the old navigation premise, and do not reopen it because the original reason was false — the reason was false, the conclusion stands (§4.1). |
 | **OQ-4** | **A small public Navidrome on Railway**, seeded with royalty-free audio, existing solely to give App Review working credentials. ⚠️ **It must run PERMANENTLY, not per review window.** | **Never a private or personal server instance** (§23.5). **OBSERVED:** Apple requires *"(and turn on your back-end service!)"* and App Store Connect states **"The demo account… must not expire."** An ephemeral server is a rejection risk on **every update review**, not just the first. 💰 **So this is standing infrastructure with a small ongoing hosting bill and a maintenance burden** — patching, uptime, and a corpus that stays legally clean — not a submission-time task. The original framing understated it. Still a Phase-6 blocker; Phase 2's TestFlight work does not depend on it. |
@@ -3301,6 +3333,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 92 (2026-09-04)** — one device-attached CI exception admitted; §21.3 amended, not reversed.
+
+1. §21.3 closed OQ-1 on the grounds that hosted runners made the self-hosted question malformed, and
+   set the burden for any reopening as showing why free hosted runners are insufficient. That burden
+   is now met for one class of work only: a hosted runner is an ephemeral VM with no physical device
+   attached, so it cannot observe the real iPad that several `FEATURES.yml` rows claim behaviour on.
+   That is a capability gap, not the cost preference §21.3 dismissed.
+2. §21.3.1 admits a repository-scoped, `--ephemeral`, distinctly-labelled self-hosted runner that
+   accepts **`workflow_dispatch` on `main` only**. The trigger is what removes §21.3's stated
+   fork-PR exposure — `workflow_dispatch` requires write access, so a fork cannot reach the runner —
+   rather than a job-level guard that a fork pull request could itself edit.
+3. Nothing else changes. Ordinary Apple CI stays on hosted `macos-latest`, non-Apple CI stays on
+   `ubuntu-latest`, larger and premium runner labels remain forbidden, and the device runner reads no
+   release signing secrets.
+4. The exception is void if the device workflow is ever changed to accept `pull_request` or `push`.
 
 **Revision 91 (2026-09-03)** — pinned controls migrated to the content-only capture contract.
 
