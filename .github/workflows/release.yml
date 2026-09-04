@@ -232,7 +232,10 @@ jobs:
           echo "RELEASE VALIDATION COMPLETE channel=$RELEASE_CHANNEL bundle-id=$expected_bundle_id version=$version build=$build_number"
 
       - name: Report dry run
-        if: ${{ inputs.dry_run == true }}
+        # Boolean workflow_dispatch inputs arrive as real booleans from the UI but as STRINGS
+        # through the REST API and `gh workflow run -f`. Accept both spellings, and note the
+        # asymmetry below: this branch is the safe one, so it also catches anything unrecognised.
+        if: ${{ inputs.dry_run != false && inputs.dry_run != 'false' }}
         env:
           RELEASE_BUNDLE_ID: ${{ steps.release.outputs.bundle_id }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
@@ -244,7 +247,10 @@ jobs:
       # It creates a TestFlight build only; there is intentionally no App Review submission call,
       # which keeps the DEV record permanently outside the App Store review path.
       - name: Upload to App Store Connect
-        if: ${{ inputs.dry_run == false }}
+        # Upload runs ONLY on an explicit false in either spelling. Anything else -- true,
+        # 'true', unset, or an unrecognised value -- skips the upload. Fails closed by construction,
+        # because the irreversible direction must never be the default.
+        if: ${{ inputs.dry_run == false || inputs.dry_run == 'false' }}
         env:
           DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}
           DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
