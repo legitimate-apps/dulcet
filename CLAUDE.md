@@ -128,8 +128,14 @@ run in `apple-ci` on the pinned hosted image.
   runner usage on public repositories will remain free"
   (https://github.com/resources/insights/2026-pricing-changes-for-github-actions), with the only
   carve-out being "The larger runners are not free for public repositories"
-  (https://docs.github.com/en/billing/reference/actions-minute-multipliers). **There is no self-hosted
-  runner in this project** and none should be created — see spec §21.3, where OQ-1 is closed.
+  (https://docs.github.com/en/billing/reference/actions-minute-multipliers). **Ordinary Apple CI uses
+  no self-hosted runner** — see spec §21.3, where OQ-1 is closed for the whole build/test matrix.
+  **§21.3.1 admits exactly one exception**: a repository-scoped, `--ephemeral`, distinctly-labelled
+  macOS runner with a physical device attached, which accepts **`workflow_dispatch` on `main` only**
+  — never `pull_request`, never `push`. That trigger is the safety argument, because
+  `workflow_dispatch` requires write access and a fork pull request therefore cannot reach the
+  runner. It exists because a hosted runner has no device attached and so cannot observe behaviour
+  the matrix claims on real hardware. Widening its triggers voids the exception.
 - **Never request a larger or premium macOS runner label.** Those are billed even on public repos and
   included minutes cannot be applied to them. `runs-on` for Apple jobs is `macos-latest` (or a pinned
   `macos-<version>` when the toolchain matrix demands it) and nothing else. This is the one place in
