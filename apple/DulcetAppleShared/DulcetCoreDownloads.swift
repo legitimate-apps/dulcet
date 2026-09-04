@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS)
 import DulcetCore
 import DulcetKit
 import Foundation

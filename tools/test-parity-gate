@@ -262,10 +262,18 @@ passing_cases = """\
             name="conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.SearchConformanceTest[macosArm64]"
             name="conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping[macosArm64]" time="0.1" />
-  <testcase classname="DulcetMacDownloadIntegrationTest"
+  <testcase classname="DulcetAppleDownloadIntegrationTest"
             name="downloadTriggerPromotesValidatedResponseAtomically" time="0.1" />
-  <testcase classname="DulcetMacDownloadIntegrationTest"
+  <testcase classname="DulcetAppleDownloadIntegrationTest"
             name="offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose" time="0.1" />
+  <testcase classname="DulcetAppleDownloadIntegrationTest"
+            name="downloadTriggerPromotesValidatedResponseAtomicallyOnIOS" time="0.1" />
+  <testcase classname="DulcetAppleDownloadIntegrationTest"
+            name="offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIOS" time="0.1" />
+  <testcase classname="DulcetAppleDownloadIntegrationTest"
+            name="downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS" time="0.1" />
+  <testcase classname="DulcetAppleDownloadIntegrationTest"
+            name="offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIPadOS" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
@@ -282,7 +290,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory
 execution_rejections = {
     "download integration report omits one declared conformance test": (
         passing_report.replace(
-            """  <testcase classname="DulcetMacDownloadIntegrationTest"
+            """  <testcase classname="DulcetAppleDownloadIntegrationTest"
             name="downloadTriggerPromotesValidatedResponseAtomically" time="0.1" />\n""",
             "",
         ),
