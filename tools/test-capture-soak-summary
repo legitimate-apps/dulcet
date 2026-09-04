@@ -92,7 +92,10 @@ class CaptureSoakSummaryControls(unittest.TestCase):
         summary_error = workflow.index("CAPTURE SOAK ERROR summarizer-failed")
         divergence = workflow.index("if (( divergences > 0 ))")
         self.assertIn("exit 3", workflow[summary_error:divergence])
-        self.assertIn("exit 1", workflow[divergence:])
+        divergence_block = workflow[divergence:]
+        self.assertLess(divergence_block.index("trap - ERR"), divergence_block.index("exit 1"))
+        self.assertIn("exit 1", divergence_block)
+        self.assertIn("measurement-command-exit=$status", workflow)
 
 
 if __name__ == "__main__":

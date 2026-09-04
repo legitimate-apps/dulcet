@@ -59,7 +59,7 @@ def summarize(arguments: argparse.Namespace) -> None:
         f"CAPTURE SOAK CONTEXT probability-of-zero-at-historical-20-percent-rate="
         f"{historical_zero_probability}\n"
     )
-    (results / "summary.txt").write_text(artifact)
+    (results / "summary.txt").write_text(artifact, encoding="utf-8")
     print(artifact, end="")
 
     step_summary = (
