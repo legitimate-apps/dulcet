@@ -604,7 +604,6 @@
 					};
 					8BCA96527B244E2CCEE2901B = {
 						DevelopmentTeam = 3LTL47SJ8C;
-						ProvisioningStyle = Automatic;
 					};
 					BAC15431FAE29AC4A7F630CC = {
 						DevelopmentTeam = 3LTL47SJ8C;
@@ -1001,16 +1000,21 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DulcetMac/DulcetMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = "Dulcet DEV";
+				PROVISIONING_PROFILE_SPECIFIER = "$(DULCET_RELEASE_PROFILE_NAME)";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1155,6 +1159,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 2;
+				DULCET_RELEASE_PROFILE_NAME = "Dulcet Mac App Store";
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1166,7 +1171,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = Dulcet;
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet Mac App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "$(DULCET_RELEASE_PROFILE_NAME)";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1210,6 +1215,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 2;
+				DULCET_RELEASE_PROFILE_NAME = "Dulcet Mac App Store";
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1221,7 +1227,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = Dulcet;
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet Mac App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "$(DULCET_RELEASE_PROFILE_NAME)";
 				SDKROOT = macosx;
 			};
 			name = Debug;

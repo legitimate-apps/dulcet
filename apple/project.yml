@@ -35,6 +35,13 @@ targets:
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "$(DULCET_RELEASE_PROFILE_NAME)"
+          MARKETING_VERSION: "0.1.0"
+          CURRENT_PROJECT_VERSION: "1"
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -67,7 +74,8 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
-        PROVISIONING_PROFILE_SPECIFIER: "Dulcet Mac App Store"
+        DULCET_RELEASE_PROFILE_NAME: "Dulcet Mac App Store"
+        PROVISIONING_PROFILE_SPECIFIER: "$(DULCET_RELEASE_PROFILE_NAME)"
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "2"
     info:
