@@ -68,6 +68,7 @@ struct DulcetNowPlayingView: View {
                     .font(.largeTitle.weight(.bold))
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
+                    .accessibilityIdentifier("dulcet.now-playing.title")
                 Text(DulcetStrings.artistNames(player.current.artistNames))
                     .font(.title3)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -303,6 +304,7 @@ struct DulcetSearchView: View {
                     .controlSize(.small)
 #endif
                     .accessibilityLabel(DulcetStrings.searchPrompt)
+                    .accessibilityIdentifier("dulcet.search.field")
                 Text(DulcetStrings.searchSummary)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -374,12 +376,12 @@ struct DulcetSearchView: View {
 #if os(tvOS)
             ScrollView {
                 LazyVStack(spacing: DulcetSpacing.sm) {
-                    ForEach(snapshot.searchResults) { result in
+                    ForEach(Array(snapshot.searchResults.enumerated()), id: \.element.id) { index, result in
                         Button {
                             selectedResultID = result.id
                         } label: {
                             HStack(spacing: DulcetSpacing.md) {
-                                DulcetSearchResultIdentity(result: result)
+                                DulcetSearchResultIdentity(result: result, rank: index)
                                 Spacer(minLength: DulcetSpacing.md)
                                 Text(result.kind.displayTitle)
                                     .font(.callout.weight(.semibold))
@@ -400,7 +402,10 @@ struct DulcetSearchView: View {
 #else
             Table(snapshot.searchResults, selection: $selectedResultID) {
                 TableColumn(DulcetStrings.resultColumn) { result in
-                    DulcetSearchResultIdentity(result: result)
+                    DulcetSearchResultIdentity(
+                        result: result,
+                        rank: snapshot.searchResults.firstIndex(of: result)
+                    )
                 }
                 .width(min: 320, ideal: 620)
 
@@ -487,6 +492,7 @@ private extension View {
 private struct DulcetSearchResultIdentity: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let result: DulcetSearchResult
+    let rank: Int?
 
     var body: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
@@ -497,6 +503,7 @@ private struct DulcetSearchResultIdentity: View {
                     .font(.callout.weight(.medium))
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .accessibilityIdentifier(rank.map { "dulcet.search.result.\($0)" } ?? "")
                 if !result.subtitle.isEmpty {
                     Text(result.subtitle)
                         .font(.caption)
