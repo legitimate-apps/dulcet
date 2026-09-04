@@ -15,8 +15,12 @@ on:
   workflow_run:
     workflows: [apple-ci, core-ci, parity-gate]
     types: [completed]
+    # Filter before a workflow run is created. The job-level branch predicate remains as a
+    # defense, but this avoids attaching skipped main-health checks to every pull-request SHA.
+    branches: [main]
 
 permissions:
+  actions: read
   contents: read
   issues: write
 
@@ -32,23 +36,26 @@ jobs:
     name: main-health
     # `cancelled` is excluded on purpose: the watched workflows use cancel-in-progress, so a
     # superseded run on a fast-moving branch is cancelled as designed and is not a health signal.
-    # `failure` and `timed_out` are. A timeout is the shape a hang takes, and hangs are exactly
-    # what nobody notices.
+    # `failure` and `timed_out` raise the alarm; `success` is allowed through only so the reporter
+    # can prove all three required workflows are green on this exact SHA before closing it.
     if: >-
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.event != 'pull_request' &&
-      (github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion != 'cancelled' &&
+      (github.event.workflow_run.conclusion == 'success' ||
+       github.event.workflow_run.conclusion == 'failure' ||
        github.event.workflow_run.conclusion == 'timed_out')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Open or update the main-is-red issue
+      - name: Reconcile the main-is-red issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          FAILED_WORKFLOW: ${{ github.event.workflow_run.name }}
-          FAILED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          FAILED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_WORKFLOW: ${{ github.event.workflow_run.name }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
         run: python3 tools/report_main_health.py
