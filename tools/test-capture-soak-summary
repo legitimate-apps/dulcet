@@ -15,6 +15,7 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github/workflows/capture-soak.yml"
 SUMMARIZER = ROOT / "tools/summarize_capture_soak.py"
+SUMMARY_RUNNER = ROOT / "tools/run-capture-soak-summary"
 
 
 def invoke(
@@ -39,6 +40,42 @@ def invoke(
         [
             sys.executable,
             str(SUMMARIZER),
+            "--results",
+            str(results),
+            "--pair-count",
+            str(pairs),
+            "--divergences",
+            str(divergences),
+            "--elapsed-seconds",
+            "17",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+
+def invoke_job(
+    root: Path,
+    *,
+    pairs: int,
+    divergences: int,
+    summary_target: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    results = root / "results"
+    results.mkdir()
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "DIVERGENCES": str(divergences),
+            "GITHUB_STEP_SUMMARY": str(summary_target or root / "step-summary.md"),
+            "GITHUB_OUTPUT": str(root / "github-output.txt"),
+        }
+    )
+    return subprocess.run(
+        [
+            str(SUMMARY_RUNNER),
             "--results",
             str(results),
             "--pair-count",
@@ -87,14 +124,21 @@ class CaptureSoakSummaryControls(unittest.TestCase):
             self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
             self.assertIn("CAPTURE SOAK SUMMARY ERROR", result.stderr)
 
-    def test_workflow_maps_summary_failure_and_divergence_to_different_statuses(self) -> None:
+    def test_workflow_runner_reserves_distinct_result_statuses(self) -> None:
+        for divergences, expected in ((0, 0), (1, 1)):
+            with self.subTest(divergences=divergences), tempfile.TemporaryDirectory() as temporary:
+                result = invoke_job(Path(temporary), pairs=30, divergences=divergences)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = invoke_job(root, pairs=30, divergences=0, summary_target=root)
+            self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+
+    def test_workflow_uses_the_classification_runner(self) -> None:
         workflow = WORKFLOW.read_text()
-        summary_error = workflow.index("CAPTURE SOAK ERROR summarizer-failed")
-        divergence = workflow.index("if (( divergences > 0 ))")
-        self.assertIn("exit 3", workflow[summary_error:divergence])
-        divergence_block = workflow[divergence:]
-        self.assertLess(divergence_block.index("trap - ERR"), divergence_block.index("exit 1"))
-        self.assertIn("exit 1", divergence_block)
+        self.assertIn('DIVERGENCES="$divergences" tools/run-capture-soak-summary', workflow)
+        self.assertIn('exit "$result_status"', workflow)
         self.assertIn("measurement-command-exit=$status", workflow)
 
 

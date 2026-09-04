@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+if ! [[ ${DIVERGENCES:-} =~ ^[0-9]+$ ]]; then
+  echo "CAPTURE SOAK ERROR summarizer-invalid-divergence-count" >&2
+  exit 3
+fi
+if ! python3 tools/summarize_capture_soak.py "$@"; then
+  echo "CAPTURE SOAK ERROR summarizer-failed" >&2
+  exit 3
+fi
+if (( DIVERGENCES > 0 )); then
+  exit 1
+fi
