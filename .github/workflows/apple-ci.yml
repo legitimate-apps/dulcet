@@ -618,24 +618,43 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
-          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-            DULCET_CONFORMANCE_DISPOSABLE=true \
-            xcodebuild test \
+          # A macOS host test does not inherit xcodebuild's shell environment. Build its launch
+          # manifest, inject only the disposable loopback contract, then execute that manifest.
+          xcodebuild build-for-testing \
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetPlaybackIntegration \
               -configuration Debug \
               -destination 'platform=macOS' \
               -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
-              -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
               DEVELOPMENT_TEAM= \
-              PROVISIONING_PROFILE_SPECIFIER= \
-              DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-              DULCET_TEST_CONFORMANCE_DISPOSABLE=true 2>&1 | \
+              PROVISIONING_PROFILE_SPECIFIER= 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-mac-download-build.log"
+          download_xctestrun="$(find \
+            "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData/Build/Products" \
+            -name 'DulcetPlaybackIntegration_*.xctestrun' -print -quit)"
+          test -n "$download_xctestrun"
+          /usr/bin/plutil -remove \
+            'DulcetPlaybackIntegrationTests.EnvironmentVariables.DULCET_CONFORMANCE_BASE_URL' \
+            "$download_xctestrun" 2>/dev/null || true
+          /usr/bin/plutil -remove \
+            'DulcetPlaybackIntegrationTests.EnvironmentVariables.DULCET_CONFORMANCE_DISPOSABLE' \
+            "$download_xctestrun" 2>/dev/null || true
+          /usr/bin/plutil -insert \
+            'DulcetPlaybackIntegrationTests.EnvironmentVariables.DULCET_CONFORMANCE_BASE_URL' \
+            -string "$DULCET_CONFORMANCE_BASE_URL" "$download_xctestrun"
+          /usr/bin/plutil -insert \
+            'DulcetPlaybackIntegrationTests.EnvironmentVariables.DULCET_CONFORMANCE_DISPOSABLE' \
+            -string "$DULCET_CONFORMANCE_DISPOSABLE" "$download_xctestrun"
+          xcodebuild test-without-building \
+              -xctestrun "$download_xctestrun" \
+              -destination 'platform=macOS' \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-mac-download-conf51.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
@@ -645,24 +664,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-download-junit/TEST-CONF-51.xml" \
             DulcetAppleDownloadIntegrationTest
-          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-            DULCET_CONFORMANCE_DISPOSABLE=true \
-            xcodebuild test-without-building \
-              -project apple/Dulcet.xcodeproj \
-              -scheme DulcetPlaybackIntegration \
-              -configuration Debug \
+          xcodebuild test-without-building \
+              -xctestrun "$download_xctestrun" \
               -destination 'platform=macOS' \
-              -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-conf52.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose \
-              CODE_SIGN_STYLE=Manual \
-              CODE_SIGN_IDENTITY=- \
-              CODE_SIGN_ENTITLEMENTS= \
-              DEVELOPMENT_TEAM= \
-              PROVISIONING_PROFILE_SPECIFIER= \
-              DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-              DULCET_TEST_CONFORMANCE_DISPOSABLE=true 2>&1 | \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-mac-download-conf52.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-mac-download-conf52.xcresult" \
