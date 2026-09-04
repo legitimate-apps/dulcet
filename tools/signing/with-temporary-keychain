@@ -1,0 +1,269 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+
+readonly TEAM_ID="3LTL47SJ8C"
+readonly KEYCHAIN_PASSWORD=""
+
+die() {
+  printf 'dulcet-signing: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: tools/signing/with-temporary-keychain -- command [args...]
+
+Required environment variables:
+  DULCET_CI_SIGNING_P12_BASE64
+  DULCET_CI_SIGNING_P12_PASSWORD
+  DULCET_MAC_APP_STORE_PROFILE_BASE64
+  DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64
+
+The command receives DULCET_SIGNING_KEYCHAIN and
+DULCET_SIGNING_IDENTITY_SHA1. Signing material is removed on exit.
+EOF
+  exit 64
+}
+
+[[ $# -ge 2 && "$1" == "--" ]] || usage
+shift
+
+readonly REQUIRED_SECRETS=(
+  DULCET_CI_SIGNING_P12_BASE64
+  DULCET_CI_SIGNING_P12_PASSWORD
+  DULCET_MAC_APP_STORE_PROFILE_BASE64
+  DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64
+)
+
+for secret_name in "${REQUIRED_SECRETS[@]}"; do
+  [[ -n "${!secret_name:-}" ]] || die "required environment variable is empty: $secret_name"
+done
+
+work_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+[[ -d "$work_root" ]] || die "temporary root is not a directory: $work_root"
+work_root="${work_root%/}"
+work_dir="$(/usr/bin/mktemp -d "$work_root/dulcet-signing.XXXXXX")"
+[[ -n "$work_dir" && -d "$work_dir" ]] || die "failed to create temporary directory"
+
+keychain_path="$work_dir/dulcet-ci.keychain-db"
+original_keychains_path="$work_dir/original-keychains.txt"
+profile_store="${DULCET_PROVISIONING_PROFILE_DIR:-$HOME/Library/MobileDevice/Provisioning Profiles}"
+search_list_modified=0
+keychain_created=0
+created_profiles=()
+original_keychains=()
+
+cleanup() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  set +e
+
+  if [[ "$search_list_modified" -eq 1 ]]; then
+    if [[ "${#original_keychains[@]}" -gt 0 ]]; then
+      /usr/bin/security list-keychains -d user -s "${original_keychains[@]}" >/dev/null 2>&1
+    else
+      /usr/bin/security list-keychains -d user -s >/dev/null 2>&1
+    fi
+  fi
+
+  local installed_profile
+  for installed_profile in "${created_profiles[@]}"; do
+    /bin/rm -f -- "$installed_profile"
+  done
+
+  if [[ "$keychain_created" -eq 1 ]]; then
+    /usr/bin/security delete-keychain "$keychain_path" >/dev/null 2>&1
+  fi
+
+  case "$work_dir" in
+    "$work_root"/dulcet-signing.*)
+      /bin/rm -rf -- "$work_dir"
+      ;;
+  esac
+
+  exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+decode_base64_secret() {
+  local variable_name="$1"
+  local output_path="$2"
+  printf '%s' "${!variable_name}" | /usr/bin/base64 -D > "$output_path" \
+    || die "invalid Base64 payload in $variable_name"
+  /bin/chmod 600 "$output_path"
+}
+
+readonly p12_path="$work_dir/identity.p12"
+readonly certificate_path="$work_dir/identity-certificate.pem"
+readonly private_key_path="$work_dir/identity-private-key.pem"
+
+decode_base64_secret DULCET_CI_SIGNING_P12_BASE64 "$p12_path"
+export DULCET_P12_PASSWORD_FOR_OPENSSL="$DULCET_CI_SIGNING_P12_PASSWORD"
+/usr/bin/openssl pkcs12 \
+  -in "$p12_path" \
+  -clcerts \
+  -nokeys \
+  -passin env:DULCET_P12_PASSWORD_FOR_OPENSSL \
+  -out "$certificate_path" >/dev/null 2>&1 \
+  || die "PKCS#12 certificate extraction failed"
+/usr/bin/openssl pkcs12 \
+  -in "$p12_path" \
+  -nocerts \
+  -nodes \
+  -passin env:DULCET_P12_PASSWORD_FOR_OPENSSL \
+  -out "$private_key_path" >/dev/null 2>&1 \
+  || die "PKCS#12 private-key extraction failed"
+unset DULCET_P12_PASSWORD_FOR_OPENSSL
+/bin/chmod 600 "$certificate_path" "$private_key_path"
+
+/usr/bin/openssl x509 -in "$certificate_path" -noout -checkend 0 >/dev/null \
+  || die "signing certificate is expired"
+certificate_subject="$(/usr/bin/openssl x509 -in "$certificate_path" -noout -subject -nameopt RFC2253)"
+[[ "$certificate_subject" == *"UID=$TEAM_ID"* ]] \
+  || die "signing certificate does not belong to team $TEAM_ID"
+[[ "$certificate_subject" == *"CN=Apple Distribution:"* ]] \
+  || die "PKCS#12 does not contain an Apple Distribution certificate"
+
+certificate_public_key_sha256="$({
+  /usr/bin/openssl x509 -in "$certificate_path" -noout -pubkey \
+    | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null
+} | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+private_public_key_sha256="$({
+  /usr/bin/openssl pkey -in "$private_key_path" -pubout -outform DER 2>/dev/null
+} | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+[[ "$certificate_public_key_sha256" == "$private_public_key_sha256" ]] \
+  || die "PKCS#12 certificate and private key do not match"
+
+identity_sha256="$(
+  /usr/bin/openssl x509 -in "$certificate_path" -outform DER \
+    | /usr/bin/shasum -a 256 \
+    | /usr/bin/awk '{print $1}'
+)"
+identity_sha1="$(
+  /usr/bin/openssl x509 -in "$certificate_path" -outform DER \
+    | /usr/bin/shasum -a 1 \
+    | /usr/bin/awk '{print toupper($1)}'
+)"
+
+validate_and_install_profile() {
+  local variable_name="$1"
+  local identifier="$2"
+  local decoded_path="$work_dir/$variable_name.mobileprovision"
+  local plist_path="$work_dir/$variable_name.plist"
+  local expected_application_identifier="$TEAM_ID.$identifier"
+  local uuid
+  local destination
+
+  decode_base64_secret "$variable_name" "$decoded_path"
+  /usr/bin/security cms -D -i "$decoded_path" > "$plist_path" \
+    || die "invalid provisioning profile in $variable_name"
+  /bin/chmod 600 "$plist_path"
+
+  uuid="$(/usr/bin/python3 - "$plist_path" "$TEAM_ID" "$expected_application_identifier" "$identity_sha256" <<'PY'
+import hashlib
+import plistlib
+import re
+import sys
+
+path, expected_team, expected_app_id, expected_certificate = sys.argv[1:]
+with open(path, "rb") as handle:
+    profile = plistlib.load(handle)
+
+teams = profile.get("TeamIdentifier", [])
+if expected_team not in teams:
+    raise SystemExit("profile team identifier mismatch")
+
+entitlements = profile.get("Entitlements", {})
+actual_app_id = (
+    entitlements.get("application-identifier")
+    or entitlements.get("com.apple.application-identifier")
+)
+if actual_app_id != expected_app_id:
+    raise SystemExit("profile application identifier mismatch")
+if entitlements.get("get-task-allow") is True:
+    raise SystemExit("development profile supplied where distribution profile was required")
+
+certificate_hashes = [
+    hashlib.sha256(bytes(item)).hexdigest()
+    for item in profile.get("DeveloperCertificates", [])
+]
+if certificate_hashes != [expected_certificate]:
+    raise SystemExit("profile certificate binding mismatch")
+
+uuid = profile.get("UUID", "")
+if not re.fullmatch(r"[0-9A-Fa-f-]{36}", uuid):
+    raise SystemExit("profile UUID is missing or malformed")
+print(uuid.lower())
+PY
+)" || die "profile validation failed for $variable_name"
+
+  /bin/mkdir -p "$profile_store"
+  destination="$profile_store/$uuid.mobileprovision"
+  if [[ -e "$destination" ]]; then
+    /usr/bin/cmp -s "$decoded_path" "$destination" \
+      || die "refusing to replace a different profile at $destination"
+  else
+    /usr/bin/install -m 600 "$decoded_path" "$destination"
+    created_profiles+=("$destination")
+  fi
+}
+
+validate_and_install_profile \
+  DULCET_MAC_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet
+validate_and_install_profile \
+  DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.dev
+validate_and_install_profile \
+  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.ios.dev
+validate_and_install_profile \
+  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.tvos.dev
+
+/usr/bin/security list-keychains -d user > "$original_keychains_path"
+while IFS= read -r existing_keychain; do
+  [[ -n "$existing_keychain" ]] && original_keychains+=("$existing_keychain")
+done < <(/usr/bin/sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//' "$original_keychains_path")
+
+/usr/bin/security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+keychain_created=1
+/usr/bin/security set-keychain-settings -lut 21600 "$keychain_path"
+/usr/bin/security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+/usr/bin/security import "$certificate_path" \
+  -k "$keychain_path" \
+  -T /usr/bin/codesign \
+  -T /usr/bin/security >/dev/null
+/usr/bin/security import "$private_key_path" \
+  -k "$keychain_path" \
+  -T /usr/bin/codesign \
+  -T /usr/bin/security >/dev/null
+/usr/bin/security set-key-partition-list \
+  -S apple-tool:,apple:,codesign: \
+  -s \
+  -k "$KEYCHAIN_PASSWORD" \
+  "$keychain_path" >/dev/null
+
+/usr/bin/security list-keychains -d user -s "$keychain_path" "${original_keychains[@]}"
+search_list_modified=1
+
+/usr/bin/security find-identity -v -p codesigning "$keychain_path" \
+  | /usr/bin/grep -Fq "$identity_sha1" \
+  || die "temporary keychain does not expose the expected signing identity"
+
+export DULCET_SIGNING_KEYCHAIN="$keychain_path"
+export DULCET_SIGNING_IDENTITY_SHA1="$identity_sha1"
+printf 'dulcet-signing: installed identity %s in temporary keychain; profiles=%s\n' \
+  "$identity_sha1" "${#created_profiles[@]}"
+
+"$@"
