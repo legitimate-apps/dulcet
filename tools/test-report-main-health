@@ -168,10 +168,12 @@ class MainHealthControls(unittest.TestCase):
         self.assertIn("later required workflow fails", comment)
         for identifier in (201, 202, 203):
             self.assertIn(str(identifier), comment)
-        branch_reads = [call for call in api.calls if call[1].endswith("/branches/main")]
-        self.assertEqual(len(branch_reads), 2)
-        self.assertLess(api.calls.index(comments[0]), api.calls.index(branch_reads[-1]))
-        self.assertLess(api.calls.index(branch_reads[-1]), api.calls.index(closes[0]))
+        branch_read_indices = [
+            index for index, call in enumerate(api.calls) if call[1].endswith("/branches/main")
+        ]
+        self.assertEqual(len(branch_read_indices), 2)
+        self.assertLess(api.calls.index(comments[0]), branch_read_indices[-1])
+        self.assertLess(branch_read_indices[-1], api.calls.index(closes[0]))
 
     def test_missing_required_check_context_cannot_close_even_when_workflow_succeeds(self) -> None:
         checks = [item for item in green_checks() if item["name"] != "parity-gate"]
