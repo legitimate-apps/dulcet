@@ -125,44 +125,16 @@ jobs:
           done
 
           soak_elapsed=$((SECONDS - soak_started))
-          matches=$((PAIR_COUNT - divergences))
-          # Computed with a heredoc, NOT `python3 -c '...'`. Inside a SINGLE-quoted shell string a
-          # backslash is literal, so the previous `os.environ[\"PAIR_COUNT\"]` reached Python as a
-          # backslash before a quote and died with "SyntaxError: unexpected character after line
-          # continuation character" -- AFTER all pairs had been drawn. That made a summariser crash
-          # indistinguishable from a real divergence at the exit-code level, which is the one
-          # confusion this job exists to avoid.
-          divergence_rate="$(DIVERGENCES="$divergences" PAIR_COUNT="$PAIR_COUNT" python3 <<'PY'
-          import os
-          print(f"{int(os.environ['DIVERGENCES']) / int(os.environ['PAIR_COUNT']):.6f}")
-          PY
-          )"
-          # 0.8, not 0.9: the measured pre-fix divergence rate was 20% per pair, replicated twice.
-          historical_zero_probability="$(PAIR_COUNT="$PAIR_COUNT" python3 <<'PY'
-          import os
-          print(f"{0.8 ** int(os.environ['PAIR_COUNT']):.6f}")
-          PY
-          )"
-
-          cat > "$results/summary.txt" <<EOF
-          CAPTURE SOAK RESULT pairs=$PAIR_COUNT fresh-processes=$((PAIR_COUNT * 2)) matches=$matches divergences=$divergences divergence-rate=$divergence_rate elapsed-seconds=$soak_elapsed
-          CAPTURE SOAK CONTEXT probability-of-zero-at-historical-20-percent-rate=$historical_zero_probability
-          EOF
-          cat "$results/summary.txt"
-          {
-            printf '%s\n' '## macOS deterministic-capture soak'
-            printf '\n'
-            printf '%s\n' "- Independent pairs: \`$PAIR_COUNT\`"
-            printf '%s\n' "- Fresh capture processes: \`$((PAIR_COUNT * 2))\`"
-            printf '%s\n' "- Matching pairs: \`$matches\`"
-            printf '%s\n' "- Divergent pairs: \`$divergences\`"
-            printf '%s\n' "- Divergence rate: \`$divergence_rate\`"
-            printf '%s\n' "- Elapsed seconds: \`$soak_elapsed\`"
-            printf '%s\n' "- Probability of zero divergences if the historical 10% pair rate still holds: \`$historical_zero_probability\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          echo "pairs=$PAIR_COUNT" >> "$GITHUB_OUTPUT"
-          echo "divergences=$divergences" >> "$GITHUB_OUTPUT"
+          # Summary/output failures are status 3. Status 1 is reserved for a completed measurement
+          # that actually observed divergence; capture or detector failures above use status 2.
+          if ! python3 tools/summarize_capture_soak.py \
+            --results "$results" \
+            --pair-count "$PAIR_COUNT" \
+            --divergences "$divergences" \
+            --elapsed-seconds "$soak_elapsed"; then
+            echo "CAPTURE SOAK ERROR summarizer-failed"
+            exit 3
+          fi
           if (( divergences > 0 )); then
             exit 1
           fi
