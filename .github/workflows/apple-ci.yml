@@ -331,9 +331,12 @@ jobs:
             echo "::error title=iPadOS simulator prerequisite failed::CoreSimulator did not finish booting; the layout test did not run"
             exit 1
           fi
-          # Do not add a `simctl spawn` readiness gate here. On the hosted runner it can hang after
-          # bootstatus succeeds even though XCUITest uses a different launch path. Let app.launch()
-          # provide the launch evidence so this prerequisite cannot reject a runnable destination.
+          # `bootstatus -b` proves CoreSimulator considers boot complete; it does NOT prove the
+          # device bootstrap is accepting process launches yet. That gap is left open deliberately.
+          # A `simctl spawn` readiness gate was written to close it and MEASURED to hang on the
+          # hosted runner after bootstatus had already succeeded -- and XCUITest reaches the app by
+          # a different launch path regardless. So app.launch() provides the launch evidence, and
+          # this prerequisite can never reject a destination that would in fact have run the test.
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Launch iPadOS shell and prove regular-width account layout
