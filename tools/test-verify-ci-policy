@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Exercise the CI policy verifier against isolated synthetic workflows."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+VERIFIER = Path(__file__).with_name("verify_ci_policy.py").resolve()
+
+
+@dataclass(frozen=True)
+class Case:
+    name: str
+    triggers: str
+    runs_on: str
+    accepted: bool
+    expected_error: str = ""
+    comment: str = ""
+    include_timeout: bool = True
+
+
+CASES = (
+    Case(
+        name="self-hosted with workflow_dispatch only",
+        triggers="  workflow_dispatch:",
+        runs_on="    runs-on: [self-hosted, macOS, dulcet-device]",
+        accepted=True,
+    ),
+    Case(
+        name="self-hosted with pull_request",
+        triggers="  pull_request:",
+        runs_on="    runs-on: self-hosted",
+        accepted=False,
+        expected_error="uses a self-hosted runner in a workflow that is not workflow_dispatch-only",
+    ),
+    Case(
+        name="self-hosted with push",
+        triggers="  push:",
+        runs_on="    runs-on:\n      - self-hosted\n      - macOS\n      - dulcet-device",
+        accepted=False,
+        expected_error="uses a self-hosted runner in a workflow that is not workflow_dispatch-only",
+    ),
+    Case(
+        name="self-hosted in a comment with a hosted runner",
+        triggers="  pull_request:",
+        runs_on="    runs-on: ubuntu-latest",
+        accepted=True,
+        comment="# self-hosted is discussed here but is not a runner label",
+    ),
+    Case(
+        name="xlarge runner with workflow_dispatch only",
+        triggers="  workflow_dispatch:",
+        runs_on="    runs-on: macos-latest-xlarge",
+        accepted=False,
+        expected_error="forbidden runner token -xlarge",
+    ),
+    Case(
+        name="missing timeout-minutes",
+        triggers="  workflow_dispatch:",
+        runs_on="    runs-on: ubuntu-latest",
+        accepted=False,
+        expected_error="missing per-job timeout",
+        include_timeout=False,
+    ),
+)
+
+
+def workflow_for(case: Case) -> str:
+    lines = ["name: synthetic-core-ci"]
+    if case.comment:
+        lines.append(case.comment)
+    lines.extend(
+        [
+            "on:",
+            *case.triggers.splitlines(),
+            "",
+            "concurrency:",
+            "  group: synthetic-core-ci",
+            "  cancel-in-progress: true",
+            "",
+            "jobs:",
+            "  policy-test:",
+            *case.runs_on.splitlines(),
+        ],
+    )
+    if case.include_timeout:
+        lines.append("    timeout-minutes: 5")
+    lines.extend(
+        [
+            "    steps:",
+            "      - name: Preserve the two core-ci database gates",
+            "        run: |",
+            "          python3 tools/migration_gate.py",
+            "          ./gradlew :core:verifySqlDelightMigration",
+        ],
+    )
+    return "\n".join(lines) + "\n"
+
+
+def run_case(case: Case) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-ci-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "core-ci.yml").write_text(workflow_for(case))
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    if case.accepted:
+        if result.returncode != 0:
+            raise AssertionError(
+                f"{case.name}: expected acceptance, got exit {result.returncode}\n"
+                f"stdout:\n{result.stdout}stderr:\n{result.stderr}",
+            )
+        outcome = "accepted"
+    else:
+        if result.returncode == 0:
+            raise AssertionError(f"{case.name}: expected rejection, but verifier accepted it")
+        if case.expected_error not in result.stderr:
+            raise AssertionError(
+                f"{case.name}: rejection did not contain {case.expected_error!r}\n"
+                f"stdout:\n{result.stdout}stderr:\n{result.stderr}",
+            )
+        outcome = "rejected"
+    print(f"PASS: {case.name} -> {outcome}")
+
+
+for test_case in CASES:
+    run_case(test_case)
+
+print(f"CI policy control passed: {len(CASES)}/{len(CASES)} cases")
