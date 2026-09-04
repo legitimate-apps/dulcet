@@ -22,6 +22,7 @@ class Case:
     expected_error: str = ""
     comment: str = ""
     include_timeout: bool = True
+    job_name: str = "policy-test"
 
 
 CASES = (
@@ -51,6 +52,7 @@ CASES = (
         runs_on="    runs-on: ubuntu-latest",
         accepted=True,
         comment="# self-hosted is discussed here but is not a runner label",
+        job_name="self-hosted-comment-control",
     ),
     Case(
         name="xlarge runner with workflow_dispatch only",
@@ -84,7 +86,7 @@ def workflow_for(case: Case) -> str:
             "  cancel-in-progress: true",
             "",
             "jobs:",
-            "  policy-test:",
+            f"  {case.job_name}:",
             *case.runs_on.splitlines(),
         ],
     )
