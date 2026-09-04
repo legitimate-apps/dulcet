@@ -1,0 +1,258 @@
+name: signed macOS release
+
+# Design specification §22 describes automatic DEV-on-main and tag-selected PROD releases, but the
+# repository working agreement currently requires release.yml to remain workflow_dispatch-only.
+# That open policy decision is intentionally not resolved here. See docs/RELEASES.md.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: App Store Connect channel to archive
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - prod
+      dry_run:
+        description: Archive, export, and validate without uploading
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: signed macOS ${{ inputs.channel }} release
+    runs-on: macos-latest
+    timeout-minutes: 120
+    environment: release
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Prove App Store upload safety controls
+        run: python3 tools/test-app-store-connect-upload
+
+      - name: Archive, export, and validate the selected channel
+        id: release
+        shell: bash
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          DULCET_CI_SIGNING_P12_BASE64: ${{ secrets.DULCET_CI_SIGNING_P12_BASE64 }}
+          DULCET_CI_SIGNING_P12_PASSWORD: ${{ secrets.DULCET_CI_SIGNING_P12_PASSWORD }}
+          DULCET_MAC_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_APP_STORE_PROFILE_BASE64 }}
+          DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 }}
+          DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64 }}
+          DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          case "$RELEASE_CHANNEL" in
+            dev)
+              release_scheme=DulcetMac
+              expected_bundle_id=com.legitimateapps.dulcet.dev
+              selected_profile_base64="$DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64"
+              ;;
+            prod)
+              release_scheme=DulcetMacRelease
+              expected_bundle_id=com.legitimateapps.dulcet
+              selected_profile_base64="$DULCET_MAC_APP_STORE_PROFILE_BASE64"
+              ;;
+            *)
+              echo "RELEASE CHANNEL GUARD FAILED unsupported-channel=$RELEASE_CHANNEL" >&2
+              exit 64
+              ;;
+          esac
+
+          release_root="$RUNNER_TEMP/dulcet-release"
+          archive_path="$release_root/Dulcet.xcarchive"
+          export_path="$release_root/export"
+          derived_data="$release_root/DerivedData"
+          profile_path="$release_root/selected.mobileprovision"
+          profile_plist="$release_root/selected-profile.plist"
+          export_options="$release_root/ExportOptions.plist"
+          mkdir -p "$release_root" "$export_path"
+
+          printf '%s' "$selected_profile_base64" | /usr/bin/base64 -D > "$profile_path"
+          /usr/bin/security cms -D -i "$profile_path" > "$profile_plist"
+          release_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$profile_plist")"
+          profile_application_id="$({
+            /usr/libexec/PlistBuddy \
+              -c 'Print :Entitlements:application-identifier' "$profile_plist" 2>/dev/null ||
+            /usr/libexec/PlistBuddy \
+              -c 'Print :Entitlements:com.apple.application-identifier' "$profile_plist"
+          })"
+          if [[ "$profile_application_id" != "3LTL47SJ8C.$expected_bundle_id" ]]; then
+            echo "RELEASE CHANNEL GUARD FAILED requested=$RELEASE_CHANNEL expected-bundle-id=$expected_bundle_id profile-application-id-mismatch=true" >&2
+            exit 65
+          fi
+          if [[ -z "$release_profile_name" || "$release_profile_name" == *$'\n'* ]]; then
+            echo "RELEASE VALIDATION FAILED selected profile has an invalid name" >&2
+            exit 66
+          fi
+
+          release_build_number="$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))"
+          export RELEASE_SCHEME="$release_scheme"
+          export EXPECTED_BUNDLE_ID="$expected_bundle_id"
+          export RELEASE_PROFILE_NAME="$release_profile_name"
+          export RELEASE_BUILD_NUMBER="$release_build_number"
+          export ARCHIVE_PATH="$archive_path"
+          export EXPORT_PATH="$export_path"
+          export DERIVED_DATA="$derived_data"
+          export EXPORT_OPTIONS="$export_options"
+
+          # The single-quoted program is expanded by the child after the signing wrapper exports
+          # its temporary-keychain variables; the outer shell must not expand it first.
+          # shellcheck disable=SC2016
+          tools/signing/with-temporary-keychain -- /bin/bash -c '
+            set -euo pipefail
+
+            xcodebuild archive \
+              -project apple/Dulcet.xcodeproj \
+              -scheme "$RELEASE_SCHEME" \
+              -configuration Release \
+              -destination "generic/platform=macOS" \
+              -archivePath "$ARCHIVE_PATH" \
+              -derivedDataPath "$DERIVED_DATA" \
+              -hideShellScriptEnvironment \
+              DULCET_RELEASE_PROFILE_NAME="$RELEASE_PROFILE_NAME" \
+              CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"
+
+            app_count="$(find "$ARCHIVE_PATH/Products/Applications" \
+              -mindepth 1 -maxdepth 1 -type d -name "*.app" -print | wc -l | tr -d "[:space:]")"
+            if [[ "$app_count" -ne 1 ]]; then
+              echo "RELEASE VALIDATION FAILED expected exactly one archived app; found=$app_count" >&2
+              exit 67
+            fi
+            app_path="$(find "$ARCHIVE_PATH/Products/Applications" \
+              -mindepth 1 -maxdepth 1 -type d -name "*.app" -print)"
+            actual_bundle_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_path/Contents/Info.plist")"
+            if [[ "$actual_bundle_id" != "$EXPECTED_BUNDLE_ID" ]]; then
+              echo "RELEASE CHANNEL GUARD FAILED requested=$RELEASE_CHANNEL expected-bundle-id=$EXPECTED_BUNDLE_ID resolved-bundle-id=$actual_bundle_id" >&2
+              exit 68
+            fi
+
+            /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
+            /usr/bin/codesign -d --entitlements :- "$app_path" > "$ARCHIVE_PATH/app-entitlements.plist"
+            signed_application_id="$({
+              /usr/libexec/PlistBuddy \
+                -c "Print :application-identifier" "$ARCHIVE_PATH/app-entitlements.plist" 2>/dev/null ||
+              /usr/libexec/PlistBuddy \
+                -c "Print :com.apple.application-identifier" "$ARCHIVE_PATH/app-entitlements.plist"
+            })"
+            if [[ "$signed_application_id" != "3LTL47SJ8C.$EXPECTED_BUNDLE_ID" ]]; then
+              echo "RELEASE VALIDATION FAILED signed application identifier does not match channel" >&2
+              exit 69
+            fi
+            /usr/bin/security cms -D \
+              -i "$app_path/Contents/embedded.provisionprofile" \
+              > "$ARCHIVE_PATH/embedded-profile.plist"
+            embedded_application_id="$({
+              /usr/libexec/PlistBuddy \
+                -c "Print :Entitlements:application-identifier" "$ARCHIVE_PATH/embedded-profile.plist" 2>/dev/null ||
+              /usr/libexec/PlistBuddy \
+                -c "Print :Entitlements:com.apple.application-identifier" "$ARCHIVE_PATH/embedded-profile.plist"
+            })"
+            if [[ "$embedded_application_id" != "3LTL47SJ8C.$EXPECTED_BUNDLE_ID" ]]; then
+              echo "RELEASE VALIDATION FAILED embedded profile does not match channel" >&2
+              exit 70
+            fi
+
+            /usr/bin/plutil -create xml1 "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :teamID string 3LTL47SJ8C" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :destination string export" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :signingCertificate string $DULCET_SIGNING_IDENTITY_SHA1" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_BUNDLE_ID string $RELEASE_PROFILE_NAME" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$EXPORT_OPTIONS"
+            /usr/libexec/PlistBuddy -c "Add :manageAppVersionAndBuildNumber bool false" "$EXPORT_OPTIONS"
+
+            xcodebuild -exportArchive \
+              -archivePath "$ARCHIVE_PATH" \
+              -exportPath "$EXPORT_PATH" \
+              -exportOptionsPlist "$EXPORT_OPTIONS" \
+              -hideShellScriptEnvironment
+          '
+
+          package_count="$(find "$export_path" \
+            -mindepth 1 -maxdepth 1 -type f -name '*.pkg' -print | wc -l | tr -d '[:space:]')"
+          if [[ "$package_count" -ne 1 ]]; then
+            echo "RELEASE VALIDATION FAILED expected exactly one exported package; found=$package_count" >&2
+            exit 71
+          fi
+          package_path="$(find "$export_path" \
+            -mindepth 1 -maxdepth 1 -type f -name '*.pkg' -print)"
+          /usr/sbin/pkgutil --check-signature "$package_path"
+
+          archived_info="$archive_path/Products/Applications"
+          app_path="$(find "$archived_info" \
+            -mindepth 1 -maxdepth 1 -type d -name '*.app' -print)"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")"
+          build_number="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Contents/Info.plist")"
+          if [[ "$build_number" != "$release_build_number" ]]; then
+            echo "RELEASE VALIDATION FAILED expected-build=$release_build_number resolved-build=$build_number" >&2
+            exit 72
+          fi
+
+          {
+            echo "package=$package_path"
+            echo "bundle_id=$expected_bundle_id"
+            echo "version=$version"
+            echo "build_number=$build_number"
+          } >> "$GITHUB_OUTPUT"
+          echo "RELEASE VALIDATION COMPLETE channel=$RELEASE_CHANNEL bundle-id=$expected_bundle_id version=$version build=$build_number"
+
+      - name: Report dry run
+        if: ${{ inputs.dry_run == true }}
+        env:
+          RELEASE_BUNDLE_ID: ${{ steps.release.outputs.bundle_id }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build_number }}
+        run: echo "DRY RUN COMPLETE upload-skipped=true bundle-id=$RELEASE_BUNDLE_ID version=$RELEASE_VERSION build=$RELEASE_BUILD_NUMBER"
+
+      # This client uses Apple's current App Store Connect build-upload API. It reads all API-key
+      # material from the environment, keeps it out of argv, and never logs signed upload URLs.
+      # It creates a TestFlight build only; there is intentionally no App Review submission call,
+      # which keeps the DEV record permanently outside the App Store review path.
+      - name: Upload to App Store Connect
+        if: ${{ inputs.dry_run == false }}
+        env:
+          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}
+          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
+          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}
+          RELEASE_PACKAGE: ${{ steps.release.outputs.package }}
+          RELEASE_BUNDLE_ID: ${{ steps.release.outputs.bundle_id }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ steps.release.outputs.build_number }}
+        run: >-
+          python3 tools/app_store_connect_upload.py
+          --package "$RELEASE_PACKAGE"
+          --bundle-id "$RELEASE_BUNDLE_ID"
+          --version "$RELEASE_VERSION"
+          --build-number "$RELEASE_BUILD_NUMBER"
