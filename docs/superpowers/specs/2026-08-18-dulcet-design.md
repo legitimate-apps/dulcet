@@ -1570,6 +1570,25 @@ against the legacy Keychain, never records an active-account pointer, and the co
 no matching legacy generic-password item exists. This proves the failure is loud and prevents a
 silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
 
+**ASSUMED signed-Keychain properties; no resolvable promotion condition:** the accessibility,
+non-sync, and resulting device-migration properties above remain ASSUMED. The earlier proposed
+workflow `signed-release-validation`, job `entitled-keychain`, and test
+`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` do not resolve to repository
+definitions and are not a runnable promotion plan. `FEATURES.yml` therefore records
+`promotion_condition.status = blocked` on `operator-signing-identity-decision`, names no runnable
+target, and leaves `account.connect / macos` at `partial`. Pull-request workflows receive no signing
+identity, and hosted run `32598531311` already established that an ad-hoc-signed host carrying the
+production Keychain access group cannot launch. The operator must first select the signed execution
+environment and signing identity. After that decision, a real workflow, job, and test may be added;
+the machine-readable promotion condition may name them only after each resolves in the repository.
+The eventual entitled control must add, update, read, and delete the real data-protection-Keychain
+item, read back `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and
+`kSecAttrSynchronizable = false`, and observe the item absent after deletion. CONF-10a does not claim
+those properties.
+
+CONF-10e narrows that retained boundary for simulator-stored values on iOS, iPadOS, and tvOS only;
+the macOS promotion condition and its signed-host requirements remain unchanged.
+
 **OBSERVED simulator-stored attributes; enforcement and macOS remain ASSUMED:** CONF-10e saves with
 the production Apple credential store inside app-hosted iOS, iPadOS, and tvOS simulator test
 processes, requires the save path's active-account marker, and then queries that exact item with
