@@ -1,132 +1,419 @@
 #!/usr/bin/env python3
-"""Run every gate a workflow declares, locally, before you push.
+"""Run the directly reproducible ``run:`` commands declared by GitHub workflows.
 
-WHY THIS EXISTS. The `parity-gate` workflow runs about a dozen separate tools. Running two or three
-of them locally and reading a clean exit as "the gate passes" is a correct instrument answering a
-narrower question than CI will ask, and it costs a full CI round trip to discover. That happened:
-`parity_gate.py`, `verify_promotion_conditions.py` and `verify_ci_policy.py` all passed locally on a
-change that `test-spec-evidence-boundaries` then rejected in CI over 29 missing pinned phrases.
+The unit of discovery is a workflow ``run:`` scalar, not a path-shaped token found somewhere in
+the YAML. Every run block is therefore either executed with its arguments intact or printed as
+NOT COVERED with a reason. Any failure, environment fault, or uncovered command makes the normal
+invocation nonzero. ``--list`` only inventories coverage and never claims a gate result.
 
-So this does not hard-code a list. It PARSES the workflow, which means it cannot drift out of date
-when a gate is added -- a hard-coded list would silently under-report exactly like the manual subset
-it replaces.
+Only a single direct repository Python invocation is reproducible here. Shell programs, compound
+shell blocks, redirects, GitHub expressions, dynamic environments, Gradle/Xcode commands, and
+commands relying on action-produced artifacts remain visible but uncovered. This intentionally
+narrow contract is safer than silently approximating CI.
 
     tools/run-local-gates                      # parity-gate (the default)
     tools/run-local-gates core-ci parity-gate  # named workflows
-    tools/run-local-gates --list               # show what would run, run nothing
+    tools/run-local-gates --list core-ci       # inventory only
 
-Baseline: GITHUB_BASE_REF is a BRANCH NAME. parity_gate.py builds `origin/<name>` itself and falls
-back to HEAD^ when that misses, so passing a ref path silently measures the wrong baseline. This
-resolves and PRINTS the baseline, and refuses to run if it does not exist.
+Before a normal run, ``origin/$GITHUB_BASE_REF`` is fetched. An offline caller may instead provide
+the exact expected commit in ``GITHUB_BASE_SHA``; the cached remote-tracking ref must equal it.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
+from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
-from pathlib import Path
+
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO / ".github" / "workflows"
-
-# Self-declared environment faults, not gate failures. Reported separately so a busy port never reads
-# as a broken change -- and never as a silent pass either.
 ENVIRONMENT_FAULT = re.compile(r"environment fault, not a gate failure", re.I)
+RUN_KEY = re.compile(r"^(?P<indent> *)(?:-\s+)?run\s*:\s*(?P<value>.*)$")
+ENV_KEY = re.compile(r"^(?P<indent> *)env\s*:\s*(?P<value>.*)$")
+ENV_ENTRY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?P<value>.*)$")
+BASE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+FULL_SHA = re.compile(r"[0-9a-fA-F]{40}")
 
 
-def declared_tools(workflow: str) -> list[str]:
+@dataclass(frozen=True)
+class WorkflowCommand:
+    workflow: str
+    line: int
+    command: str
+    environment: tuple[tuple[str, str], ...] = ()
+    environment_issue: str | None = None
+
+    @property
+    def source(self) -> str:
+        return f"{self.workflow}.yml:{self.line}"
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"run-local-gates: {message}")
+
+
+def indentation(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def scalar_value(raw: str) -> str | None:
+    """Decode the small literal subset accepted for local environment values."""
+    value = raw.strip()
+    if not value or "${{" in value:
+        return None
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            import json
+
+            decoded = json.loads(value)
+        except (ValueError, TypeError):
+            return None
+        return decoded if isinstance(decoded, str) else None
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1].replace("''", "'")
+    if value[0] in "[{|>&*!" or " #" in value:
+        return None
+    return value
+
+
+@dataclass(frozen=True)
+class EnvironmentBlock:
+    start: int
+    end: int
+    values: tuple[tuple[str, str], ...]
+    issue: str | None
+
+
+def environment_blocks(lines: list[str], workflow: str) -> list[EnvironmentBlock]:
+    blocks: list[EnvironmentBlock] = []
+    for index, line in enumerate(lines):
+        match = ENV_KEY.match(line)
+        if match is None:
+            continue
+        base_indent = len(match.group("indent"))
+        content_end = len(lines)
+        for candidate in range(index + 1, len(lines)):
+            if lines[candidate].strip() and indentation(lines[candidate]) <= base_indent:
+                content_end = candidate
+                break
+        scope_end = len(lines)
+        for candidate in range(content_end, len(lines)):
+            if lines[candidate].strip() and indentation(lines[candidate]) < base_indent:
+                scope_end = candidate
+                break
+
+        inline = match.group("value").strip()
+        values: list[tuple[str, str]] = []
+        issue: str | None = None
+        if inline:
+            issue = f"inline env syntax at {workflow}.yml:{index + 1} is not reproducible"
+        else:
+            child_indents = [
+                indentation(lines[candidate])
+                for candidate in range(index + 1, content_end)
+                if lines[candidate].strip() and not lines[candidate].lstrip().startswith("#")
+            ]
+            child_indent = min(child_indents, default=base_indent + 2)
+            for candidate in range(index + 1, content_end):
+                text = lines[candidate]
+                if not text.strip() or text.lstrip().startswith("#"):
+                    continue
+                if indentation(text) != child_indent:
+                    continue
+                entry = ENV_ENTRY.match(text)
+                if entry is None:
+                    issue = f"env syntax at {workflow}.yml:{candidate + 1} is not reproducible"
+                    break
+                value = scalar_value(entry.group("value"))
+                if value is None:
+                    issue = (
+                        f"dynamic env {entry.group('key')} at "
+                        f"{workflow}.yml:{candidate + 1} is not reproducible"
+                    )
+                    break
+                values.append((entry.group("key"), value))
+        blocks.append(EnvironmentBlock(index, scope_end, tuple(values), issue))
+    return blocks
+
+
+def folded(lines: list[str]) -> str:
+    """Implement the ordinary, same-indentation YAML folded-scalar shape used here."""
+    output = ""
+    previous_blank = False
+    for line in lines:
+        blank = not line.strip()
+        if blank:
+            output += "\n"
+        elif output and not output.endswith("\n") and not previous_blank:
+            output += " "
+        output += line if not blank else ""
+        previous_blank = blank
+    return output.rstrip("\n")
+
+
+def declared_commands(workflow: str) -> list[WorkflowCommand]:
     path = WORKFLOWS / f"{workflow}.yml"
     if not path.is_file():
-        raise SystemExit(f"no such workflow: {path}")
-    found = re.findall(r"tools/[A-Za-z0-9_.\-]+", path.read_text())
-    return sorted({t for t in found if (REPO / t).is_file()})
+        fail(f"no such workflow: {path}")
+    lines = path.read_text().splitlines()
+    environments = environment_blocks(lines, workflow)
+    commands: list[WorkflowCommand] = []
+    consumed: set[int] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = RUN_KEY.match(line)
+        if match is None:
+            # Flow-map run keys are valid YAML but outside this parser. Refuse them instead of
+            # silently losing a command. Text inside comments is not a key.
+            if (
+                not line.lstrip().startswith("#")
+                and re.match(r"^\s*(?:-\s*)?run\s*:", line)
+            ):
+                fail(f"unsupported run syntax at {workflow}.yml:{index + 1}")
+            index += 1
+            continue
+
+        run_indent = len(match.group("indent"))
+        raw = match.group("value").strip()
+        start = index
+        if raw.startswith(("|", ">")):
+            if not re.fullmatch(r"[|>][+-]?", raw):
+                fail(f"unsupported run scalar header {raw!r} at {workflow}.yml:{index + 1}")
+            style = raw[0]
+            index += 1
+            body: list[str] = []
+            body_indexes: list[int] = []
+            while index < len(lines):
+                candidate = lines[index]
+                if candidate.strip() and indentation(candidate) <= run_indent:
+                    break
+                body.append(candidate)
+                body_indexes.append(index)
+                index += 1
+            nonblank_indents = [indentation(item) for item in body if item.strip()]
+            if not nonblank_indents:
+                fail(f"empty run block at {workflow}.yml:{start + 1}")
+            content_indent = min(nonblank_indents)
+            body = [item[content_indent:] if item.strip() else "" for item in body]
+            command = "\n".join(body).rstrip("\n") if style == "|" else folded(body)
+            consumed.update(body_indexes)
+        else:
+            if not raw:
+                fail(f"empty run command at {workflow}.yml:{start + 1}")
+            command = raw
+            index += 1
+
+        applicable = [block for block in environments if block.start < start < block.end]
+        environment: dict[str, str] = {}
+        environment_issue = None
+        for block in applicable:
+            environment.update(block.values)
+            if block.issue is not None:
+                environment_issue = block.issue
+        commands.append(
+            WorkflowCommand(
+                workflow,
+                start + 1,
+                command,
+                tuple(environment.items()),
+                environment_issue,
+            )
+        )
+
+    # A defensive count makes future unsupported key layouts fail closed.
+    for line_number, line in enumerate(lines, 1):
+        if line_number - 1 in consumed or line.lstrip().startswith("#"):
+            continue
+        if re.match(r"^\s*(?:-\s+)?run\s*:", line) and RUN_KEY.match(line) is None:
+            fail(f"unparsed run key at {workflow}.yml:{line_number}")
+    return commands
 
 
-def runnable(tool: str) -> list[str] | None:
-    """Only self-contained python gates are safe to run unattended here."""
+def repository_python(tokens: list[str]) -> list[str] | None:
+    if len(tokens) >= 2 and tokens[0] in {"python", "python3"}:
+        tool = tokens[1]
+        arguments = tokens[2:]
+    elif tokens and tokens[0].startswith("tools/"):
+        tool = tokens[0]
+        arguments = tokens[1:]
+    else:
+        return None
+    if not tool.startswith("tools/") or ".." in Path(tool).parts:
+        return None
     path = REPO / tool
-    if tool.endswith(".py"):
-        return [sys.executable, str(path)]
-    head = path.read_bytes()[:64]
-    if head.startswith(b"#!") and b"python" in head.split(b"\n", 1)[0]:
-        return [sys.executable, str(path)]
-    return None
+    if not path.is_file():
+        return None
+    if not tool.endswith(".py"):
+        head = path.read_bytes()[:128].split(b"\n", 1)[0]
+        if not (head.startswith(b"#!") and b"python" in head):
+            return None
+    return [sys.executable, str(path), *arguments]
+
+
+def runnable(item: WorkflowCommand) -> list[str] | None:
+    """Return exact Python argv only when no shell interpretation is required."""
+    if item.environment_issue or "\n" in item.command or "\r" in item.command:
+        return None
+    if "${{" in item.command or re.search(r"[\$`|;&<>]", item.command):
+        return None
+    try:
+        tokens = shlex.split(item.command)
+    except ValueError:
+        return None
+    return repository_python(tokens)
+
+
+def uncovered_reason(item: WorkflowCommand) -> str:
+    if item.environment_issue:
+        return item.environment_issue
+    if "\n" in item.command or "\r" in item.command:
+        return "compound or multiline shell block"
+    if "${{" in item.command:
+        return "contains a GitHub expression"
+    if re.search(r"[\$`|;&<>]", item.command):
+        return "requires shell expansion, composition, or redirection"
+    try:
+        tokens = shlex.split(item.command)
+    except ValueError:
+        return "shell quoting could not be parsed"
+    if repository_python(tokens) is None:
+        return "not a single direct repository Python invocation"
+    return "not locally reproducible"
+
+
+def display(command: str) -> str:
+    return command.replace("\n", "\n             ")
+
+
+def resolve_baseline(environment: dict[str, str]) -> tuple[str, str]:
+    base_ref = environment.get("GITHUB_BASE_REF", "main")
+    if (
+        not BASE_REF.fullmatch(base_ref)
+        or base_ref.startswith(("-", "/"))
+        or ".." in base_ref
+        or base_ref.endswith("/")
+    ):
+        fail("GITHUB_BASE_REF must be a branch name such as 'main'")
+    resolved = f"origin/{base_ref}"
+    expected = environment.get("GITHUB_BASE_SHA", "")
+    if expected:
+        if not FULL_SHA.fullmatch(expected):
+            fail("GITHUB_BASE_SHA must be a full 40-character commit SHA")
+    else:
+        refspec = f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}"
+        fetched = subprocess.run(
+            ["git", "fetch", "--quiet", "--no-tags", "origin", refspec],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+        )
+        if fetched.returncode != 0:
+            detail = " ".join((fetched.stderr or fetched.stdout).split())[:200]
+            fail(f"could not refresh {resolved}: {detail or 'git fetch failed'}")
+
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{resolved}^{{commit}}"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    sha = result.stdout.strip()
+    if result.returncode != 0 or not FULL_SHA.fullmatch(sha):
+        fail(f"baseline {resolved!r} does not resolve to a commit")
+    if expected and sha.lower() != expected.lower():
+        fail(f"baseline {resolved} is {sha}, not expected GITHUB_BASE_SHA {expected}")
+    return resolved, sha
 
 
 def main() -> int:
-    argv = [a for a in sys.argv[1:] if a != "--list"]
-    listing = "--list" in sys.argv[1:]
-    workflows = argv or ["parity-gate"]
+    arguments = sys.argv[1:]
+    listing = "--list" in arguments
+    unknown_options = [item for item in arguments if item.startswith("-") and item != "--list"]
+    if unknown_options:
+        fail(f"unknown option: {unknown_options[0]}")
+    workflows = [item for item in arguments if item != "--list"] or ["parity-gate"]
+    declared = [(workflow, declared_commands(workflow)) for workflow in workflows]
 
-    env = dict(os.environ)
-    # GITHUB_BASE_REF is a BRANCH NAME, not a ref path. `parity_gate.py` builds the ref itself as
-    # f"origin/{base_ref}" and falls back to HEAD^ when that misses. So passing "origin/main" here
-    # resolves to "origin/origin/main", misses, and SILENTLY compares against HEAD^ instead -- a
-    # different question than CI asks, reported as a confident pass or a confident bogus regression.
-    # Measured: base_ref="origin/main" reported "undeclared regression: search.query/android
-    # shipped -> partial" on a branch where main already had it partial; base_ref="main" passed.
-    env.setdefault("GITHUB_BASE_REF", "main")
-
-    base_ref = env["GITHUB_BASE_REF"]
-    resolved = f"origin/{base_ref}"
-    if subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", resolved],
-        cwd=REPO, capture_output=True,
-    ).returncode != 0:
-        # Refuse to run rather than measure a baseline nobody asked for.
-        raise SystemExit(
-            f"baseline {resolved!r} does not resolve. GITHUB_BASE_REF must be a BRANCH NAME "
-            f"(e.g. 'main'), not a ref path. Try: git fetch origin"
-        )
-    print(f"baseline: {resolved} ({subprocess.run(['git','rev-parse','--short',resolved],cwd=REPO,capture_output=True,text=True).stdout.strip()})")
+    if not listing:
+        environment = dict(os.environ)
+        environment.setdefault("GITHUB_BASE_REF", "main")
+        resolved, sha = resolve_baseline(environment)
+        print(f"baseline: {resolved} ({sha[:12]})")
+    else:
+        environment = dict(os.environ)
 
     failures: list[str] = []
-    env_faults: list[str] = []
-    skipped: list[str] = []
+    environment_faults: list[str] = []
+    uncovered: list[str] = []
     passed = 0
+    total = 0
 
-    for workflow in workflows:
-        tools = declared_tools(workflow)
-        print(f"\n=== {workflow}: {len(tools)} declared tool(s) ===")
-        for tool in tools:
-            command = runnable(tool)
+    for workflow, commands in declared:
+        print(f"\n=== {workflow}: {len(commands)} run command(s) ===")
+        for item in commands:
+            total += 1
+            command = runnable(item)
             if command is None:
-                skipped.append(tool)
-                print(f"  SKIP  {tool}  (not a self-contained python gate)")
+                uncovered.append(item.source)
+                print(
+                    f"  NOT COVERED  {item.source}  ({uncovered_reason(item)})\n"
+                    f"             {display(item.command)}"
+                )
                 continue
             if listing:
-                print(f"  WOULD RUN  {tool}")
+                print(f"  WOULD RUN    {item.source}\n             {display(item.command)}")
                 continue
+            command_environment = dict(environment)
+            command_environment.update(item.environment)
             result = subprocess.run(
-                command, cwd=REPO, env=env, capture_output=True, text=True
+                command,
+                cwd=REPO,
+                env=command_environment,
+                capture_output=True,
+                text=True,
             )
             output = (result.stdout or "") + (result.stderr or "")
             if result.returncode == 0:
                 passed += 1
-                print(f"  PASS  {tool}")
+                print(f"  PASS         {item.source}\n             {display(item.command)}")
             elif ENVIRONMENT_FAULT.search(output):
-                env_faults.append(tool)
-                print(f"  ENV   {tool}  (self-declared environment fault, not a gate failure)")
+                environment_faults.append(item.source)
+                print(
+                    f"  ENVIRONMENT  {item.source}  (incomplete; exit {result.returncode})\n"
+                    f"             {display(item.command)}"
+                )
             else:
-                failures.append(tool)
+                failures.append(item.source)
                 detail = " ".join(output.split())[:200]
-                print(f"  FAIL  {tool}\n          {detail}")
+                print(
+                    f"  FAIL         {item.source}  (exit {result.returncode})\n"
+                    f"             {display(item.command)}\n"
+                    f"             {detail}"
+                )
 
     if listing:
+        print(f"\nLIST ONLY: {total} run command(s); no gate result was claimed")
         return 0
 
     print(
         f"\n{passed} passed, {len(failures)} failed, "
-        f"{len(env_faults)} environment fault(s), {len(skipped)} skipped"
+        f"{len(environment_faults)} environment fault(s), {len(uncovered)} NOT covered"
     )
-    if env_faults:
-        print("environment faults (fix the environment, not the change): " + ", ".join(env_faults))
-    if skipped:
-        print("not run here, so NOT covered by this result: " + ", ".join(skipped))
+    if environment_faults:
+        print("INCOMPLETE environment: " + ", ".join(environment_faults))
+    if uncovered:
+        print("NOT covered by this result: " + ", ".join(uncovered))
     if failures:
         print("FAILED: " + ", ".join(failures))
+    if failures or environment_faults or uncovered:
+        print("LOCAL GATE RESULT: INCOMPLETE OR FAILED")
         return 1
+    print("LOCAL GATE RESULT: COMPLETE PASS")
     return 0
 
 

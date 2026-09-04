@@ -50,6 +50,8 @@ jobs:
         run: python3 tools/test-report-main-health
       - name: Prove transcode timeouts identify their phase and obey the wall-clock budget
         run: python3 tools/test-transcode-probe-timeout-diagnostic
+      - name: Prove the local gate runner reports incomplete workflow coverage
+        run: python3 tools/test-run-local-gates
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
       - name: Verify CI policy

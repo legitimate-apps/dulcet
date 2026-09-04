@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Regression controls for honest local workflow-command coverage."""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.machinery
+import importlib.util
+import io
+import os
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
+
+
+TOOLS = Path(__file__).resolve().parent
+loader = importlib.machinery.SourceFileLoader("run_local_gates", str(TOOLS / "run-local-gates"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+if spec is None:
+    raise RuntimeError("could not load run-local-gates")
+runner = importlib.util.module_from_spec(spec)
+sys.modules[loader.name] = runner
+loader.exec_module(runner)
+
+
+class Result:
+    returncode = 0
+    stdout = "0123456789abcdef0123456789abcdef01234567\n"
+    stderr = ""
+
+
+def command_text(item: object) -> str:
+    return getattr(item, "command", str(item))
+
+
+class LocalGateControls(unittest.TestCase):
+    def test_discovery_preserves_arguments_and_nested_tool_paths(self) -> None:
+        discover = getattr(runner, "declared_commands", runner.declared_tools)
+        commands = [command_text(item) for item in discover("core-ci")]
+
+        self.assertIn("python3 tools/verify_os_floors.py --configuration-only", commands)
+        self.assertTrue(
+            any("tools/conformance-env/linux-local --root \"$ROOT\" up" in item for item in commands),
+            "the multiline conformance run block must be discovered in full",
+        )
+        self.assertTrue(
+            any('test "$CORE_BUILD_RESULT" = success' in item for item in commands),
+            "inline shell assertions must be discovered even when they are not locally runnable",
+        )
+
+    def test_known_incomplete_coverage_returns_nonzero(self) -> None:
+        discovery_name = "declared_commands" if hasattr(runner, "declared_commands") else "declared_tools"
+        item = (
+            runner.WorkflowCommand("fixture", 1, "echo unsupported")
+            if hasattr(runner, "WorkflowCommand")
+            else "tools/not-python"
+        )
+        output = io.StringIO()
+        with (
+            patch.object(runner, discovery_name, return_value=[item]),
+            patch.object(runner, "runnable", return_value=None),
+            patch.object(runner.subprocess, "run", return_value=Result()) as run,
+            patch.object(sys, "argv", ["run-local-gates", "fixture"]),
+            patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}, clear=False),
+            contextlib.redirect_stdout(output),
+        ):
+            status = runner.main()
+
+        self.assertNotEqual(status, 0)
+        self.assertIn("NOT covered", output.getvalue())
+        self.assertTrue(run.called)
+
+    def test_default_mode_fetches_base_branch_before_claiming_a_result(self) -> None:
+        discovery_name = "declared_commands" if hasattr(runner, "declared_commands") else "declared_tools"
+        calls: list[list[str]] = []
+
+        def record(command: list[str], **_kwargs: object) -> Result:
+            calls.append(command)
+            return Result()
+
+        with (
+            patch.object(runner, discovery_name, return_value=[]),
+            patch.object(runner.subprocess, "run", side_effect=record),
+            patch.object(sys, "argv", ["run-local-gates", "fixture"]),
+            patch.dict(os.environ, {"GITHUB_BASE_REF": "main"}, clear=False),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            runner.main()
+
+        self.assertTrue(
+            any(command[:3] == ["git", "fetch", "--quiet"] for command in calls),
+            "a cached origin/main must not be treated as current without a fetch",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
