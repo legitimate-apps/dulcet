@@ -256,16 +256,47 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     }
 
     private func makeContext() throws -> DownloadIntegrationContext {
-        let baseURL = ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"] ?? ""
-        guard ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true",
-              let components = URLComponents(string: baseURL),
-              components.scheme == "http",
-              components.host == "127.0.0.1",
-              components.port != nil,
-              components.path.isEmpty,
-              components.query == nil,
-              components.fragment == nil else {
-            XCTFail("downloads may run only against the disposable loopback conformance server")
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL = environment["DULCET_CONFORMANCE_BASE_URL"] ?? ""
+        let disposable = environment["DULCET_CONFORMANCE_DISPOSABLE"]
+        var violations: [String] = []
+
+        if disposable == nil {
+            violations.append("DULCET_CONFORMANCE_DISPOSABLE is missing from the test process")
+        } else if disposable != "true" {
+            violations.append("DULCET_CONFORMANCE_DISPOSABLE must equal true")
+        }
+
+        if baseURL.isEmpty {
+            violations.append("DULCET_CONFORMANCE_BASE_URL is missing or empty in the test process")
+        } else if let components = URLComponents(string: baseURL) {
+            if components.scheme != "http" {
+                violations.append("DULCET_CONFORMANCE_BASE_URL scheme must be http")
+            }
+            if components.host != "127.0.0.1" {
+                violations.append("DULCET_CONFORMANCE_BASE_URL host must be literal 127.0.0.1")
+            }
+            if components.port == nil {
+                violations.append("DULCET_CONFORMANCE_BASE_URL must include a port")
+            }
+            if !components.path.isEmpty {
+                violations.append("DULCET_CONFORMANCE_BASE_URL path must be empty")
+            }
+            if components.query != nil {
+                violations.append("DULCET_CONFORMANCE_BASE_URL query must be absent")
+            }
+            if components.fragment != nil {
+                violations.append("DULCET_CONFORMANCE_BASE_URL fragment must be absent")
+            }
+        } else {
+            violations.append("DULCET_CONFORMANCE_BASE_URL must be a valid URL")
+        }
+
+        guard violations.isEmpty else {
+            XCTFail(
+                "downloads may run only against the disposable loopback conformance server; "
+                    + "environment violations: \(violations.joined(separator: "; "))"
+            )
             throw DownloadIntegrationPrecondition.invalidEnvironment
         }
         let root = FileManager.default.temporaryDirectory
