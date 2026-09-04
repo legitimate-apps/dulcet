@@ -92,10 +92,11 @@ jobs:
           archive_path="$release_root/Dulcet.xcarchive"
           export_path="$release_root/export"
           derived_data="$release_root/DerivedData"
+          android_user_home="$release_root/android-user"
           profile_path="$release_root/selected.mobileprovision"
           profile_plist="$release_root/selected-profile.plist"
           export_options="$release_root/ExportOptions.plist"
-          mkdir -p "$release_root" "$export_path"
+          mkdir -p "$release_root" "$export_path" "$android_user_home"
 
           printf '%s' "$selected_profile_base64" | /usr/bin/base64 -D > "$profile_path"
           /usr/bin/security cms -D -i "$profile_path" > "$profile_plist"
@@ -123,6 +124,7 @@ jobs:
           export ARCHIVE_PATH="$archive_path"
           export EXPORT_PATH="$export_path"
           export DERIVED_DATA="$derived_data"
+          export ANDROID_USER_HOME="$android_user_home"
           export EXPORT_OPTIONS="$export_options"
 
           # The single-quoted program is expanded by the child after the signing wrapper exports
