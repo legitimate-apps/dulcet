@@ -150,7 +150,7 @@ struct AVPlayerEngineTests {
     }
 
     @Test
-    func blockedMediaSamplingDoesNotBlockReadyOrSeekableNowPlaying() async {
+    func blockedMediaSamplingDoesNotBlockReadyOrSeekableNowPlaying() async throws {
         let clock = BlockingSampleAVPlayerEngineClock()
         let mediaControls = RecordingSystemMediaControls()
         let engine = DulcetAVPlayerEngine(
@@ -170,8 +170,19 @@ struct AVPlayerEngineTests {
         let readiness = Task.detached {
             engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
         }
-        try? await Task.sleep(for: .milliseconds(50))
-        let liveness = await engine.probeQueueLivenessForTesting(timeout: 0.1)
+        try await waitUntil(
+            "readiness was never published while a media sample was blocked",
+            engine: engine
+        ) {
+            events.containsReady(seekability: .seekable)
+        }
+        // Readiness above already proves the engine queue serviced work while the sample was
+        // blocked, so this probe only has to distinguish "queue is blocked" from "queue is slow".
+        // The blocked sample is held until `clock.unblockSample()` BELOW this assertion, so a queue
+        // genuinely blocked by it stays blocked for the whole probe no matter how long the probe
+        // waits -- a longer timeout therefore cannot turn a real block into a pass, and only stops
+        // a loaded runner from reporting a responsive queue as a blocked one.
+        let liveness = await engine.probeQueueLivenessForTesting(timeout: blockedQueueProbeTimeout)
 
         #expect(events.containsReady(seekability: .seekable))
         #expect(mediaControls.publications.first?.seekability == .seekable)
@@ -950,6 +961,10 @@ private func execute(
 // or media time never advances, the condition never becomes true and the test still fails, just
 // later. On failure the queue probe below says whether the engine queue itself could service work.
 private let realAVFoundationProgressTimeout: TimeInterval = 60
+
+// Used as a pass/fail gate, not as a diagnostic, so it is deliberately far longer than the one
+// second `waitFailureDiagnostic` spends classifying an already-failed wait. See the call site.
+private let blockedQueueProbeTimeout: TimeInterval = 5
 
 private func waitUntil(
     _ failure: String,
