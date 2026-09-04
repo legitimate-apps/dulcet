@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Raise a durable GitHub issue when a protected-branch health signal fails on `main`.
+"""Keep a durable GitHub issue aligned with protected-branch health on `main`.
 
-Failures and timeouts open the alarm or append to it. Success is deliberately non-mutating: GitHub
-does not offer an atomic operation that couples the observed branch/check state to an issue close,
-so an asynchronous success handler cannot prove that its evidence is still current at mutation
-time. Closing remains a human action after current required contexts and live protection are
-verified.
+Failures and timeouts open an alarm or append to it. A success event may close an existing alarm
+only after every manifest-required context has a latest successful GitHub Actions check run on that
+exact SHA. The branch head is checked before the audit comment and again immediately before close.
+A later failure opens a fresh alarm, making the remaining API-round-trip race self-correcting.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -23,6 +23,7 @@ MARKER = "<!-- dulcet-main-health -->"
 API = "https://api.github.com"
 MANIFEST = Path(__file__).resolve().parent.parent / ".github/required-checks.json"
 BRANCH_PROTECTION_WORKFLOW = "branch-protection-drift"
+GITHUB_ACTIONS_APP_ID = 15368
 ALARM_CONCLUSIONS = frozenset({"failure", "timed_out"})
 IGNORED_CONCLUSIONS = frozenset({"cancelled"})
 
@@ -68,6 +69,263 @@ def open_health_issue(repository: str, token: str) -> int | None:
     return number
 
 
+def check_runs_for_head(repository: str, head: str, token: str) -> list[dict[str, object]]:
+    """Return every check run reported for one exact commit SHA, failing on truncation."""
+    runs: list[dict[str, object]] = []
+    expected_total: int | None = None
+    page = 1
+    while True:
+        query = urllib.parse.urlencode({"filter": "all", "per_page": 100, "page": page})
+        document = call(
+            "GET", f"/repos/{repository}/commits/{head}/check-runs?{query}", token
+        )
+        if not isinstance(document, dict):
+            fail("GitHub check-runs API returned malformed JSON")
+        total = document.get("total_count")
+        batch = document.get("check_runs")
+        if (
+            not isinstance(total, int)
+            or isinstance(total, bool)
+            or total < 0
+            or not isinstance(batch, list)
+            or not all(isinstance(item, dict) for item in batch)
+        ):
+            fail("GitHub check-runs API returned a malformed document")
+        if expected_total is None:
+            expected_total = total
+        elif total != expected_total:
+            fail("GitHub check-runs API changed total_count during pagination")
+        runs.extend(batch)
+        if len(runs) > total:
+            fail("GitHub check-runs API returned more entries than total_count")
+        if len(runs) >= total:
+            break
+        if len(batch) < 100:
+            fail("GitHub check-runs API ended pagination before total_count")
+        page += 1
+        if page > 100:
+            fail("more than 10,000 check runs matched one head SHA")
+    return runs
+
+
+def commit_statuses_for_head(
+    repository: str, head: str, token: str
+) -> list[dict[str, object]]:
+    """Return classic commit statuses so they cannot silently collide with check contexts."""
+    statuses: list[dict[str, object]] = []
+    page = 1
+    while True:
+        query = urllib.parse.urlencode({"per_page": 100, "page": page})
+        document = call("GET", f"/repos/{repository}/commits/{head}/status?{query}", token)
+        if not isinstance(document, dict):
+            fail("GitHub commit-status API returned a malformed document")
+        exact_response_sha(document.get("sha"), head, "GitHub commit-status API")
+        if not isinstance(document.get("statuses"), list) or not all(
+            isinstance(item, dict) for item in document["statuses"]
+        ):
+            fail("GitHub commit-status API returned a malformed document or different head SHA")
+        batch = document["statuses"]
+        statuses.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+        if page > 100:
+            fail("more than 10,000 commit statuses matched one head SHA")
+    return statuses
+
+
+def positive_identifier(value: object, source: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        fail(f"{source} omitted a positive integer id")
+    return value
+
+
+def exact_response_sha(value: object, head: str, source: str) -> None:
+    if not isinstance(value, str) or value.lower() != head.lower():
+        fail(f"{source} returned a different head SHA")
+
+
+@dataclass(frozen=True)
+class CheckEvidence:
+    context: str
+    identifier: int
+    url: str
+
+
+def required_check_evidence(
+    required_contexts: set[str],
+    head: str,
+    checks: list[dict[str, object]],
+    statuses: list[dict[str, object]],
+) -> tuple[dict[str, CheckEvidence], list[str]]:
+    expected: dict[str, list[dict[str, object]]] = {
+        context: [] for context in required_contexts
+    }
+    foreign: dict[str, list[int]] = {context: [] for context in required_contexts}
+    classic: dict[str, list[int]] = {context: [] for context in required_contexts}
+    seen_check_ids: set[int] = set()
+    for item in checks:
+        identifier = positive_identifier(item.get("id"), "GitHub check-runs API")
+        if identifier in seen_check_ids:
+            fail(f"GitHub check-runs API duplicated check run {identifier}")
+        seen_check_ids.add(identifier)
+        exact_response_sha(item.get("head_sha"), head, f"check run {identifier}")
+        name = item.get("name")
+        status = item.get("status")
+        conclusion = item.get("conclusion")
+        app = item.get("app")
+        url = item.get("html_url")
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(status, str)
+            or not status
+            or (
+                conclusion is not None
+                and (not isinstance(conclusion, str) or not conclusion)
+            )
+            or not isinstance(app, dict)
+            or not isinstance(app.get("id"), int)
+            or isinstance(app.get("id"), bool)
+            or app.get("id", 0) <= 0
+            or not isinstance(url, str)
+            or not url
+        ):
+            fail(f"GitHub check-runs API returned malformed check run {identifier}")
+        if name not in required_contexts:
+            continue
+        if app["id"] == GITHUB_ACTIONS_APP_ID:
+            expected[name].append(item)
+        else:
+            foreign[name].append(identifier)
+
+    seen_status_ids: set[int] = set()
+    for item in statuses:
+        identifier = positive_identifier(item.get("id"), "GitHub commit-status API")
+        if identifier in seen_status_ids:
+            fail(f"GitHub commit-status API duplicated status {identifier}")
+        seen_status_ids.add(identifier)
+        exact_response_sha(item.get("sha"), head, f"commit status {identifier}")
+        context = item.get("context")
+        state = item.get("state")
+        if not isinstance(context, str) or not context or not isinstance(state, str) or not state:
+            fail(f"GitHub commit-status API returned malformed status {identifier}")
+        if context in required_contexts:
+            classic[context].append(identifier)
+
+    evidence: dict[str, CheckEvidence] = {}
+    problems: list[str] = []
+    for context in sorted(required_contexts):
+        if classic[context]:
+            problems.append(
+                f"{context}=ambiguous classic status id(s) "
+                f"{','.join(str(item) for item in classic[context])}"
+            )
+        if foreign[context]:
+            problems.append(
+                f"{context}=wrong-app check run id(s) "
+                f"{','.join(str(item) for item in foreign[context])}"
+            )
+        candidates = expected[context]
+        if not candidates:
+            problems.append(f"{context}=missing")
+            continue
+        latest = max(candidates, key=lambda item: positive_identifier(item["id"], "check run"))
+        identifier = positive_identifier(latest["id"], "check run")
+        if latest["status"] != "completed" or latest["conclusion"] != "success":
+            problems.append(
+                f"{context}={latest['status']}/{latest['conclusion']} (check run {identifier})"
+            )
+            continue
+        evidence[context] = CheckEvidence(context, identifier, str(latest["html_url"]))
+    return evidence, problems
+
+
+def current_main_head(repository: str, token: str) -> str:
+    document = call("GET", f"/repos/{repository}/branches/main", token)
+    commit = document.get("commit") if isinstance(document, dict) else None
+    head = commit.get("sha") if isinstance(commit, dict) else None
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", head):
+        fail("GitHub branches API omitted the current main head SHA")
+    return head
+
+
+def close_if_green(
+    repository: str,
+    token: str,
+    issue_number: int,
+    head: str,
+    required_contexts: set[str],
+) -> None:
+    evidence, problems = required_check_evidence(
+        required_contexts,
+        head,
+        check_runs_for_head(repository, head, token),
+        commit_statuses_for_head(repository, head, token),
+    )
+    if problems or set(evidence) != required_contexts:
+        detail = ", ".join(problems) or "required context evidence incomplete"
+        print(f"MAIN HEALTH: issue #{issue_number} remains open at {head[:8]}: {detail}")
+        return
+
+    live_head = current_main_head(repository, token)
+    if live_head != head:
+        print(
+            f"MAIN HEALTH: issue #{issue_number} remains open; green SHA {head[:8]} "
+            f"was superseded by {live_head[:8]}"
+        )
+        return
+
+    evidence_text = "\n".join(
+        f"- **{context}** — check run [`{evidence[context].identifier}`]"
+        f"({evidence[context].url})"
+        for context in sorted(required_contexts)
+    )
+    comment = (
+        f"All manifest-required check contexts were observed **success** on `main` at "
+        f"`{head}`.\n\n"
+        f"The exact-SHA GitHub Actions check runs used were:\n\n{evidence_text}\n\n"
+        f"The branch head will be read again immediately after this audit record and before "
+        f"the close mutation. If a later required workflow fails on `main`, main-health will "
+        f"open a fresh alarm issue."
+    )
+    call(
+        "POST",
+        f"/repos/{repository}/issues/{issue_number}/comments",
+        token,
+        {"body": comment},
+    )
+
+    # Keep this read adjacent to the state mutation. A newer failure will create a fresh issue even
+    # if main moves in the remaining API round trip, but do not knowingly close a superseded alarm.
+    final_head = current_main_head(repository, token)
+    if final_head != head:
+        call(
+            "POST",
+            f"/repos/{repository}/issues/{issue_number}/comments",
+            token,
+            {
+                "body": (
+                    f"Automatic close aborted: `main` moved from `{head}` to `{final_head}` "
+                    f"before the close mutation."
+                )
+            },
+        )
+        print(
+            f"MAIN HEALTH: issue #{issue_number} remains open; main moved to {final_head[:8]} "
+            f"immediately before close"
+        )
+        return
+
+    call(
+        "PATCH",
+        f"/repos/{repository}/issues/{issue_number}",
+        token,
+        {"state": "closed"},
+    )
+    print(f"MAIN HEALTH: closed issue #{issue_number} at {head[:8]}")
+
+
 def report_alarm(
     repository: str,
     token: str,
@@ -97,11 +355,9 @@ def report_alarm(
         f"A protected-branch health signal failed on `main`. This issue was opened "
         f"automatically because post-merge failures otherwise have no durable owner.\n\n"
         f"{line}\n\n"
-        f"Further failures while it is open are appended as comments. Automatic closing is "
-        f"disabled because an asynchronous workflow cannot atomically prove that the observed "
-        f"branch and required-check state is still current when the issue mutation occurs. "
-        f"Close manually only after verifying the current required contexts and live branch "
-        f"protection."
+        f"Further failures while it is open are appended as comments. It closes automatically "
+        f"only after every manifest-required context has a successful GitHub Actions check run "
+        f"on one exact current head SHA. A later failure opens a fresh alarm issue."
     )
     created = call(
         "POST",
@@ -152,27 +408,23 @@ def main() -> None:
     if conclusion not in ALARM_CONCLUSIONS | {"success"}:
         fail(f"unexpected conclusion {conclusion!r}")
 
-    # This is intentionally before issue lookup: success must not mutate or even inspect alarm
-    # state. There is no compare-and-swap spanning GitHub's branch/check and issue APIs, so every
-    # automatic close has an unavoidable stale-green interval.
-    if conclusion == "success":
-        print(
-            f"MAIN HEALTH: {workflow} succeeded at {head[:8]}; "
-            f"automatic alarm closing is disabled"
+    issue_number = open_health_issue(repository, token)
+    if conclusion in ALARM_CONCLUSIONS:
+        report_alarm(
+            repository,
+            token,
+            issue_number,
+            workflow,
+            conclusion,
+            run_url,
+            head,
+            identifier,
         )
         return
-
-    issue_number = open_health_issue(repository, token)
-    report_alarm(
-        repository,
-        token,
-        issue_number,
-        workflow,
-        conclusion,
-        run_url,
-        head,
-        identifier,
-    )
+    if issue_number is None:
+        print(f"MAIN HEALTH: {head[:8]} reported success; no open alarm")
+        return
+    close_if_green(repository, token, issue_number, head, required_contexts)
 
 
 if __name__ == "__main__":
