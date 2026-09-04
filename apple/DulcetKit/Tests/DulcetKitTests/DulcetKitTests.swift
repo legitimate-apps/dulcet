@@ -295,6 +295,91 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 }
 
 #if os(macOS)
+@Test @MainActor
+func accountFieldsResolveToEqualIntrinsicHeights() {
+    let store = DulcetPresentationStore(
+        source: DulcetDeterministicDataSource(initialState: .tlsUntrusted)
+    )
+    let view = NSHostingView(rootView: DulcetAccountConnectionView(
+        store: store,
+        allowsProgrammaticFocus: false
+    ))
+    view.sizingOptions = []
+    view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
+    view.layoutSubtreeIfNeeded()
+    view.displayIfNeeded()
+
+    let fields = accountTextFields(in: view)
+    #expect(fields.count == 3)
+    let assignedHeights = fields.map(\.frame.height)
+    let intrinsicHeights = fields.map(\.intrinsicContentSize.height)
+    // Assert the measured product invariant directly: the capture-sized proposal must not compress
+    // any hosted field below its native ideal. Runtime intrinsic values keep the test valid if
+    // native controls or accessibility sizing change.
+    #expect(Set(assignedHeights).count == 1)
+    #expect(assignedHeights == intrinsicHeights)
+}
+
+@Test @MainActor
+func searchFieldResolvesToIntrinsicHeightAcrossFlexibleContentStates() throws {
+    for state in [DulcetPresentationState.searchIdle, .searchEmpty] {
+        let store = DulcetPresentationStore(
+            source: DulcetDeterministicDataSource(initialState: state)
+        )
+        let view = NSHostingView(rootView: DulcetSearchView(
+            snapshot: store.snapshot,
+            searchQuery: Binding(
+                get: { store.searchQuery },
+                set: { store.searchQuery = $0 }
+            ),
+            onLoadMore: { _ in },
+            onRetry: {},
+            onActivateResult: { _ in }
+        ))
+        view.sizingOptions = []
+        view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+
+        let fields = textFields(in: view, matching: [DulcetStrings.searchPrompt])
+        #expect(fields.count == 1, "\(state.rawValue) rendered \(fields.count) search fields")
+        let field = try #require(fields.first)
+        #expect(
+            field.frame.height == field.intrinsicContentSize.height,
+            "\(state.rawValue) assigned \(field.frame.height) instead of intrinsic \(field.intrinsicContentSize.height)"
+        )
+    }
+}
+
+@MainActor
+private func accountTextFields(in root: NSView) -> [NSTextField] {
+    textFields(
+        in: root,
+        matching: [
+            DulcetStrings.serverAddressPlaceholder,
+            DulcetStrings.username,
+            DulcetStrings.password,
+        ]
+    )
+}
+
+@MainActor
+private func textFields(in root: NSView, matching placeholders: Set<String>) -> [NSTextField] {
+    var fields: [NSTextField] = []
+    func visit(_ view: NSView) {
+        if let field = view as? NSTextField,
+           let placeholder = field.placeholderString,
+           placeholders.contains(placeholder) {
+            fields.append(field)
+        }
+        view.subviews.forEach(visit)
+    }
+    visit(root)
+    return fields.sorted { lhs, rhs in
+        lhs.convert(lhs.bounds, to: root).maxY > rhs.convert(rhs.bounds, to: root).maxY
+    }
+}
+
 // Deliberately `async`, and deliberately NOT `RunLoop.main.run(until:)`. SwiftUI needs a main
 // run-loop turn to publish the window title, but this test takes one per presentation state, and
 // pumping the run loop synchronously HOLDS the main actor for the whole sweep. Swift Testing runs
