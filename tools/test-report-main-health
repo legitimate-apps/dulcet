@@ -1,75 +1,281 @@
 #!/usr/bin/env python3
-"""Controls for report_main_health.py.
+"""Discriminating controls for report_main_health.py."""
 
-The tool's whole purpose is to break a silence, so the failure that matters is it exiting 0 while
-reporting nothing. These controls assert it refuses rather than degrades.
-"""
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
-import subprocess
 import sys
+import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-TOOL = Path(__file__).resolve().parent / "report_main_health.py"
+TOOLS = Path(__file__).resolve().parent
+sys.path.insert(0, str(TOOLS))
 
+import report_main_health as reporter  # noqa: E402
+
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+REPOSITORY = "owner/repo"
+REQUIRED = ("apple-ci", "core-ci", "parity-gate")
 FULL = {
     "GITHUB_TOKEN": "not-a-real-token",
-    "GITHUB_REPOSITORY": "owner/repo",
-    "FAILED_WORKFLOW": "apple-ci",
-    "FAILED_CONCLUSION": "failure",
-    "FAILED_RUN_URL": "https://example.invalid/run/1",
-    "FAILED_HEAD_SHA": "0123456789abcdef",
+    "GITHUB_REPOSITORY": REPOSITORY,
+    "RUN_WORKFLOW": "apple-ci",
+    "RUN_CONCLUSION": "success",
+    "RUN_URL": "https://example.invalid/actions/runs/101",
+    "RUN_HEAD_SHA": SHA,
+    "RUN_ID": "101",
 }
+ENV_KEYS = tuple(FULL)
 
 
-def run(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    child = dict(os.environ)
-    for key in FULL:
-        child.pop(key, None)
-    child.update(env)
-    return subprocess.run(
-        [sys.executable, str(TOOL)], capture_output=True, text=True, env=child, timeout=60
-    )
+def workflow_run(
+    name: str,
+    conclusion: str,
+    run_id: int,
+    sha: str = SHA,
+    event: str = "push",
+    branch: str = "main",
+) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "name": name,
+        "head_sha": sha,
+        "head_branch": branch,
+        "event": event,
+        "conclusion": conclusion,
+        "html_url": f"https://example.invalid/actions/runs/{run_id}",
+    }
 
 
-failures: list[str] = []
+class FakeGitHub:
+    def __init__(
+        self,
+        runs: list[dict[str, object]],
+        issue_number: int | None = 52,
+        current_sha: str = SHA,
+    ):
+        self.runs = runs
+        self.issue_number = issue_number
+        self.current_sha = current_sha
+        self.calls: list[tuple[str, str, dict | None]] = []
+
+    def __call__(
+        self, method: str, path: str, _token: str, body: dict | None = None
+    ) -> object:
+        self.calls.append((method, path, body))
+        if method == "GET" and path.startswith("/search/issues?"):
+            items = [] if self.issue_number is None else [{"number": self.issue_number}]
+            return {"items": items}
+        if method == "GET" and path.startswith(f"/repos/{REPOSITORY}/actions/runs?"):
+            return {"total_count": len(self.runs), "workflow_runs": self.runs}
+        if method == "GET" and path == f"/repos/{REPOSITORY}/branches/main":
+            return {"name": "main", "commit": {"sha": self.current_sha}}
+        if method == "POST" and path.endswith("/comments"):
+            return {"id": 901}
+        if method == "PATCH" and path == f"/repos/{REPOSITORY}/issues/{self.issue_number}":
+            return {"number": self.issue_number, "state": "closed"}
+        if method == "POST" and path == f"/repos/{REPOSITORY}/issues":
+            return {"number": 53}
+        raise AssertionError(f"unexpected API call: {method} {path} body={body!r}")
 
 
-def expect_refusal(label: str, env: dict[str, str], expected: str) -> None:
-    result = run(env)
-    combined = result.stdout + result.stderr
-    if result.returncode == 0:
-        failures.append(f"{label}: exited 0 -- it must refuse, not degrade. output={combined!r}")
-    elif expected not in combined:
-        failures.append(f"{label}: expected {expected!r}, got {combined!r}")
+def invoke(env: dict[str, str], api: FakeGitHub) -> str:
+    clean = {key: value for key, value in os.environ.items() if key not in ENV_KEYS}
+    clean.update(env)
+    output = io.StringIO()
+    with patch.dict(os.environ, clean, clear=True), patch.object(reporter, "call", api):
+        with contextlib.redirect_stdout(output):
+            reporter.main()
+    return output.getvalue()
 
 
-# Every required variable, one at a time. A reporter that runs with a missing field would report a
-# health state it cannot establish -- which is indistinguishable from silence.
-for missing in sorted(FULL):
-    partial = {k: v for k, v in FULL.items() if k != missing}
-    expect_refusal(f"missing {missing}", partial, "missing required environment")
+class MainHealthControls(unittest.TestCase):
+    def test_partial_green_same_sha_stays_open(self) -> None:
+        """One green event must not become a false all-clear while another check is red."""
+        api = FakeGitHub(
+            [
+                workflow_run("apple-ci", "success", 101),
+                workflow_run("core-ci", "failure", 102),
+                workflow_run("parity-gate", "success", 103),
+            ]
+        )
 
-expect_refusal("no environment at all", {}, "missing required environment")
+        invoke(FULL, api)
 
-# With a complete but invalid token the tool must still fail loudly rather than pretend success.
-result = run(FULL)
-if result.returncode == 0:
-    failures.append(
-        "invalid token: exited 0. A reporter that cannot reach the API must not look like one "
-        "that found nothing to report."
-    )
+        run_queries = [
+            path
+            for method, path, _body in api.calls
+            if method == "GET" and "/actions/runs?" in path
+        ]
+        self.assertEqual(len(run_queries), 1, "success must resolve every workflow on its SHA")
+        self.assertIn(f"head_sha={SHA}", run_queries[0])
+        mutations = [call for call in api.calls if call[0] in {"POST", "PATCH"}]
+        self.assertEqual(mutations, [], "a partial green state must leave the issue untouched")
 
-# The marker must be stable: idempotency depends on finding it again next time.
-source = TOOL.read_text()
-if source.count('MARKER = "<!-- dulcet-main-health -->"') != 1:
-    failures.append("the issue marker must be defined exactly once and be a literal")
-if "auto-close" in source or "state\": \"closed\"" in source:
-    failures.append("the tool must not close issues; a self-closing report restores the silence")
+    def test_all_required_green_same_sha_closes_with_audit_comment(self) -> None:
+        api = FakeGitHub(
+            [workflow_run(name, "success", 101 + index) for index, name in enumerate(REQUIRED)]
+        )
 
-if failures:
-    for line in failures:
-        print(f"FAIL: {line}")
-    raise SystemExit(1)
-print(f"report-main-health controls pass ({len(FULL) + 3} checks)")
+        invoke(FULL, api)
+
+        comments = [call for call in api.calls if call[0] == "POST" and call[1].endswith("/comments")]
+        closes = [
+            call
+            for call in api.calls
+            if call[0] == "PATCH" and call[2] == {"state": "closed"}
+        ]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(len(closes), 1)
+        comment = comments[0][2]["body"]
+        self.assertIn(SHA, comment)
+        for run_id in (101, 102, 103):
+            self.assertIn(str(run_id), comment)
+        self.assertLess(api.calls.index(comments[0]), api.calls.index(closes[0]))
+
+    def test_cancelled_event_changes_nothing(self) -> None:
+        api = FakeGitHub([])
+        cancelled = dict(FULL, RUN_CONCLUSION="cancelled")
+
+        invoke(cancelled, api)
+
+        self.assertEqual(api.calls, [])
+
+    def test_cancelled_run_does_not_override_prior_failure(self) -> None:
+        api = FakeGitHub(
+            [
+                workflow_run("apple-ci", "success", 101),
+                workflow_run("core-ci", "failure", 102),
+                workflow_run("core-ci", "cancelled", 202),
+                workflow_run("parity-gate", "success", 103),
+            ]
+        )
+
+        invoke(FULL, api)
+
+        self.assertFalse(any(method == "PATCH" for method, _path, _body in api.calls))
+
+    def test_other_sha_cannot_supply_a_green_check(self) -> None:
+        other_sha = "fedcba9876543210fedcba9876543210fedcba98"
+        api = FakeGitHub(
+            [
+                workflow_run("apple-ci", "success", 101),
+                workflow_run("core-ci", "failure", 102),
+                workflow_run("core-ci", "success", 202, other_sha),
+                workflow_run("parity-gate", "success", 103),
+            ]
+        )
+
+        invoke(FULL, api)
+
+        self.assertFalse(any(method == "PATCH" for method, _path, _body in api.calls))
+
+    def test_pull_request_run_cannot_supply_a_green_check(self) -> None:
+        api = FakeGitHub(
+            [
+                workflow_run("apple-ci", "success", 101),
+                workflow_run("core-ci", "failure", 102),
+                workflow_run("core-ci", "success", 202, event="pull_request"),
+                workflow_run("parity-gate", "success", 103),
+            ]
+        )
+
+        invoke(FULL, api)
+
+        self.assertFalse(any(method == "PATCH" for method, _path, _body in api.calls))
+
+    def test_failure_appends_to_existing_alarm(self) -> None:
+        api = FakeGitHub([])
+        failed = dict(FULL, RUN_CONCLUSION="failure")
+
+        invoke(failed, api)
+
+        comments = [call for call in api.calls if call[0] == "POST" and call[1].endswith("/comments")]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("Still red", comments[0][2]["body"])
+        self.assertFalse(any("/actions/runs?" in path for _method, path, _body in api.calls))
+        self.assertFalse(any(method == "PATCH" for method, _path, _body in api.calls))
+
+    def test_timeout_opens_alarm_when_none_exists(self) -> None:
+        api = FakeGitHub([], issue_number=None)
+        timed_out = dict(FULL, RUN_CONCLUSION="timed_out")
+
+        invoke(timed_out, api)
+
+        creates = [
+            call
+            for call in api.calls
+            if call[0] == "POST" and call[1] == f"/repos/{REPOSITORY}/issues"
+        ]
+        self.assertEqual(len(creates), 1)
+        self.assertIn("timed_out", creates[0][2]["body"])
+        self.assertIn(SHA[:8], creates[0][2]["body"])
+
+    def test_success_without_open_alarm_does_not_query_runs(self) -> None:
+        api = FakeGitHub([], issue_number=None)
+
+        invoke(FULL, api)
+
+        self.assertEqual(len(api.calls), 1)
+        self.assertEqual(api.calls[0][0], "GET")
+        self.assertIn("/search/issues?", api.calls[0][1])
+
+    def test_green_superseded_sha_cannot_close_current_main_alarm(self) -> None:
+        current_sha = "fedcba9876543210fedcba9876543210fedcba98"
+        api = FakeGitHub(
+            [workflow_run(name, "success", 101 + index) for index, name in enumerate(REQUIRED)],
+            current_sha=current_sha,
+        )
+
+        invoke(FULL, api)
+
+        self.assertFalse(any(method == "PATCH" for method, _path, _body in api.calls))
+
+    def test_missing_required_environment_is_refused(self) -> None:
+        required_environment = (
+            "GITHUB_TOKEN",
+            "GITHUB_REPOSITORY",
+            "RUN_WORKFLOW",
+            "RUN_CONCLUSION",
+            "RUN_URL",
+            "RUN_HEAD_SHA",
+            "RUN_ID",
+        )
+        current = {key: FULL[key] for key in required_environment}
+        for missing in required_environment:
+            with self.subTest(missing=missing):
+                api = FakeGitHub([])
+                with self.assertRaisesRegex(SystemExit, "missing required environment"):
+                    invoke({key: value for key, value in current.items() if key != missing}, api)
+                self.assertEqual(api.calls, [])
+
+    def test_api_failure_is_loud(self) -> None:
+        def unavailable(*_args: object, **_kwargs: object) -> object:
+            raise SystemExit("GET /search/issues failed: 503 Service Unavailable")
+
+        clean = {key: value for key, value in os.environ.items() if key not in ENV_KEYS}
+        clean.update(FULL)
+        with patch.dict(os.environ, clean, clear=True), patch.object(reporter, "call", unavailable):
+            with self.assertRaisesRegex(SystemExit, "503 Service Unavailable"):
+                reporter.main()
+
+    def test_marker_and_required_workflows_are_stable(self) -> None:
+        source = (TOOLS / "report_main_health.py").read_text()
+        manifest = json.loads((TOOLS.parent / ".github/required-checks.json").read_text())
+        self.assertEqual(source.count('MARKER = "<!-- dulcet-main-health -->"'), 1)
+        self.assertEqual(set(reporter.REQUIRED_WORKFLOWS), set(REQUIRED))
+        self.assertEqual(set(reporter.REQUIRED_WORKFLOWS), set(manifest["contexts"]))
+
+    def test_workflow_filters_main_early_and_excludes_cancelled(self) -> None:
+        workflow = (TOOLS.parent / ".github/workflows/main-health.yml").read_text()
+        self.assertIn("branches: [main]", workflow)
+        self.assertIn("workflow_run.conclusion != 'cancelled'", workflow)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
