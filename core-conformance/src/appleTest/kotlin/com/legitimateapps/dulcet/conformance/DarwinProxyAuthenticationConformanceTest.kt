@@ -11,7 +11,16 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import platform.Foundation.NSURLAuthenticationMethodHTTPBasic
 import platform.Foundation.NSURLCredential
 import platform.Foundation.NSURLCredentialPersistence
@@ -109,10 +118,50 @@ class DarwinProxyAuthenticationConformanceTest {
         } catch (failure: Throwable) {
             throw AssertionError(
                 "Proxy authentication timeline (${started.elapsedNow()} total): " +
-                    timeline.joinToString("; "),
+                    timeline.joinToString("; ") + "; proxy wire observation: " + failureObservation(),
                 failure,
             )
         }
+    }
+
+    // A fresh scope uses a real dispatcher, independent of runTest's cancelled scope and virtual
+    // clock. Bound the entire request (including the body); never echo response/exception text,
+    // which could contain credentials. Failure to diagnose must preserve the original cause.
+    private fun failureObservation(): String = try {
+        runBlocking(Dispatchers.Default) {
+            withTimeout(3_000) {
+                val client = HttpClient(Darwin) { expectSuccess = false }
+                try {
+                    val response = client.get("http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth")
+                    val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+                    when {
+                        response.status.value == 409 && body["error"]?.jsonPrimitive?.content ==
+                            "proxy authentication challenge was not reached" ->
+                            "challenge_count=0; client never reached proxy; Proxy-Authorization absent"
+                        response.status.value == 409 && body["error"]?.jsonPrimitive?.content ==
+                            "proxy authorization reached the wire" ->
+                            "Proxy-Authorization reached the wire; challenge_count unavailable"
+                        response.status.value == 200 -> {
+                            val count = body["challenge_count"]?.jsonPrimitive?.longOrNull
+                            val values = body["proxy_authorization_values"]?.jsonArray
+                            if (count == null || count < 1 || values == null || values.isNotEmpty()) {
+                                "observation fetch returned an unexpected response"
+                            } else {
+                                val outcome = if (count == 1L) "one challenge observed" else "repeated challenges observed"
+                                "challenge_count=$count; $outcome; Proxy-Authorization absent"
+                            }
+                        }
+                        else -> "observation fetch returned an unexpected response"
+                    }
+                } finally {
+                    client.close()
+                }
+            }
+        }
+    } catch (_: TimeoutCancellationException) {
+        "observation fetch timed out after 3s; proxy outcome unavailable"
+    } catch (_: Throwable) {
+        "observation fetch failed; proxy outcome unavailable"
     }
 
     private companion object {
