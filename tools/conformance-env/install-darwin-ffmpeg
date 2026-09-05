@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -248,6 +249,125 @@ def observe_keg(root: Path) -> dict[str, int | str] | None:
         "receipt_sha256": file_sha256(receipt_path),
         "receipt_time": receipt_time,
     }
+
+
+def path_file_type(path: Path) -> str:
+    """Name one path's own filesystem type.
+
+    The type comes from `lstat`, so a symlink is named as a symlink rather than as whatever it
+    points at. The link target is read only to say whether that symlink is broken.
+    """
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return "absent"
+    except OSError as error:
+        raise SystemExit(f"unreadable Homebrew Cellar path {path}: {error}") from error
+    if stat.S_ISLNK(mode):
+        return "symlink" if path.exists() else "broken-symlink"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISREG(mode):
+        return "file"
+    return f"other-{stat.S_IFMT(mode):#o}"
+
+
+def observe_cellar_rack(rack: Path) -> dict:
+    """Name every entry in one formula's `<cellar>/<formula>` rack, with each entry's file type.
+
+    OBSERVED (apple-ci, hosted runner): a pour of the pinned openssl@3 3.6.4 bottle was rejected
+    naming `Cellar/openssl@3/3.6.3` - an entry at a version the closure does not pin. So a pour
+    reads more of the rack than the pinned keg path, and an entry elsewhere in the rack can decide
+    its outcome. `brew list --versions` reports only what Homebrew still parses as an installed
+    keg, and `observe_keg` reads one pinned path, so neither can see such an entry. This covers
+    the whole rack and runs no Homebrew command.
+    """
+    rack_type = path_file_type(rack)
+    entries: dict[str, str] = {}
+    if rack_type == "directory":
+        try:
+            children = sorted(rack.iterdir(), key=lambda child: child.name)
+        except OSError as error:
+            raise SystemExit(f"unlistable Homebrew Cellar rack {rack}: {error}") from error
+        entries = {child.name: path_file_type(child) for child in children}
+    return {"rack_type": rack_type, "entries": entries}
+
+
+def rack_takes_no_part_in_a_pour(observation: dict) -> bool:
+    """Accept a rack as out of a pour's way only when it is absent or an empty directory.
+
+    This is deliberately stricter than Homebrew, which pours happily alongside a valid keg at
+    another version. This installer owns and re-pours the whole closure, so it requires the empty
+    case rather than deciding which leftovers are benign - a judgement the runner failure shows is
+    easy to get wrong.
+    """
+    if observation["rack_type"] == "absent":
+        return True
+    return observation["rack_type"] == "directory" and not observation["entries"]
+
+
+def rack_entry_label(name: str) -> str:
+    """Render one entry name as a token an attestation field can carry without ambiguity."""
+    if re.fullmatch(r"[A-Za-z0-9._+@~-]+", name):
+        return name
+    return urllib.parse.quote(name, safe="")
+
+
+def describe_rack_entries(entries: dict[str, str]) -> str:
+    """Render rack entries as one whitespace-free field, every entry named with its own type."""
+    if not entries:
+        return "none"
+    return ",".join(f"{rack_entry_label(name)}:{kind}" for name, kind in entries.items())
+
+
+def describe_rack(observation: dict) -> str:
+    """Render a whole rack observation as one whitespace-free attestation field."""
+    if observation["rack_type"] == "absent":
+        return "absent"
+    if observation["rack_type"] != "directory":
+        return f"rack:{observation['rack_type']}"
+    if not observation["entries"]:
+        return "empty"
+    return describe_rack_entries(observation["entries"])
+
+
+def remove_cellar_path(path: Path, kind: str) -> None:
+    """Delete one Cellar entry of an already-observed type, or stop the run naming both."""
+    try:
+        if kind == "directory":
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError as error:
+        raise SystemExit(
+            f"Homebrew Cellar residue could not be removed: path={path} type={kind} "
+            f"error={error}"
+        ) from error
+
+
+def remove_cellar_rack_residue(cellar: Path, formula: str) -> dict[str, str]:
+    """Remove what `brew uninstall` left in one rack and name every entry that was removed.
+
+    The formula name is required to be a single Homebrew-shaped path segment and a symlink is
+    unlinked rather than followed, so only that formula's own rack and the tree beneath it can be
+    removed here. A rack that is not a directory is removed whole and reported under the formula's
+    own name. Absence is not inferred from these removals having been attempted: the caller
+    re-observes every rack afterwards and stops the run on anything still there.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+@-]*", formula):
+        raise SystemExit(f"refusing to clear a rack for an unexpected formula name: {formula!r}")
+    rack = cellar / formula
+    observation = observe_cellar_rack(rack)
+    if observation["rack_type"] == "absent":
+        return {}
+    if observation["rack_type"] != "directory":
+        remove_cellar_path(rack, observation["rack_type"])
+        return {rack.name: observation["rack_type"]}
+    removed: dict[str, str] = {}
+    for name, kind in observation["entries"].items():
+        remove_cellar_path(rack / name, kind)
+        removed[name] = kind
+    return removed
 
 
 def assert_fresh_pour(
@@ -937,12 +1057,63 @@ def main(pins_path: Path | None = None) -> None:
         for expected in closure
     }
     preinstall_kegs = {name: observe_keg(path) for name, path in keg_paths.items()}
+    preinstall_racks = {name: observe_cellar_rack(cellar / name) for name in names}
 
-    # Remove every installed member first, in reverse dependency order. The
-    # explicit absence checkpoint makes a retained pre-existing keg fail closed.
+    # Remove every installed member first, in reverse dependency order. This removes what Homebrew
+    # itself still reports as installed, and only that; the rack checkpoint below covers the rest.
     for name in reversed(names):
         if installed_formula_versions(name):
             run(["brew", "uninstall", "--force", "--ignore-dependencies", name])
+
+    # A pour reads more of `<cellar>/<formula>` than the pinned keg path: a hosted runner rejected
+    # the pinned openssl@3 3.6.4 pour naming `Cellar/openssl@3/3.6.3 is not a directory`, an entry
+    # at a version the closure does not pin. Homebrew does not remove an entry it can no longer
+    # parse as an installed keg, and a pinned-path observation cannot see one at another version,
+    # so an entry of that shape survives both and reaches the pour. Observe every rack, name and
+    # remove whatever the uninstall left, then observe every rack again. Absence is asserted from
+    # that second observation, never inferred from the removals having been attempted, and a rack
+    # that is still occupied stops the run. This removal stays inside racks the uninstall above is
+    # already asking Homebrew to empty: `--force` asks it to delete every installed version of the
+    # formula. The runner-side cause of the leftover entry is not established.
+    racks_after_uninstall = {name: observe_cellar_rack(cellar / name) for name in names}
+    removed_rack_residue: dict[str, dict[str, str]] = {}
+    for name in names:
+        if rack_takes_no_part_in_a_pour(racks_after_uninstall[name]):
+            continue
+        removed_rack_residue[name] = remove_cellar_rack_residue(cellar, name)
+    racks_before_pour = {name: observe_cellar_rack(cellar / name) for name in names}
+    racks_observed_clear = [
+        name for name in names if rack_takes_no_part_in_a_pour(racks_before_pour[name])
+    ]
+    occupied_racks = [name for name in names if name not in racks_observed_clear]
+    if occupied_racks:
+        raise SystemExit(
+            "fresh-pour rack absence checkpoint could not clear "
+            + " ".join(
+                f"{name}={describe_rack(racks_before_pour[name])}" for name in occupied_racks
+            )
+        )
+    for name, removed in removed_rack_residue.items():
+        print(
+            f"DARWIN CELLAR RACK CLEARED formula={name} "
+            f"preinstall={describe_rack(preinstall_racks[name])} "
+            f"after_uninstall={describe_rack(racks_after_uninstall[name])} "
+            f"removed={describe_rack_entries(removed)} "
+            f"before_pour={describe_rack(racks_before_pour[name])}"
+        )
+    print(
+        f"DARWIN CELLAR RACKS OBSERVED formulas={len(names)} "
+        f"racks_clear_after_uninstall={len(names) - len(removed_rack_residue)} "
+        f"racks_cleared_by_installer={len(removed_rack_residue)} "
+        f"entries_removed={sum(len(removed) for removed in removed_rack_residue.values())} "
+        f"racks_observed_clear_before_pour={len(racks_observed_clear)}"
+    )
+
+    # The pinned keg path is then observed on its own. The rack checkpoint above should already
+    # have made a retained keg unreachable here, so this fires only if a rack was observed clear
+    # and the pinned keg is present anyway. It stays because it is the observation
+    # `assert_fresh_pour` consumes per formula, and because it reads the pour receipt as well as
+    # the path.
     absent_before_pour = {name: observe_keg(path) for name, path in keg_paths.items()}
     retained = [name for name, observation in absent_before_pour.items() if observation is not None]
     if retained:

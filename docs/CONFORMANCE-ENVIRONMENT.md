@@ -55,10 +55,20 @@ pour, the installer replaces only that dependency list with the graph already pr
 immutable bottles and then verifies the complete receipt.
 
 The installer records every locked keg's pre-install filesystem and receipt observation, removes the
-complete closure in reverse dependency order, and requires an observed absence checkpoint for every
-locked keg. It records the post-install observation, verifies every active keg and bottle receipt, and
-checks the `libmp3lame` and `libopus` encoders used by the corpus. It also computes a hash of every
-installed keg payload and re-hashes the payloads before reporting one aggregate. Installed payload
+complete closure in reverse dependency order, and then requires an observed absence checkpoint. That
+checkpoint covers the whole `<cellar>/<formula>` rack, not only the pinned keg path, because a pour
+reads the whole rack: an entry at any other version takes part in it, `brew uninstall` does not
+remove one Homebrew can no longer parse as an installed keg, and a hosted runner rejected the
+openssl@3 pour with `Cellar/openssl@3/3.6.3 is not a directory` while 3.6.4 was the pinned version.
+Every rack is observed after the uninstall, anything still there is named with its file type and
+removed, and every rack is then observed again; absence comes from that second observation, and a
+rack that is still occupied, or an entry that cannot be removed, stops the run naming the path and
+its type. The runner-side cause of that leftover entry is not established here, so this closes the
+gap on the installer's side rather than claiming the runner condition is understood.
+
+The installer then records the post-install observation, verifies every active keg and bottle
+receipt, and checks the `libmp3lame` and `libopus` encoders used by the corpus. It also computes a
+hash of every installed keg payload and re-hashes the payloads before reporting one aggregate. Installed payload
 hashes are deliberately not treated as cross-run pins: Homebrew's post-pour relocation and signing
 made all 15 payload hashes differ across two fresh standard hosted runners while their
 checksum-verified source archives remained identical.
@@ -70,9 +80,13 @@ observation, and unchanged across two payload hashes in this run. A copied keg c
 receipt and payload while changing its inode, so placing one after the absence checkpoint can satisfy
 those observations without tying its bytes to the checksum-verified bottle. Homebrew's relocation
 means the installed bytes also cannot be compared soundly with the archive or pinned across runners.
-The fresh-pour negative control proves only that an untouched retained keg is rejected. The separate
-bottle-integrity control drives the installer main path, changes a blob after its archive-metadata
-check, and observes a final failed hash with zero install attempts; its authentic case observes the
+The fresh-pour negative control proves only that an untouched retained keg at the pinned path is
+rejected; the separate Cellar-rack control builds residue at versions the closure does not pin,
+asserts that the pinned-path observation is blind to it, and drives the installer main path with
+Homebrew's own rack precondition standing in for the pour, so it fails the way the runner failed
+whenever the rack is not cleared first. The separate bottle-integrity control drives the installer
+main path, changes a blob after its archive-metadata check, and observes a final failed hash with
+zero install attempts; its authentic case observes the
 ordered final-hash-success then `brew install` events. This narrower post-pour result is
 sufficient for a standard ephemeral hosted runner, whose job state is discarded rather than carried
 forward as an adversarial keg cache; no stronger provenance claim is made. The checks run before

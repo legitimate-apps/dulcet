@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+
+"""Prove Cellar residue at a NON-pinned version cannot reach the Darwin pour.
+
+The pinned-keg observation this installer already had can only see `<cellar>/<formula>/<pinned
+version>`. A hosted runner failed the openssl@3 pour with "Cellar/openssl@3/3.6.3 is not a
+directory" while 3.6.4 was pinned, so the entry that broke the pour sat at a version no existing
+observation looked at. Every residual entry this control builds is therefore at a version the
+closure does not pin, and the control asserts that fact before drawing any conclusion from it: a
+residue built at the pinned path would be caught by the older checkpoint and would prove nothing
+about the new one.
+
+`brew install` is stubbed with Homebrew's own precondition - a rack entry it cannot read as a
+directory rejects the pour - so the authentic scenario fails exactly the way the runner failed if
+the rack is not cleared first.
+"""
+
+import contextlib
+import hashlib
+from importlib.machinery import SourceFileLoader
+import io
+import json
+from pathlib import Path
+import sys
+import tempfile
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg_cellar_rack_gate",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+FORMULA = "negative-control"
+PINNED_VERSION = "1.0"
+
+
+class InstallObserved(Exception):
+    """Stop the stubbed installer once main reaches an accepted pour."""
+
+
+class PourRejected(Exception):
+    """Homebrew's own rack precondition, raised the way Homebrew raises it."""
+
+
+def pinned_entry(payload: bytes) -> dict:
+    digest = hashlib.sha256(payload).hexdigest()
+    return {
+        "formula": FORMULA,
+        "version": PINNED_VERSION,
+        "revision": 0,
+        "version_scheme": 0,
+        "dependencies": [],
+        "bottle_tag": "arm64_tahoe",
+        "bottle_rebuild": 0,
+        "url": f"https://ghcr.io/v2/homebrew/core/{FORMULA}/blobs/sha256:{digest}",
+        "sha256": digest,
+    }
+
+
+def build_residue(rack: Path, shapes: dict[str, str]) -> None:
+    """Create rack entries at versions the closure does not pin, one per requested shape."""
+    rack.mkdir(parents=True)
+    for version, shape in shapes.items():
+        if version == PINNED_VERSION:
+            raise SystemExit(
+                "this control must build residue away from the pinned keg path: "
+                f"version={version} pinned={PINNED_VERSION}"
+            )
+        path = rack / version
+        if shape == "file":
+            path.write_text("residue Homebrew cannot read as a keg\n")
+        elif shape == "directory":
+            path.mkdir()
+            (path / "bin").mkdir()
+            (path / "bin" / "leftover").write_text("payload from an earlier install\n")
+        elif shape == "broken-symlink":
+            path.symlink_to(rack / "never-created")
+        else:
+            raise SystemExit(f"unsupported residue shape: {shape}")
+
+
+def homebrew_pour_precondition(rack: Path) -> None:
+    """Reject a pour the way Homebrew rejects one, by reading the whole rack.
+
+    Homebrew builds a keg for every rack entry and refuses anything it cannot open as a directory,
+    which is why a leftover file or broken link at any version fails the pour rather than being
+    ignored. `is_dir()` follows a symlink here for the same reason Homebrew's own check does.
+    """
+    if rack.exists() and not rack.is_dir():
+        raise PourRejected(f"{rack} is not a directory")
+    if not rack.is_dir():
+        return
+    for child in sorted(rack.iterdir(), key=lambda entry: entry.name):
+        if not child.is_dir():
+            raise PourRejected(f"{child} is not a directory")
+
+
+def drive_main(
+    root: Path,
+    *,
+    residue: dict[str, str],
+    removal_failure: OSError | None = None,
+) -> dict:
+    payload = b"known pinned cellar-rack-control bottle"
+    entry = pinned_entry(payload)
+    bottle = root / installer.bottle_cache_filename(entry)
+    bottle.write_bytes(payload)
+    cellar = root / "cellar"
+    rack = cellar / FORMULA
+    pins_path = root / "pins.json"
+    pins_path.write_text(
+        json.dumps(
+            {
+                "ffmpeg": {
+                    "darwin": {
+                        "formula": entry["formula"],
+                        "version": entry["version"],
+                        "path": "/stub/ffmpeg",
+                        "required_encoders": [],
+                        "closure": [entry],
+                    }
+                }
+            }
+        )
+    )
+    build_residue(rack, residue)
+
+    # The observation that already existed must be blind to this residue, otherwise the control is
+    # measuring the old checkpoint rather than the new one.
+    pinned_keg_observation = installer.observe_keg(rack / PINNED_VERSION)
+    if pinned_keg_observation is not None:
+        raise SystemExit(
+            "the pinned-path observation can see this residue, so the control is built wrong: "
+            f"observation={pinned_keg_observation}"
+        )
+
+    events: list[str] = []
+    originals = {
+        "run": installer.run,
+        "fetch_pinned_bottle": installer.fetch_pinned_bottle,
+        "assert_bottle_archive_shape": installer.assert_bottle_archive_shape,
+        "advise_live_shape": installer.advise_live_shape,
+        "installed_formula_versions": installer.installed_formula_versions,
+        "rmtree": installer.shutil.rmtree,
+        "platform_system": installer.platform.system,
+        "platform_machine": installer.platform.machine,
+    }
+
+    def stub_run(arguments: list[str], **_kwargs) -> str:
+        if arguments == ["brew", "--cache"]:
+            return str(root / "cache")
+        if arguments == ["brew", "--cellar"]:
+            return str(cellar)
+        if arguments == ["brew", "--prefix"]:
+            return str(root / "prefix")
+        if arguments[:2] == ["brew", "uninstall"]:
+            events.append("brew-uninstall")
+            return ""
+        if arguments[:2] == ["brew", "install"]:
+            events.append("brew-install")
+            homebrew_pour_precondition(rack)
+            events.append("pour-accepted")
+            raise InstallObserved
+        raise AssertionError(f"unexpected command before install observation: {arguments}")
+
+    def stub_installed_versions(_name: str) -> list[str]:
+        # Homebrew cannot report residue it can no longer parse as an installed keg, which is why
+        # its own uninstall never runs against it. That blindness is the condition under test.
+        events.append("installed-versions")
+        return []
+
+    def failing_rmtree(path, *_args, **_kwargs):
+        events.append("rmtree-denied")
+        raise removal_failure
+
+    installer.run = stub_run
+    installer.fetch_pinned_bottle = lambda _entry, _cache: (bottle, entry["sha256"], True)
+    installer.assert_bottle_archive_shape = lambda _path, _entry: 0
+    installer.advise_live_shape = lambda _closure: ("unavailable", [])
+    installer.installed_formula_versions = stub_installed_versions
+    installer.platform.system = lambda: "Darwin"
+    installer.platform.machine = lambda: "arm64"
+    if removal_failure is not None:
+        installer.shutil.rmtree = failing_rmtree
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    outcome = ""
+    try:
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                installer.main(pins_path)
+        except InstallObserved:
+            outcome = "pour-reached"
+        except PourRejected as error:
+            outcome = f"homebrew rejected the pour: {error}"
+        except SystemExit as error:
+            outcome = str(error)
+        else:
+            outcome = "main returned without reaching a pour"
+    finally:
+        installer.run = originals["run"]
+        installer.fetch_pinned_bottle = originals["fetch_pinned_bottle"]
+        installer.assert_bottle_archive_shape = originals["assert_bottle_archive_shape"]
+        installer.advise_live_shape = originals["advise_live_shape"]
+        installer.installed_formula_versions = originals["installed_formula_versions"]
+        installer.shutil.rmtree = originals["rmtree"]
+        installer.platform.system = originals["platform_system"]
+        installer.platform.machine = originals["platform_machine"]
+
+    return {
+        "outcome": outcome,
+        "events": events,
+        "stdout": stdout.getvalue(),
+        "rack_after": installer.observe_cellar_rack(rack),
+        "pinned_keg_observation": pinned_keg_observation,
+    }
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SystemExit(message)
+
+
+def cleared_scenario(root: Path) -> dict:
+    residue = {"0.7": "broken-symlink", "0.8": "directory", "0.9": "file"}
+    result = drive_main(root, residue=residue)
+    require(
+        result["outcome"] == "pour-reached",
+        "residue at a non-pinned version was not cleared before the pour: "
+        f"outcome={result['outcome']!r} events={result['events']}",
+    )
+    require(
+        result["events"].count("brew-uninstall") == 0,
+        "Homebrew's own uninstall ran, so this control did not exercise the residue it names: "
+        f"events={result['events']}",
+    )
+    require(
+        result["events"].count("installed-versions") == 1,
+        f"the installed-version query did not run exactly once: events={result['events']}",
+    )
+    require(
+        installer.rack_takes_no_part_in_a_pour(result["rack_after"]),
+        f"the rack still holds entries after the run: {result['rack_after']}",
+    )
+    cleared_lines = [
+        line
+        for line in result["stdout"].splitlines()
+        if line.startswith("DARWIN CELLAR RACK CLEARED ")
+    ]
+    require(
+        len(cleared_lines) == 1,
+        f"the run did not attest exactly one cleared rack: {cleared_lines}",
+    )
+    for version, shape in residue.items():
+        require(
+            f"{version}:{shape}" in cleared_lines[0],
+            f"the attestation does not name residue {version} as {shape}: {cleared_lines[0]!r}",
+        )
+    expected_removed = "removed=" + ",".join(
+        f"{version}:{shape}" for version, shape in sorted(residue.items())
+    )
+    require(
+        expected_removed in cleared_lines[0],
+        f"the attestation does not name what was removed as {expected_removed!r}: "
+        f"{cleared_lines[0]!r}",
+    )
+    summary = [
+        line
+        for line in result["stdout"].splitlines()
+        if line.startswith("DARWIN CELLAR RACKS OBSERVED ")
+    ]
+    require(len(summary) == 1, f"the run did not attest one rack summary: {summary}")
+    require(
+        "racks_cleared_by_installer=1" in summary[0]
+        and f"entries_removed={len(residue)}" in summary[0]
+        and "racks_observed_clear_before_pour=1" in summary[0],
+        f"the rack summary does not report the observed clearing: {summary[0]!r}",
+    )
+    return {"result": result, "cleared_line": cleared_lines[0], "summary_line": summary[0]}
+
+
+def unclearable_scenario(root: Path) -> dict:
+    denial = PermissionError(13, "Permission denied")
+    result = drive_main(root, residue={"0.8": "directory"}, removal_failure=denial)
+    expected_prefix = "Homebrew Cellar residue could not be removed: "
+    require(
+        result["outcome"].startswith(expected_prefix),
+        "unclearable residue did not stop the run by name: "
+        f"outcome={result['outcome']!r} events={result['events']}",
+    )
+    require(
+        "type=directory" in result["outcome"] and "/0.8" in result["outcome"],
+        f"the failure does not name the residual path and its type: {result['outcome']!r}",
+    )
+    require(
+        result["events"].count("rmtree-denied") == 1,
+        f"the removal denial did not fire exactly once: {result['events']}",
+    )
+    require(
+        result["events"].count("brew-install") == 0,
+        f"a pour was attempted over residue that could not be removed: {result['events']}",
+    )
+    require(
+        not installer.rack_takes_no_part_in_a_pour(result["rack_after"]),
+        "the control expected the residue to survive its denied removal: "
+        f"{result['rack_after']}",
+    )
+    return {"result": result}
+
+
+def out_of_cellar_scenario(root: Path) -> str:
+    """A clearing request that would leave the Cellar must be refused before anything is deleted."""
+    escape = root / "outside"
+    escape.mkdir()
+    (escape / "keep-me").write_text("this file must survive\n")
+    cellar = root / "cellar" / "nested"
+    cellar.mkdir(parents=True)
+    try:
+        installer.remove_cellar_rack_residue(cellar, "../../outside")
+    except SystemExit as error:
+        detail = str(error)
+    else:
+        raise SystemExit("a rack path outside the Cellar was accepted for clearing")
+    require(
+        detail.startswith("refusing to clear a rack for an unexpected formula name"),
+        f"the escaping formula name was refused for the wrong reason: {detail!r}",
+    )
+    require(
+        (escape / "keep-me").is_file(),
+        "the refused request removed a path outside the Cellar",
+    )
+    return detail
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory() as cleared_root:
+        cleared = cleared_scenario(Path(cleared_root))
+    with tempfile.TemporaryDirectory() as unclearable_root:
+        unclearable = unclearable_scenario(Path(unclearable_root))
+    with tempfile.TemporaryDirectory() as escape_root:
+        escape_detail = out_of_cellar_scenario(Path(escape_root))
+    print(
+        "NEGATIVE CONTROL PASS darwin_cellar_rack "
+        f"pinned_version={PINNED_VERSION} "
+        "residual_versions=0.7,0.8,0.9 "
+        f"pinned_path_observation={cleared['result']['pinned_keg_observation']} "
+        f"cleared_outcome={cleared['result']['outcome']} "
+        f"cleared_events={','.join(cleared['result']['events'])} "
+        f"unclearable_events={','.join(unclearable['result']['events'])} "
+        f"unclearable_detail={unclearable['result']['outcome']!r} "
+        f"out_of_cellar_detail={escape_detail!r}"
+    )
+    print(f"  attested: {cleared['cleared_line']}")
+    print(f"  attested: {cleared['summary_line']}")
+
+
+if __name__ == "__main__":
+    main()
