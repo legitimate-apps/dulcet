@@ -37,12 +37,17 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         store.submitAccountConnection()
         try await waitUntil(
             timeout: .seconds(20),
-            failureMessage: "the disposable account did not connect before the search UI test deadline"
+            failureMessage: "Disposable account connected=\(store.snapshot.accountConnected) state=\(store.snapshot.state)"
         ) {
             store.snapshot.accountConnected
         }
 
-        NSApp.accessibilitySetValue(true, forAttribute: NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface"))
+        // SwiftUI materializes its accessibility nodes only when accessibility is requested.
+        // Restore the application-wide flag so this control does not affect sibling tests.
+        let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
+        NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
+        defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
         let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         let window = NSWindow(
@@ -65,7 +70,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         _ = try selectAccessibilityTableRow(searchDestination, in: window)
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "clicking the Search sidebar row did not navigate to Search"
+            failureMessage: "AX selection dulcet.sidebar.search: destination=\(store.selectedDestination), expected search"
         ) {
             store.selectedDestination == .search
         }
@@ -76,24 +81,33 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             in: hostingView,
             timeout: .seconds(5)
         )
-        try clickAccessibilityElement(searchFieldElement, in: window)
+        // Focus the actual AppKit field resolved from the app's accessibility identifier.
+        // Never set its value or call the presentation store's search API.
+        let searchField = try XCTUnwrap(
+            (searchFieldElement as? NSTextField) ?? (searchFieldElement as? NSCell)?.controlView as? NSTextField,
+            "dulcet.search.field must resolve to NSTextField; observed \(type(of: searchFieldElement))"
+        )
+        XCTAssertTrue(window.makeFirstResponder(searchField),
+            "dulcet.search.field rejected focus; responder=\(String(describing: window.firstResponder))")
+        XCTAssertTrue(searchField.currentEditor() === window.firstResponder,
+            "dulcet.search.field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
         let query = "UI Playback Canary"
         try sendText(query, to: window)
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the typed query did not reach the bound search field"
+            failureMessage: "dulcet.search.field typed=\(query.debugDescription) bound=\(store.searchQuery.debugDescription) native=\(searchField.stringValue.debugDescription)"
         ) {
             store.searchQuery == query
         }
         XCTAssertEqual(
             accessibilityValue(searchFieldElement) as? String,
             query,
-            "the platform field itself must expose the query sent through key events"
+            "dulcet.search.field AX value after NSApp.sendEvent"
         )
 
         try await waitUntil(
             timeout: .seconds(20),
-            failureMessage: "the ranked live result did not render before the search deadline"
+            failureMessage: "Search state=\(store.snapshot.state) resultCount=\(store.snapshot.searchResults.count) titles=\(store.snapshot.searchResults.map(\.title)); expected rank0=\(query)"
         ) {
             store.snapshot.state == .searchResults
                 && store.snapshot.searchResults.first?.title == query
@@ -107,36 +121,47 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(
             accessibilityLabel(firstResult),
             "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
-            "rank zero must be the rendered canary track, not merely a store value"
+            "dulcet.search.result.0 rendered accessibility text (title, credits, album, kind)"
         )
 
+        XCTAssertEqual(store.snapshot.searchResults.count, 1, "Exact fixture query result count")
+        let rankZeroID = try XCTUnwrap(store.snapshot.searchResults.first?.id,
+            "Search result count=\(store.snapshot.searchResults.count); missing rank-zero identity")
+        XCTAssertEqual(playback.queueReplacementCount, 0,
+            "Rendering dulcet.search.result.0 must not start a queue before activation")
         let resultTable = try selectAccessibilityTableRow(firstResult, in: window)
-        XCTAssertTrue(window.makeFirstResponder(resultTable), "Rank-zero table must accept keyboard focus")
+        XCTAssertEqual(resultTable.numberOfRows, 1, "Rendered search table row count")
+        XCTAssertTrue(window.makeFirstResponder(resultTable),
+            "dulcet.search.result.0 table rejected focus; responder=\(String(describing: window.firstResponder))")
         try sendKey(.returnKey, to: window)
         try await waitUntil(
             timeout: .seconds(10),
-            failureMessage: "Pressing Return on rank zero did not render its Now Playing intent"
+            failureMessage: "Return on dulcet.search.result.0: queueReplacements=\(playback.queueReplacementCount) state=\(store.snapshot.state) nowPlaying=\(String(describing: store.snapshot.nowPlaying?.current.title)); expected one search queue and \(query)"
         ) {
             store.snapshot.state == .nowPlaying
                 && store.snapshot.nowPlaying?.current.title == query
         }
 
-        let intent = try XCTUnwrap(playback.lastIntent)
-        XCTAssertEqual(intent.sourceKind, .search)
-        XCTAssertNil(intent.sourceID)
-        XCTAssertEqual(intent.sourceDisplayName, "Search")
-        XCTAssertEqual(intent.startIndex, 0)
-        XCTAssertEqual(intent.tracks.first?.title, query)
+        XCTAssertEqual(playback.queueReplacementCount, 1, "Return on rank zero must replace/play exactly one queue")
+        let intent = try XCTUnwrap(playback.lastIntent,
+            "Return on dulcet.search.result.0: no playback intent; queueReplacements=\(playback.queueReplacementCount)")
+        XCTAssertEqual(intent.sourceKind, .search, "Activated queue source kind")
+        XCTAssertNil(intent.sourceID, "Search queue must not carry a container source ID")
+        XCTAssertEqual(intent.sourceDisplayName, "Search", "Activated queue source display name")
+        XCTAssertEqual(intent.startIndex, 0, "Activated queue start index")
+        XCTAssertEqual(intent.tracks.count, 1, "Activated queue track count")
+        XCTAssertEqual(intent.tracks.first?.id, rankZeroID, "Queue identity must match the rendered rank-zero result")
+        XCTAssertEqual(intent.tracks.first?.title, query, "Activated queue rank-zero title")
         hostingView.layoutSubtreeIfNeeded()
         let nowPlayingTitle = try await accessibilityElement(
             identifiedBy: "dulcet.now-playing.title",
             in: hostingView,
             timeout: .seconds(5)
         )
-        XCTAssertEqual(accessibilityLabel(nowPlayingTitle), query)
+        XCTAssertEqual(accessibilityLabel(nowPlayingTitle), query, "dulcet.now-playing.title rendered text")
         print(
             "MACOS SEARCH UI OBSERVED query=typed rank0=rendered"
-                + " activation=return source=search now-playing=\(query)"
+                + " result-count=\(resultTable.numberOfRows) activation=return queue-replacements=\(playback.queueReplacementCount) source=search now-playing=\(query)"
         )
     }
 
@@ -586,7 +611,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 charactersIgnoringModifiers: characters,
                 isARepeat: false,
                 keyCode: key.keyCode
-            ))
+            ), "Could not construct \(eventType) keyCode=\(key.keyCode) window=\(window.windowNumber)")
             NSApp.sendEvent(event)
         }
     }
@@ -606,7 +631,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                     charactersIgnoringModifiers: value,
                     isARepeat: false,
                     keyCode: 0
-                ))
+                ), "Could not construct search \(eventType) character=\(value.debugDescription) window=\(window.windowNumber)")
                 NSApp.sendEvent(event)
             }
         }
@@ -638,68 +663,46 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     }
 
     private func accessibilityDescendants(in root: Any) -> [Any] {
-        var result: [Any] = [root]
+        var result: [Any] = []
         var visited = Set<ObjectIdentifier>()
         var pending: [Any] = [root]
         while let current = pending.popLast() {
             guard let object = current as AnyObject? else { continue }
             let identity = ObjectIdentifier(object)
             guard visited.insert(identity).inserted else { continue }
-            var children = accessibilityAttribute(.children, of: current) as? [Any] ?? []
+            var children = accessibilityObjectValue("accessibilityChildren", of: current) as? [Any] ?? []
             if let view = current as? NSView {
                 children.append(contentsOf: view.subviews)
             }
-            result.append(contentsOf: children)
+            result.append(current)
             pending.append(contentsOf: children)
         }
         return result
     }
 
-    private func accessibilityAttribute(
-        _ attribute: NSAccessibility.Attribute,
-        of element: Any
-    ) -> Any? {
-        guard let accessible = element as? any NSAccessibilityProtocol else {
-            let name: String
-            switch attribute {
-            case .children: name = "accessibilityChildren"
-            case .identifier: name = "accessibilityIdentifier"
-            case .title: name = "accessibilityLabel"
-            case .description: name = "accessibilityTitle"
-            case .value: name = "accessibilityValue"
-            default: return nil
-            }
-            guard let object = element as? NSObject else { return nil }
-            let selector = NSSelectorFromString(name)
-            if object.responds(to: selector) {
-                return object.perform(selector)?.takeUnretainedValue()
-            }
-            let legacy = NSSelectorFromString("accessibilityAttributeValue:")
-            guard object.responds(to: legacy) else { return nil }
-            return object.perform(legacy, with: attribute.rawValue)?.takeUnretainedValue()
-        }
-        switch attribute {
-        case .children: return accessible.accessibilityChildren()
-        case .identifier: return accessible.accessibilityIdentifier()
-        case .title: return accessible.accessibilityLabel()
-        case .description: return accessible.accessibilityTitle()
-        case .value: return accessible.accessibilityValue()
-        default: return nil
-        }
+    // SwiftUI AccessibilityNode implements these Objective-C getters without conforming to
+    // the complete NSAccessibilityProtocol. It is neither NSView nor NSAccessibilityElement.
+    // Check the public selector instead of dropping such nodes or naming a private SwiftUI type.
+    // Object-valued getters only: struct/scalar returns must never go through perform(_:).
+    private func accessibilityObjectValue(_ name: String, of element: Any) -> Any? {
+        guard let object = element as? NSObject else { return nil }
+        let selector = NSSelectorFromString(name)
+        guard object.responds(to: selector) else { return nil }
+        return object.perform(selector)?.takeUnretainedValue()
     }
 
     private func accessibilityIdentifier(_ element: Any) -> String? {
-        accessibilityAttribute(.identifier, of: element) as? String
+        accessibilityObjectValue("accessibilityIdentifier", of: element) as? String
     }
 
     private func accessibilityLabel(_ element: Any) -> String? {
-        accessibilityAttribute(.title, of: element) as? String
-            ?? accessibilityAttribute(.description, of: element) as? String
+        accessibilityObjectValue("accessibilityLabel", of: element) as? String
+            ?? accessibilityObjectValue("accessibilityTitle", of: element) as? String
             ?? accessibilityValue(element) as? String
     }
 
     private func accessibilityValue(_ element: Any) -> Any? {
-        accessibilityAttribute(.value, of: element)
+        accessibilityObjectValue("accessibilityValue", of: element)
     }
 
     private func selectAccessibilityTableRow(_ element: Any, in window: NSWindow) throws -> NSTableView {
@@ -708,54 +711,34 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         let table = try XCTUnwrap(content.hitTest(content.convert(point, from: nil)) as? NSTableView,
             "Expected table at \(point) for \(accessibilityIdentifier(element) ?? "nil")")
         let index = table.row(at: table.convert(point, from: nil))
-        let rows = try XCTUnwrap(table.perform(NSSelectorFromString("accessibilityRows"))?.takeUnretainedValue() as? [Any],
+        // The SDK types this as [NSAccessibilityRow], but AppKit actually returns NSOutlineRow
+        // objects that fail Swift's protocol-array bridge. Preserve the Objective-C object array.
+        let rows = try XCTUnwrap(accessibilityObjectValue("accessibilityRows", of: table) as? [Any],
             "No accessibility rows for \(accessibilityIdentifier(element) ?? "nil")")
         guard rows.indices.contains(index) else {
-            throw SearchHostedAppTestError.missingAccessibilityElement("row=\(index) count=\(rows.count)")
+            throw SearchHostedAppTestError.missingAccessibilityElement("\(accessibilityIdentifier(element) ?? "nil"): row=\(index) count=\(rows.count)")
         }
-        table.perform(NSSelectorFromString("setAccessibilitySelectedRows:"), with: [rows[index]])
+        let selectRows = NSSelectorFromString("setAccessibilitySelectedRows:")
+        guard table.responds(to: selectRows) else {
+            throw SearchHostedAppTestError.missingAccessibilityElement(
+                "\(accessibilityIdentifier(element) ?? "nil"): table lacks setAccessibilitySelectedRows:"
+            )
+        }
+        table.perform(selectRows, with: [rows[index]])
         XCTAssertEqual(table.selectedRow, index, "Accessibility selection for \(accessibilityIdentifier(element) ?? "nil")")
         return table
     }
 
-    private func clickAccessibilityElement(_ element: Any, in window: NSWindow) throws {
-        try sendMouseClick(at: accessibilityWindowPoint(element, in: window), count: 1, to: window)
-    }
-
-    private func doubleClickAccessibilityElement(_ element: Any, in window: NSWindow) throws {
-        let point = try accessibilityWindowPoint(element, in: window)
-        try sendMouseClick(at: point, count: 1, to: window)
-        try sendMouseClick(at: point, count: 2, to: window)
-    }
-
     private func accessibilityWindowPoint(_ element: Any, in window: NSWindow) throws -> NSPoint {
         let accessible = try XCTUnwrap(element as? any NSAccessibilityElementProtocol,
-            "Pointer target must conform to NSAccessibility: \(type(of: element))")
+            "\(accessibilityIdentifier(element) ?? "nil") frame API unavailable on \(type(of: element))")
         let screenFrame = accessible.accessibilityFrame()
         XCTAssertFalse(screenFrame.isEmpty,
-            "Pointer target \(accessibilityIdentifier(element) ?? "<no identifier>") frame=\(screenFrame)")
+            "\(accessibilityIdentifier(element) ?? "<no identifier>") frame=\(screenFrame)")
         let point = window.convertPoint(fromScreen: NSPoint(x: screenFrame.midX, y: screenFrame.midY))
-        print("SEARCH POINTER id=\(accessibilityIdentifier(element) ?? "nil") frame=\(screenFrame) window=\(window.frame) point=\(point) active=\(NSApp.isActive) key=\(window.isKeyWindow)")
-        if let content = window.contentView {
-            let local = content.convert(point, from: nil)
-            print("SEARCH HIT \(String(describing: content.hitTest(local)))")
-        }
         return point
     }
 
-    private func sendMouseClick(at point: NSPoint, count: Int, to window: NSWindow) throws {
-        func event(_ type: NSEvent.EventType) throws -> NSEvent {
-            try XCTUnwrap(NSEvent.mouseEvent(
-                with: type, location: point, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber, context: nil,
-                eventNumber: 0, clickCount: count,
-                pressure: type == .leftMouseDown ? 1 : 0
-            ), "Could not construct \(type) at \(point) clickCount=\(count)")
-        }
-        NSApp.postEvent(try event(.leftMouseUp), atStart: true)
-        NSApp.sendEvent(try event(.leftMouseDown))
-    }
 
 }
 
@@ -784,6 +767,7 @@ private final class SearchIntentPlaybackController: DulcetPlaybackControlling {
     private var presentationHandler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
     private(set) var lastIntent: DulcetPlaybackQueueIntent?
+    private(set) var queueReplacementCount = 0
 
     func setPresentationHandler(
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
@@ -795,6 +779,7 @@ private final class SearchIntentPlaybackController: DulcetPlaybackControlling {
     func restorePersistedQueue(with tracks: [DulcetTrack]) {}
 
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
+        queueReplacementCount += 1
         lastIntent = intent
         guard !intent.tracks.isEmpty else { return }
         let index = intent.startIndex ?? 0
