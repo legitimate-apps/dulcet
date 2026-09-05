@@ -31,9 +31,9 @@ final class DulcetTVUITests: XCTestCase {
         // not. Asserting the whole order makes drift in either fail here, naming what it observed,
         // rather than silently relocating the canary to another rank.
         let rankedLabels = [
-            "Thirty One Seconds, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
-            "Twenty Nine Seconds, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
-            "UI Playback Canary, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
         let app = XCUIApplication()
@@ -87,6 +87,9 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertEqual(result.label, rankedLabels[rank], "Rank \(rank) rendered accessibility text")
             rankedResults.append(result)
         }
+        // Captured while the rows are still on screen: after activation the search surface is
+        // replaced and re-reading these elements throws rather than returning a stale value.
+        let observedLabels = rankedResults.map(\.label)
         XCTAssertNotEqual(
             rankedResults[0].label,
             rankedLabels[canaryRank],
@@ -98,8 +101,8 @@ final class DulcetTVUITests: XCTestCase {
         )
         print("DULCET TV RANKS labels=\(rankedResults.map(\.label))")
 
-        // Focus walks down through the ranks the canary is not at, so reaching it is itself
-        // evidence that the rows are distinct and ordered as asserted.
+        // The remote moves focus until the canary's own row holds it, bounded so a focus engine
+        // that never reaches the row fails here rather than pressing Select on whatever does.
         let canaryResult = rankedResults[canaryRank]
         for _ in 0..<16 {
             if canaryResult.hasFocus { break }
@@ -131,7 +134,7 @@ final class DulcetTVUITests: XCTestCase {
             "Media time must advance after remote activation"
         )
         XCTAssertEqual(title.label, canaryTitle)
-        print("DULCET TV SEARCH PASS query=typed ranks=\(rankedResults.map(\.label))"
+        print("DULCET TV SEARCH PASS query=typed ranks=\(observedLabels)"
             + " activated-rank=\(canaryRank) activation=remote-select source=search"
             + " title=\(title.label) progress=\(initialValue)->\(progress.value as? String ?? "missing")"
             + " setup=debug-account-and-destination")
