@@ -12,14 +12,32 @@ Both legs run Navidrome 0.63.2 and the same generated corpus:
 | Linux/amd64 | `deluan/navidrome` manifest digest in `tools/conformance-env/pins.json` | ffmpeg 6.1.1 inside that immutable image filesystem |
 | Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, immutable GHCR blob URL, and SHA-256 is locked |
 
-The Darwin installer does not perform a name-only resolution. Before any closure member is fetched,
-it validates the complete closure: every URL must be an immutable
-`ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and its digest must equal the separate
-SHA-256 pin. Public GHCR pulls still require authentication, so the installer obtains an anonymous
-repository-scoped pull token before downloading a missing blob. A previously cached blob can be used
-without a token or network request, but is re-hashed before every use; a corrupt cache entry fails
-closed rather than being silently replaced. Newly downloaded bytes are written to a temporary file,
-verified, and only then atomically promoted into the cache.
+Before any closure member is fetched, the Darwin installer validates the complete closure: every URL
+must be an immutable `ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and its digest
+must equal the separate SHA-256 pin. That check runs on the pin file itself and fails before any
+Homebrew command or network request is issued.
+
+**Bottles are then poured by formula name, and the resolution that name gets is asserted against the
+pin.** Homebrew is deliberately never asked to install a bottle by package path, because that makes
+it parse the formula source embedded in the bottle, and a Homebrew generation that rejects a keyword
+argument used by one of the pinned formulae fails there with a message about that keyword and then a
+missing Cellar directory — a toolchain incompatibility that presents as a corrupt install. Installing
+by name makes Homebrew read the formula from its own index instead, which it can always parse.
+
+Resolution is therefore the thing that has to be constrained. The installer refreshes Homebrew's
+index, asks Homebrew to resolve all 15 pinned names at once, and requires every resolved formula to
+equal its pin field for field: version, revision, version scheme, runtime dependency list, bottle
+tag, bottle rebuild, bottle URL and bottle SHA-256. Every drifted formula is reported in one pass, so
+a pin refresh is a single edit rather than one CI run per formula. Nothing is fetched or poured until
+all 15 resolutions match, and an index generation that no longer carries the pinned versions fails
+closed here rather than pouring something else.
+
+Each bottle is then fetched, verified and poured in one step per formula. `brew fetch` populates
+Homebrew's own download cache; the installer asks Homebrew for the path it holds that formula's
+bottle at, hashes **that** file against the pin, and immediately pours the same formula by name. The
+artifact that is verified and the artifact that is poured are the same file because there is only one
+copy: the installer keeps no bottle cache of its own, so no second copy exists for the checksum to
+drift onto while the pour reads a different one.
 
 The 15 pinned Homebrew bottles do not embed an `INSTALL_RECEIPT.json`. They do embed an SPDX 2.3
 document, a single formula/version keg directory, and the formula source. The SPDX document supplies
@@ -36,23 +54,24 @@ closed on ambiguous or unsupported dependency syntax; unrelated formula DSL such
 and post-install keywords is never interpreted.
 
 Every derived fact is checked against the pin. Missing, duplicate, non-regular, oversized, malformed,
-or mutually inconsistent metadata fails before `brew install` is attempted. The metadata path cannot
+or mutually inconsistent metadata fails before `brew install` is attempted. **This reader** cannot
 access the formula index by construction, and its mutation control replaces both command and network
-entry points with traps while asserting `formula_index_accesses=0` on successful and failing reads.
-This does not claim
-that Homebrew's later bottle-install code contains no fallback; the installer rejects the fallback's
-missing/unreadable preconditions first and re-hashes the same archive immediately before handing it to
-Homebrew. The live formula API comparison remains an advisory refresh signal: the main-path controls
-observe that both drift and an API outage still reach pinned install preparation.
+entry points with traps while asserting `authenticated_archive_reader_index_accesses=0` on successful
+and failing reads. That number is scoped to the reader and is not a claim about the run: the run
+resolves formula names through Homebrew and reports its own `formula_index_accesses` total, counted
+from the invocations that actually ran, alongside the number of resolutions asserted against the pin.
+The live formula API comparison remains an advisory refresh signal: the main-path controls observe
+that both drift and an API outage still reach pinned install preparation.
 
-Homebrew remains responsible for pouring each verified local bottle, relocating its paths and Mach-O
-install names, running applicable post-install handling, creating receipts, and linking active `opt`
-prefixes. It is not allowed to resolve or upgrade dependencies: the installer pours all 15 local
-bottle paths explicitly in pinned topological order with dependency resolution and installed-dependent
-upgrades disabled. Each archive is re-hashed immediately before its pour. Homebrew derives mutable
-runtime receipt fields from its local formula metadata, which may itself have moved ahead; after the
-pour, the installer replaces only that dependency list with the graph already proven from the
-immutable bottles and then verifies the complete receipt.
+Homebrew remains responsible for resolving each pinned name against its own index, pouring the
+bottle, relocating its paths and Mach-O install names, running applicable post-install handling,
+creating receipts, and linking active `opt` prefixes. It is not allowed to choose *which* artifact a
+name means: all 15 resolutions are asserted equal to the pin first, and the closure is poured in
+pinned topological order so each dependency is already installed at its pinned version before its
+dependent. Each bottle is hashed immediately before its own pour. Homebrew derives mutable runtime
+receipt fields from its local formula metadata, which may itself have moved ahead; after the pour,
+the installer replaces only that dependency list with the graph already proven from the immutable
+bottles and then verifies the complete receipt.
 
 The installer records every locked keg's pre-install filesystem and receipt observation, removes the
 complete closure in reverse dependency order, and requires an observed absence checkpoint for every
@@ -73,7 +92,13 @@ means the installed bytes also cannot be compared soundly with the archive or pi
 The fresh-pour negative control proves only that an untouched retained keg is rejected. The separate
 bottle-integrity control drives the installer main path, changes a blob after its archive-metadata
 check, and observes a final failed hash with zero install attempts; its authentic case observes the
-ordered final-hash-success then `brew install` events. This narrower post-pour result is
+ordered final-hash-success then `brew install` events, and asserts that the path hashed is the path
+Homebrew reported and that the install names that same formula. A third case corrupts only the file
+Homebrew would pour while leaving a pristine copy of the pinned bytes in a directory Homebrew never
+reads, and requires the run to fail: that case passes only while the checksum follows the artifact
+Homebrew consumes, so it goes red if verification is ever re-pointed at a separate copy. A fourth
+control resolves a pinned name to a different artifact and requires the run to stop before it fetches
+or pours anything, and requires every drifted formula to be named. This narrower post-pour result is
 sufficient for a standard ephemeral hosted runner, whose job state is discarded rather than carried
 forward as an adversarial keg cache; no stronger provenance claim is made. The checks run before
 either the resource-loader fixture encoder or the corpus encoder, so both use the same installed

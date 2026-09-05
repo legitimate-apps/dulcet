@@ -64,6 +64,8 @@ jobs:
         run: python3 tools/test-darwin-fresh-pour-gate
       - name: Prove Darwin bottle integrity gate rejects a tampered blob
         run: python3 tools/test-darwin-bottle-integrity-gate
+      - name: Prove Homebrew name resolution is asserted against the pin before any pour
+        run: python3 tools/test-darwin-resolver-drift-gate
       - name: Prove every Darwin bottle pin is validated before any download
         run: python3 tools/test-darwin-pin-prevalidation-gate
       - name: Prove authenticated bottle metadata fails closed without formula-index access

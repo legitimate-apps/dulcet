@@ -73,11 +73,11 @@ def rejected(callable_under_test) -> str:
     raise SystemExit("mutated bottle metadata was accepted")
 
 
-def formula_index_accesses(detail: str) -> int:
-    match = re.search(r"formula_index_accesses=(\d+)", detail)
+def archive_reader_index_accesses(detail: str) -> int:
+    match = re.search(r"authenticated_archive_reader_index_accesses=(\d+)", detail)
     if match is None:
         raise SystemExit(
-            "authenticated metadata failure omitted formula-index accesses: "
+            "authenticated metadata failure omitted archive-reader index accesses: "
             f"detail={detail!r}"
         )
     return int(match.group(1))
@@ -137,7 +137,7 @@ end
         installer.run = reject_external_access
         installer.urllib.request.urlopen = reject_external_access
         try:
-            observed_shape, valid_formula_index_accesses = installer.bottle_archive_shape(
+            observed_shape, valid_archive_reader_index_accesses = installer.bottle_archive_shape(
                 valid_bottle, entry
             )
             expected_shape = {
@@ -147,11 +147,11 @@ end
                 "version_scheme": 2,
                 "dependencies": ["darwin-no-linkage", "runtime-dependency"],
             }
-            if observed_shape != expected_shape or valid_formula_index_accesses != 0:
+            if observed_shape != expected_shape or valid_archive_reader_index_accesses != 0:
                 raise SystemExit(
                     "valid authenticated archive did not use the index-free path: "
-                    f"shape={observed_shape} formula_index_accesses="
-                    f"{valid_formula_index_accesses}"
+                    f"shape={observed_shape} authenticated_archive_reader_index_accesses="
+                    f"{valid_archive_reader_index_accesses}"
                 )
 
             missing_formula = root / "negative-control--missing-formula.tar.gz"
@@ -210,7 +210,7 @@ end
             unsupported_detail,
         ]
         observed_failure_accesses = [
-            formula_index_accesses(detail) for detail in failure_details
+            archive_reader_index_accesses(detail) for detail in failure_details
         ]
         if observed_failure_accesses != [0, 0, 0]:
             raise SystemExit(
@@ -224,8 +224,8 @@ end
 
         print(
             "NEGATIVE CONTROL PASS darwin_authenticated_archive_metadata "
-            f"valid_formula_index_accesses={valid_formula_index_accesses} "
-            f"failure_formula_index_accesses={','.join(map(str, observed_failure_accesses))} "
+            f"valid_archive_reader_index_accesses={valid_archive_reader_index_accesses} "
+            f"failure_archive_reader_index_accesses={','.join(map(str, observed_failure_accesses))} "
             "missing_formula_rejected=true missing_sbom_rejected=true "
             "dependency_drift_rejected=true unsupported_dependency_rejected=true "
             "overwrite_keyword_accepted=true "

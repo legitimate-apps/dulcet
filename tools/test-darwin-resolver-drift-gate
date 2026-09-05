@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+
+"""Prove Homebrew's own name resolution is asserted against the pin before anything is poured.
+
+Bottles are poured by formula name, so Homebrew decides which artifact a pinned name means. That
+decision is only trustworthy while it is compared to the pin first. This drives main with a
+Homebrew whose index resolves a pinned name to a different artifact and requires the run to stop
+before it fetches or installs anything, and it requires every drifted formula to be named in one
+report rather than only the first.
+"""
+
+import hashlib
+from importlib.machinery import SourceFileLoader
+import json
+from pathlib import Path
+import sys
+import tempfile
+
+
+sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg_resolver_drift_gate",
+    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+).load_module()
+
+
+def pinned_entry(name: str, dependencies: list[str] | None = None) -> dict:
+    digest = hashlib.sha256(name.encode()).hexdigest()
+    return {
+        "formula": name,
+        "version": "1.0",
+        "revision": 0,
+        "version_scheme": 0,
+        "dependencies": dependencies or [],
+        "bottle_tag": "arm64_tahoe",
+        "bottle_rebuild": 0,
+        "url": f"https://ghcr.io/v2/homebrew/core/{name}/blobs/sha256:{digest}",
+        "sha256": digest,
+    }
+
+
+def resolved_formula(entry: dict, *, version: str | None = None, sha256: str | None = None) -> dict:
+    return {
+        "name": entry["formula"],
+        "versions": {
+            "stable": version or entry["version"],
+            "version_scheme": entry["version_scheme"],
+        },
+        "revision": entry["revision"],
+        "version_scheme": entry["version_scheme"],
+        "dependencies": entry["dependencies"],
+        "bottle": {
+            "stable": {
+                "rebuild": entry["bottle_rebuild"],
+                "files": {
+                    entry["bottle_tag"]: {
+                        "url": entry["url"],
+                        "sha256": sha256 or entry["sha256"],
+                    }
+                },
+            }
+        },
+    }
+
+
+def drive_main(root: Path, closure: list[dict], resolutions: list[dict]) -> tuple[list[str], str]:
+    pins_path = root / "pins.json"
+    pins_path.write_text(
+        json.dumps(
+            {
+                "ffmpeg": {
+                    "darwin": {
+                        "formula": closure[-1]["formula"],
+                        "version": closure[-1]["version"],
+                        "path": "/stub/ffmpeg",
+                        "required_encoders": [],
+                        "closure": closure,
+                    }
+                }
+            }
+        )
+    )
+
+    events: list[str] = []
+    originals = {
+        "run": installer.run,
+        "advise_live_shape": installer.advise_live_shape,
+        "installed_formula_versions": installer.installed_formula_versions,
+        "observe_keg": installer.observe_keg,
+        "platform_system": installer.platform.system,
+        "platform_machine": installer.platform.machine,
+    }
+
+    def stub_run(arguments: list[str], **_kwargs) -> str:
+        if arguments == ["brew", "update"]:
+            events.append("brew-update")
+            return ""
+        if arguments[:3] == ["brew", "info", "--json=v2"]:
+            events.append("brew-info")
+            return json.dumps({"formulae": resolutions, "casks": []})
+        if arguments[:2] == ["brew", "fetch"]:
+            events.append("brew-fetch")
+            return ""
+        if arguments[:2] == ["brew", "install"]:
+            events.append("brew-install")
+            return ""
+        events.append(f"brew-{arguments[1] if len(arguments) > 1 else 'unknown'}")
+        return str(root / "unused")
+
+    try:
+        installer.run = stub_run
+        installer.advise_live_shape = lambda _closure: ("unavailable", [])
+        installer.installed_formula_versions = lambda _name: []
+        installer.observe_keg = lambda _path: None
+        installer.platform.system = lambda: "Darwin"
+        installer.platform.machine = lambda: "arm64"
+        try:
+            installer.main(pins_path)
+        except SystemExit as error:
+            return events, str(error)
+        raise SystemExit("resolver drift was accepted")
+    finally:
+        installer.run = originals["run"]
+        installer.advise_live_shape = originals["advise_live_shape"]
+        installer.installed_formula_versions = originals["installed_formula_versions"]
+        installer.observe_keg = originals["observe_keg"]
+        installer.platform.system = originals["platform_system"]
+        installer.platform.machine = originals["platform_machine"]
+
+
+def main() -> None:
+    dependency = pinned_entry("resolver-control-dependency")
+    root_formula = pinned_entry("resolver-control", [dependency["formula"]])
+    closure = [dependency, root_formula]
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+
+        version_events, version_detail = drive_main(
+            root,
+            closure,
+            [
+                resolved_formula(dependency),
+                resolved_formula(root_formula, version="2.0"),
+            ],
+        )
+        expected_prefix = f"Homebrew resolver drift for {root_formula['formula']}:"
+        if not version_detail.startswith(expected_prefix):
+            raise SystemExit(
+                "a resolved version that is not the pinned version was not rejected as resolver "
+                f"drift: detail={version_detail!r} events={version_events}"
+            )
+        if "brew-fetch" in version_events or "brew-install" in version_events:
+            raise SystemExit(
+                f"resolver drift was detected only after fetching or pouring: {version_events}"
+            )
+
+        digest_events, digest_detail = drive_main(
+            root,
+            closure,
+            [
+                resolved_formula(dependency, sha256="0" * 64),
+                resolved_formula(root_formula),
+            ],
+        )
+        if not digest_detail.startswith(
+            f"Homebrew resolver drift for {dependency['formula']}:"
+        ):
+            raise SystemExit(
+                "a resolved bottle digest that is not the pinned digest was not rejected as "
+                f"resolver drift: detail={digest_detail!r} events={digest_events}"
+            )
+        if "brew-fetch" in digest_events or "brew-install" in digest_events:
+            raise SystemExit(
+                f"digest drift was detected only after fetching or pouring: {digest_events}"
+            )
+
+        both_events, both_detail = drive_main(
+            root,
+            closure,
+            [
+                resolved_formula(dependency, sha256="0" * 64),
+                resolved_formula(root_formula, version="2.0"),
+            ],
+        )
+        reported = [
+            entry["formula"]
+            for entry in closure
+            if f"Homebrew resolver drift for {entry['formula']}:" in both_detail
+        ]
+        if reported != [entry["formula"] for entry in closure]:
+            raise SystemExit(
+                "a run with two drifted formulae reported only some of them, so a pin refresh "
+                f"driven by this message is incomplete: reported={reported} detail={both_detail!r}"
+            )
+
+        missing_events, missing_detail = drive_main(
+            root, closure, [resolved_formula(dependency)]
+        )
+        if not missing_detail.startswith(
+            f"Homebrew resolver drift for {root_formula['formula']}:"
+        ):
+            raise SystemExit(
+                "a formula Homebrew did not resolve at all was not rejected as resolver drift: "
+                f"detail={missing_detail!r} events={missing_events}"
+            )
+
+        print(
+            "NEGATIVE CONTROL PASS darwin_resolver_drift "
+            f"version_drift_rejected=true version_drift_events={','.join(version_events)} "
+            f"digest_drift_rejected=true digest_drift_events={','.join(digest_events)} "
+            f"unresolved_formula_rejected=true "
+            f"drifted_formulae_reported={len(reported)}/{len(closure)} "
+            f"fetch_attempts_before_rejection={version_events.count('brew-fetch')} "
+            f"install_attempts_before_rejection={version_events.count('brew-install')}"
+        )
+
+
+if __name__ == "__main__":
+    main()

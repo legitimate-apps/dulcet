@@ -49,6 +49,31 @@ def pinned_entry(payload: bytes) -> dict:
     }
 
 
+def resolved_formula(entry: dict) -> dict:
+    """Homebrew's own resolution of the pinned name, matching the pin exactly."""
+    return {
+        "name": entry["formula"],
+        "versions": {
+            "stable": entry["version"],
+            "version_scheme": entry["version_scheme"],
+        },
+        "revision": entry["revision"],
+        "version_scheme": entry["version_scheme"],
+        "dependencies": entry["dependencies"],
+        "bottle": {
+            "stable": {
+                "rebuild": entry["bottle_rebuild"],
+                "files": {
+                    entry["bottle_tag"]: {
+                        "url": entry["url"],
+                        "sha256": entry["sha256"],
+                    }
+                },
+            }
+        },
+    }
+
+
 def live_formula(entry: dict) -> dict:
     return {
         "name": entry["formula"],
@@ -73,7 +98,9 @@ def live_formula(entry: dict) -> dict:
 def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     payload = b"known pinned advisory-control bottle"
     entry = pinned_entry(payload)
-    bottle = root / f"{mode}-{installer.bottle_cache_filename(entry)}"
+    brew_cache = root / f"{mode}-brew-cache"
+    brew_cache.mkdir(exist_ok=True)
+    bottle = brew_cache / "negative-control--1.0.arm64_tahoe.bottle.tar.gz"
     bottle.write_bytes(payload)
     pins_path = root / f"{mode}-pins.json"
     pins_path.write_text(
@@ -97,6 +124,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     originals = {
         "run": installer.run,
         "fetch_pinned_bottle": installer.fetch_pinned_bottle,
+        "verify_bottle_checksum": installer.verify_bottle_checksum,
         "assert_bottle_archive_shape": installer.assert_bottle_archive_shape,
         "advise_live_shape": installer.advise_live_shape,
         "installed_formula_versions": installer.installed_formula_versions,
@@ -106,8 +134,10 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     }
 
     def stub_run(arguments: list[str], **_kwargs) -> str:
-        if arguments == ["brew", "--cache"]:
-            return str(root / "cache")
+        if arguments == ["brew", "update"]:
+            return ""
+        if arguments[:3] == ["brew", "info", "--json=v2"]:
+            return json.dumps({"formulae": [resolved_formula(entry)], "casks": []})
         if arguments == ["brew", "--cellar"]:
             return str(root / "cellar")
         if arguments == ["brew", "--prefix"]:
@@ -134,11 +164,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
         return status, observed
 
     installer.run = stub_run
-    installer.fetch_pinned_bottle = lambda _entry, _cache: (
-        bottle,
-        entry["sha256"],
-        True,
-    )
+    installer.fetch_pinned_bottle = lambda _entry: bottle
     installer.assert_bottle_archive_shape = lambda _path, _entry: 0
     installer.advise_live_shape = recorded_advisory
     installer.installed_formula_versions = lambda _name: []
@@ -163,6 +189,7 @@ def drive_main(root: Path, *, mode: str) -> tuple[list[str], str]:
     finally:
         installer.run = originals["run"]
         installer.fetch_pinned_bottle = originals["fetch_pinned_bottle"]
+        installer.verify_bottle_checksum = originals["verify_bottle_checksum"]
         installer.assert_bottle_archive_shape = originals["assert_bottle_archive_shape"]
         installer.advise_live_shape = originals["advise_live_shape"]
         installer.installed_formula_versions = originals["installed_formula_versions"]

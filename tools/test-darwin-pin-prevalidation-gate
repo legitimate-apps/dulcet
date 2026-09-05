@@ -65,17 +65,16 @@ def main() -> None:
         )
 
         network_calls: list[str] = []
+        homebrew_calls: list[list[str]] = []
         originals = {
             "run": installer.run,
-            "ghcr_pull_token": installer.ghcr_pull_token,
             "urlopen": installer.urllib.request.urlopen,
             "platform_system": installer.platform.system,
             "platform_machine": installer.platform.machine,
         }
 
         def stub_run(arguments: list[str], **_kwargs) -> str:
-            if arguments == ["brew", "--cache"]:
-                return str(root / "cache")
+            homebrew_calls.append(arguments)
             raise AssertionError(
                 f"unexpected command before pin rejection: {arguments}"
             )
@@ -88,7 +87,6 @@ def main() -> None:
             return observe
 
         installer.run = stub_run
-        installer.ghcr_pull_token = network_observed("ghcr-token")
         installer.urllib.request.urlopen = network_observed("urlopen")
         installer.platform.system = lambda: "Darwin"
         installer.platform.machine = lambda: "arm64"
@@ -104,7 +102,6 @@ def main() -> None:
                 raise SystemExit("late pin mismatch was accepted")
         finally:
             installer.run = originals["run"]
-            installer.ghcr_pull_token = originals["ghcr_pull_token"]
             installer.urllib.request.urlopen = originals["urlopen"]
             installer.platform.system = originals["platform_system"]
             installer.platform.machine = originals["platform_machine"]
@@ -122,10 +119,15 @@ def main() -> None:
             raise SystemExit(
                 f"late pin mismatch followed network calls: {network_calls}"
             )
+        if homebrew_calls:
+            raise SystemExit(
+                f"late pin mismatch followed Homebrew invocations: {homebrew_calls}"
+            )
 
         print(
             "NEGATIVE CONTROL PASS darwin_pin_prevalidation "
             f"closure_entries={len([first, late])} network_calls={len(network_calls)} "
+            f"homebrew_calls={len(homebrew_calls)} "
             f"detail={observed_detail}"
         )
 
