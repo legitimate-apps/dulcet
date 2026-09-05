@@ -19,18 +19,19 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import hashlib
-import json
 import secrets
 import sys
 import time
+import urllib.error
 import urllib.parse
-import urllib.request
+
+from readiness_transport import TRANSPORT_ERRORS, read_json
 
 ADMIN_USER = "dulcet-admin"
 ADMIN_PASSWORD = "dulcet-ci-canary-password"
 
 
-def call(base_url: str, endpoint: str, **parameters: str) -> dict:
+def call(base_url: str, endpoint: str, *, timeout_seconds: float = 15, **parameters: str) -> dict:
     salt = secrets.token_hex(16)
     token = hashlib.md5((ADMIN_PASSWORD + salt).encode()).hexdigest()
     query = {
@@ -39,8 +40,7 @@ def call(base_url: str, endpoint: str, **parameters: str) -> dict:
     }
     query.update(parameters)
     url = f"{base_url}/rest/{endpoint}?" + urllib.parse.urlencode(query)
-    with urllib.request.urlopen(url, timeout=15) as response:
-        return json.load(response)["subsonic-response"]
+    return read_json(url, timeout_seconds)["subsonic-response"]
 
 
 def parse_last_scan(value: object) -> tuple[str, datetime]:
@@ -76,7 +76,25 @@ def main() -> None:
         parser.error("--poll-interval-seconds must be greater than zero")
 
     if arguments.print_last_scan:
-        status = call(arguments.base_url, "getScanStatus").get("scanStatus", {})
+        deadline = time.monotonic() + arguments.timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                response = call(
+                    arguments.base_url, "getScanStatus",
+                    timeout_seconds=min(15, max(0, deadline - time.monotonic())),
+                )
+                break
+            except urllib.error.HTTPError:
+                # HTTP responses are failures, not a missing transport response.
+                raise
+            except TRANSPORT_ERRORS as error:
+                if time.monotonic() >= deadline:
+                    raise
+                print(f"scan baseline transport error; retrying: {error}", file=sys.stderr)
+                time.sleep(min(arguments.poll_interval_seconds, max(0, deadline - time.monotonic())))
+        else:
+            raise TimeoutError("timed out")
+        status = response.get("scanStatus", {})
         if error := status.get("error"):
             raise SystemExit(f"library scan status reported an error: {error}")
         value, _ = parse_last_scan(status.get("lastScan"))

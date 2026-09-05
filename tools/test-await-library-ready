@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parent
@@ -38,7 +39,14 @@ def run_tool(statuses: list[dict], *arguments: str) -> subprocess.CompletedProce
 
         def do_GET(self) -> None:
             if self.path.startswith("/rest/getScanStatus"):
-                response = {"scanStatus": state.next_status()}
+                observed = state.next_status()
+                if observed.get("stall"):
+                    time.sleep(30)
+                    return
+                if observed.get("http_error"):
+                    self.send_error(503)
+                    return
+                response = observed.get("envelope", {"scanStatus": observed})
             elif self.path.startswith("/rest/getAlbumList2"):
                 response = {"albumList2": {"album": [{"id": "album"}]}}
             else:
@@ -70,6 +78,7 @@ def run_tool(statuses: list[dict], *arguments: str) -> subprocess.CompletedProce
             text=True,
             capture_output=True,
             check=False,
+            timeout=25,
         )
     finally:
         server.shutdown()
@@ -96,6 +105,46 @@ snapshot = run_tool(
 )
 require(snapshot.returncode == 0, snapshot.stdout + snapshot.stderr)
 require(snapshot.stdout.strip() == BASELINE, f"wrong baseline: {snapshot.stdout!r}")
+
+# Exercise the actual CLI and its unchanged 15-second request cap against a server
+# that accepts the first connection without responding, then answers the retry.
+recovered = run_tool(
+    [{"stall": True}, status(scanning=False, last_scan=BASELINE)],
+    "--print-last-scan", "--timeout-seconds", "20", "--poll-interval-seconds", "0.01",
+)
+require(recovered.returncode == 0, recovered.stdout + recovered.stderr)
+require("scan baseline transport error; retrying: timed out" in recovered.stderr, recovered.stderr)
+require(recovered.stdout.strip() == BASELINE, recovered.stdout)
+print("POSITIVE CONTROL PASS unresponsive_then_responsive=true")
+print(recovered.stderr.strip())
+print(recovered.stdout.strip())
+
+started = time.monotonic()
+unresponsive = run_tool(
+    [{"stall": True}],
+    "--print-last-scan", "--timeout-seconds", "0.15", "--poll-interval-seconds", "0.01",
+)
+require(unresponsive.returncode != 0, "unresponsive endpoint was accepted")
+require("TimeoutError: timed out" in unresponsive.stderr, unresponsive.stderr)
+require(time.monotonic() - started < 3, "baseline request escaped its deadline")
+print("NEGATIVE CONTROL PASS baseline_transport_deadline=true")
+
+for invalid, message in [
+    ({}, "scan status did not carry lastScan: None"),
+    ({"envelope": {"status": "failed", "error": {"message": "denied"}}},
+     "scan status did not carry lastScan: None"),
+    ({"http_error": True}, "HTTP Error 503"),
+    (status(scanning=False, last_scan=BASELINE, error="scanner exploded"),
+     "library scan status reported an error: scanner exploded"),
+]:
+    rejected = run_tool(
+        [invalid, status(scanning=False, last_scan=BASELINE)],
+        "--print-last-scan", "--timeout-seconds", "1", "--poll-interval-seconds", "0.01",
+    )
+    require(rejected.returncode != 0, f"logical failure was retried: {invalid}")
+    require(message in rejected.stderr, rejected.stderr)
+    require("retrying" not in rejected.stderr, rejected.stderr)
+print("NEGATIVE CONTROL PASS baseline_logical_failures_not_retried=true")
 
 stale = run_tool(
     [status(scanning=False, last_scan=BASELINE)],
