@@ -23,11 +23,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.time.TimeSource
 
 @OptIn(BetaInteropApi::class, ExperimentalForeignApi::class)
 class DarwinProxyAuthenticationConformanceTest {
     @Test
-    fun proxyChallengeFailsClosedWithoutAmbientCredentials() = runTest {
+    fun proxyChallengeFailsClosedWithoutAmbientCredentials() = traceProxyTest { mark ->
+        mark("writing ambient credential")
         val protectionSpace = NSURLProtectionSpace(
             proxyHost = PROXY_HOST,
             port = PROXY_PORT.toLong(),
@@ -49,8 +51,10 @@ class DarwinProxyAuthenticationConformanceTest {
                 "the fixture precondition never held, so the rest of this test proves nothing",
         )
 
+        mark("ambient credential precondition satisfied")
         val observationClient = HttpClient(Darwin) { expectSuccess = false }
         try {
+            mark("connector started")
             val result = DarwinForwardProxyAccountConnector(
                 proxyHost = PROXY_HOST,
                 proxyPort = PROXY_PORT,
@@ -63,6 +67,7 @@ class DarwinProxyAuthenticationConformanceTest {
                     allowLocalHttp = false,
                 ),
             )
+            mark("connector returned")
             val failure = assertIs<AccountConnectionResult.Failed>(
                 result,
                 "connecting through the forward proxy was expected to fail closed, but returned $result",
@@ -73,9 +78,11 @@ class DarwinProxyAuthenticationConformanceTest {
                     "observed ${failure.error}",
             )
 
+            mark("fetching proxy wire observation")
             val observation = observationClient.get(
                 "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
             )
+            mark("proxy wire observation headers received")
             assertEquals(
                 200,
                 observation.status.value,
@@ -83,8 +90,28 @@ class DarwinProxyAuthenticationConformanceTest {
                     observation.bodyAsText(),
             )
         } finally {
+            mark("cleanup started")
             observationClient.close()
             storage.removeCredential(credential, protectionSpace)
+            mark("cleanup completed")
+        }
+    }
+
+    // Keep the wall-clock timeline outside runTest: its timeout cancels the connector, which can
+    // return Cancelled and fail a later assertion. That assertion alone loses where time was spent.
+    private fun traceProxyTest(block: suspend ((String) -> Unit) -> Unit) {
+        val started = TimeSource.Monotonic.markNow()
+        val timeline = mutableListOf<String>()
+        try {
+            runTest {
+                block { phase -> timeline += "${started.elapsedNow()}: $phase" }
+            }
+        } catch (failure: Throwable) {
+            throw AssertionError(
+                "Proxy authentication timeline (${started.elapsedNow()} total): " +
+                    timeline.joinToString("; "),
+                failure,
+            )
         }
     }
 
