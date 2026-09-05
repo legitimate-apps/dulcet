@@ -28,7 +28,7 @@ Xcode build invokes Gradle through a run-script phase.
 With the existing disposable fixture running, execute this from the worktree:
 
 ```bash
-DERIVED_ROOT="$(mktemp -d)"   # must resolve onto the system volume
+DERIVED_ROOT="$(mktemp -d)"
 export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533
 export DULCET_CONFORMANCE_DISPOSABLE=true
 for mode in build-for-testing test-without-building; do
@@ -124,4 +124,4 @@ actionlint .github/workflows/apple-ci.yml
 ```
 
 The workflow now runs the control beside the existing macOS app tests and requires its exact
-named passing xcresult. Remote CI execution is unobserved; this branch was not pushed.
+named passing xcresult. Remote CI execution is unobserved: no apple-ci run has reported on this branch yet.
