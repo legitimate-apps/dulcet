@@ -54,6 +54,10 @@ class ServerClient:
             headers["Content-Type"] = "application/json"
             payload = json.dumps(body).encode()
         request = urllib.request.Request(url, data=payload, headers=headers, method=method)
+        # Deliberately fail fast: this shared client also creates the admin and fixture
+        # users via POST. A lost response does not prove those writes failed; replaying
+        # them could change the fresh-database assertions. Readiness retries belong in
+        # bounded, read-only probes, not in this general request method.
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.load(response)

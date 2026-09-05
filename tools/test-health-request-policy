@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Keep shared health-check requests single-attempt, including fixture writes."""
+
+import io
+from pathlib import Path
+import runpy
+import sys
+import urllib.error
+from unittest.mock import patch
+
+PROBES = Path(__file__).resolve().parent / "conformance-env"
+sys.path.insert(0, str(PROBES))
+ServerClient = runpy.run_path(str(PROBES / "health-check"))["ServerClient"]
+client = ServerClient("http://127.0.0.1:4533")
+
+for method, path in [("GET", "/rest/getScanStatus.view"), ("POST", "/auth/createAdmin")]:
+    failure = TimeoutError("timed out")
+    with patch("urllib.request.urlopen", side_effect=failure) as request:
+        try:
+            client.json_request(path, method=method)
+        except TimeoutError as error:
+            assert error is failure
+        else:
+            raise AssertionError("transport failure was swallowed")
+        assert request.call_count == 1, request.call_count
+    print(f"NEGATIVE CONTROL PASS health_request_fail_fast=true method={method} attempts=1")
+
+failure = urllib.error.HTTPError("http://127.0.0.1:4533/ping", 503, "Unavailable", {}, io.BytesIO(b"busy"))
+with patch("urllib.request.urlopen", side_effect=failure) as request:
+    try:
+        client.json_request("/ping")
+    except RuntimeError as error:
+        assert str(error) == "GET /ping returned HTTP 503: busy", str(error)
+    else:
+        raise AssertionError("HTTP error was swallowed")
+    assert request.call_count == 1
+print("NEGATIVE CONTROL PASS health_http_error_message_preserved=true attempts=1")
+
+with patch.object(client, "json_request", return_value={"subsonic-response": {
+    "version": "1.16.1", "status": "failed", "error": {"message": "denied"},
+}}):
+    try:
+        client.subsonic("getScanStatus")
+    except RuntimeError as error:
+        assert str(error) == "getScanStatus returned error envelope: {'message': 'denied'}", str(error)
+    else:
+        raise AssertionError("error envelope was accepted")
+print("NEGATIVE CONTROL PASS health_error_envelope_message_preserved=true")
