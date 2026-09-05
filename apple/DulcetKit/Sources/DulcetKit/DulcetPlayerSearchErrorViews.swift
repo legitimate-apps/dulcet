@@ -280,7 +280,12 @@ struct DulcetNowPlayingView: View {
 }
 
 struct DulcetSearchView: View {
+#if os(macOS)
     @State private var selectedResultID: DulcetSearchResult.ID?
+#endif
+#if os(iOS)
+    @FocusState private var searchFieldFocused: Bool
+#endif
     let snapshot: DulcetSnapshot
     @Binding var searchQuery: String
     let onLoadMore: (DulcetSearchResultKind) -> Void
@@ -302,6 +307,13 @@ struct DulcetSearchView: View {
                     .controlSize(.regular)
 #else
                     .controlSize(.small)
+#endif
+#if os(iOS)
+                    // A search field takes the platform's search submit key and resigns on
+                    // submit, so the keyboard clears the results without a second gesture.
+                    .focused($searchFieldFocused)
+                    .submitLabel(.search)
+                    .onSubmit { searchFieldFocused = false }
 #endif
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
@@ -373,33 +385,7 @@ struct DulcetSearchView: View {
                     .dulcetForeground(.secondaryTextOnWindow)
             }
 
-#if os(tvOS)
-            ScrollView {
-                LazyVStack(spacing: DulcetSpacing.sm) {
-                    ForEach(Array(snapshot.searchResults.enumerated()), id: \.element.id) { index, result in
-                        Button {
-                            selectedResultID = result.id
-                        } label: {
-                            HStack(spacing: DulcetSpacing.md) {
-                                DulcetSearchResultIdentity(result: result, rank: index)
-                                Spacer(minLength: DulcetSpacing.md)
-                                Text(result.kind.displayTitle)
-                                    .font(.callout.weight(.semibold))
-                                    .dulcetForeground(.secondaryTextOnWindow)
-                            }
-                            .padding(DulcetSpacing.sm)
-                            .contentShape(Rectangle())
-                        }
-                        .dulcetMediaButtonStyle()
-                        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
-                            title: result.title,
-                            subtitle: result.subtitle,
-                            kind: result.kind.displayTitle
-                        ))
-                    }
-                }
-            }
-#else
+#if os(macOS)
             Table(snapshot.searchResults, selection: $selectedResultID) {
                 TableColumn(DulcetStrings.resultColumn) { result in
                     DulcetSearchResultIdentity(
@@ -415,7 +401,6 @@ struct DulcetSearchView: View {
                 }
                 .width(min: 72, ideal: 90, max: 120)
             }
-#if os(macOS)
             .alternatingRowBackgrounds(.disabled)
             .contextMenu(forSelectionType: DulcetSearchResult.ID.self) { _ in
                 EmptyView()
@@ -424,6 +409,44 @@ struct DulcetSearchView: View {
                 selectedResultID = id
                 onActivateResult(id)
             }
+#else
+            // Selection is the macOS Table's idiom; touch and the remote share the library's
+            // single-activation idiom instead -- one press on a row routes its semantic action
+            // (play a track, open an album or artist) through onActivateResult.
+            ScrollView {
+                LazyVStack(spacing: DulcetSpacing.sm) {
+                    ForEach(Array(snapshot.searchResults.enumerated()), id: \.element.id) { index, result in
+                        Button {
+                            onActivateResult(result.id)
+                        } label: {
+                            HStack(spacing: DulcetSpacing.md) {
+                                DulcetSearchResultIdentity(result: result, rank: index)
+                                Spacer(minLength: DulcetSpacing.md)
+                                Text(result.kind.displayTitle)
+                                    .font(.callout.weight(.semibold))
+                                    .dulcetForeground(.secondaryTextOnWindow)
+                            }
+                            .padding(DulcetSpacing.sm)
+                            .contentShape(Rectangle())
+                        }
+                        .dulcetMediaButtonStyle()
+                        // A button flattens its children into one accessibility element, so the
+                        // stable rank identifier lives on the button here; on macOS it stays on
+                        // the row's title text inside the Table.
+                        .accessibilityIdentifier("dulcet.search.result.\(index)")
+                        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
+                            title: result.title,
+                            subtitle: result.subtitle,
+                            kind: result.kind.displayTitle
+                        ))
+                    }
+                }
+            }
+#if os(iOS)
+            // The keyboard otherwise stays up over the lower results; a results drag is the
+            // platform's dismissal gesture, and it must work even when the list is too short
+            // to scroll. `automatic` does not guarantee that; interactive does.
+            .scrollDismissesKeyboard(.interactively)
 #endif
 #endif
 
@@ -503,7 +526,11 @@ private struct DulcetSearchResultIdentity: View {
                     .font(.callout.weight(.medium))
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+#if os(macOS)
+                    // iOS/tvOS rows are buttons, which absorb child identifiers into the row's
+                    // own accessibility element; there the button carries this identifier.
                     .accessibilityIdentifier(rank.map { "dulcet.search.result.\($0)" } ?? "")
+#endif
                 if !result.subtitle.isEmpty {
                     Text(result.subtitle)
                         .font(.caption)

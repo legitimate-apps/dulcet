@@ -860,12 +860,12 @@ jobs:
           # INSIDE this step because Navidrome's lifetime IS this step's shell: `trap cleanup EXIT`
           # kills it, so a later step finds nothing on 127.0.0.1:4533.
           #
-          # LAST, deliberately. This is the only UI test in the job -- it launches an app, and this
-          # file records an unexplained, still-live launch flake (runs 33420584120, 33457633113).
-          # Under `set -e` an upstream position would mean one flaked launch destroys every
-          # conformance suite's evidence too. The canary's count survives `restart_navidrome_cold`
-          # (it is in the DB), and CONF-22/23 target the 29s and 31s tracks, never this one, so
-          # running last costs the assertion nothing.
+          # LAST, deliberately. The UI tests in this step are the job's only app-launching tests,
+          # and this file records an unexplained, still-live launch flake (runs 33420584120,
+          # 33457633113). Under `set -e` an upstream position would mean one flaked launch destroys
+          # every conformance suite's evidence too. The canary's count survives
+          # `restart_navidrome_cold` (it is in the DB), and CONF-22/23 target the 29s and 31s
+          # tracks, never this one, so running last costs the assertion nothing.
           #
           # The XCUITest deliberately never reads a play count -- a test that could call
           # /rest/scrobble itself cannot evidence that the APP scrobbled. The server-side half is
@@ -923,6 +923,55 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-playback-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # ---- iOS + iPadOS search-activation evidence --------------------------------------
+          # Same shape as the playback proof above and inside this step for the same reason:
+          # Navidrome's lifetime is this step's shell. The typed query, the ranked render and
+          # the activation-to-Now-Playing assertions all live in the UI test; this file supplies
+          # only the disposable fixture coordinates. The iPhone run evidences the ios cell, the
+          # iPad run the ipados cell -- the test itself fails on the wrong window class, so one
+          # destination's evidence cannot be mistaken for the other's.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-search.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_PLAYBACK_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-search.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test \
             core-conformance/build/test-results/iosSimulatorArm64Test \
@@ -932,6 +981,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
