@@ -6,16 +6,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
-import json
 import os
 from pathlib import Path
 import re
 import secrets
 import signal
 import subprocess
+import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+
+from readiness_transport import TRANSPORT_ERRORS, read_json
 
 
 ADMIN_USER = "dulcet-admin"
@@ -160,13 +163,18 @@ def main() -> None:
     search_deadline = time.monotonic() + 5
     song = None
     while time.monotonic() < search_deadline:
-        with urllib.request.urlopen(search_url, timeout=10) as response:
-            document = json.load(response)
-        songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
-        song = next((value for value in songs if value.get("title") == "Dulcet Health Probe"), None)
-        if song is not None:
-            break
-        time.sleep(0.05)
+        try:
+            document = read_json(search_url, min(10, max(0, search_deadline - time.monotonic())))
+        except urllib.error.HTTPError:
+            raise
+        except TRANSPORT_ERRORS as error:
+            print(f"cache search transport error: {error}", file=sys.stderr)
+        else:
+            songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
+            song = next((value for value in songs if value.get("title") == "Dulcet Health Probe"), None)
+            if song is not None:
+                break
+        time.sleep(min(0.05, max(0, search_deadline - time.monotonic())))
     if not song or not isinstance(song.get("id"), str):
         raise SystemExit("known transcode cache probe is absent from the disposable corpus")
 
