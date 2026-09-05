@@ -1025,12 +1025,14 @@ class ForwardProxyAuthenticationHandler(BaseHTTPRequestHandler):
     def _challenge(self) -> None:
         values = self.headers.get_all("Proxy-Authorization", failobj=[]) or []
         STATE.record_proxy_auth_challenge(values)
+        print(f"PROXY AUTH challenge received monotonic={time.monotonic():.6f}", flush=True)
         self.send_response(407, "Proxy Authentication Required")
         self.send_header("Proxy-Authenticate", 'Basic realm="dulcet-forward-proxy"')
         self.send_header("Content-Length", "0")
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
+        print(f"PROXY AUTH 407 sent monotonic={time.monotonic():.6f}", flush=True)
 
     def _send_json(self, status: int, value: object) -> None:
         self._send(
