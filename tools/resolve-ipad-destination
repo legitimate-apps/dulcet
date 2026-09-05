@@ -21,27 +21,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 XCODE_QUERY_TIMEOUT = 60
+DISCOVERY_TIMEOUT = 120
+DISCOVERY_RETRY_INTERVAL = 5
 
 
-def load_destinations(path: str | None, project: str, scheme: str) -> str:
+def load_destinations(path: str | None, project: str, scheme: str,
+                      timeout: float = XCODE_QUERY_TIMEOUT) -> str:
     if path:
         return Path(path).read_text()
     command = ["xcrun", "xcodebuild", "-showdestinations", "-project", project,
                "-scheme", scheme, "-configuration", "Debug"]
     try:
         result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=XCODE_QUERY_TIMEOUT, check=False)
+                                timeout=timeout, check=False)
     except subprocess.TimeoutExpired as error:
         def decoded(value):
             return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
         raise ValueError(
-            f"xcodebuild destination query timed out after {XCODE_QUERY_TIMEOUT}s; "
+            f"xcodebuild destination query timed out after {timeout:g}s; "
             "accepted set UNKNOWN; partial output:\n"
             + decoded(error.stdout) + decoded(error.stderr)
         ) from error
@@ -150,18 +155,40 @@ def main() -> None:
     parser.add_argument("--destinations-file", help="read xcodebuild -showdestinations output instead of running Xcode")
     parser.add_argument("--project", default="apple/Dulcet.xcodeproj")
     parser.add_argument("--scheme", default="DulcetiOS")
+    parser.add_argument("--discovery-timeout", type=float, default=DISCOVERY_TIMEOUT,
+                        help="overall Xcode discovery deadline in seconds (default: 120)")
     parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
     args = parser.parse_args()
+    if not math.isfinite(args.discovery_timeout) or args.discovery_timeout <= 0:
+        parser.error("--discovery-timeout must be finite and positive")
 
     document = load_devices(args.devices_json)
     candidates = ipad_candidates(document)
     transcript = "(query did not produce output)"
+    started = time.monotonic()
+    deadline = started + args.discovery_timeout
+    attempts = 0
     try:
-        transcript = load_destinations(args.destinations_file, args.project, args.scheme)
-        accepted = accepted_ids(transcript, args.scheme)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("Xcode discovery deadline expired with zero concrete iOS Simulator destinations")
+            attempts += 1
+            transcript = load_destinations(args.destinations_file, args.project, args.scheme,
+                                           min(XCODE_QUERY_TIMEOUT, remaining))
+            accepted = accepted_ids(transcript, args.scheme)
+            if time.monotonic() >= deadline:
+                raise ValueError("Xcode discovery deadline expired before destinations could be accepted")
+            # A populated set is authoritative, including a genuine mismatch with simctl's iPads.
+            # Only an entirely empty concrete simulator set is eligible for another query.
+            if accepted:
+                break
+            time.sleep(max(0, min(DISCOVERY_RETRY_INTERVAL, deadline - time.monotonic())))
     except (OSError, ValueError) as error:
         raise SystemExit(
             f"cannot determine Xcode-drivable iPads: {error}\n"
+            f"discovery attempts={attempts} elapsed={time.monotonic() - started:.3f}s "
+            f"deadline={args.discovery_timeout:g}s\n"
             f"simctl offered: {json.dumps(diagnostic_devices(document), sort_keys=True)}\n"
             f"xcodebuild accepts (raw query):\n{transcript}"
         ) from error
@@ -187,7 +214,7 @@ def main() -> None:
     else:
         print(f"platform=iOS Simulator,id={udid}")
     print(
-        f"RESOLVED IPAD name={name!r} ios={'.'.join(str(p) for p in version)} candidates={len(candidates)} simctl_ipads={offered_count}",
+        f"RESOLVED IPAD name={name!r} ios={'.'.join(str(p) for p in version)} candidates={len(candidates)} simctl_ipads={offered_count} query_attempts={attempts}",
         file=sys.stderr,
     )
 
