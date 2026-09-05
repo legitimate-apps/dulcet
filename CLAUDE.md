@@ -312,8 +312,17 @@ They are deliberately not reproduced in this repository.**
     ffmpeg revision, sdl3). Refresh the pin from `https://formulae.brew.sh/api/formula/<name>.json`,
     not from the CI error text, and update both the url digest and the `sha256`. ➡️ **Check this
     first when several unrelated pull requests go red together** — it looks like flakiness and is
-    deterministic. `pins.json` already records each bottle's ghcr blob digest; fetching that directly
-    would retire the whole class.
+    deterministic. `pins.json` already records each bottle's ghcr blob digest, and fetching that blob
+    directly does retire pin drift — but **installing from the fetched path is a different thing and
+    reintroduces a worse failure**. A package-path install makes Homebrew parse the formula embedded in
+    the bottle, which fails on any Homebrew generation that rejects a keyword argument appearing in it.
+    OBSERVED 2026-09-05: the pinned `openssl@3` 3.6.4 bottle embeds
+    `symlink "…", "…", overwrite: true`; a package-path install failed with
+    `openssl@3: unknown keyword: :overwrite` and then a misleading
+    `Cellar/openssl@3/<older version> is not a directory` on 4 of 4 runs on one runner-image generation,
+    while a by-name install succeeded on that same image. **The digest fetch is not the problem; the
+    package-path install is.** Retiring this class therefore needs a way to pour a digest-fetched bottle
+    *without* routing through Homebrew's own formula parse — not simply fetching by digest.
 37. **The capture step runs BEFORE the iPadOS steps, so a capture divergence SKIPS them.** Measured:
     capture at step 25 `failure`, iPadOS boot and layout at 31-32 `skipped`. A ~20%-per-pair capture
     flake therefore gates every later step in the job, and an iPadOS fix cannot be validated at all
