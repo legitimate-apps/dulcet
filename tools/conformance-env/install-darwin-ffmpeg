@@ -12,36 +12,18 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 import urllib.parse
 import urllib.request
-from urllib.error import HTTPError, URLError
 
 from ffmpeg_version import require_ffmpeg_version
 
 
-def run(
-    arguments: list[str],
-    *,
-    capture: bool = False,
-    local_homebrew_package: bool = False,
-) -> str:
-    environment = {**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"}
-    if local_homebrew_package:
-        # Homebrew intentionally gates package-path installs behind developer mode. Suppress its
-        # post-install dependent upgrade pass too: those upgrades would reintroduce live resolution.
-        environment.update(
-            {
-                "HOMEBREW_DEVELOPER": "1",
-                "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK": "1",
-                "HOMEBREW_NO_INSTALL_CLEANUP": "1",
-            }
-        )
+def run(arguments: list[str], *, capture: bool = False) -> str:
     process = subprocess.run(
         arguments,
         text=True,
         capture_output=capture,
-        env=environment,
+        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
     )
     if process.returncode != 0:
         detail = ((process.stdout or "") + (process.stderr or "")).strip()
@@ -49,7 +31,28 @@ def run(
     return process.stdout.strip() if capture else ""
 
 
+FORMULA_INDEX_ACCESSES = 0
+
+
+def count_formula_index_access() -> None:
+    """Record one Homebrew invocation that reads or refreshes Homebrew's formula index.
+
+    Pouring a bottle by formula name asks Homebrew to resolve that name itself, so this installer
+    does reach the formula index and must not claim otherwise. This is the only place the reported
+    total is incremented, which keeps that total an observation of what ran rather than a constant.
+    """
+    global FORMULA_INDEX_ACCESSES
+    FORMULA_INDEX_ACCESSES += 1
+
+
+def run_formula_index_command(arguments: list[str], *, capture: bool = False) -> str:
+    """Run one Homebrew command that resolves a formula name or refreshes the formula index."""
+    count_formula_index_access()
+    return run(arguments, capture=capture)
+
+
 def installed_formula_versions(name: str) -> list[str]:
+    count_formula_index_access()
     process = subprocess.run(
         ["brew", "list", "--versions", name],
         text=True,
@@ -109,19 +112,6 @@ def validate_pinned_bottle_closure(closure: list[dict]) -> None:
         pinned_ghcr_repository(entry)
 
 
-def bottle_filename(entry: dict) -> str:
-    rebuild = entry["bottle_rebuild"]
-    rebuild_suffix = f".{rebuild}" if rebuild else ""
-    return (
-        f"{entry['formula']}--{keg_version(entry)}.{entry['bottle_tag']}"
-        f".bottle{rebuild_suffix}.tar.gz"
-    )
-
-
-def bottle_cache_filename(entry: dict) -> str:
-    return f"{entry['sha256']}--{bottle_filename(entry)}"
-
-
 def verify_bottle_checksum(path: Path, entry: dict) -> str:
     """Reject any archive whose bytes do not match the immutable digest pin."""
     pinned_ghcr_repository(entry)
@@ -134,71 +124,46 @@ def verify_bottle_checksum(path: Path, entry: dict) -> str:
     return observed_sha256
 
 
-def ghcr_pull_token(repository: str) -> str:
-    query = urllib.parse.urlencode(
-        {
-            "service": "ghcr.io",
-            "scope": f"repository:{repository}:pull",
-        }
+def fetch_pinned_bottle(entry: dict) -> Path:
+    """Populate Homebrew's own download cache and return the file its next install will pour.
+
+    The returned path is the one Homebrew reports for this formula and bottle tag, so it is the
+    file a by-name install of the same formula consumes. Nothing else in this installer downloads
+    a bottle: there is exactly one copy of each artifact, and it is Homebrew's.
+    """
+    name = entry["formula"]
+    run_formula_index_command(["brew", "fetch", "--force", "--force-bottle", name])
+    bottle_path = Path(
+        run_formula_index_command(
+            ["brew", "--cache", f"--bottle-tag={entry['bottle_tag']}", name],
+            capture=True,
+        )
     )
-    request = urllib.request.Request(
-        f"https://ghcr.io/token?{query}",
-        headers={"User-Agent": "dulcet-darwin-conformance/1"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            token_document = json.load(response)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise SystemExit(f"GHCR authentication failed for {repository}: {error}") from error
-    token = token_document.get("token") or token_document.get("access_token")
-    if not isinstance(token, str) or not token:
-        raise SystemExit(f"GHCR authentication returned no pull token for {repository}")
-    return token
+    if not bottle_path.is_file():
+        raise SystemExit(f"Homebrew did not fetch the pinned bottle for {name}: {bottle_path}")
+    return bottle_path
 
 
-def fetch_pinned_bottle(entry: dict, cache_directory: Path) -> tuple[Path, str, bool]:
-    """Return a checksum-verified pinned bottle, using a reusable local cache when possible."""
-    repository = pinned_ghcr_repository(entry)
-    cache_directory.mkdir(parents=True, exist_ok=True)
-    destination = cache_directory / bottle_cache_filename(entry)
-    if destination.exists():
-        if destination.is_symlink() or not destination.is_file():
-            raise SystemExit(f"pinned bottle cache entry is not a file: {destination}")
-        return destination, verify_bottle_checksum(destination, entry), True
+def pour_pinned_bottle(entry: dict) -> tuple[str, int]:
+    """Verify one pinned bottle and pour the artifact that was verified.
 
-    token = ghcr_pull_token(repository)
-    request = urllib.request.Request(
-        entry["url"],
-        headers={
-            "Accept": "application/vnd.oci.image.layer.v1.tar+gzip",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "dulcet-darwin-conformance/1",
-        },
+    Locating the artifact, hashing it and pouring it are one operation on purpose. The hash is
+    taken from the path Homebrew names for this formula and bottle tag, and the install that
+    immediately follows names the same formula, so no step in between can substitute a different
+    file and no separate copy exists for the checksum to drift onto.
+    """
+    name = entry["formula"]
+    bottle_path = fetch_pinned_bottle(entry)
+    archive_reader_index_accesses = assert_bottle_archive_shape(bottle_path, entry)
+    observed_sha256 = verify_bottle_checksum(bottle_path, entry)
+    print(
+        f"DARWIN BOTTLE VERIFIED formula={name} sha256={observed_sha256} "
+        f"bottle_file={bottle_path.name} "
+        "authenticated_archive_metadata_matches_pin=true "
+        f"authenticated_archive_reader_index_accesses={archive_reader_index_accesses}"
     )
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{entry['formula']}-",
-            suffix=".partial",
-            dir=cache_directory,
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            try:
-                with urllib.request.urlopen(request, timeout=60) as response:
-                    while block := response.read(1024 * 1024):
-                        temporary.write(block)
-            except (HTTPError, URLError, TimeoutError) as error:
-                raise SystemExit(
-                    f"GHCR blob fetch failed for {entry['formula']} at its pinned digest: {error}"
-                ) from error
-        observed_sha256 = verify_bottle_checksum(temporary_path, entry)
-        os.replace(temporary_path, destination)
-        temporary_path = None
-        return destination, observed_sha256, False
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+    run_formula_index_command(["brew", "install", "--force-bottle", name])
+    return observed_sha256, archive_reader_index_accesses
 
 
 def keg_payload_sha256(root: Path) -> tuple[str, int]:
@@ -314,6 +279,52 @@ def keg_version(entry: dict) -> str:
     version the built binary reports about itself must not.
     """
     return entry["version"] if entry["revision"] == 0 else f"{entry['version']}_{entry['revision']}"
+
+
+def assert_resolver_shape(entry: dict, resolved_by_name: dict[str, dict]) -> dict:
+    """Require Homebrew's own resolution of a pinned formula name to be exactly the pinned shape.
+
+    A by-name pour asks Homebrew which artifact a name means, so the answer has to be constrained
+    before the name is used. Every pinned field is compared: version, revision, version scheme,
+    runtime dependency list, bottle tag, bottle rebuild, bottle URL and bottle sha256. Comparing
+    the bottle digest establishes that the formula Homebrew pours from declares the pinned digest.
+    What Homebrew then does with its own declared checksum is Homebrew's behaviour, not a guarantee
+    this installer owns; the guarantee here is the digest hashed immediately before each install.
+    """
+    name = entry["formula"]
+    try:
+        observed = formula_shape(resolved_by_name.get(name, {}), entry["bottle_tag"])
+    except (ValueError, KeyError, TypeError) as error:
+        raise SystemExit(
+            f"Homebrew resolver drift for {name}: unusable resolution: "
+            f"{type(error).__name__}: {error}"
+        ) from error
+    if observed != entry:
+        raise SystemExit(
+            f"Homebrew resolver drift for {name}: expected {entry}, observed {observed}"
+        )
+    return observed
+
+
+def assert_resolver_shapes(
+    closure: list[dict], resolved_by_name: dict[str, dict]
+) -> dict[str, dict]:
+    """Assert every pinned name resolves to its pinned shape, reporting all drift in one pass.
+
+    Exiting on the first drifted formula names one formula while hiding the rest, and whoever
+    refreshes the pin from that message refreshes only what it printed, then spends another full
+    CI run discovering the next one. Every entry is checked; the check still fails closed.
+    """
+    shapes: dict[str, dict] = {}
+    drift: list[str] = []
+    for entry in closure:
+        try:
+            shapes[entry["formula"]] = assert_resolver_shape(entry, resolved_by_name)
+        except SystemExit as error:
+            drift.append(str(error))
+    if drift:
+        raise SystemExit("\n".join(drift))
+    return shapes
 
 
 def assert_locked_graph(closure: list[dict], root_formula: str) -> None:
@@ -707,7 +718,7 @@ def bottle_archive_shape(path: Path, entry: dict) -> tuple[dict, int]:
         raise SystemExit(
             f"unusable authenticated metadata in pinned bottle {entry['formula']}: "
             f"{type(error).__name__}: {error}; "
-            f"formula_index_accesses={formula_index_accesses}"
+            f"authenticated_archive_reader_index_accesses={formula_index_accesses}"
         ) from error
 
     return (
@@ -910,23 +921,21 @@ def main(pins_path: Path | None = None) -> None:
     by_name = {entry["formula"]: entry for entry in closure}
     observed_keg_hashes: dict[str, str] = {}
     observed_bottle_sha256s: dict[str, str] = {}
-    observed_formula_index_accesses = 0
-    bottle_paths: dict[str, Path] = {}
-    brew_cache = Path(run(["brew", "--cache"], capture=True))
-    bottle_cache = brew_cache / "dulcet" / "darwin-conformance-bottles"
-    for expected in closure:
-        name = expected["formula"]
-        bottle_path, observed_sha256, cache_hit = fetch_pinned_bottle(expected, bottle_cache)
-        observed_formula_index_accesses += assert_bottle_archive_shape(
-            bottle_path, expected
-        )
-        bottle_paths[name] = bottle_path
-        observed_bottle_sha256s[name] = observed_sha256
-        print(
-            f"DARWIN BOTTLE VERIFIED formula={name} sha256={observed_sha256} "
-            f"cache_hit={str(cache_hit).lower()} authenticated_archive_metadata_matches_pin=true "
-            "formula_index_accesses=0"
-        )
+    observed_archive_reader_index_accesses = 0
+
+    # Bottles are poured by formula name, so Homebrew resolves each name itself and the resolution
+    # is what has to be constrained. Refresh the index first: a runner image baked before the pin
+    # was last refreshed carries an older index generation, which resolves the pinned names to
+    # older artifacts. Then require every resolution to equal the pin, reporting all drift at once
+    # rather than the first name, so a pin refresh is one pass instead of one CI run per formula.
+    run_formula_index_command(["brew", "update"])
+    resolved = json.loads(
+        run_formula_index_command(["brew", "info", "--json=v2", *names], capture=True)
+    )
+    resolved_by_name = {
+        formula["name"]: formula for formula in resolved.get("formulae", [])
+    }
+    resolver_shapes = assert_resolver_shapes(closure, resolved_by_name)
 
     live_shape_status, observed_live_closure = advise_live_shape(closure)
 
@@ -942,7 +951,9 @@ def main(pins_path: Path | None = None) -> None:
     # explicit absence checkpoint makes a retained pre-existing keg fail closed.
     for name in reversed(names):
         if installed_formula_versions(name):
-            run(["brew", "uninstall", "--force", "--ignore-dependencies", name])
+            run_formula_index_command(
+                ["brew", "uninstall", "--force", "--ignore-dependencies", name]
+            )
     absent_before_pour = {name: observe_keg(path) for name, path in keg_paths.items()}
     retained = [name for name, observation in absent_before_pour.items() if observation is not None]
     if retained:
@@ -950,21 +961,15 @@ def main(pins_path: Path | None = None) -> None:
             f"fresh-pour absence checkpoint retained locked kegs: {','.join(retained)}"
         )
 
-    # Pour every local bottle in the validated dependency order. The fail-closed archive metadata
-    # check above rejects missing, ambiguous or inconsistent SPDX/path/formula declaration data;
-    # this final hash binds the exact checked archive to the immediately following install attempt.
+    # Fetch, verify and pour each bottle in the validated dependency order, one formula per
+    # iteration. The fail-closed archive metadata check rejects missing, ambiguous or inconsistent
+    # SPDX/path/formula declaration data; the hash that follows it binds the exact checked archive
+    # to the immediately following install attempt, and that archive is Homebrew's own cached
+    # download rather than a second copy the install would ignore.
     for name in names:
-        verify_bottle_checksum(bottle_paths[name], by_name[name])
-        run(
-            [
-                "brew",
-                "install",
-                "--force",
-                "--ignore-dependencies",
-                str(bottle_paths[name]),
-            ],
-            local_homebrew_package=True,
-        )
+        observed_sha256, archive_reader_index_accesses = pour_pinned_bottle(by_name[name])
+        observed_bottle_sha256s[name] = observed_sha256
+        observed_archive_reader_index_accesses += archive_reader_index_accesses
 
     observed_install_observations: dict[str, dict[str, bool]] = {}
     installed_receipts: dict[str, dict] = {}
@@ -1013,6 +1018,10 @@ def main(pins_path: Path | None = None) -> None:
             f"receipt_time={postinstall_keg['receipt_time']}"
         )
 
+    # Hashing the poured trees a second time detects a tree that changed while this run measured
+    # it. It is not provenance: no pinned keg payload hash exists to compare against, so a matching
+    # pair proves stability during the run and says nothing about which artifact was poured. The
+    # pinned-artifact guarantee is the bottle digest verified immediately before each install.
     rehashed_kegs = {name: keg_payload_sha256(keg_paths[name])[0] for name in names}
     if rehashed_kegs != observed_keg_hashes:
         raise SystemExit(
@@ -1086,8 +1095,10 @@ def main(pins_path: Path | None = None) -> None:
         f"expected_encoders={','.join(sorted(ffmpeg['required_encoders']))} "
         f"observed_encoders={','.join(observed_required_encoders)} "
         f"expected_closure_sha256={expected_closure_digest} "
-        f"authenticated_archive_metadata_matching_pin={len(bottle_paths)} "
-        f"formula_index_accesses={observed_formula_index_accesses} "
+        f"authenticated_archive_metadata_matching_pin={len(observed_bottle_sha256s)} "
+        f"authenticated_archive_reader_index_accesses={observed_archive_reader_index_accesses} "
+        f"formula_index_accesses={FORMULA_INDEX_ACCESSES} "
+        f"formula_index_resolutions_asserted_against_pin={len(resolver_shapes)} "
         f"installed_receipts_matching_pin={len(installed_receipts)} "
         f"live_shape_status={live_shape_status} "
         f"observed_live_closure_sha256={observed_live_closure_digest} "
