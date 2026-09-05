@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Exercise cache-search recovery without changing stream or corpus assertions."""
+
+from pathlib import Path
+import runpy
+import time
+
+controls = runpy.run_path(str(Path(__file__).with_name("test-transcode-probe-timeout-diagnostic")))
+controls["require_port_free"]()
+run_probe = controls["run_probe"]
+
+recovered = run_probe(mode="search-reset", budget=2)
+assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+assert "cache search transport error:" in recovered.stderr, recovered.stderr
+assert "TRANSCODE CACHE OBSERVATION cached=false transcoding=true" in recovered.stdout, recovered.stdout
+print("POSITIVE CONTROL PASS cache_search_transport_retried=true")
+print(recovered.stderr.strip())
+print(recovered.stdout.strip())
+
+started = time.monotonic()
+stalled = run_probe(mode="search-stall", budget=2)
+elapsed = time.monotonic() - started
+assert stalled.returncode != 0, stalled.stdout
+assert "cache search transport error: timed out" in stalled.stderr, stalled.stderr
+assert "known transcode cache probe is absent from the disposable corpus" in stalled.stderr, stalled.stderr
+assert elapsed < 7, f"search escaped its five-second deadline: {elapsed:.3f}s"
+print(f"NEGATIVE CONTROL PASS cache_search_deadline=true elapsed_seconds={elapsed:.3f}")
+
+for mode, message in [
+    ("search-http-error", "HTTP Error 503"),
+    ("search-missing-id", "known transcode cache probe is absent from the disposable corpus"),
+    ("search-error-envelope", "known transcode cache probe is absent from the disposable corpus"),
+]:
+    rejected = run_probe(mode=mode, budget=2)
+    assert rejected.returncode != 0, rejected.stdout
+    assert message in rejected.stderr, rejected.stderr
+    assert "cache search transport error:" not in rejected.stderr, rejected.stderr
+    print(f"NEGATIVE CONTROL PASS {mode}=rejected message={message}")
