@@ -244,6 +244,17 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.ui-tests
         TEST_TARGET_NAME: DulcetiOS
+  DulcetTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - DulcetTVUITests
+    dependencies:
+      - target: DulcetTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev.ui-tests
+        TEST_TARGET_NAME: DulcetTV
   DulcetTV:
     type: application
     platform: tvOS
@@ -362,3 +373,4 @@ schemes:
       targets:
         - DulcetKitTVOSTests
         - DulcetKeychainTVOSTests
+        - DulcetTVUITests
