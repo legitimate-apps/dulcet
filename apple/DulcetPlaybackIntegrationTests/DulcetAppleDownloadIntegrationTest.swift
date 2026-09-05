@@ -324,7 +324,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
 
     private func loadLiveTrack(baseURL: String) async throws -> DulcetTrack {
         let client = AppleLibraryBrowseClient()
-        let seed: LiveDownloadTrackSeed? = await withCheckedContinuation { continuation in
+        let (seed, failure): (LiveDownloadTrackSeed?, String) = await withCheckedContinuation { continuation in
             _ = client.startBrowse(request: AppleLibraryBrowseRequest(
                 providerInstanceId: providerInstanceID,
                 normalizedBaseUrl: baseURL,
@@ -332,13 +332,24 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 password: fixturePassword,
                 allowLocalHttp: true
             )) { outcome in
-                guard let source = outcome.snapshot?.albums.lazy
-                    .flatMap(\.tracks)
-                    .first(where: { $0.sourceContainer != nil }) else {
-                    continuation.resume(returning: nil)
+                if let error = outcome.error {
+                    continuation.resume(returning: (nil, "library browse failed: kind=\(error.kind)"))
                     return
                 }
-                continuation.resume(returning: LiveDownloadTrackSeed(
+                guard let snapshot = outcome.snapshot else {
+                    continuation.resume(returning: (nil, "library browse returned neither snapshot nor error"))
+                    return
+                }
+                let tracks = snapshot.albums.flatMap(\.tracks)
+                guard !tracks.isEmpty else {
+                    continuation.resume(returning: (nil, "library empty: albums=\(snapshot.albums.count), tracks=0"))
+                    return
+                }
+                guard let source = tracks.first(where: { $0.sourceContainer != nil }) else {
+                    continuation.resume(returning: (nil, "no track carrying a source container: tracks=\(tracks.count)"))
+                    return
+                }
+                continuation.resume(returning: (LiveDownloadTrackSeed(
                     providerInstanceID: source.providerInstanceId,
                     rawID: source.rawId,
                     title: source.title,
@@ -348,14 +359,17 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                     durationMilliseconds: source.durationMilliseconds,
                     sourceContainer: source.sourceContainer,
                     mediaSourceID: source.mediaSourceId
-                ))
+                ), ""))
             }
         }
         let source = try XCTUnwrap(
             seed,
-            "the disposable library must expose one downloadable track"
+            "the disposable library must expose one downloadable track; \(failure)"
         )
-        let container = try XCTUnwrap(source.sourceContainer.flatMap(downloadContainer))
+        let container = try XCTUnwrap(
+            source.sourceContainer.flatMap(downloadContainer),
+            "download seed has an unsupported source container: \(source.sourceContainer ?? "missing")"
+        )
         return DulcetTrack(
             id: DulcetProviderItemID(
                 providerInstanceID: source.providerInstanceID,
