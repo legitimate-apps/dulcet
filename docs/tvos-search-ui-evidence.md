@@ -78,10 +78,14 @@ xcode test execution valid: test=DulcetTVUITests.DulcetTVUITests/testSimulatorSe
 ## Reproduction and CI
 
 Generate the project from `apple/project.yml` with `xcodegen generate` in `apple/`.
-Supply an Android SDK through `ANDROID_HOME` and `ANDROID_SDK_ROOT`. DerivedData
-must resolve onto the system volume; resolve symlinks before selecting the
-location. Lease a tvOS simulator, pass `-parallel-testing-enabled NO`, and release
-the lease when the runtime experiment finishes. Preserve simulator signing.
+Supply an Android SDK through `ANDROID_HOME` and `ANDROID_SDK_ROOT`, because the
+Xcode build invokes Gradle through a run-script phase. Choose a DerivedData
+directory on the same physical volume as the system and resolve symlinks before
+trusting the path: a test whose DerivedData resolves onto an external volume can
+launch its host and then execute nothing, which reports as a pass rather than as
+an error. Run against a single tvOS simulator with `-parallel-testing-enabled NO`,
+because `xcodebuild test` otherwise clones the destination and the clone failure
+reads as a test failure. Preserve simulator signing.
 
 With `DERIVED_ROOT` and `TVOS_UDID` supplied, and the disposable fixture running:
 
@@ -165,5 +169,10 @@ OBSERVED repository validation after restoring the production action:
 - Regenerating in `apple/` and comparing the pbxproj byte-for-byte: `cmp` exit 0.
 - `git diff --check`: exit 0, no diagnostics.
 
-The production environment fix is commit `25155f1`; the passing control, DEBUG
-setup boundaries, generated target, and CI wiring are commit `997cd22`.
+The production environment fix is the commit "Stop tvOS search-result artwork from
+crashing the app"; the passing control, DEBUG setup boundaries, generated target
+and CI wiring are the commit "Exercise tvOS search typing and remote activation
+against the disposable server". They are named rather than cited by hash because
+this branch is rebased onto `main` before merging under `strict: true`, which
+rewrites every hash on it - the previous revision of this line cited two hashes
+that no longer existed in any published history.
