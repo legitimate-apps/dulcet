@@ -68,14 +68,20 @@ final class DulcetiOSUITests: XCTestCase {
         // The rendered order is a product contract, not a server one: results are ranked by match
         // quality first, then by kind with tracks ahead of albums, then by the order the server
         // returned them. The server lists the matching album ahead of every track; the app does
-        // not. Asserting the whole order makes drift in either fail here, naming what it observed,
-        // rather than silently relocating the canary to another rank.
+        // not. Asserting each rank's identity makes drift in either fail here, naming what it
+        // observed, rather than silently relocating the canary to another rank.
+        //
+        // OBSERVED: this query matches four rows, the fourth being the matching album, and the
+        // results list materializes its rows lazily -- so the album row is not addressable on a
+        // compact window. These three ranks are asserted on every destination; the rendered
+        // result count below pins the full arity without depending on an offscreen row, and the
+        // macOS control, whose table renders every row at once, pins the album's rank.
         let rankedLabels = [
-            "Thirty One Seconds, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
-            "Twenty Nine Seconds, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
-            "UI Playback Canary, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
-            "Threshold Boundary, Dulcet Fixtures, Album",
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
         ]
+        let renderedResultCount = "4 results"
 
         let app = XCUIApplication()
         app.launchArguments += [
@@ -151,8 +157,7 @@ final class DulcetiOSUITests: XCTestCase {
         // A person dismisses the software keyboard before activating a result; the test must do
         // the same, because the occluding keyboard window eats the hit test. Measured on iPhone
         // 17 Pro: the rank-zero row's midpoint sat at y=500 under a keyboard whose top edge was
-        // y=472, so tapping without dismissing is not a real activation path. It is also what
-        // brings the lower ranks onto the screen.
+        // y=472, so tapping without dismissing is not a real activation path.
         guard dismissKeyboardBeforeActivation(in: app) else { return }
 
         // Every rank is addressed by its own identifier and checked against the row that belongs
@@ -172,17 +177,41 @@ final class DulcetiOSUITests: XCTestCase {
             )
             rankedResults.append(result)
         }
+        // Captured while the rows are still on screen: after activation the search surface is
+        // replaced and re-reading these elements throws rather than returning a stale value.
+        let observedLabels = rankedResults.map(\.label)
         XCTAssertNotEqual(
             rankedResults[0].label,
             rankedLabels[canaryRank],
             "The canary must not render at rank zero, or this proof cannot tell rank from arity"
         )
-        XCTAssertFalse(
-            app.buttons["dulcet.search.result.\(rankedLabels.count)"].firstMatch.exists,
-            "The ranked list must end at rank \(rankedLabels.count - 1): " + app.debugDescription
+        // The app's own count of the ranked list. Asserting it keeps the arity pinned even
+        // though the list renders lazily, so a query that starts matching a different number of
+        // rows fails here instead of quietly changing which rank the canary occupies.
+        XCTAssertTrue(
+            app.staticTexts[renderedResultCount].firstMatch.exists,
+            "The results header must report \(renderedResultCount): " + app.debugDescription
         )
 
+        // OBSERVED on a compact window: the ranked rows live in a scroll view a little over one
+        // row tall, so with four results the canary's row lies below the visible bounds and its
+        // midpoint falls outside the window, where a tap resolves nowhere. An application-level
+        // swipe scrolls nothing here because its midpoint lands in the header above the list, so
+        // the swipe has to be delivered to the list itself. A person scrolls the results to the
+        // row they want and taps it; the test does the same. Every rank's identity was read
+        // before this point, so scrolling cannot affect what was asserted.
         let canaryResult = rankedResults[canaryRank]
+        let resultsList = app.scrollViews.firstMatch
+        guard resultsList.waitForExistence(timeout: 5) else {
+            XCTFail("The ranked results must render in a scrollable list: " + app.debugDescription)
+            return
+        }
+        var scrollAttempts = 0
+        while scrollAttempts < 6 && !isReachableForTap(canaryResult, in: window) {
+            resultsList.swipeUp()
+            scrollAttempts += 1
+        }
+
         guard canaryResult.isHittable else {
             // Frame diagnostics make an occlusion report actionable from the CI log alone:
             // a covered row and an offscreen row are different defects with the same symptom.
@@ -221,7 +250,7 @@ final class DulcetiOSUITests: XCTestCase {
         )
         print(
             "DULCET SEARCH UI PASS width=\(windowExpectation == .compactWidth ? "compact" : "regular")"
-                + " query=typed ranks=\(rankedResults.map(\.label))"
+                + " query=typed ranks=\(observedLabels)"
                 + " activated-rank=\(canaryRank) activation=tap source=search now-playing=\(canaryTitle)"
         )
     }
@@ -563,6 +592,17 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         return true
+    }
+
+    /// A row is reachable when the hit point XCUITest would use for a tap -- its midpoint -- is
+    /// inside the window, not merely when the element exists. A row that begins on screen and
+    /// extends past the bottom edge satisfies `exists` while its midpoint does not.
+    @MainActor
+    private func isReachableForTap(_ element: XCUIElement, in window: XCUIElement) -> Bool {
+        guard element.exists, window.exists else { return false }
+        let frame = element.frame
+        guard !frame.isEmpty, !frame.isInfinite else { return false }
+        return window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) && element.isHittable
     }
 
     @MainActor
