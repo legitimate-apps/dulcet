@@ -11,22 +11,41 @@ must not be mistaken for one.
 from __future__ import annotations
 
 import json
+import io
+import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
+from contextlib import redirect_stdout, redirect_stderr
 
 RESOLVER = Path(__file__).resolve().parent / "resolve-ipad-destination"
 IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 OLD_IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
 
 
-def run(payload: dict) -> subprocess.CompletedProcess:
+def destinations(*ids: str) -> str:
+    return 'Available destinations for the "DulcetiOS" scheme:\n' + "\n".join(
+        f"  {{ platform:iOS Simulator, arch:arm64, id:{udid}, OS:26.5, name:iPad }}"
+        for udid in ids
+    )
+
+
+def run(payload: dict, transcript: str | None = None, field: str = "name") -> subprocess.CompletedProcess:
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "devices.json"
         path.write_text(json.dumps(payload))
+        accepted = Path(tmp) / "destinations.txt"
+        accepted.write_text(transcript if transcript is not None else destinations(
+            *(d["udid"] for devices in payload["devices"].values() for d in devices)
+        ))
         return subprocess.run(
-            [sys.executable, str(RESOLVER), "--devices-json", str(path), "--print", "name"],
+            [sys.executable, str(RESOLVER), "--devices-json", str(path),
+             "--destinations-file", str(accepted), "--print", field],
+            # Fixtures must be sufficient: neither Apple executable can be found in these controls.
+            env={**os.environ, "PATH": ""},
             text=True,
             capture_output=True,
             check=False,
@@ -93,6 +112,83 @@ def main() -> None:
             f"POSITIVE CONTROL FAILED: resolution is not deterministic ({chosen!r} then {again.stdout.strip()!r})"
         )
     print("POSITIVE CONTROL PASS deterministic=true")
+
+    # Mutate only Xcode's accepted set, leaving simctl and the ranking unchanged.
+    inventory = {"devices": {
+        IOS: [device("iPad Pro 13-inch (M5)", "EEE")],
+        OLD_IOS: [device("iPad Pro 13-inch (M5)", "FFF")],
+    }}
+    for label, transcript, expected in (
+        ("top_excluded", destinations("FFF"), "FFF"),
+        ("top_included", destinations("FFF", "EEE"), "EEE"),
+    ):
+        result = run(inventory, transcript, "udid")
+        if result.returncode != 0 or result.stdout.strip() != expected:
+            raise SystemExit(f"MUTATION CONTROL FAILED {label}: {result.stdout}{result.stderr}")
+        print(f"MUTATION CONTROL PASS {label} stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}")
+
+    for label, transcript in (
+        ("empty_intersection", destinations("UNRELATED")),
+        ("placeholders_only", destinations("dvtdevice-DVTiOSDeviceSimulatorPlaceholder")),
+        ("ineligible_only", destinations() + '\nIneligible destinations for the "DulcetiOS" scheme:\n'
+         '  { platform:iOS Simulator, id:EEE, name:iPad, error:unavailable }'),
+        ("wrong_platform", 'Available destinations for the "DulcetiOS" scheme:\n'
+         '  { platform:iOS, id:EEE, name:iPad }'),
+        ("row_error", destinations("EEE").replace("name:iPad", "name:iPad, error:unavailable")),
+        ("malformed_output", "not a destinations listing"),
+        ("wrong_scheme", destinations("EEE").replace("DulcetiOS", "OtherScheme")),
+    ):
+        result = run(inventory, transcript, "udid")
+        if (result.returncode == 0 or result.stdout or "simctl offered:" not in result.stderr
+                or "xcodebuild accepts" not in result.stderr or "EEE" not in result.stderr
+                or transcript not in result.stderr):
+            raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: {result.stdout}{result.stderr}")
+        print(f"NEGATIVE CONTROL PASS {label}_rejected=true both_inventories=true stdout_empty=true")
+
+    # Exercise the real query wrapper with a mocked process boundary, never an Apple executable.
+    resolver = runpy.run_path(str(RESOLVER))
+    query = resolver["load_destinations"]
+    command = ["xcrun", "xcodebuild", "-showdestinations", "-project", "test.xcodeproj",
+               "-scheme", "TestScheme", "-configuration", "Debug"]
+    for label, returned, thrown, expected in (
+        ("query_nonzero", subprocess.CompletedProcess(command, 70, "partial", "query failed"), None, "exited 70"),
+        ("query_timeout", None, subprocess.TimeoutExpired(command, 60, b"partial", b"timeout detail"), "timed out after 60s"),
+    ):
+        with patch("subprocess.run", return_value=returned, side_effect=thrown) as process:
+            try:
+                query(None, "test.xcodeproj", "TestScheme")
+            except ValueError as error:
+                if expected not in str(error) or "partial" not in str(error) or "UNKNOWN" not in str(error):
+                    raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: {error}")
+            else:
+                raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: query did not fail")
+            process.assert_called_once_with(command, capture_output=True, text=True, timeout=60, check=False)
+        print(f"NEGATIVE CONTROL PASS {label}_rejected=true query_timeout_seconds=60")
+
+    for label, error in (
+        ("failed_query_diagnostic", ValueError("query exited 70; accepted set UNKNOWN")),
+        ("timed_out_query_diagnostic", ValueError("query timed out; accepted set UNKNOWN")),
+        ("missing_query_executable", FileNotFoundError("xcrun unavailable")),
+    ):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        # Invoke main itself so no failure can accidentally fall back to simctl's first iPad.
+        with (patch.dict(resolver["main"].__globals__, {
+                  "load_devices": lambda _: inventory,
+                  "load_destinations": lambda *args: (_ for _ in ()).throw(error),
+              }), patch.object(sys, "argv", [str(RESOLVER)]),
+              redirect_stdout(stdout), redirect_stderr(stderr)):
+            try:
+                resolver["main"]()
+            except SystemExit as failure:
+                message = str(failure)
+                if ("simctl offered:" not in message or "EEE" not in message
+                        or "xcodebuild accepts" not in message or str(error) not in message):
+                    raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: {message}")
+            else:
+                raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: resolver did not fail")
+        if stdout.getvalue():
+            raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: resolver returned a destination")
+        print(f"NEGATIVE CONTROL PASS {label}=true both_inventories=true stdout_empty=true")
 
 
 if __name__ == "__main__":
