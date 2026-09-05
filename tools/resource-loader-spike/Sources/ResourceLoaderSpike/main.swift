@@ -204,7 +204,6 @@ private final class FixtureResourceLoader: NSObject, AVAssetResourceLoaderDelega
 
 private enum SpikeError: LocalizedError {
     case commandFailed(String, Int32, String)
-    case httpServerDidNotStart
     case invalidByteRange(Int, Int)
     case invalidFixturePath(String)
     case invalidManifest(String)
@@ -219,8 +218,6 @@ private enum SpikeError: LocalizedError {
         switch self {
         case let .commandFailed(command, status, output):
             return "\(command) failed with exit \(status): \(output)"
-        case .httpServerDidNotStart:
-            return "localhost HLS control server did not become ready"
         case let .invalidByteRange(offset, size):
             return "requested byte offset \(offset) exceeds fixture size \(size)"
         case let .invalidFixturePath(path):
@@ -243,6 +240,106 @@ private enum SpikeError: LocalizedError {
     }
 }
 
+/// Every distinguishable way the localhost control server can fail to become
+/// ready. One message per condition, each carrying the child's liveness and the
+/// elapsed times, so a CI log alone identifies which one occurred.
+private enum ServerReadinessFailure: LocalizedError {
+    case childExitedBeforePortHandshake(
+        child: String,
+        elapsed: Double,
+        budget: Double,
+        portFileBytes: Int,
+        parse: String
+    )
+    case portHandshakeTimedOut(
+        child: String,
+        elapsed: Double,
+        budget: Double,
+        portFileBytes: Int,
+        parse: String
+    )
+    case httpProbeNeverSucceeded(
+        port: Int,
+        probes: Int,
+        lastProbe: String,
+        child: String,
+        handshakeElapsed: Double,
+        elapsed: Double,
+        budget: Double
+    )
+
+    var errorDescription: String? {
+        let prefix = "localhost HLS control server readiness failed condition="
+        switch self {
+        case let .childExitedBeforePortHandshake(child, elapsed, budget, portFileBytes, parse):
+            return prefix + "child-exited-before-port-handshake "
+                + "\(child) elapsed=\(ResourceLoaderSpike.format(elapsed))s "
+                + "budget=\(ResourceLoaderSpike.format(budget))s "
+                + "port_file_bytes=\(portFileBytes) last_parse=\(parse)"
+        case let .portHandshakeTimedOut(child, elapsed, budget, portFileBytes, parse):
+            return prefix + "port-handshake-timeout "
+                + "\(child) elapsed=\(ResourceLoaderSpike.format(elapsed))s "
+                + "budget=\(ResourceLoaderSpike.format(budget))s "
+                + "port_file_bytes=\(portFileBytes) last_parse=\(parse)"
+        case let .httpProbeNeverSucceeded(
+            port, probes, lastProbe, child, handshakeElapsed, elapsed, budget
+        ):
+            return prefix + "http-probe-never-succeeded "
+                + "port=\(port) probes=\(probes) last_probe=\(lastProbe) \(child) "
+                + "handshake_elapsed=\(ResourceLoaderSpike.format(handshakeElapsed))s "
+                + "elapsed=\(ResourceLoaderSpike.format(elapsed))s "
+                + "budget=\(ResourceLoaderSpike.format(budget))s"
+        }
+    }
+}
+
+/// Readiness timing, kept in one value so a check can drive the same production
+/// code path with a short budget instead of duplicating the logic.
+private struct ServerReadinessBudget {
+    let deadline: TimeInterval
+    let probeTimeout: TimeInterval
+    let pollInterval: TimeInterval
+
+    /// Unchanged from the value this tool has always used.
+    static let production = ServerReadinessBudget(
+        deadline: 10, probeTimeout: 1, pollInterval: 0.1
+    )
+}
+
+/// The child publishes its port by atomically replacing the handshake file with
+/// a newline-terminated decimal. A reader therefore observes either no file or
+/// the whole value, and a hypothetical short read is rejected by the missing
+/// terminator rather than parsed as a truncated port number.
+private enum PortHandshake {
+    case absent
+    case incomplete(bytes: Int, reason: String)
+    case published(port: Int, bytes: Int)
+}
+
+private struct ProbeOutcome {
+    let succeeded: Bool
+    let detail: String
+}
+
+/// The probe's completion handler runs on a URLSession queue while the readiness
+/// loop reads the result, so the result crosses threads under a lock.
+private final class ProbeResultBox {
+    private let lock = NSLock()
+    private var value = ProbeOutcome(succeeded: false, detail: "probe-did-not-complete")
+
+    func record(_ outcome: ProbeOutcome) {
+        lock.lock()
+        value = outcome
+        lock.unlock()
+    }
+
+    var outcome: ProbeOutcome {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 private struct PlaybackObservation {
     let maximumTime: Double
     let status: AVPlayerItem.Status
@@ -253,15 +350,18 @@ private struct HTTPFixtureServer {
     let controlManifestURL: URL
 }
 
-private struct SpikeArguments {
-    let expectedSegmentOutcome: String
+private enum SpikeMode {
+    case fullSpike(expectedSegmentOutcome: String)
+    case readinessReportingSelfCheck
 }
 
 @main
 private enum ResourceLoaderSpike {
     static func main() {
         do {
-            let arguments = try parseArguments()
+            let mode = try parseArguments()
+            try verifyReadinessReportingContract()
+            guard case let .fullSpike(expectedSegmentOutcome) = mode else { return }
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("dulcet-resource-loader-spike-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -390,29 +490,36 @@ private enum ResourceLoaderSpike {
                 )
             }
             printEvents(segmentEvents)
-            guard arguments.expectedSegmentOutcome == observedOutcome else {
+            guard expectedSegmentOutcome == observedOutcome else {
                 throw SpikeError.verificationFailed(
-                    "recorded HLS outcome expected \(arguments.expectedSegmentOutcome), observed \(observedOutcome)"
+                    "recorded HLS outcome expected \(expectedSegmentOutcome), observed \(observedOutcome)"
                 )
             }
-            print("VERDICT expected=\(arguments.expectedSegmentOutcome) observed=\(observedOutcome) PASS")
+            print("VERDICT expected=\(expectedSegmentOutcome) observed=\(observedOutcome) PASS")
         } catch {
             FileHandle.standardError.write(Data("resource-loader spike ERROR: \(error.localizedDescription)\n".utf8))
             Foundation.exit(1)
         }
     }
 
-    private static func parseArguments() throws -> SpikeArguments {
+    private static func parseArguments() throws -> SpikeMode {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard arguments.count == 2,
-              arguments[0] == "--expect-hls-segments"
-        else {
+        guard arguments.count == 2 else {
+            throw SpikeError.unexpectedArgument(arguments.joined(separator: " "))
+        }
+        if arguments[0] == "--self-check" {
+            guard arguments[1] == "readiness-reporting" else {
+                throw SpikeError.unexpectedArgument(arguments[1])
+            }
+            return .readinessReportingSelfCheck
+        }
+        guard arguments[0] == "--expect-hls-segments" else {
             throw SpikeError.unexpectedArgument(arguments.joined(separator: " "))
         }
         guard ["all-routed", "first-only-playback-failed"].contains(arguments[1]) else {
             throw SpikeError.unexpectedArgument(arguments[1])
         }
-        return SpikeArguments(expectedSegmentOutcome: arguments[1])
+        return .fullSpike(expectedSegmentOutcome: arguments[1])
     }
 
     private static func createFixtures(at root: URL) throws {
@@ -506,6 +613,196 @@ private enum ResourceLoaderSpike {
         print("REWRITE_CONTRACT media,playlist,key,map=ALL_RESOLVE_TO_CUSTOM_SCHEME PASS")
     }
 
+    /// Drives the production readiness wait into each of its three failure
+    /// conditions and asserts that the reported message names that condition and
+    /// no other. A readiness failure in CI is otherwise indistinguishable from
+    /// the other two, which is the whole point of these checks.
+    private static func verifyReadinessReportingContract() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dulcet-readiness-reporting-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let budget = ServerReadinessBudget(deadline: 1.0, probeTimeout: 0.25, pollInterval: 0.05)
+
+        // Condition 1: the child died before publishing a port.
+        let exitedChild = shellChild("exit 7")
+        try exitedChild.run()
+        exitedChild.waitUntilExit()
+        let exited = try readinessFailureMessage(
+            process: exitedChild,
+            portFile: root.appendingPathComponent("exited-port"),
+            budget: budget
+        )
+        try requireCondition("child-exited-before-port-handshake", in: exited)
+        try require(exited.contains("exit_status=7"), "child exit status not reported: \(exited)")
+        try require(exited.contains("child_running=false"), "child liveness not reported: \(exited)")
+        try require(
+            exited.contains("last_parse=port-file-absent"),
+            "handshake state not reported: \(exited)"
+        )
+
+        // Condition 2: a port handshake that never completes. The file holds "5",
+        // which is exactly the prefix a torn read of a five-digit port would
+        // yield, and which the old reader parsed as the valid port 5.
+        let tornPortFile = root.appendingPathComponent("torn-port")
+        try Data("5".utf8).write(to: tornPortFile)
+        let tornChild = shellChild("sleep 30")
+        try tornChild.run()
+        defer { terminate(tornChild) }
+        let torn = try readinessFailureMessage(
+            process: tornChild,
+            portFile: tornPortFile,
+            budget: budget
+        )
+        try requireCondition("port-handshake-timeout", in: torn)
+        try require(
+            torn.contains("last_parse=unterminated-port-file"),
+            "truncated handshake not named: \(torn)"
+        )
+        try require(torn.contains("port_file_bytes=1"), "handshake byte count missing: \(torn)")
+        try require(torn.contains("child_running=true"), "child liveness not reported: \(torn)")
+        try require(
+            !torn.contains("port=5"),
+            "a truncated handshake was parsed as a port: \(torn)"
+        )
+
+        // Condition 3: a published port that never answers HTTP. The port is
+        // bound without ever being listened on, so no HTTP response can arrive
+        // there and nothing else can occupy it for the duration of the check.
+        let silent = try reserveSilentPort()
+        defer { Darwin.close(silent.descriptor) }
+        let silentPortFile = root.appendingPathComponent("silent-port")
+        try Data("\(silent.port)\n".utf8).write(to: silentPortFile)
+        let silentChild = shellChild("sleep 30")
+        try silentChild.run()
+        defer { terminate(silentChild) }
+        let unanswered = try readinessFailureMessage(
+            process: silentChild,
+            portFile: silentPortFile,
+            budget: budget
+        )
+        try requireCondition("http-probe-never-succeeded", in: unanswered)
+        try require(
+            unanswered.contains("port=\(silent.port)"),
+            "published port not reported: \(unanswered)"
+        )
+        try require(
+            unanswered.contains("last_probe="),
+            "probe outcome not reported: \(unanswered)"
+        )
+        try require(
+            unanswered.contains("child_running=true"),
+            "child liveness not reported: \(unanswered)"
+        )
+        try require(
+            !unanswered.contains("probes=0"),
+            "no HTTP probe was attempted: \(unanswered)"
+        )
+
+        for message in [exited, torn, unanswered] {
+            try require(message.contains("elapsed="), "elapsed time not reported: \(message)")
+            try require(message.contains("budget="), "budget not reported: \(message)")
+        }
+
+        print(
+            "READINESS_REPORTING child-exited-before-port-handshake,port-handshake-timeout,"
+                + "http-probe-never-succeeded=EACH_NAMED_AND_MUTUALLY_EXCLUSIVE PASS"
+        )
+    }
+
+    private static let readinessConditions = [
+        "child-exited-before-port-handshake",
+        "port-handshake-timeout",
+        "http-probe-never-succeeded",
+    ]
+
+    private static func requireCondition(_ expected: String, in message: String) throws {
+        for condition in readinessConditions {
+            let present = message.contains("condition=\(condition)")
+            guard present == (condition == expected) else {
+                throw SpikeError.verificationFailed(
+                    "readiness message should name only \(expected): \(message)"
+                )
+            }
+        }
+    }
+
+    private static func require(_ condition: Bool, _ message: String) throws {
+        guard condition else { throw SpikeError.verificationFailed(message) }
+    }
+
+    private static func readinessFailureMessage(
+        process: Process,
+        portFile: URL,
+        budget: ServerReadinessBudget
+    ) throws -> String {
+        do {
+            let url = try waitForControlServer(
+                process: process,
+                portFile: portFile,
+                budget: budget
+            )
+            throw SpikeError.verificationFailed(
+                "readiness wait reported success where it must fail: \(url.absoluteString)"
+            )
+        } catch let failure as ServerReadinessFailure {
+            return failure.localizedDescription
+        }
+    }
+
+    private static func shellChild(_ script: String) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        return process
+    }
+
+    private static func terminate(_ process: Process) {
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+        }
+    }
+
+    /// Binds a loopback port without listening on it, so nothing ever accepts a
+    /// connection there and the port stays reserved while the descriptor is open.
+    /// Whether a connection attempt is refused or simply never completes is a
+    /// platform detail the check deliberately does not depend on.
+    private static func reserveSilentPort() throws -> (descriptor: Int32, port: Int) {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw SpikeError.verificationFailed("could not create a silent probe socket")
+        }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else {
+            Darwin.close(descriptor)
+            throw SpikeError.verificationFailed("could not bind a silent probe socket")
+        }
+        var resolved = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &resolved) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard named == 0, resolved.sin_port != 0 else {
+            Darwin.close(descriptor)
+            throw SpikeError.verificationFailed("could not resolve the silent probe port")
+        }
+        return (descriptor, Int(UInt16(bigEndian: resolved.sin_port)))
+    }
+
     private static func makeWAV(duration: Double, frequency: Double) -> Data {
         let sampleRate = 44_100
         let sampleCount = Int(Double(sampleRate) * duration)
@@ -566,10 +863,16 @@ private enum ResourceLoaderSpike {
         process.arguments = [
             "-c",
             """
-            import http.server, os, pathlib, sys
+            import http.server, os, sys, tempfile
             os.chdir(sys.argv[1])
             server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), http.server.SimpleHTTPRequestHandler)
-            pathlib.Path(sys.argv[2]).write_text(str(server.server_address[1]), encoding='ascii')
+            port_file = sys.argv[2]
+            handle, staging = tempfile.mkstemp(dir=os.path.dirname(port_file) or '.')
+            with os.fdopen(handle, 'w') as sink:
+                sink.write('%d\\n' % server.server_address[1])
+                sink.flush()
+                os.fsync(sink.fileno())
+            os.replace(staging, port_file)
             server.serve_forever()
             """,
             root.path,
@@ -578,34 +881,216 @@ private enum ResourceLoaderSpike {
         process.standardOutput = FileHandle.standardError
         process.standardError = FileHandle.standardError
         try process.run()
-        let deadline = Date().addingTimeInterval(10)
+        do {
+            let controlURL = try waitForControlServer(
+                process: process,
+                portFile: portFile,
+                budget: .production
+            )
+            return HTTPFixtureServer(process: process, controlManifestURL: controlURL)
+        } catch {
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+            throw error
+        }
+    }
+
+    /// Blocks until the child's control server answers `/control.m3u8`, or throws
+    /// the `ServerReadinessFailure` naming which readiness condition occurred.
+    private static func waitForControlServer(
+        process: Process,
+        portFile: URL,
+        budget: ServerReadinessBudget
+    ) throws -> URL {
+        let start = Date()
+        let deadline = start.addingTimeInterval(budget.deadline)
+        let session = URLSession(configuration: probeConfiguration(timeout: budget.probeTimeout))
+        defer { session.invalidateAndCancel() }
+
+        var publishedPort: Int?
+        var handshakeElapsed = 0.0
+        var portFileBytes = 0
+        var lastParse = "port-file-absent"
+        var probes = 0
+        var lastProbe = "no-probe-attempted"
+
         while Date() < deadline {
-            guard let portText = try? String(contentsOf: portFile, encoding: .ascii),
-                  let port = Int(portText)
-            else {
-                if !process.isRunning { throw SpikeError.httpServerDidNotStart }
-                Thread.sleep(forTimeInterval: 0.1)
+            if publishedPort == nil {
+                switch readPortHandshake(portFile) {
+                case .absent:
+                    portFileBytes = 0
+                    lastParse = "port-file-absent"
+                case let .incomplete(bytes, reason):
+                    portFileBytes = bytes
+                    lastParse = reason
+                case let .published(port, bytes):
+                    publishedPort = port
+                    portFileBytes = bytes
+                    lastParse = "published"
+                    handshakeElapsed = Date().timeIntervalSince(start)
+                }
+            }
+
+            guard let port = publishedPort else {
+                let child = childState(process)
+                if !child.running {
+                    throw ServerReadinessFailure.childExitedBeforePortHandshake(
+                        child: child.summary,
+                        elapsed: Date().timeIntervalSince(start),
+                        budget: budget.deadline,
+                        portFileBytes: portFileBytes,
+                        parse: lastParse
+                    )
+                }
+                Thread.sleep(forTimeInterval: budget.pollInterval)
                 continue
             }
+
             let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
-            let semaphore = DispatchSemaphore(value: 0)
-            var succeeded = false
-            URLSession.shared.dataTask(with: controlURL) {
-                _, response, _ in
-                succeeded = (response as? HTTPURLResponse)?.statusCode == 200
-                semaphore.signal()
-            }.resume()
-            _ = semaphore.wait(timeout: .now() + 1)
-            if succeeded {
-                return HTTPFixtureServer(process: process, controlManifestURL: controlURL)
+            probes += 1
+            let outcome = probe(session: session, url: controlURL, timeout: budget.probeTimeout)
+            lastProbe = outcome.detail
+            if outcome.succeeded {
+                let total = Date().timeIntervalSince(start)
+                print(
+                    "READINESS control_server=READY port=\(port) probes=\(probes) "
+                        + "handshake_elapsed=\(format(handshakeElapsed))s "
+                        + "total_elapsed=\(format(total))s "
+                        + "budget=\(format(budget.deadline))s port_file_bytes=\(portFileBytes)"
+                )
+                return controlURL
             }
-            Thread.sleep(forTimeInterval: 0.1)
+
+            let child = childState(process)
+            if !child.running {
+                throw ServerReadinessFailure.httpProbeNeverSucceeded(
+                    port: port,
+                    probes: probes,
+                    lastProbe: lastProbe,
+                    child: child.summary,
+                    handshakeElapsed: handshakeElapsed,
+                    elapsed: Date().timeIntervalSince(start),
+                    budget: budget.deadline
+                )
+            }
+            Thread.sleep(forTimeInterval: budget.pollInterval)
         }
+
+        let child = childState(process)
+        let elapsed = Date().timeIntervalSince(start)
+        guard let port = publishedPort else {
+            throw ServerReadinessFailure.portHandshakeTimedOut(
+                child: child.summary,
+                elapsed: elapsed,
+                budget: budget.deadline,
+                portFileBytes: portFileBytes,
+                parse: lastParse
+            )
+        }
+        throw ServerReadinessFailure.httpProbeNeverSucceeded(
+            port: port,
+            probes: probes,
+            lastProbe: lastProbe,
+            child: child.summary,
+            handshakeElapsed: handshakeElapsed,
+            elapsed: elapsed,
+            budget: budget.deadline
+        )
+    }
+
+    /// Rejects anything that is not a complete, newline-terminated port value, so
+    /// a short read of "51234\n" can never be mistaken for the valid port 5.
+    private static func readPortHandshake(_ portFile: URL) -> PortHandshake {
+        guard let data = try? Data(contentsOf: portFile, options: [.uncached]) else {
+            return .absent
+        }
+        guard data.last == UInt8(ascii: "\n") else {
+            return .incomplete(
+                bytes: data.count,
+                reason: data.isEmpty ? "empty-port-file" : "unterminated-port-file"
+            )
+        }
+        guard let text = String(data: data.dropLast(), encoding: .ascii),
+              let port = Int(text),
+              (1...65_535).contains(port)
+        else {
+            return .incomplete(bytes: data.count, reason: "unparsable-port-value")
+        }
+        return .published(port: port, bytes: data.count)
+    }
+
+    private static func childState(_ process: Process) -> (running: Bool, summary: String) {
         if process.isRunning {
-            process.terminate()
-            process.waitUntilExit()
+            return (true, "child_running=true")
         }
-        throw SpikeError.httpServerDidNotStart
+        let reason = process.terminationReason == .uncaughtSignal ? "uncaught-signal" : "exit"
+        return (
+            false,
+            "child_running=false exit_status=\(process.terminationStatus) "
+                + "termination_reason=\(reason)"
+        )
+    }
+
+    private static func probeConfiguration(timeout: TimeInterval) -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.httpMaximumConnectionsPerHost = 1
+        configuration.waitsForConnectivity = false
+        return configuration
+    }
+
+    /// One bounded probe. A probe that outlives its own request timeout is
+    /// cancelled rather than abandoned, and the session is invalidated when the
+    /// readiness wait returns, so no probe survives it.
+    private static func probe(
+        session: URLSession,
+        url: URL,
+        timeout: TimeInterval
+    ) -> ProbeOutcome {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let box = ProbeResultBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        let task = session.dataTask(with: request) { _, response, error in
+            if let http = response as? HTTPURLResponse {
+                box.record(
+                    ProbeOutcome(
+                        succeeded: http.statusCode == 200,
+                        detail: "http_status=\(http.statusCode)"
+                    )
+                )
+            } else if let urlError = error as? URLError {
+                box.record(
+                    ProbeOutcome(succeeded: false, detail: "url_error=\(urlError.code.rawValue)")
+                )
+            } else if let error {
+                let failure = error as NSError
+                box.record(
+                    ProbeOutcome(
+                        succeeded: false,
+                        detail: "error=\(failure.domain)/\(failure.code)"
+                    )
+                )
+            } else {
+                box.record(ProbeOutcome(succeeded: false, detail: "no-http-response"))
+            }
+            semaphore.signal()
+        }
+        task.resume()
+        // The request already bounds itself at `timeout`; the extra grace only
+        // covers completion-handler delivery, so a probe that hits its own
+        // timeout reports the URL error rather than "abandoned". The readiness
+        // deadline still governs whether another probe starts.
+        if semaphore.wait(timeout: .now() + timeout + 0.25) == .timedOut {
+            task.cancel()
+            return ProbeOutcome(succeeded: false, detail: "probe-cancelled-after-timeout")
+        }
+        return box.outcome
     }
 
     private static func play(
