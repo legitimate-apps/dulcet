@@ -15,24 +15,28 @@ and the resulting Now Playing UI through an injected intent witness.
 
 ## Reproduction
 
-Use an internal-disk DerivedData directory. Resolve symlinks before choosing it: the usual
-Xcode DerivedData location on the test machine resolved onto an external volume, where the
-host launched without executing this control. `/private/tmp` was on the internal disk.
-Both `DULCET_TEST_CONFORMANCE_*` build settings below are necessary because the scheme maps
-them into the test process environment; shell environment variables alone were insufficient.
+Use a DerivedData directory on the same physical volume as the system, and resolve symlinks
+before choosing it rather than trusting the path: an application-hosted macOS test whose
+DerivedData resolves onto an external volume launches its host and then executes nothing,
+which reports as a pass rather than as an error. Both `DULCET_TEST_CONFORMANCE_*` build
+settings below are required because the scheme maps them into the test process environment;
+shell environment variables alone do not reach it.
+
+An Android SDK must be discoverable through `ANDROID_HOME`/`ANDROID_SDK_ROOT`, because the
+Xcode build invokes Gradle through a run-script phase.
 
 With the existing disposable fixture running, execute this from the worktree:
 
 ```bash
-export ANDROID_HOME=/Volumes/AndroidSDK/sdk ANDROID_SDK_ROOT=/Volumes/AndroidSDK/sdk
+DERIVED_ROOT="$(mktemp -d)"   # must resolve onto the system volume
 export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533
 export DULCET_CONFORMANCE_DISPOSABLE=true
 for mode in build-for-testing test-without-building; do
   xcodebuild "$mode" \
     -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug \
     -destination 'platform=macOS' \
-    -derivedDataPath /private/tmp/dulcet-search-internal-dd \
-    -resultBundlePath "/private/tmp/dulcet-search-${mode}.xcresult" \
+    -derivedDataPath "$DERIVED_ROOT/dulcet-search-dd" \
+    -resultBundlePath "$DERIVED_ROOT/dulcet-search-${mode}.xcresult" \
     -parallel-testing-enabled NO \
     -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/searchQueryRanksAndActivatesTrackThroughHostedAppUI \
     CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= \
@@ -41,7 +45,7 @@ for mode in build-for-testing test-without-building; do
     DULCET_TEST_CONFORMANCE_DISPOSABLE=true || exit "$?"
 done
 python3 tools/verify-xcode-test-execution \
-  /private/tmp/dulcet-search-test-without-building.xcresult \
+  "$DERIVED_ROOT"/dulcet-search-test-without-building.xcresult \
   DulcetMacTests.DulcetMacAccountConnectAppTest \
   searchQueryRanksAndActivatesTrackThroughHostedAppUI
 ```
@@ -75,10 +79,9 @@ MACOS SEARCH UI OBSERVED query=typed rank0=rendered result-count=1 activation=re
 xcode test execution valid: test=DulcetMacTests.DulcetMacAccountConnectAppTest/searchQueryRanksAndActivatesTrackThroughHostedAppUI terminal=Passed individual-results=1
 ```
 
-Final-run artifacts were `/private/tmp/dulcet-search-green-final.xcresult` and
-`/private/tmp/dulcet-search-green-final.log`; the negative-control equivalents were
-`/private/tmp/dulcet-search-red-activation.xcresult` and `.log`.
-These local temporary artifacts are not committed.
+Each run writes an `.xcresult` bundle and a log beside it, for the green run and for the
+negative control alike. They are local scratch artifacts and are deliberately not committed;
+CI publishes its own from `RUNNER_TEMP`.
 
 ## Accessibility findings and scope
 
