@@ -947,8 +947,10 @@ def main(pins_path: Path | None = None) -> None:
     }
     preinstall_kegs = {name: observe_keg(path) for name, path in keg_paths.items()}
 
-    # Remove every installed member first, in reverse dependency order. The
-    # explicit absence checkpoint makes a retained pre-existing keg fail closed.
+    # Remove every installed member first, in reverse dependency order. The absence checkpoint
+    # below observes each formula's PINNED keg path only, so it fails closed on a keg retained at
+    # the pinned version. A keg retained at any OTHER version is not observed here and does not
+    # fail closed - stating otherwise would claim a property this code does not have.
     for name in reversed(names):
         if installed_formula_versions(name):
             run_formula_index_command(
