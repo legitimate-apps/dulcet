@@ -9,9 +9,17 @@ It hosts `DulcetMacProduction.makeRootView` in the macOS application test proces
 Account setup uses the live Kotlin connector, an in-memory credential store, and the live
 server-search adapter. The test drives the production sidebar through accessibility row
 selection, focuses the identified native search field, types through `NSApp.sendEvent`,
-reads the rendered result's accessibility text, selects rank zero through accessibility,
-and sends Return through the app's event path. It observes the playback-controller handoff
-and the resulting Now Playing UI through an injected intent witness.
+reads every rendered rank's accessibility text, selects the canary's rank through
+accessibility, and sends Return through the app's event path. It observes the
+playback-controller handoff and the resulting Now Playing UI through an injected intent
+witness.
+
+REVISED 2026-09-05: the control previously drove a query matching exactly one row. With a
+single result, "rank zero" and "the only row" are the same assertion, and so are "activate
+the row that was pressed" and "activate the first result", so the rank threaded through the
+result view was unobservable. The query now matches four rows and the canary sits at rank
+two. Every observation below that names a single result or rank zero describes that earlier
+control and is retained as history, not as a description of the current one.
 
 ## Reproduction
 
@@ -79,6 +87,50 @@ MACOS SEARCH UI OBSERVED query=typed rank0=rendered result-count=1 activation=re
 xcode test execution valid: test=DulcetMacTests.DulcetMacAccountConnectAppTest/searchQueryRanksAndActivatesTrackThroughHostedAppUI terminal=Passed individual-results=1
 ```
 
+## Ranked rendering, OBSERVED 2026-09-05
+
+The four-row query passed with build exit 0 and test exit 0, emitting the rendered rank
+order, the queue the activation built, and the index it started at:
+
+```text
+MACOS SEARCH UI OBSERVED query=typed ranks=["Thirty One Seconds", "Twenty Nine Seconds", "UI Playback Canary", "Threshold Boundary"] result-count=4 activated-rank=2 activation=return queue=["Thirty One Seconds", "Twenty Nine Seconds", "UI Playback Canary"] start-index=2 queue-replacements=1 source=search now-playing=UI Playback Canary
+Executed 1 test, with 0 failures (0 unexpected) in 0.716 (0.717) seconds
+```
+
+**FINDING, OBSERVED: the rendered order is the app's, not the server's.** For this query the
+server returns one album and three songs, and its response lists the album ahead of every
+track. The app re-ranks by match quality, then by kind with tracks ahead of albums, then by
+the order the server returned them, so the album that arrives first renders last. The
+rendered list is four rows in an order the server never emits, which is why the control
+asserts the whole order rather than assuming the server's.
+
+Only tracks are playable, so the activated queue is the ranked list without its album row,
+and the pressed row's index in that queue is two. Rank two is also where the canary renders;
+those are separate facts and the control asserts them separately.
+
+## Identifier mutation control, OBSERVED 2026-09-05
+
+The macOS row title's rank identifier was temporarily replaced with the constant
+`dulcet.search.result.0`, so that every row claimed rank zero. No test assertion changed.
+`build-for-testing` returned exit 0 and `** TEST BUILD SUCCEEDED **`; the mutation run was
+gated on that recorded zero exit before `test-without-building` was invoked against the same
+DerivedData, because a mutation that does not compile re-runs the previous binary and reports
+a pass.
+
+`test-without-building` returned exit 65 with two failures. The first named the wrong row at
+rank zero; the second could not resolve rank one at all, and its diagnostic tree recorded all
+four rows carrying the same identifier:
+
+```text
+XCTAssertEqual failed: ("Optional("Threshold Boundary, Dulcet Fixtures, Album")") is not equal to ("Optional("Thirty One Seconds, Dulcet Fixtures - Threshold Boundary, Track")") - dulcet.search.result.0 rendered accessibility text (title, credits, album, kind)
+failed: caught error: "missingAccessibilityElement("dulcet.search.result.1; ...
+Executed 1 test, with 2 failures (1 unexpected) in 5.642 (5.643) seconds
+```
+
+The production source was then restored, verified by an empty `git diff` over the framework
+sources. The mutation is not committed. Under the previous single-result query this same
+mutation left the control green, which is the coverage gap it was written to close.
+
 Each run writes an `.xcresult` bundle and a log beside it, for the green run and for the
 negative control alike. They are local scratch artifacts and are deliberately not committed;
 CI publishes its own from `RUNNER_TEMP`.
@@ -99,7 +151,7 @@ OBSERVED: Swift's typed `accessibilityRows()` bridge crashed with
 `Expected NSAccessibilityRow but found NSOutlineRow`. Reading the public Objective-C getter
 as an object array and invoking `setAccessibilitySelectedRows:` avoids that incompatible
 protocol-array bridge. This changes the app's actual selection; the test asserts the native
-selected row and the resulting presentation destination. The rendered rank-zero accessibility
+selected row and the resulting presentation destination. Each rendered rank's accessibility
 text includes title, credits, album, and kind, all checked against the fixed fixture text.
 
 OBSERVED: pointer attempts reached the correct outline row but did not select it while the

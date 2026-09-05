@@ -4,10 +4,18 @@ OBSERVED on 2026-09-04 with Xcode 26.6.0, tvOS Simulator 26.5, and the disposabl
 Navidrome fixture at `http://127.0.0.1:4533`:
 
 `DulcetTVUITests/DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack`
-types `UI Playback Canary` into the production tvOS Search field, checks the
-field's own value, observes the rendered rank-zero Track button, focuses it with
-the remote and presses Select, and observes the canary title, `Playing from
-Search`, and advancing media time in Now Playing.
+types a query into the production tvOS Search field, checks the field's own
+value, observes the rendered Track buttons, focuses one with the remote and
+presses Select, and observes the activated title, `Playing from Search`, and
+advancing media time in Now Playing.
+
+REVISED 2026-09-05: the control previously drove a query matching exactly one
+row. With a single result, "rank zero" and "the only row" are the same
+assertion, and so are "activate the row that was focused" and "activate the
+first result", so the rank threaded through the result view was unobservable.
+The query now matches four rows and the canary sits at rank two. Every
+observation below that names a single result or rank zero describes that earlier
+control and is retained as history, not as a description of the current one.
 
 ## Product gaps and the exact setup boundary
 
@@ -74,6 +82,49 @@ OBSERVED named-test guard:
 ```text
 xcode test execution valid: test=DulcetTVUITests.DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack terminal=Passed individual-results=1
 ```
+
+## Ranked rendering, OBSERVED 2026-09-05
+
+The four-row query passed with build exit 0 and test exit 0. All four ranked rows render on
+the tvOS layout, each under its own identifier, and the control activated the canary at
+rank two:
+
+```text
+DULCET TV SEARCH PASS query=typed ranks=["Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track", "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track", "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track", "Threshold Boundary, Dulcet Fixtures, Album"] activated-rank=2 activation=remote-select source=search title=UI Playback Canary progress=0:02 of 0:31->0:04 of 0:31 setup=debug-account-and-destination
+Executed 1 test, with 0 failures (0 unexpected) in 24.173 (24.174) seconds
+xcode test execution valid: test=DulcetTVUITests.DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack terminal=Passed individual-results=1
+```
+
+**FINDING, OBSERVED: the rendered order is the app's, not the server's.** For this query the
+server returns one album and three songs and lists the album ahead of every track. The app
+re-ranks by match quality, then by kind with tracks ahead of albums, then by the order the
+server returned them, so the album that arrives first renders last. The control asserts the
+whole order rather than assuming the server's.
+
+The rank-two row is a 31-second track and so is rank zero, so the duration in the progress
+receipt cannot distinguish them. The title assertion is what does, which is why Now Playing
+is checked against the canary's title and not only against advancing media time.
+
+## Identifier mutation control, OBSERVED 2026-09-05
+
+The row identifier shared by the tvOS and touch layouts was temporarily replaced with the
+constant `dulcet.search.result.0`, so every row claimed rank zero. No test assertion changed.
+`build-for-testing` returned exit 0; the mutation run was gated on that recorded zero exit
+before `test-without-building` was invoked, because a mutant that does not compile re-runs the
+previous binary and reports a pass. The run then returned exit 65, failing at
+`Rank 1 must render its own identifier`.
+
+A second mutation changed the row action from activating the pressed row to activating the
+first result. `build-for-testing` returned exit 0 and the run returned exit 65:
+
+```text
+XCTAssertEqual failed: ("Thirty One Seconds") is not equal to ("UI Playback Canary") - Now Playing must show the row that was activated, not the first result
+```
+
+Both mutations were exercised on the touch layout, which shares this source with tvOS; the
+production source was restored and verified byte-identical afterwards. Under the previous
+single-result query neither mutation could fail any of these controls, which is the coverage
+gap they were written to close.
 
 ## Reproduction and CI
 
