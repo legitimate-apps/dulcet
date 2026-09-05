@@ -8,6 +8,11 @@
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
       "gates": ["protocol:subsonic-1.16.1"],
       "conformance": ["CONF-01", "CONF-02", "CONF-03", "CONF-04", "CONF-05", "CONF-06", "CONF-07", "CONF-08", "CONF-09a", "CONF-09b", "CONF-09c", "CONF-10a", "CONF-10b", "CONF-10c"],
+      "platform_conformance": {
+        "ios": ["CONF-10e"],
+        "ipados": ["CONF-10e"],
+        "tvos": ["CONF-10e"]
+      },
       "platforms": {
         "macos": {
           "status": "partial",
@@ -18,8 +23,8 @@
           },
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "signed-host-validation-workflow",
-            "reason": "The signing identity is no longer an open decision. The release target now archives and signs with Apple Distribution (team 3LTL47SJ8C), hardened runtime enabled, and the keychain-access-groups entitlement was read back out of the signed binary rather than assumed from the build settings. What is still missing is a workflow that RUNS that entitled signed host and asserts the Keychain accessibility and non-sync attributes, which remain ASSUMED. No such workflow, job, or test exists in this repository, so none can be honestly named. The earlier signed-release-validation / entitled-keychain / DulcetMacEntitledKeychainTests candidate still does not resolve here and is not a promotion condition."
+            "blocked_on": "signed-macos-keychain-and-live-account-validation",
+            "reason": "The signing identity is no longer an open decision. The release target now archives and signs with Apple Distribution (team 3LTL47SJ8C), hardened runtime enabled, and the keychain-access-groups entitlement was read back out of the signed binary rather than assumed from the build settings. What is still missing is a workflow that RUNS that entitled signed host and asserts the Keychain accessibility and non-sync attributes, which remain ASSUMED. No such workflow, job, or test exists in this repository, so none can be honestly named. The earlier signed-release-validation / entitled-keychain / DulcetMacEntitledKeychainTests candidate still does not resolve here and is not a promotion condition. The production store's macOS data-protection-Keychain accessibility and non-sync attributes remain ASSUMED because apple-ci cannot launch the entitled macOS host without signing material. Separately, no workflow executes a successful connection through the production Kotlin adapter inside that signed app. The simulator-only CONF-10e evidence does not apply to macOS, does not prove OS enforcement, and does not close either missing signed-host execution link."
           },
           "evidence": [
             {
@@ -107,7 +112,7 @@
               "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
             }
           ],
-          "reason": "All fourteen controls prove their bounded core/Darwin and presentation claims. CONF-10a proves that an unentitled SwiftPM process receives missingDataProtectionKeychainEntitlement and creates neither an active-account pointer nor a legacy-Keychain item; the signed data-protection-Keychain accessibility and non-sync attributes remain ASSUMED. NO RESOLVABLE PROMOTION CONDITION exists today: the previously proposed workflow signed-release-validation, job entitled-keychain, and test DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility are absent from the repository and are explicitly rejected as promotion targets. Selecting the signed execution environment and signing identity is an operator decision; until that decision is made, promotion_condition remains blocked and no workflow, job, or test can be honestly named. Hosted apple-ci run 32598531311 built the app-hosted control but launchd refused to spawn its ad-hoc-signed host carrying keychain-access-groups, before application or test code ran. Hosted run 32599896419 then launched the unentitled app host, supplied the real pinned fixture URL, and reached only two failing offscreen-accessibility assertions after every production-state guard passed: accountErrorPersistence, credentialPersistenceFailed in both status and connectivity, no active-account pointer, and no persisted credential. That OBSERVES the live CI-runnable seam through a real fixture success crossing the Kotlin main dispatcher to @MainActor completion in Swift and reaching the production persistence-failure state. DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState continuously pins that boundary without claiming an accessibility tree this host cannot expose. SwiftUI rendering of that live-derived state is not observed here; it remains compile-checked in the app and separately bounded by the fake-connector presentation and deterministic capture controls. A production Keychain save and connected UI in the real app process also remain ASSUMED and require an entitled signed-host run."
+          "reason": "All fourteen controls prove their bounded core/Darwin and presentation claims. CONF-10a proves that an unentitled SwiftPM process receives missingDataProtectionKeychainEntitlement and creates neither an active-account pointer nor a legacy-Keychain item; the signed data-protection-Keychain accessibility and non-sync attributes remain ASSUMED. NO RESOLVABLE PROMOTION CONDITION exists today: the previously proposed workflow signed-release-validation, job entitled-keychain, and test DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility are absent from the repository and are explicitly rejected as promotion targets. Selecting the signed execution environment and signing identity is an operator decision; until that decision is made, promotion_condition remains blocked and no workflow, job, or test can be honestly named. Hosted apple-ci run 32598531311 built the app-hosted control but launchd refused to spawn its ad-hoc-signed host carrying keychain-access-groups, before application or test code ran. Hosted run 32599896419 then launched the unentitled app host, supplied the real pinned fixture URL, and reached only two failing offscreen-accessibility assertions after every production-state guard passed: accountErrorPersistence, credentialPersistenceFailed in both status and connectivity, no active-account pointer, and no persisted credential. That OBSERVES the live CI-runnable seam through a real fixture success crossing the Kotlin main dispatcher to @MainActor completion in Swift and reaching the production persistence-failure state. DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState continuously pins that boundary without claiming an accessibility tree this host cannot expose. SwiftUI rendering of that live-derived state is not observed here; it remains compile-checked in the app and separately bounded by the fake-connector presentation and deterministic capture controls. A production Keychain save and connected UI in the real app process also remain ASSUMED and require an entitled signed-host run. CONF-10e does not apply to macOS: apple-ci still cannot launch the entitled macOS host without signing material, so the production store's macOS accessibility and non-sync attributes remain ASSUMED. The existing live fixture control still ends at the production persistence-failure state and does not observe a successful signed-app connection, production Keychain save, or connected UI."
         },
         "ios": {
           "status": "partial",
@@ -119,7 +124,7 @@
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-ios-live-account-validation-workflow",
-            "reason": "The simulator controls do not execute a successful connection through the DulcetiOS production Kotlin adapter inside the signed app and do not prove a saved iOS data-protection-Keychain item's accessibility and non-sync attributes. No workflow, job, or test in this repository exercises that signed live path, so no named promotion target can honestly resolve yet."
+            "reason": "The simulator controls do not execute a successful connection through the DulcetiOS production Kotlin adapter inside the signed app and do not prove a saved iOS data-protection-Keychain item's accessibility and non-sync attributes. No workflow, job, or test in this repository exercises that signed live path, so no named promotion target can honestly resolve yet. CONF-10e now narrows the former two-part blocker by OBSERVING that an app-hosted iPhone-simulator save through the production store records AfterFirstUnlockThisDeviceOnly accessibility and synchronizable=false. That is stored-value evidence only: OS enforcement and device-equivalent behavior remain ASSUMED. The unclosed half remains a successful connection through the DulcetiOS production Kotlin adapter inside a signed app; the repository has no Actions signing material or environment for that live path."
           },
           "evidence": [
             {
@@ -205,16 +210,22 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
+            },
+            {
+              "conformance": "CONF-10e",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator"
             }
           ],
-          "reason": "The universal iOS target now hosts the production Dulcet root, and apple-ci is wired to build that shell and run the shared presentation, credential-store, and iOS root-host controls on an iPhone simulator. The iOS JUnit report has its own DulcetKitIOSTests identity, so the Apple presentation evidence cannot resolve against the macOS package run. CONF-01 through CONF-08 and CONF-10c remain bounded common Kotlin/Darwin controls; they do not claim a live connection from the iOS app process. A successful production connection, signed Keychain persistence, and the connected UI in the real iOS app process remain unproved, so shipped would be unearned."
+          "reason": "The universal iOS target now hosts the production Dulcet root, and apple-ci is wired to build that shell and run the shared presentation, credential-store, and iOS root-host controls on an iPhone simulator. The iOS JUnit report has its own DulcetKitIOSTests identity, so the Apple presentation evidence cannot resolve against the macOS package run. CONF-01 through CONF-08 and CONF-10c remain bounded common Kotlin/Darwin controls; they do not claim a live connection from the iOS app process. A successful production connection, signed Keychain persistence, and the connected UI in the real iOS app process remain unproved, so shipped would be unearned. CONF-10e additionally runs as DulcetKeychainIOSTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator in an app-hosted iPhone-simulator process. It requires the production save marker, reads attributes without filtering for the expected values, first observes a deliberately wrong-accessibility control, and then observes AfterFirstUnlockThisDeviceOnly plus synchronizable=false on the saved item. This is simulator-stored-value evidence, not OS-enforcement or physical-device evidence. The universal wire controls still do not execute a successful production-adapter connection inside a signed app, and no connected UI is observed there, so the cell remains partial."
         },
         "ipados": {
           "status": "partial",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-ipados-live-account-and-interaction-validation",
-            "reason": "The regular-width simulator proof covers layout only. No workflow, job, or test executes a successful connection through the production iOS adapter in the iPad app process, proves the saved data-protection-Keychain item's accessibility and non-sync attributes, or exercises account-connect interaction on iPadOS, so no named promotion target can honestly resolve yet."
+            "reason": "The regular-width simulator proof covers layout only. No workflow, job, or test executes a successful connection through the production iOS adapter in the iPad app process, proves the saved data-protection-Keychain item's accessibility and non-sync attributes, or exercises account-connect interaction on iPadOS, so no named promotion target can honestly resolve yet. CONF-10e now narrows the former three-part blocker by OBSERVING that an app-hosted iPad-simulator save through the production store records AfterFirstUnlockThisDeviceOnly accessibility and synchronizable=false. That is stored-value evidence only: OS enforcement and device-equivalent behavior remain ASSUMED. The unclosed halves remain a successful connection through the production iOS Kotlin adapter inside a signed app and the broader touch and hardware-keyboard interaction surface; the existing iPad control still covers regular-width layout."
           },
           "evidence": [
             {
@@ -300,9 +311,15 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
+            },
+            {
+              "conformance": "CONF-10e",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator"
             }
           ],
-          "reason": "apple-ci now launches the universal shell on one iPad Pro 13-inch simulator, executes the shared iOS presentation and credential-store controls there, and runs testAccountConnectUsesRegularWidthSplitLayout in a separate UI-test bundle. That assertion requires a regular horizontal size class and simultaneously hittable, horizontally separated Library-sidebar and account-detail elements, so the compact iPhone presentation cannot satisfy it. CONF-01 through CONF-08 and CONF-10c remain bounded controls for the same universal iosSimulatorArm64 Kotlin/Darwin target; they do not claim an iPad app-process connection. This is one layout assertion, not an iPad interaction suite: touch, hardware-keyboard traversal, rotation, multitasking widths, a successful production connection, signed Keychain persistence, and the connected UI in the real iPad app process remain unproved, so shipped would be unearned."
+          "reason": "apple-ci now launches the universal shell on one iPad Pro 13-inch simulator, executes the shared iOS presentation and credential-store controls there, and runs testAccountConnectUsesRegularWidthSplitLayout in a separate UI-test bundle. That assertion requires a regular horizontal size class and simultaneously hittable, horizontally separated Library-sidebar and account-detail elements, so the compact iPhone presentation cannot satisfy it. CONF-01 through CONF-08 and CONF-10c remain bounded controls for the same universal iosSimulatorArm64 Kotlin/Darwin target; they do not claim an iPad app-process connection. This is one layout assertion, not an iPad interaction suite: touch, hardware-keyboard traversal, rotation, multitasking widths, a successful production connection, signed Keychain persistence, and the connected UI in the real iPad app process remain unproved, so shipped would be unearned. CONF-10e additionally runs as DulcetKeychainIOSTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator in an app-hosted iPad-simulator process. It requires the production save marker, reads attributes without filtering for expected values, first observes a deliberately wrong-accessibility control, and then observes AfterFirstUnlockThisDeviceOnly plus synchronizable=false on the saved item. This is simulator-stored-value evidence, not OS-enforcement or physical-device evidence. The named interaction gaps, a successful production-adapter connection inside a signed app, and its connected UI remain unproved."
         },
         "tvos": {
           "status": "partial",
@@ -314,7 +331,7 @@
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-tvos-live-account-validation-workflow",
-            "reason": "The simulator controls do not execute a successful connection through the DulcetTV production Kotlin adapter inside the signed app and do not prove a saved tvOS data-protection-Keychain item's accessibility and non-sync attributes. No workflow, job, or test in this repository exercises that signed live path, so no named promotion target can honestly resolve yet."
+            "reason": "The simulator controls do not execute a successful connection through the DulcetTV production Kotlin adapter inside the signed app and do not prove a saved tvOS data-protection-Keychain item's accessibility and non-sync attributes. No workflow, job, or test in this repository exercises that signed live path, so no named promotion target can honestly resolve yet. CONF-10e now narrows the former two-part blocker by OBSERVING that an app-hosted Apple TV simulator save through the production store records AfterFirstUnlockThisDeviceOnly accessibility and synchronizable=false. That is stored-value evidence only: OS enforcement and device-equivalent behavior remain ASSUMED. The unclosed half remains a successful connection through the DulcetTV production Kotlin adapter inside a signed app; the repository has no Actions signing material or environment for that live path."
           },
           "evidence": [
             {
@@ -400,9 +417,15 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DarwinProxyAuthenticationConformanceTest/proxyChallengeFailsClosedWithoutAmbientCredentials"
+            },
+            {
+              "conformance": "CONF-10e",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainTVOSTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator"
             }
           ],
-          "reason": "The tvOS target now hosts the production Dulcet root with a dedicated full-screen navigation and focus model, native tvOS credential fields, and its own application and test-bundle identities. apple-ci builds the app and executes shared presentation and credential-store controls in DulcetKitTVOSTests on an Apple TV simulator; accountConnectRootLoadsForTVOS constrains the 1920-by-1080 root, while accountConnectTVOSUsesSystemCredentialTextEntryAndInitialFocus separately constrains three system credential fields and the initial remote focus. The tvOS JUnit report and tvosSimulatorArm64 core-conformance result are separate from the macOS and iOS runs. CONF-01 through CONF-08 and CONF-10c remain bounded core/Darwin controls; they do not claim a live connection from the DulcetTV app process. A successful production connection, signed Keychain persistence, and the connected UI in the real tvOS app process remain unproved, so shipped would be unearned."
+          "reason": "The tvOS target now hosts the production Dulcet root with a dedicated full-screen navigation and focus model, native tvOS credential fields, and its own application and test-bundle identities. apple-ci builds the app and executes shared presentation and credential-store controls in DulcetKitTVOSTests on an Apple TV simulator; accountConnectRootLoadsForTVOS constrains the 1920-by-1080 root, while accountConnectTVOSUsesSystemCredentialTextEntryAndInitialFocus separately constrains three system credential fields and the initial remote focus. The tvOS JUnit report and tvosSimulatorArm64 core-conformance result are separate from the macOS and iOS runs. CONF-01 through CONF-08 and CONF-10c remain bounded core/Darwin controls; they do not claim a live connection from the DulcetTV app process. A successful production connection, signed Keychain persistence, and the connected UI in the real tvOS app process remain unproved, so shipped would be unearned. CONF-10e additionally runs as DulcetKeychainTVOSTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator in an app-hosted Apple TV simulator process. It requires the production save marker, reads attributes without filtering for expected values, first observes a deliberately wrong-accessibility control, and then observes AfterFirstUnlockThisDeviceOnly plus synchronizable=false on the saved item. This is simulator-stored-value evidence, not OS-enforcement or physical-device evidence. The bounded wire controls still do not execute a successful production-adapter connection inside a signed app, and no connected UI is observed there, so the cell remains partial."
         },
         "android": {
           "status": "partial",

@@ -220,6 +220,19 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetKeychainIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - DulcetKeychainAppTests
+    dependencies:
+      - target: DulcetiOS
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.keychain-tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Dulcet DEV"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   DulcetiOSUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -278,6 +291,19 @@ targets:
           fi
           cd "$SRCROOT/.."
           ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetKeychainTVOSTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - DulcetKeychainAppTests
+    dependencies:
+      - target: DulcetTV
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev.keychain-tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Dulcet DEV"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
   DulcetPlaybackIntegration:
     build:
@@ -295,6 +321,7 @@ schemes:
     test:
       targets:
         - DulcetKitIOSTests
+        - DulcetKeychainIOSTests
         - DulcetiOSUITests
   DulcetiOSDownloadIntegration:
     build:
@@ -334,3 +361,4 @@ schemes:
     test:
       targets:
         - DulcetKitTVOSTests
+        - DulcetKeychainTVOSTests

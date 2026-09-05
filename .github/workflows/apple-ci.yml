@@ -307,7 +307,7 @@ jobs:
           if-no-files-found: warn
           compression-level: 0
           retention-days: 14
-      - name: Build iOS shell and test DulcetKit on iPhone
+      - name: Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone
         run: |
           set -o pipefail
           xcodebuild test \
@@ -324,6 +324,24 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
             DulcetKitIOSTests
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-keychain-attributes.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetKeychainIOSTests/DulcetKeychainAttributeTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-keychain-attributes.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes.xcresult" \
+            DulcetKeychainIOSTests.DulcetKeychainAttributeTests \
+            testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
+            DulcetKeychainIOSTests
       - name: Boot iPadOS simulator before the layout launch
         id: ipados_layout_destination
         run: |
@@ -347,7 +365,7 @@ jobs:
           # this prerequisite can never reject a destination that would in fact have run the test.
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
-      - name: Launch iPadOS shell and prove regular-width account layout
+      - name: Launch iPadOS shell and prove layout plus stored Keychain attributes
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
@@ -408,7 +426,25 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit/TEST-DulcetKitIOSTests.xml" \
             DulcetKitIOSTests
-      - name: Build DulcetTV and test DulcetKit on tvOS
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination "$IPAD_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-keychain-attributes.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetKeychainIOSTests/DulcetKeychainAttributeTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ipados-keychain-attributes.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes.xcresult" \
+            DulcetKeychainIOSTests.DulcetKeychainAttributeTests \
+            testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
+            DulcetKeychainIOSTests
+      - name: Build DulcetTV and test DulcetKit plus stored Keychain attributes on tvOS
         run: |
           set -o pipefail
           xcodebuild test \
@@ -425,6 +461,24 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit/TEST-DulcetKitTVOSTests.xml" \
             DulcetKitTVOSTests
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetTV \
+            -configuration Debug \
+            -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetKeychainTVOSTests/DulcetKeychainAttributeTests/testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.xcresult" \
+            DulcetKeychainTVOSTests.DulcetKeychainAttributeTests \
+            testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit/TEST-DulcetKeychainTVOSTests.xml" \
+            DulcetKeychainTVOSTests
       - name: Assert Kotlin and Xcode OS floors
         run: >-
           python3 tools/verify_os_floors.py
@@ -906,15 +960,19 @@ jobs:
             core-conformance/build/test-results/tvosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit"
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
-      # the platform download runs -- along with the JUnit directories `verify-parity-evidence` consumes
+      # the platform download and Keychain runs -- along with the JUnit directories
+      # `verify-parity-evidence` consumes
       # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
       # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
       # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.
