@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve an available iPad simulator and print an xcodebuild destination for it.
+"""Resolve an iPad in both simctl and the selected Xcode's scheme destinations.
 
 The iPadOS proof used to pin `name=iPad Pro 13-inch (M4)`. Apple rotates the marketing model names in
 the hosted image -- OBSERVED 2026-08-30, run 33316319093 failed because that image shipped only
@@ -11,6 +11,10 @@ asserts the regular-width layout itself and rejects anything narrower, so any ge
 evidence and a wrong device fails inside the test with its own message. What this resolver owes that
 guard is the guarantee it never hands back a non-iPad: a silent fallback to an iPhone would turn a
 layout proof into a lie.
+
+The selected Xcode must also list the same device as an available iOS Simulator destination for
+the scheme. An installed, bootable simulator alone does not establish that eligibility. Query
+failures stop resolution; --destinations-file supplies a saved query transcript for offline controls.
 """
 
 from __future__ import annotations
@@ -20,6 +24,63 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+XCODE_QUERY_TIMEOUT = 60
+
+
+def load_destinations(path: str | None, project: str, scheme: str) -> str:
+    if path:
+        return Path(path).read_text()
+    command = ["xcrun", "xcodebuild", "-showdestinations", "-project", project,
+               "-scheme", scheme, "-configuration", "Debug"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                                timeout=XCODE_QUERY_TIMEOUT, check=False)
+    except subprocess.TimeoutExpired as error:
+        def decoded(value):
+            return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+        raise ValueError(
+            f"xcodebuild destination query timed out after {XCODE_QUERY_TIMEOUT}s; "
+            "accepted set UNKNOWN; partial output:\n"
+            + decoded(error.stdout) + decoded(error.stderr)
+        ) from error
+    transcript = result.stdout + "\n" + result.stderr
+    if result.returncode:
+        raise ValueError(f"xcodebuild destination query exited {result.returncode}; "
+                         f"accepted set UNKNOWN; output:\n{transcript}")
+    return transcript
+
+
+def accepted_ids(transcript: str, scheme: str) -> set[str]:
+    """Only concrete available iOS Simulator rows count, never ineligible rows/placeholders."""
+    header = f'Available destinations for the "{scheme}" scheme:'
+    active = False
+    seen_header = False
+    identifiers = set()
+    for line in transcript.splitlines():
+        line = line.strip()
+        if line == header:
+            active = seen_header = True
+            continue
+        if not line:
+            continue
+        if not line.startswith("{"):
+            active = False
+            continue
+        if not active:
+            continue
+        if not line.endswith("}"):
+            raise ValueError("malformed xcodebuild destination row; accepted set UNKNOWN")
+        fields = dict(re.findall(r"(?:^|,)\s*([^:,]+):\s*([^,]*)", line[1:-1]))
+        fields = {key.strip(): value.strip() for key, value in fields.items()}
+        identifier = fields.get("id", "")
+        if (fields.get("platform") == "iOS Simulator" and identifier
+                and "placeholder" not in identifier.lower() and "error" not in fields):
+            identifiers.add(identifier.upper())
+    if not seen_header:
+        raise ValueError(f"missing {header!r}; accepted set UNKNOWN")
+    return identifiers
 
 RUNTIME_IOS = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?$")
 
@@ -76,18 +137,32 @@ def family_rank(name: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--devices-json", help="read a simctl payload from a file instead of running simctl")
+    parser.add_argument("--destinations-file", help="read xcodebuild -showdestinations output instead of running Xcode")
+    parser.add_argument("--project", default="apple/Dulcet.xcodeproj")
+    parser.add_argument("--scheme", default="DulcetiOS")
     parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
     args = parser.parse_args()
 
     document = load_devices(args.devices_json)
     candidates = ipad_candidates(document)
-    if not candidates:
-        names = sorted(
-            {d.get("name", "?") for devices in (document.get("devices") or {}).values() for d in devices}
-        )
+    transcript = "(query did not produce output)"
+    try:
+        transcript = load_destinations(args.destinations_file, args.project, args.scheme)
+        accepted = accepted_ids(transcript, args.scheme)
+    except (OSError, ValueError) as error:
         raise SystemExit(
-            "no available iPad simulator was found, so the regular-width layout proof cannot run. "
-            f"Looked for an available device whose name starts with 'iPad' on an iOS runtime; saw: {names or '(none)'}"
+            f"cannot determine Xcode-drivable iPads: {error}\n"
+            f"simctl offered: {json.dumps(document, sort_keys=True)}\n"
+            f"xcodebuild accepts (raw query):\n{transcript}"
+        ) from error
+    offered_count = len(candidates)
+    candidates = [entry for entry in candidates if entry[2].upper() in accepted]
+    if not candidates:
+        raise SystemExit(
+            "no available iPad simulator is accepted by Xcode, so the regular-width layout proof cannot run.\n"
+            f"simctl offered: {json.dumps(document, sort_keys=True)}\n"
+            f"xcodebuild accepts concrete iOS Simulator IDs: {sorted(accepted)}\n"
+            f"xcodebuild accepts (raw query):\n{transcript}"
         )
     # Deterministic AND widest-first. Sorting by name alone picked "iPad mini" over "iPad Pro"
     # (lowercase 'm' sorts above 'P'), and the mini is the one iPad whose portrait width sits closest
@@ -102,7 +177,7 @@ def main() -> None:
     else:
         print(f"platform=iOS Simulator,id={udid}")
     print(
-        f"RESOLVED IPAD name={name!r} ios={'.'.join(str(p) for p in version)} candidates={len(candidates)}",
+        f"RESOLVED IPAD name={name!r} ios={'.'.join(str(p) for p in version)} candidates={len(candidates)} simctl_ipads={offered_count}",
         file=sys.stderr,
     )
 
