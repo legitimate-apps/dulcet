@@ -43,7 +43,7 @@ def run(payload: dict, transcript: str | None = None, field: str = "name") -> su
         ))
         return subprocess.run(
             [sys.executable, str(RESOLVER), "--devices-json", str(path),
-             "--destinations-file", str(accepted), "--print", field],
+             "--destinations-file", str(accepted), "--discovery-timeout", "0.1", "--print", field],
             # Fixtures must be sufficient: neither Apple executable can be found in these controls.
             env={**os.environ, "PATH": ""},
             text=True,
@@ -54,6 +54,41 @@ def run(payload: dict, transcript: str | None = None, field: str = "name") -> su
 
 def device(name: str, udid: str, available: bool = True) -> dict:
     return {"name": name, "udid": udid, "isAvailable": available}
+
+
+def discovery_fixture(transcripts: list[str], query_duration: float = 0) -> dict:
+    """Drive main with a query sequence and a virtual monotonic clock, without Apple tools."""
+    resolver = runpy.run_path(str(RESOLVER))
+    elapsed = 0.0
+    timeouts, sleeps = [], []
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    def query(path, project, scheme, timeout):
+        nonlocal elapsed
+        timeouts.append(timeout)
+        elapsed += min(query_duration, timeout)
+        return transcripts[min(len(timeouts) - 1, len(transcripts) - 1)]
+
+    def sleep(seconds):
+        nonlocal elapsed
+        sleeps.append(seconds)
+        elapsed += seconds
+
+    with (patch.dict(resolver["main"].__globals__, {
+              "load_devices": lambda _: {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}},
+              "load_destinations": query,
+          }), patch("time.monotonic", side_effect=lambda: elapsed),
+          patch("time.sleep", side_effect=sleep),
+          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"]),
+          redirect_stdout(stdout), redirect_stderr(stderr)):
+        status = 0
+        try:
+            resolver["main"]()
+        except SystemExit as error:
+            status = 1
+            print(error, file=sys.stderr)
+    return {"status": status, "stdout": stdout.getvalue(), "stderr": stderr.getvalue(),
+            "elapsed": elapsed, "attempts": len(timeouts), "timeouts": timeouts, "sleeps": sleeps}
 
 
 def main() -> None:
@@ -213,6 +248,36 @@ def main() -> None:
                                    "runtime": IOS, "isAvailable": True}]:
             raise SystemExit(f"LEAK CONTROL FAILED {label}: identifying fields changed")
         print(f"LEAK CONTROL PASS {label} home_paths_absent=true identifying_fields_only=true both_inventories=true stdout_empty=true")
+
+    empty = destinations("dvtdevice-DVTiOSDeviceSimulatorPlaceholder")
+    populated = discovery_fixture([empty] * 4 + [destinations("EEE")])
+    if (populated["status"] != 0 or populated["stdout"] != "EEE\n"
+            or populated["attempts"] != 5 or "query_attempts=5" not in populated["stderr"]):
+        raise SystemExit(f"RETRY CONTROL FAILED empty_then_populated: {populated}")
+    print(f"RETRY CONTROL PASS empty_then_populated exit_code=0 attempts=5 virtual_elapsed={populated['elapsed']:.3f}s deadline=120s stdout={populated['stdout'].strip()!r}")
+    print(populated["stderr"].strip())
+
+    empty_forever = discovery_fixture([empty])
+    if (empty_forever["status"] != 1 or empty_forever["stdout"]
+            or empty_forever["elapsed"] != 120 or empty_forever["attempts"] != 24
+            or "attempts=24 elapsed=120.000s deadline=120s" not in empty_forever["stderr"]
+            or "simctl offered:" not in empty_forever["stderr"]
+            or "xcodebuild accepts" not in empty_forever["stderr"] or empty not in empty_forever["stderr"]):
+        raise SystemExit(f"RETRY CONTROL FAILED empty_throughout: {empty_forever}")
+    print("RETRY CONTROL PASS empty_throughout exit_code=1 attempts=24 virtual_elapsed=120.000s deadline=120s both_inventories=true last_query_present=true stdout_empty=true")
+
+    mismatch = discovery_fixture([destinations("IPHONE")])
+    if (mismatch["status"] != 1 or mismatch["stdout"] or mismatch["attempts"] != 1
+            or mismatch["elapsed"] != 0 or mismatch["sleeps"]
+            or "simctl offered:" not in mismatch["stderr"]
+            or "['IPHONE']" not in mismatch["stderr"]):
+        raise SystemExit(f"RETRY CONTROL FAILED concrete_mismatch: {mismatch}")
+    print("RETRY CONTROL PASS concrete_mismatch exit_code=1 attempts=1 virtual_elapsed=0.000s deadline=120s sleeps=0 both_inventories=true stdout_empty=true")
+
+    slow = discovery_fixture([empty], query_duration=59)
+    if slow["status"] != 1 or slow["stdout"] or slow["elapsed"] != 120 or slow["timeouts"] != [60, 56]:
+        raise SystemExit(f"RETRY CONTROL FAILED remaining_budget: {slow}")
+    print("RETRY CONTROL PASS remaining_budget exit_code=1 query_timeouts=[60,56] virtual_elapsed=120.000s deadline=120s stdout_empty=true")
 
 
 if __name__ == "__main__":
