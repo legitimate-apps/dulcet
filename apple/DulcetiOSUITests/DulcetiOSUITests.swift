@@ -58,7 +58,24 @@ final class DulcetiOSUITests: XCTestCase {
         windowExpectation: SearchUIWindowExpectation
     ) {
         guard let configuration = livePlaybackConfiguration() else { return }
-        let query = "UI Playback Canary"
+        // A query matching exactly one row cannot separate rank from arity: with a single result,
+        // "rank zero" and "the only row" are the same assertion, and so are "activate the row that
+        // was pressed" and "activate the first result". This query matches four rows and places
+        // the canary at a non-zero rank, so both distinctions become observable.
+        let query = "Threshold"
+        let canaryTitle = "UI Playback Canary"
+        let canaryRank = 2
+        // The rendered order is a product contract, not a server one: results are ranked by match
+        // quality first, then by kind with tracks ahead of albums, then by the order the server
+        // returned them. The server lists the matching album ahead of every track; the app does
+        // not. Asserting the whole order makes drift in either fail here, naming what it observed,
+        // rather than silently relocating the canary to another rank.
+        let rankedLabels = [
+            "Thirty One Seconds, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
+            "Twenty Nine Seconds, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
+            "UI Playback Canary, Dulcet Fixtures \u{00B7} Threshold Boundary, Track",
+            "Threshold Boundary, Dulcet Fixtures, Album",
+        ]
 
         let app = XCUIApplication()
         app.launchArguments += [
@@ -128,50 +145,71 @@ final class DulcetiOSUITests: XCTestCase {
 
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
         guard firstResult.waitForExistence(timeout: 30) else {
-            XCTFail("The disposable server must rank the UI playback canary first for this query")
+            XCTFail("The disposable server must return ranked results for this query")
             return
         }
-        XCTAssertTrue(
-            firstResult.label.hasPrefix(query),
-            "Rank zero must render the canary track, not a store value; label=\(firstResult.label)"
-        )
-        // The row's accessibility label is "<title>, <subtitle>, <kind>"; DulcetStrings.track
-        // renders the track kind as "Track".
-        XCTAssertTrue(
-            firstResult.label.hasSuffix(", Track"),
-            "Rank zero must be a track result; label=\(firstResult.label)"
-        )
         // A person dismisses the software keyboard before activating a result; the test must do
         // the same, because the occluding keyboard window eats the hit test. Measured on iPhone
         // 17 Pro: the rank-zero row's midpoint sat at y=500 under a keyboard whose top edge was
-        // y=472, so tapping without dismissing is not a real activation path.
+        // y=472, so tapping without dismissing is not a real activation path. It is also what
+        // brings the lower ranks onto the screen.
         guard dismissKeyboardBeforeActivation(in: app) else { return }
 
-        guard firstResult.isHittable else {
+        // Every rank is addressed by its own identifier and checked against the row that belongs
+        // there. A view that stamped one constant identifier on every row would satisfy rank zero
+        // and then fail to produce rank one at all.
+        var rankedResults: [XCUIElement] = []
+        for rank in rankedLabels.indices {
+            let result = app.buttons["dulcet.search.result.\(rank)"].firstMatch
+            guard result.waitForExistence(timeout: 10) else {
+                XCTFail("Rank \(rank) must render its own identifier: " + app.debugDescription)
+                return
+            }
+            XCTAssertEqual(
+                result.label,
+                rankedLabels[rank],
+                "Rank \(rank) rendered accessibility text (title, credits, album, kind)"
+            )
+            rankedResults.append(result)
+        }
+        XCTAssertNotEqual(
+            rankedResults[0].label,
+            rankedLabels[canaryRank],
+            "The canary must not render at rank zero, or this proof cannot tell rank from arity"
+        )
+        XCTAssertFalse(
+            app.buttons["dulcet.search.result.\(rankedLabels.count)"].firstMatch.exists,
+            "The ranked list must end at rank \(rankedLabels.count - 1): " + app.debugDescription
+        )
+
+        let canaryResult = rankedResults[canaryRank]
+        guard canaryResult.isHittable else {
             // Frame diagnostics make an occlusion report actionable from the CI log alone:
             // a covered row and an offscreen row are different defects with the same symptom.
             let keyboard = app.keyboards.firstMatch
             print(
-                "DULCET SEARCH UI DIAG result-frame=\(firstResult.frame)"
+                "DULCET SEARCH UI DIAG result-frame=\(canaryResult.frame)"
                     + " window-frame=\(window.frame)"
                     + " keyboard-exists=\(keyboard.exists)"
                     + " keyboard-frame=\(keyboard.exists ? String(describing: keyboard.frame) : "none")"
             )
-            XCTFail("The rank-zero result must be hittable so activation is a real tap")
+            XCTFail("The rank-\(canaryRank) result must be hittable so activation is a real tap")
             return
         }
 
-        firstResult.tap()
+        canaryResult.tap()
 
         let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
         guard nowPlayingTitle.waitForExistence(timeout: 15) else {
-            XCTFail("Activating rank zero must present the Now Playing surface")
+            XCTFail("Activating rank \(canaryRank) must present the Now Playing surface")
             return
         }
+        // Now Playing showing rank zero's track here would mean activation played the first
+        // result rather than the row that was pressed. That is why a non-zero rank is pressed.
         XCTAssertEqual(
             nowPlayingTitle.label,
-            query,
-            "Now Playing must show the activated search track"
+            canaryTitle,
+            "Now Playing must show the row that was activated, not the first result"
         )
         XCTAssertTrue(
             app.staticTexts["Playing from Search"].firstMatch.waitForExistence(timeout: 5),
@@ -183,7 +221,8 @@ final class DulcetiOSUITests: XCTestCase {
         )
         print(
             "DULCET SEARCH UI PASS width=\(windowExpectation == .compactWidth ? "compact" : "regular")"
-                + " query=typed rank0=rendered activation=tap source=search now-playing=\(query)"
+                + " query=typed ranks=\(rankedResults.map(\.label))"
+                + " activated-rank=\(canaryRank) activation=tap source=search now-playing=\(canaryTitle)"
         )
     }
 
