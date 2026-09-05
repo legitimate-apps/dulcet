@@ -190,6 +190,30 @@ def main() -> None:
             raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: resolver returned a destination")
         print(f"NEGATIVE CONTROL PASS {label}=true both_inventories=true stdout_empty=true")
 
+    private_device = {
+        **device("iPad Pro 13-inch (M5)", "AAAA"),
+        "dataPath": "/Users/SOMEUSER/Library/Developer/CoreSimulator/Devices/AAAA",
+        "logPath": "/Users/SOMEUSER/Library/Logs/CoreSimulator/AAAA",
+        "futurePrivateField": "/Users/SOMEUSER/private",
+    }
+    for label, transcript in (
+        ("no_eligible_ipad", destinations("UNRELATED")),
+        ("query_failure", "not a destinations listing"),
+    ):
+        result = run({"devices": {IOS: [private_device]}}, transcript, "udid")
+        output = result.stdout + result.stderr
+        if any(value in output for value in ("/Users/", "SOMEUSER", "dataPath", "logPath", "futurePrivateField")):
+            raise SystemExit(f"LEAK CONTROL FAILED {label}: private simctl fields reached output")
+        if (result.returncode == 0 or result.stdout or "simctl offered:" not in result.stderr
+                or "xcodebuild accepts" not in result.stderr or transcript not in result.stderr):
+            raise SystemExit(f"LEAK CONTROL FAILED {label}: failure lost inventory diagnostics")
+        offered = next(line.removeprefix("simctl offered: ") for line in result.stderr.splitlines()
+                       if line.startswith("simctl offered: "))
+        if json.loads(offered) != [{"name": private_device["name"], "udid": "AAAA",
+                                   "runtime": IOS, "isAvailable": True}]:
+            raise SystemExit(f"LEAK CONTROL FAILED {label}: identifying fields changed")
+        print(f"LEAK CONTROL PASS {label} home_paths_absent=true identifying_fields_only=true both_inventories=true stdout_empty=true")
+
 
 if __name__ == "__main__":
     main()

@@ -134,6 +134,16 @@ def family_rank(name: str) -> int:
     return 2
 
 
+def diagnostic_devices(document: dict) -> list[dict]:
+    """Describe the offered inventory without simctl's private filesystem paths."""
+    return [
+        {"name": device.get("name"), "udid": device.get("udid"),
+         "runtime": runtime, "isAvailable": device.get("isAvailable")}
+        for runtime, devices in (document.get("devices") or {}).items()
+        for device in devices
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--devices-json", help="read a simctl payload from a file instead of running simctl")
@@ -152,7 +162,7 @@ def main() -> None:
     except (OSError, ValueError) as error:
         raise SystemExit(
             f"cannot determine Xcode-drivable iPads: {error}\n"
-            f"simctl offered: {json.dumps(document, sort_keys=True)}\n"
+            f"simctl offered: {json.dumps(diagnostic_devices(document), sort_keys=True)}\n"
             f"xcodebuild accepts (raw query):\n{transcript}"
         ) from error
     offered_count = len(candidates)
@@ -160,7 +170,7 @@ def main() -> None:
     if not candidates:
         raise SystemExit(
             "no available iPad simulator is accepted by Xcode, so the regular-width layout proof cannot run.\n"
-            f"simctl offered: {json.dumps(document, sort_keys=True)}\n"
+            f"simctl offered: {json.dumps(diagnostic_devices(document), sort_keys=True)}\n"
             f"xcodebuild accepts concrete iOS Simulator IDs: {sorted(accepted)}\n"
             f"xcodebuild accepts (raw query):\n{transcript}"
         )
