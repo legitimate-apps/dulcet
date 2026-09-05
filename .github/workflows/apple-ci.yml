@@ -984,7 +984,7 @@ jobs:
               -scheme DulcetTV \
               -configuration Debug \
               -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
-              -derivedDataPath "$RUNNER_TEMP/DulcetTVSearchDerivedData" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
               -parallel-testing-enabled NO \
               -only-testing:DulcetTVUITests/DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack 2>&1 | \
