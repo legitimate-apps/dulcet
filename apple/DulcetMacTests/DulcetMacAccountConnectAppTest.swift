@@ -91,7 +91,35 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             "dulcet.search.field rejected focus; responder=\(String(describing: window.firstResponder))")
         XCTAssertTrue(searchField.currentEditor() === window.firstResponder,
             "dulcet.search.field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
-        let query = "UI Playback Canary"
+        // A query matching exactly one row cannot separate rank from arity: with a single result,
+        // "rank zero" and "the only row" are the same assertion, and so are "activate the row that
+        // was pressed" and "activate results[0]". This query matches four rows and places the
+        // canary at a non-zero rank, so both distinctions become observable.
+        let query = "Threshold"
+        let canaryTitle = "UI Playback Canary"
+        let canaryRank = 2
+        // The rendered order is a product contract, not a server one: results are ranked by match
+        // quality first, then by kind with tracks ahead of albums, then by the order the server
+        // returned them. The server lists the matching album ahead of every track; the app does
+        // not. Asserting the whole order makes any drift in either fail here, naming what it
+        // observed, rather than silently relocating the canary.
+        let rankedLabels = [
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
+            "Threshold Boundary, Dulcet Fixtures, Album",
+        ]
+        let rankedTitles = [
+            "Thirty One Seconds",
+            "Twenty Nine Seconds",
+            "UI Playback Canary",
+            "Threshold Boundary",
+        ]
+        // Only tracks are playable, so the activated queue is the ranked list without its album
+        // row. The canary's position in that queue and its rendered rank are separate facts and
+        // are asserted separately.
+        let queueTitles = ["Thirty One Seconds", "Twenty Nine Seconds", "UI Playback Canary"]
+        let canaryQueueIndex = 2
         try sendText(query, to: window)
         try await waitUntil(
             timeout: .seconds(5),
@@ -107,61 +135,97 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(20),
-            failureMessage: "Search state=\(store.snapshot.state) resultCount=\(store.snapshot.searchResults.count) titles=\(store.snapshot.searchResults.map(\.title)); expected rank0=\(query)"
+            failureMessage: "Search state=\(store.snapshot.state) resultCount=\(store.snapshot.searchResults.count) titles=\(store.snapshot.searchResults.map(\.title)); expected \(rankedTitles)"
         ) {
             store.snapshot.state == .searchResults
-                && store.snapshot.searchResults.first?.title == query
+                && store.snapshot.searchResults.map(\.title) == rankedTitles
         }
+        XCTAssertEqual(store.snapshot.searchResults.map(\.title), rankedTitles,
+            "Rendered search rank order")
+        XCTAssertEqual(store.snapshot.searchResults.count, rankedTitles.count,
+            "Exact fixture query result count")
         hostingView.layoutSubtreeIfNeeded()
-        let firstResult = try await accessibilityElement(
-            identifiedBy: "dulcet.search.result.0",
-            in: hostingView,
-            timeout: .seconds(5)
-        )
-        XCTAssertEqual(
-            accessibilityLabel(firstResult),
-            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
-            "dulcet.search.result.0 rendered accessibility text (title, credits, album, kind)"
+        // Every rank is resolved by its own identifier and checked against the row that belongs
+        // there. A view that stamped one constant identifier on every row would satisfy rank zero
+        // and then fail to produce rank one at all.
+        var rankedElements: [Any] = []
+        for rank in rankedLabels.indices {
+            let element = try await accessibilityElement(
+                identifiedBy: "dulcet.search.result.\(rank)",
+                in: hostingView,
+                timeout: .seconds(5)
+            )
+            XCTAssertEqual(
+                accessibilityLabel(element),
+                rankedLabels[rank],
+                "dulcet.search.result.\(rank) rendered accessibility text (title, credits, album, kind)"
+            )
+            rankedElements.append(element)
+        }
+        XCTAssertNotEqual(
+            accessibilityLabel(rankedElements[0]),
+            rankedLabels[canaryRank],
+            "The canary must not render at rank zero, or this proof cannot tell rank from arity"
         )
 
-        XCTAssertEqual(store.snapshot.searchResults.count, 1, "Exact fixture query result count")
-        let rankZeroID = try XCTUnwrap(store.snapshot.searchResults.first?.id,
-            "Search result count=\(store.snapshot.searchResults.count); missing rank-zero identity")
+        let canaryResult = try XCTUnwrap(
+            store.snapshot.searchResults.indices.contains(canaryRank)
+                ? store.snapshot.searchResults[canaryRank]
+                : nil,
+            "Search titles=\(store.snapshot.searchResults.map(\.title)); missing rank \(canaryRank)"
+        )
+        XCTAssertEqual(canaryResult.title, canaryTitle, "Rank \(canaryRank) identity")
+        let canaryID = canaryResult.id
         XCTAssertEqual(playback.queueReplacementCount, 0,
-            "Rendering dulcet.search.result.0 must not start a queue before activation")
-        let resultTable = try selectAccessibilityTableRow(firstResult, in: window)
-        XCTAssertEqual(resultTable.numberOfRows, 1, "Rendered search table row count")
+            "Rendering the search results must not start a queue before activation")
+        let resultTable = try selectAccessibilityTableRow(rankedElements[canaryRank], in: window)
+        XCTAssertEqual(resultTable.numberOfRows, rankedTitles.count, "Rendered search table row count")
+        XCTAssertEqual(resultTable.selectedRow, canaryRank,
+            "Selecting dulcet.search.result.\(canaryRank) must select that rank's row, not another")
         XCTAssertTrue(window.makeFirstResponder(resultTable),
-            "dulcet.search.result.0 table rejected focus; responder=\(String(describing: window.firstResponder))")
+            "dulcet.search.result.\(canaryRank) table rejected focus; responder=\(String(describing: window.firstResponder))")
         try sendKey(.returnKey, to: window)
         try await waitUntil(
             timeout: .seconds(10),
-            failureMessage: "Return on dulcet.search.result.0: queueReplacements=\(playback.queueReplacementCount) state=\(store.snapshot.state) nowPlaying=\(String(describing: store.snapshot.nowPlaying?.current.title)); expected one search queue and \(query)"
+            failureMessage: "Return on dulcet.search.result.\(canaryRank): queueReplacements=\(playback.queueReplacementCount) state=\(store.snapshot.state) nowPlaying=\(String(describing: store.snapshot.nowPlaying?.current.title)); expected one search queue and \(canaryTitle)"
         ) {
             store.snapshot.state == .nowPlaying
-                && store.snapshot.nowPlaying?.current.title == query
+                && store.snapshot.nowPlaying?.current.title == canaryTitle
         }
 
-        XCTAssertEqual(playback.queueReplacementCount, 1, "Return on rank zero must replace/play exactly one queue")
+        XCTAssertEqual(playback.queueReplacementCount, 1,
+            "Return on rank \(canaryRank) must replace/play exactly one queue")
         let intent = try XCTUnwrap(playback.lastIntent,
-            "Return on dulcet.search.result.0: no playback intent; queueReplacements=\(playback.queueReplacementCount)")
+            "Return on dulcet.search.result.\(canaryRank): no playback intent; queueReplacements=\(playback.queueReplacementCount)")
         XCTAssertEqual(intent.sourceKind, .search, "Activated queue source kind")
         XCTAssertNil(intent.sourceID, "Search queue must not carry a container source ID")
         XCTAssertEqual(intent.sourceDisplayName, "Search", "Activated queue source display name")
-        XCTAssertEqual(intent.startIndex, 0, "Activated queue start index")
-        XCTAssertEqual(intent.tracks.count, 1, "Activated queue track count")
-        XCTAssertEqual(intent.tracks.first?.id, rankZeroID, "Queue identity must match the rendered rank-zero result")
-        XCTAssertEqual(intent.tracks.first?.title, query, "Activated queue rank-zero title")
+        XCTAssertEqual(intent.tracks.map(\.title), queueTitles,
+            "Activated queue must be every playable result in rendered rank order")
+        // A start index of zero here would mean activation played the first result rather than
+        // the row that was pressed. That is the whole point of pressing a non-zero rank.
+        let startIndex = try XCTUnwrap(intent.startIndex,
+            "Activated queue carries no start index; titles=\(intent.tracks.map(\.title))")
+        XCTAssertEqual(startIndex, canaryQueueIndex,
+            "Activated queue must start at the pressed row, not at rank zero")
+        let startedTrack = try XCTUnwrap(
+            intent.tracks.indices.contains(startIndex) ? intent.tracks[startIndex] : nil,
+            "Activated queue startIndex=\(startIndex) titles=\(intent.tracks.map(\.title))"
+        )
+        XCTAssertEqual(startedTrack.id, canaryID, "Queue identity at the start index must be the pressed row")
+        XCTAssertEqual(startedTrack.title, canaryTitle, "Activated queue start title")
         hostingView.layoutSubtreeIfNeeded()
         let nowPlayingTitle = try await accessibilityElement(
             identifiedBy: "dulcet.now-playing.title",
             in: hostingView,
             timeout: .seconds(5)
         )
-        XCTAssertEqual(accessibilityLabel(nowPlayingTitle), query, "dulcet.now-playing.title rendered text")
+        XCTAssertEqual(accessibilityLabel(nowPlayingTitle), canaryTitle, "dulcet.now-playing.title rendered text")
         print(
-            "MACOS SEARCH UI OBSERVED query=typed rank0=rendered"
-                + " result-count=\(resultTable.numberOfRows) activation=return queue-replacements=\(playback.queueReplacementCount) source=search now-playing=\(query)"
+            "MACOS SEARCH UI OBSERVED query=typed ranks=\(rankedTitles)"
+                + " result-count=\(resultTable.numberOfRows) activated-rank=\(canaryRank) activation=return"
+                + " queue=\(intent.tracks.map(\.title)) start-index=\(startIndex)"
+                + " queue-replacements=\(playback.queueReplacementCount) source=search now-playing=\(canaryTitle)"
         )
     }
 
