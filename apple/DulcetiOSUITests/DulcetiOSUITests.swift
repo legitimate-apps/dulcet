@@ -19,6 +19,174 @@ final class DulcetiOSUITests: XCTestCase {
         let accessibilityValue: String
     }
 
+    private enum SearchUIWindowExpectation {
+        case compactWidth
+        case regularWidth
+    }
+
+    /// Simulator evidence for the `platform-observed-search-activation` gate on the iOS cell: a
+    /// query typed through the app's own UI reaches the search field, ranked results render with
+    /// the disposable corpus's canary track at rank zero, and activating it starts the
+    /// search-sourced queue -- observed through the Now Playing surface (the activated track's
+    /// title, the "Playing from Search" source line) and the progress slider that only exists
+    /// once media time is actually advancing.
+    @MainActor
+    func testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone() {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This search proof requires an iPhone simulator; a physical device is not valid evidence")
+            return
+        }
+
+        proveSearchQueryRanksAndActivatesTrack(windowExpectation: .compactWidth)
+    }
+
+    /// The same typed-query-to-Now-Playing proof on the regular-width iPad split layout, where
+    /// the sidebar and detail are visible at once. Recorded against the iPadOS cell: a compact
+    /// window here is a wrong-destination failure, not a pass.
+    @MainActor
+    func testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS() {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This search proof requires an iPad simulator; a physical device is not valid evidence")
+            return
+        }
+
+        proveSearchQueryRanksAndActivatesTrack(windowExpectation: .regularWidth)
+    }
+
+    @MainActor
+    private func proveSearchQueryRanksAndActivatesTrack(
+        windowExpectation: SearchUIWindowExpectation
+    ) {
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let query = "UI Playback Canary"
+
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url",
+            configuration.serverURL,
+            "-dulcet-debug-account-username",
+            configuration.username,
+            "-dulcet-debug-account-password",
+            configuration.password,
+        ]
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        switch windowExpectation {
+        case .compactWidth:
+            XCTAssertLessThanOrEqual(
+                window.frame.width,
+                700,
+                "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
+            )
+        case .regularWidth:
+            XCTAssertGreaterThan(
+                window.frame.width,
+                700,
+                "This proof requires a regular-width iPad window; an iPhone is invalid evidence"
+            )
+        }
+
+        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live account connection must succeed before search is attempted")
+            return
+        }
+
+        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
+        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
+        let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
+        if !searchRow.isHittable {
+            // Compact width opens on the detail column; the sidebar sits behind the detail's
+            // back control, exactly as a person reaches it on an iPhone.
+            let backControl = app.navigationBars.buttons.firstMatch
+            guard backControl.waitForExistence(timeout: 5) else {
+                XCTFail("A compact-width window must expose the sidebar through a back control")
+                return
+            }
+            backControl.tap()
+        }
+        guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
+            XCTFail("The Search row must be visible in the sidebar")
+            return
+        }
+        searchRow.tap()
+
+        let searchField = app.textFields["dulcet.search.field"].firstMatch
+        guard searchField.waitForExistence(timeout: 5) else {
+            XCTFail("The search field must exist on the Search destination")
+            return
+        }
+        searchField.tap()
+        searchField.typeText(query)
+        XCTAssertEqual(
+            searchField.value as? String,
+            query,
+            "The query typed through the platform keyboard must reach the search field itself"
+        )
+
+        let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
+        guard firstResult.waitForExistence(timeout: 30) else {
+            XCTFail("The disposable server must rank the UI playback canary first for this query")
+            return
+        }
+        XCTAssertTrue(
+            firstResult.label.hasPrefix(query),
+            "Rank zero must render the canary track, not a store value; label=\(firstResult.label)"
+        )
+        // The row's accessibility label is "<title>, <subtitle>, <kind>"; DulcetStrings.track
+        // renders the track kind as "Track".
+        XCTAssertTrue(
+            firstResult.label.hasSuffix(", Track"),
+            "Rank zero must be a track result; label=\(firstResult.label)"
+        )
+        // A person dismisses the software keyboard before activating a result; the test must do
+        // the same, because the occluding keyboard window eats the hit test. Measured on iPhone
+        // 17 Pro: the rank-zero row's midpoint sat at y=500 under a keyboard whose top edge was
+        // y=472, so tapping without dismissing is not a real activation path.
+        guard dismissKeyboardBeforeActivation(in: app) else { return }
+
+        guard firstResult.isHittable else {
+            // Frame diagnostics make an occlusion report actionable from the CI log alone:
+            // a covered row and an offscreen row are different defects with the same symptom.
+            let keyboard = app.keyboards.firstMatch
+            print(
+                "DULCET SEARCH UI DIAG result-frame=\(firstResult.frame)"
+                    + " window-frame=\(window.frame)"
+                    + " keyboard-exists=\(keyboard.exists)"
+                    + " keyboard-frame=\(keyboard.exists ? String(describing: keyboard.frame) : "none")"
+            )
+            XCTFail("The rank-zero result must be hittable so activation is a real tap")
+            return
+        }
+
+        firstResult.tap()
+
+        let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        guard nowPlayingTitle.waitForExistence(timeout: 15) else {
+            XCTFail("Activating rank zero must present the Now Playing surface")
+            return
+        }
+        XCTAssertEqual(
+            nowPlayingTitle.label,
+            query,
+            "Now Playing must show the activated search track"
+        )
+        XCTAssertTrue(
+            app.staticTexts["Playing from Search"].firstMatch.waitForExistence(timeout: 5),
+            "The Now Playing source line must report the search-sourced queue"
+        )
+        XCTAssertTrue(
+            app.sliders["Now Playing"].firstMatch.waitForExistence(timeout: 30),
+            "Real playback of the activated track must begin and expose progressing media time"
+        )
+        print(
+            "DULCET SEARCH UI PASS width=\(windowExpectation == .compactWidth ? "compact" : "regular")"
+                + " query=typed rank0=rendered activation=tap source=search now-playing=\(query)"
+        )
+    }
+
     /// Proves the iPad renders the regular-width split: sidebar and detail visible at once, in
     /// separate columns. An iPhone cannot satisfy this, which is the point -- a test that passed on
     /// both would let the iPadOS cell claim evidence it does not have.
@@ -331,6 +499,28 @@ final class DulcetiOSUITests: XCTestCase {
         }
         guard keyboard.waitForNonExistence(timeout: 5) else {
             XCTFail("The software keyboard must dismiss before the account controls are driven")
+            return false
+        }
+        return true
+    }
+
+    @MainActor
+    private func dismissKeyboardBeforeActivation(in app: XCUIApplication) -> Bool {
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.exists else { return true }
+        // The search field carries the platform's search submit key, which resigns the field on
+        // both iPhone and iPad. The iPad-only hide key and a results drag remain fallbacks.
+        let submit = keyboard.buttons["Search"].firstMatch
+        let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
+        if submit.waitForExistence(timeout: 2) {
+            submit.tap()
+        } else if hideKeyboard.waitForExistence(timeout: 2) {
+            hideKeyboard.tap()
+        } else {
+            app.swipeDown()
+        }
+        guard keyboard.waitForNonExistence(timeout: 5) else {
+            XCTFail("The software keyboard must dismiss before a result is activated")
             return false
         }
         return true
