@@ -972,6 +972,31 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # tvOS setup opens Search explicitly: the root currently has no Search navigation.
+          # The control types into the real field and activates the focused result by remote.
+          # Keep this inside the disposable fixture lifetime and retain simulator signing:
+          # the account hook uses the production Keychain store.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVSearchDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-search.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testSimulatorSearchQueryRanksAndActivatesTrack
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test \
             core-conformance/build/test-results/iosSimulatorArm64Test \
@@ -983,6 +1008,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
             "$RUNNER_TEMP/dulcet-ios-search-junit" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \

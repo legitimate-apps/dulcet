@@ -50,6 +50,17 @@
                ReferencedContainer = "container:Dulcet.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "CAFB2F4770427EEAD9E634F4"
+               BuildableName = "DulcetTVUITests.xctest"
+               BlueprintName = "DulcetTVUITests"
+               ReferencedContainer = "container:Dulcet.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
