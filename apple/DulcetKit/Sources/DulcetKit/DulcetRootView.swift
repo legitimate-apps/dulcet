@@ -75,6 +75,7 @@ public struct DulcetRootView: View {
                 }
             }
         }
+        .environment(store)
         .tint(.dulcetAccent)
 #endif
     }
