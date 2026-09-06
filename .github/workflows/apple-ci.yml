@@ -1307,6 +1307,10 @@ jobs:
           # The preceding step stops its server on EXIT. A separate fresh database prevents
           # the iPad's play from being credited to iPhone; never reset or reuse its annotations.
           IPHONE_ROOT="$ROOT/iphone-playback"
+          # Fail loudly if this database already exists. A reused directory would carry another
+          # platform's annotation, and the "count was 0 before" assertion below would then be
+          # measuring a stale zero rather than a fresh one.
+          test ! -e "$IPHONE_ROOT"
           mkdir -p "$IPHONE_ROOT/data" "$IPHONE_ROOT/cache"
           tools/conformance-env/render-config \
             --output "$IPHONE_ROOT/navidrome.toml" --music-folder "$ROOT/music" \
