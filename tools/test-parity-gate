@@ -43,6 +43,9 @@ def materialize(root: Path) -> None:
         # Android TV has its own app/runtime and evidence class; copying only the mobile sources
         # would make this fixture reject a valid TV promotion before its mutation cases run.
         "android/tv/src",
+        # library.sync/macos cites the macOS app-host integration observation, so this fixture
+        # needs the DulcetMacTests sources for the same reason as the line above.
+        "apple/DulcetMacTests",
     ):
         shutil.copytree(REPOSITORY / relative, root / relative)
     if "--source-ref" in sys.argv:
@@ -155,9 +158,33 @@ def invoke_comparison(
     return invoke(root, base_ref="main")
 
 
+# Every comparison control in this file uses library.sync/macos as its subject and needs that cell
+# to START partial with a promotion_condition, because what they test is a promotion. They used to
+# read whichever status the live FEATURES.yml happened to carry, so the day that cell shipped they
+# stopped testing a promotion -- three of them raised KeyError and the rest would have gone green
+# while asserting nothing. Pin the starting state instead of borrowing it.
+PINNED_FIXTURE_CELL = ("library.sync", "macos")
+PINNED_FIXTURE_PROMOTION_CONDITION = {
+    "status": "blocked",
+    "blocked_on": "parity-gate-review-control",
+    "reason": "Synthetic base state owned by tools/test-parity-gate.",
+}
+
+
+def pin_fixture_cell(document: dict[str, object]) -> None:
+    cell = feature_cell(document, *PINNED_FIXTURE_CELL)
+    cell["status"] = "partial"
+    cell["promotion_condition"] = copy_document(
+        {"value": PINNED_FIXTURE_PROMOTION_CONDITION}
+    )["value"]
+
+
 def comparison_documents() -> tuple[dict[str, object], dict[str, object]]:
     document = json.loads((REPOSITORY / "FEATURES.yml").read_text())
-    return copy_document(document), copy_document(document)
+    base, current = copy_document(document), copy_document(document)
+    pin_fixture_cell(base)
+    pin_fixture_cell(current)
+    return base, current
 
 
 def macos_evidence(document: dict[str, object]) -> list[dict[str, str]]:
@@ -267,6 +294,9 @@ def review_control(label: str) -> None:
             new["evidence"] = copy_document(old["evidence"])
             new["status"] = "shipped"
             new.pop("promotion_condition")
+            assert old["status"] == "partial" and new["status"] == "shipped", (
+                "review control must compare a real promotion"
+            )
             new["evidence"][-1]["observes"] = (
                 " \tplatform integration \n" if label == "whitespace" else
                 "platform \t\n  integration" if label == "whitespace-internal" else
@@ -487,8 +517,10 @@ PR65_PROMOTED_REASON = (
 def _pr65_promotion(base: dict[str, object], current: dict[str, object]) -> None:
     """Reproduce PR #65's partial -> shipped edit with byte-identical evidence rows."""
     base_cell = feature_cell(base, "library.sync", "macos")
+    # A replay, so the historical rows are WRITTEN here. Asserting the live document still carries
+    # them made this control a hostage of the very pull request it reproduces.
     assert base_cell["status"] == "partial"
-    assert base_cell["evidence"] == PR65_LIBRARY_SYNC_EVIDENCE
+    base_cell["evidence"] = copy_document({"rows": PR65_LIBRARY_SYNC_EVIDENCE})["rows"]
     current_cell = feature_cell(current, "library.sync", "macos")
     current_cell.clear()
     current_cell.update(
@@ -848,6 +880,8 @@ passing_cases = """\
             name="conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.SearchConformanceTest[macosArm64]"
             name="conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping[macosArm64]" time="0.1" />
+  <testcase classname="DulcetMacAccountConnectAppTest"
+            name="librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline" time="0.1" />
   <testcase classname="DulcetAppleDownloadIntegrationTest"
             name="downloadTriggerPromotesValidatedResponseAtomically" time="0.1" />
   <testcase classname="DulcetAppleDownloadIntegrationTest"

@@ -137,6 +137,10 @@ struct Snapshot {
     var finished = false
     func cancelLibraryBrowse() {}
     func cancelSearchRequest() {}
+    // The removal path also cancels an in-flight library refresh. The control lifts that
+    // method's real text, so every collaborator it names needs a stub here; a missing one
+    // fails to compile rather than silently skipping the call.
+    func cancelLibraryRefresh() {}
     func publishAccountRemovalState(state: State, status: Connection) {
         currentSnapshot.state = state
         currentSnapshot.accountConnection = status
