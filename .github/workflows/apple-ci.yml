@@ -974,6 +974,60 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit"
+      - name: Prove iPhone playback and independently attributed server scrobble
+        # Hang guard, not a budget: no iPhone playback durations exist yet. This is well above
+        # the comparable ~11-minute Apple build/test maximum; re-derive from real durations.
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
+        run: |
+          set -o pipefail
+          # The preceding step stops its server on EXIT. A separate fresh database prevents
+          # the iPad's play from being credited to iPhone; never reset or reuse its annotations.
+          IPHONE_ROOT="$ROOT/iphone-playback"
+          mkdir -p "$IPHONE_ROOT/data" "$IPHONE_ROOT/cache"
+          tools/conformance-env/render-config \
+            --output "$IPHONE_ROOT/navidrome.toml" --music-folder "$ROOT/music" \
+            --data-folder "$IPHONE_ROOT/data" --cache-folder "$IPHONE_ROOT/cache" \
+            --address 127.0.0.1 \
+            --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          "$ROOT/bin/navidrome" --configfile "$IPHONE_ROOT/navidrome.toml" \
+            > "$ROOT/logs/iphone-playback-navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          trap 'kill "$navidrome_pid" 2>/dev/null || true; wait "$navidrome_pid" 2>/dev/null || true' EXIT
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          kill -0 "$navidrome_pid"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" --expect 0
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-playback.log"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" \
+            --expect 1 --await-seconds 15
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
