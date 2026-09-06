@@ -1076,6 +1076,61 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit"
+      - name: Prove tvOS playback and independently attributed server scrobble
+        # Hang guard, not a budget: no tvOS playback durations exist yet. This is well above
+        # the comparable ~11-minute Apple build/test maximum; re-derive from real durations.
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
+        run: |
+          set -o pipefail
+          # The preceding step stops its server on EXIT. A separate fresh database prevents
+          # the iPad's play from being credited to tvOS; never reset or reuse its annotations.
+          TVOS_ROOT="$ROOT/tvos-playback"
+          test ! -e "$TVOS_ROOT"
+          mkdir -p "$TVOS_ROOT/data" "$TVOS_ROOT/cache"
+          tools/conformance-env/render-config \
+            --output "$TVOS_ROOT/navidrome.toml" --music-folder "$ROOT/music" \
+            --data-folder "$TVOS_ROOT/data" --cache-folder "$TVOS_ROOT/cache" \
+            --address 127.0.0.1 \
+            --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          "$ROOT/bin/navidrome" --configfile "$TVOS_ROOT/navidrome.toml" \
+            > "$ROOT/logs/tvos-playback-navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          trap 'kill "$navidrome_pid" 2>/dev/null || true; wait "$navidrome_pid" 2>/dev/null || true' EXIT
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          kill -0 "$navidrome_pid"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" --expect 0
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testTVSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playback.log"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" \
+            --expect 1 --await-seconds 15
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testTVSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
