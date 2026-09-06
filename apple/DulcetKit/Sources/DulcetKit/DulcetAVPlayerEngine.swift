@@ -142,6 +142,29 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    #if DEBUG
+    /// Installs a pass-through PCM observer on the current item's platform audio processing path.
+    /// Call after prepare and before play. No observer code is compiled into Release builds.
+    @MainActor
+    func installCurrentItemAudioRenderObserverForTesting() async throws -> DulcetAudioRenderObservation {
+        var item: AVPlayerItem?
+        performOnQueueSynchronously { [self] in item = current?.item }
+        guard let item else { throw DulcetAudioRenderObservation.Failure.noCurrentItem }
+        let tracks = try await item.asset.loadTracks(withMediaType: .audio)
+        guard let track = tracks.first else { throw DulcetAudioRenderObservation.Failure.noAudioTrack }
+        let observation = DulcetAudioRenderObservation()
+        let mix = try observation.makeAudioMix(track: track)
+        var installed = false
+        performOnQueueSynchronously { [self] in
+            guard current?.item === item, !released else { return }
+            item.audioMix = mix
+            installed = true
+        }
+        guard installed else { throw DulcetAudioRenderObservation.Failure.noCurrentItem }
+        return observation
+    }
+    #endif
+
     func reportCurrentItemReadyForTesting(
         duration: TimeInterval?,
         seekability: DulcetPlaybackSeekability

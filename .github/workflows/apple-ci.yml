@@ -129,6 +129,42 @@ jobs:
             "$RUNNER_TEMP/dulcet-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-swift-testing-junit/TEST-DulcetKitTests.xml" \
             DulcetKitTests
+      - name: Observe decoded PCM with music and silence controls on macos
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetPlaybackIntegration \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetPlaybackIntegrationDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-macos-audio-render.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetPlaybackIntegrationTests/DulcetPlaybackIntegrationTests/testProductionEngineRendersNonZeroPCMAndDistinguishesSilence \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-macos-audio-render.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-macos-audio-render.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetPlaybackIntegrationTests \
+            testProductionEngineRendersNonZeroPCMAndDistinguishesSilence
+      - name: Observe decoded PCM with music and silence controls on ios
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOSPlaybackIntegration \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSPlaybackIntegrationDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-audio-render.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSPlaybackIntegrationTests/DulcetPlaybackIntegrationTests/testProductionEngineRendersNonZeroPCMAndDistinguishesSilence \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-audio-render.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-audio-render.xcresult" \
+            DulcetiOSPlaybackIntegrationTests.DulcetPlaybackIntegrationTests \
+            testProductionEngineRendersNonZeroPCMAndDistinguishesSilence
       - name: Prove macOS capture rejects an inapplicable Dynamic Type label
         run: |
           swift build --package-path apple/DulcetKit --product DulcetCapture
