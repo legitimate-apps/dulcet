@@ -35,6 +35,12 @@ def materialize(root: Path) -> None:
         "apple/DulcetPlaybackIntegrationTests",
         "apple/DulcetKeychainAppTests",
         "apple/DulcetiOSUITests",
+        # The search cells cite the macOS app-host proof and the tvOS UI proof, and the gate
+        # verifies every cited test NAME exists in the tree. Without these the fixture rejects a
+        # correct FEATURES.yml for citing tests that do not exist -- a false negative that reads
+        # exactly like a bad promotion.
+        "apple/DulcetMacTests",
+        "apple/DulcetTVUITests",
         # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
         # verifies that every cited evidence test NAME exists in the tree. Without this the fixture
         # is missing those sources and a correct FEATURES.yml is rejected as citing tests that do
@@ -837,6 +843,14 @@ passing_cases = """\
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator" time="0.1" />
   <testcase classname="DulcetKeychainIOSTests"
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator" time="0.1" />
+  <testcase classname="DulcetMacAccountConnectAppTest"
+            name="searchQueryRanksAndActivatesTrackThroughHostedAppUI" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testSimulatorSearchQueryRanksAndActivatesTrack" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testAccountConnectUsesRegularWidthSplitLayout" time="0.1" />
   <testcase classname="DulcetiOSUITests"
