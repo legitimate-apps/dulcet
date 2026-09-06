@@ -362,6 +362,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let serverSearch: (any DulcetServerSearching)?
     private let playbackController: (any DulcetPlaybackControlling)?
     private let downloadController: (any DulcetDownloadControlling)?
+    private let accountRemovalTimeout: Duration
     private let searchDebounce: Duration
     private let providerInstanceIDFactory: @MainActor () -> String
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
@@ -370,6 +371,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var activeSearchOperation: (any DulcetSearchOperation)?
     private var searchDebounceTask: Task<Void, Never>?
     private var accountRemovalTask: Task<Void, Never>?
+    private var accountRemovalWatchdog: Task<Void, Never>?
+    private var accountRemovalID: UUID?
     private var generation = 0
     private var libraryGeneration = 0
     private var searchGeneration = 0
@@ -403,6 +406,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         downloadController: (any DulcetDownloadControlling)? = nil,
         initialRequest: DulcetAccountConnectRequest = .empty,
         searchDebounce: Duration = .milliseconds(250),
+        accountRemovalTimeout: Duration = .seconds(30),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
     ) {
         self.connector = connector
@@ -412,6 +416,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         self.serverSearch = serverSearch
         self.playbackController = playbackController
         self.downloadController = downloadController
+        self.accountRemovalTimeout = accountRemovalTimeout
         self.searchDebounce = searchDebounce
         self.providerInstanceIDFactory = providerInstanceIDFactory
         do {
@@ -1125,27 +1130,72 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         cancelSearchRequest()
         let removedServerID = providerInstanceID
         let cacheRemover = artworkFetcher as? any DulcetArtworkCacheRemoving
+        let removalID = UUID()
+        accountRemovalID = removalID
+        let downloadController = downloadController
+        // Independent tasks are intentional: a task group would wait forever for a
+        // cleanup adapter that ignores cancellation, even after its timeout won.
         accountRemovalTask = Task { [weak self] in
-            guard let self else { return }
-            if let downloadController,
-               !(await downloadController.removeAccountData()) {
-                accountRemovalTask = nil
-                accountRemovalStatus = .failed
-                publishAccountRemovalState(
-                    state: .accountRemovalError,
-                    status: connectedStatus
-                )
+            await withTaskCancellationHandler {
+                let downloadsRemoved = await downloadController?.removeAccountData() ?? true
+                guard !Task.isCancelled else {
+                    self?.failAccountRemoval(removalID)
+                    return
+                }
+                guard self?.accountRemovalID == removalID else { return }
+                guard downloadsRemoved else {
+                    self?.failAccountRemoval(removalID)
+                    return
+                }
+                if let removedServerID, let cacheRemover {
+                    await cacheRemover.removeCachedArtwork(serverID: removedServerID)
+                }
+                guard !Task.isCancelled else {
+                    self?.failAccountRemoval(removalID)
+                    return
+                }
+                guard self?.accountRemovalID == removalID else { return }
+                self?.finishAccountRemoval()
+            } onCancel: { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.failAccountRemoval(removalID)
+                }
+            }
+        }
+        accountRemovalWatchdog = Task { [weak self, accountRemovalTimeout] in
+            do {
+                try await Task.sleep(for: accountRemovalTimeout)
+            } catch {
                 return
             }
-            if let removedServerID, let cacheRemover {
-                await cacheRemover.removeCachedArtwork(serverID: removedServerID)
-            }
-            guard !Task.isCancelled else { return }
-            finishAccountRemoval()
+            self?.failAccountRemoval(removalID)
         }
     }
 
+    /// Cancels presentation-owned cleanup without waiting for adapter cooperation.
+    /// Internal cancellation boundary; no presentation action exposes it yet.
+    func cancelAccountRemoval() {
+        accountRemovalTask?.cancel()
+    }
+
+    private func failAccountRemoval(_ removalID: UUID) {
+        guard accountRemovalID == removalID else { return }
+        accountRemovalID = nil
+        accountRemovalWatchdog?.cancel()
+        accountRemovalWatchdog = nil
+        accountRemovalTask?.cancel()
+        accountRemovalTask = nil
+        accountRemovalStatus = .failed
+        publishAccountRemovalState(
+            state: .accountRemovalError,
+            status: currentSnapshot.accountConnection
+        )
+    }
+
     private func finishAccountRemoval() {
+        accountRemovalID = nil
+        accountRemovalWatchdog?.cancel()
+        accountRemovalWatchdog = nil
         accountRemovalTask = nil
         providerInstanceID = nil
         playbackController?.disconnect()
