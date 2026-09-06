@@ -4,22 +4,24 @@ This registry reserves stable identifiers for the tests required by the design. 
 stable when its test moves from planned to executable; the design's representative-test table carries
 the detailed assertion.
 
-**This registry is server-protocol semantics, and nothing else.** Every id below is a wire or
-sync-consistency contract (generation-pinned reads, atomic commit, envelope shape, and so on) that this
-project has committed to testing. It is not a place to register that a platform actually wires a
-capability up — a UI activating, a build launching the production client, a real device rendering a
-layout. `FEATURES.yml` evidence has a second row shape for exactly that claim, carrying `observes`
-prose instead of a `conformance` id (design spec §19.2). A `conformance` row asserts a contract
-against this registry; an `observes` row asserts a platform observation the registry has no id for.
+**This registry includes protocol, sync-consistency, presentation, and platform-security contracts.**
+For example, CONF-09b/09c cover render-state inventory and actionable errors, and CONF-10a/10e cover
+secure storage and observed Keychain attributes. A `conformance` row cites one of these registered
+contracts. An `observes` row carries a supplementary claim for which no matching id is registered;
+its distinction is the absence of a matching registry id, not an exclusion of platform or UI behavior
+from this registry (design spec §19.2).
 Citing a test under either shape proves that one named test executed and passed — it is not a status
 promotion, and it does not by itself justify moving a cell to `shipped`. When a cell strengthens from
 `planned` through `blocked`, `partial`, and `shipped`, the changed document must add at least one
-complete evidence row that was absent from that cell in the base document. Reordering a row's keys,
-or editing `reason` or `promotion_condition`, does not meet that requirement. A missing `evidence`
+complete evidence row that was absent from that cell in the base document. Whitespace runs and edges
+in `observes` are normalized for novelty; prose words, case, punctuation and identifiers remain exact. Reordering
+a row's keys, or editing `reason` or `promotion_condition`, does not meet that requirement. A missing `evidence`
 value and `evidence: null` are both the empty set; `n/a` is outside the ordered statuses. A future
 promotion that cannot structurally gain CI evidence must be declared in the initially empty
 `accepted_promotions` list with the cell id, platform, a non-empty reason, and a `#<number>` PR.
-Promotion exceptions and `accepted_regressions` are deliberately independent.
+Promotion exceptions and `accepted_regressions` are deliberately independent. The base document is
+`origin/$GITHUB_BASE_REF:FEATURES.yml` when requested, otherwise `HEAD^:FEATURES.yml`. A missing
+base is an error naming that document; the gate never substitutes a different base or skips comparison.
 
 | id | assertion |
 |---|---|

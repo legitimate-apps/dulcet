@@ -1146,14 +1146,14 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 }
                 guard self?.accountRemovalID == removalID else { return }
                 guard let self else { return }
-                // Credential deletion is the commit point. Until all cleanup returns,
-                // failure or cancellation must leave Keep Account durable across launches.
+                // Delete the credential only after downloads report success and the artwork
+                // adapter returns. Artwork deletion is best effort: its Void adapter swallows
+                // filesystem errors, so return does not verify that cached files were erased.
+                // Before this point, failure/cancellation retains the saved credential; artwork
+                // may already be gone if failure occurs after its cleanup attempt.
                 do {
                     try self.credentialStore?.delete()
                 } catch {
-                    if case let .connected(account) = self.currentSnapshot.accountConnection {
-                        self.configureDownloads(account: account, request: self.currentSnapshot.accountForm)
-                    }
                     self.failAccountRemoval(removalID)
                     return
                 }
@@ -1187,6 +1187,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalWatchdog = nil
         accountRemovalTask?.cancel()
         accountRemovalTask = nil
+        // Successful download cleanup clears its configuration before artwork/credential work.
+        // Every recovery path must restore it, including watchdog and explicit cancellation.
+        // configure also advances the download generation before a stale continuation resumes.
+        if case let .connected(account) = self.currentSnapshot.accountConnection {
+            self.configureDownloads(account: account, request: self.currentSnapshot.accountForm)
+        }
         accountRemovalStatus = .failed
         publishAccountRemovalState(
             state: .accountRemovalError,

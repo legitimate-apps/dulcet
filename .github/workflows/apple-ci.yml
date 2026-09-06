@@ -17,6 +17,11 @@ jobs:
   apple-ci:
     name: apple-ci
     runs-on: macos-26
+    # Cap history: 30 -> 45 on 2026-08-27 after a legitimate 30m36s run;
+    # later 45 -> 75 -> 120 as healthy runner-condition variance remained visible.
+    # A job timeout can implicate whichever step is active rather than a failed assertion:
+    # twice this looked like Darwin conformance failing. Step caps localize the eleven
+    # measured heavy steps, but this misattribution risk remains for uncapped steps.
     # MEASURED 2026-09-06: slowest successful job 73.9m; the old 75m cap
     # killed run 34040853135 (77.9m). Use 120m = 1.624x the successful maximum
     # as the compound-workload backstop, not the sum of individual step caps.
@@ -25,7 +30,7 @@ jobs:
     # In particular iPadOS uses 11.30m from its regular-width account-layout
     # predecessor, not just the current name's 7.87m; tvOS uses max(8.37, 8.62)
     # and iOS uses max(5.63, 8.07). The commit records every maximum and ratio.
-    # Leave the other 41 steps uncapped individually; the job bounds them.
+    # Leave the other 42 steps uncapped individually; the job bounds them.
     # Re-measure across renames when observed healthy maxima or workloads change.
     timeout-minutes: 120
     env:
@@ -35,6 +40,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Require partial promotion conditions to resolve or declare a block
         run: python3 tools/verify_promotion_conditions.py
+      - name: Prove account-removal recovery rejects stale cleanup
+        run: python3 tools/test-account-removal-recovery
       - name: Prove nonexistent promotion targets are rejected
         run: python3 tools/test-promotion-condition-resolvability
       - name: Read toolchain pins

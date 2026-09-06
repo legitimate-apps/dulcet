@@ -205,7 +205,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     }
 
     func removeAccountData() async -> Bool {
+        guard !Task.isCancelled else { return false }
         reconciliationGeneration += 1
+        let removalGeneration = reconciliationGeneration
         reconciled = false
         pendingTracks = []
         prepareOperations.values.forEach { $0.cancel() }
@@ -214,6 +216,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         queuePrepareOperation = nil
         cancelRetry()
         let tasks = await allSessionTasks()
+        // URLSession's continuation does not cooperate with task cancellation. Recovery,
+        // reconnect, disconnect or a newer removal can supersede us while it is suspended.
+        // On the main actor this guard and all mutations below run without another await.
+        guard !Task.isCancelled,
+              removalGeneration == reconciliationGeneration else { return false }
         removedTaskIdentifiers.formUnion(tasks.map(\.taskIdentifier))
         tasks.forEach { $0.cancel() }
         guard let client else {

@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Execute production removal/recovery method bodies with deterministic Swift collaborators.
+
+This is a bounded concurrency control, not an Apple app or Kotlin/URLSession integration test.
+Only external collaborators are fake. --source-ref replays a historical implementation, and
+--mutant removes one guard from the extracted copy to prove the control detects its absence.
+"""
+from pathlib import Path
+import argparse
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--source-ref')
+CONTROLS = ['superseded', 'cancelled', 'timeout-reconnect', 'keep-account', 'success']
+parser.add_argument('--control', choices=CONTROLS)
+parser.add_argument('--mutant', choices=['generation', 'cancellation', 'reconfigure'])
+args = parser.parse_args()
+
+
+def source(path):
+    if args.source_ref:
+        return subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], cwd=ROOT, text=True)
+    return (ROOT / path).read_text()
+
+
+def method(text, name):
+    # Select a complete method by its declaration indentation, retaining its body verbatim.
+    start = text.index(f'    {"private " if f"    private func {name}(" in text else ""}func {name}(')
+    end = text.index('\n    }', start) + len('\n    }')
+    return text[start:end].replace('    private func ', '    func ', 1)
+
+
+download = method(source('apple/DulcetAppleShared/DulcetCoreDownloads.swift'), 'removeAccountData')
+presentation = source('apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift')
+methods = '\n'.join(method(presentation, name) for name in
+                    ['removeAccount', 'failAccountRemoval', 'cancelAccountRemoval', 'dismissAccountRemovalFailure'])
+if args.mutant == 'generation':
+    assert 'removalGeneration == reconciliationGeneration' in download
+    download = download.replace('removalGeneration == reconciliationGeneration', 'true')
+    download = download.replace('        let removalGeneration = reconciliationGeneration\n', '')
+if args.mutant == 'cancellation':
+    assert '!Task.isCancelled' in download
+    download = download.replace('!Task.isCancelled', 'true')
+if args.mutant == 'reconfigure':
+    start = methods.index('    func failAccountRemoval(')
+    before, recovery = methods[:start], methods[start:]
+    call = 'self.configureDownloads(account: account, request: self.currentSnapshot.accountForm)'
+    assert call in recovery
+    methods = before + recovery.replace(call, '_ = account')
+
+harness = r'''
+import Foundation
+
+@MainActor final class Operation { func cancel() {} }
+@MainActor final class SessionTask {
+    let taskIdentifier = 42
+    var cancellations = 0
+    func cancel() { cancellations += 1 }
+}
+struct Outcome { var errorKind: String? = nil }
+@MainActor final class Client {
+    var removals = 0
+    var closes = 0
+    func removeAccountData() -> Outcome { removals += 1; return Outcome() }
+    func close() { closes += 1 }
+}
+@MainActor protocol DulcetDownloadControlling {
+    func removeAccountData() async -> Bool
+    func configure(account: String)
+}
+@MainActor final class Downloads: DulcetDownloadControlling {
+    var reconciliationGeneration = 0
+    var reconciled = true
+    var pendingTracks: [Int] = []
+    var prepareOperations: [Int: Operation] = [:]
+    var queuePrepareOperation: Operation?
+    var removedTaskIdentifiers: Set<Int> = []
+    var account: String?
+    var client: Client?
+    var inboxRemovals = 0
+    var shouldSuspend = true
+    var continuation: CheckedContinuation<[SessionTask], Never>?
+    let sessionTask = SessionTask()
+    func configure(account: String) {
+        reconciliationGeneration += 1
+        self.account = account
+        client = Client()
+    }
+    func cancelRetry() {}
+    func removeSecuredDownloadInbox() { inboxRemovals += 1 }
+    func allSessionTasks() async -> [SessionTask] {
+        if !shouldSuspend { return [sessionTask] }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func resume() { let saved = continuation; continuation = nil; saved?.resume(returning: [sessionTask]) }
+    // Production body follows, without copied or simulated removal logic.
+__DOWNLOAD__
+}
+@MainActor protocol DulcetArtworkCacheRemoving: AnyObject {
+    func removeCachedArtwork(serverID: String) async
+}
+@MainActor final class Artwork: DulcetArtworkCacheRemoving {
+    var shouldSuspend = true
+    var continuation: CheckedContinuation<Void, Never>?
+    func removeCachedArtwork(serverID: String) async {
+        if shouldSuspend { await withCheckedContinuation { continuation = $0 } }
+    }
+    func resume() { let saved = continuation; continuation = nil; saved?.resume() }
+}
+@MainActor final class Credentials {
+    var deletes = 0
+    func delete() throws { deletes += 1 }
+}
+enum Connection { case connected(String), disconnected }
+enum Removal { case idle, removing, failed }
+enum State { case accountConnected, accountRemoving, accountRemovalError }
+struct Snapshot {
+    var accountConnection: Connection = .connected("kept")
+    var accountForm = "saved-form"
+    var state: State = .accountConnected
+}
+@MainActor final class Presentation {
+    var currentSnapshot = Snapshot()
+    var accountRemovalStatus: Removal = .idle
+    var generation = 0
+    var activeOperation: Operation?
+    var providerInstanceID: String? = "kept"
+    var artworkFetcher: AnyObject?
+    var downloadController: (any DulcetDownloadControlling)?
+    var credentialStore: Credentials? = Credentials()
+    var accountRemovalID: UUID?
+    var accountRemovalTask: Task<Void, Never>?
+    var accountRemovalWatchdog: Task<Void, Never>?
+    var accountRemovalTimeout: Duration = .milliseconds(20)
+    var finished = false
+    func cancelLibraryBrowse() {}
+    func cancelSearchRequest() {}
+    func publishAccountRemovalState(state: State, status: Connection) {
+        currentSnapshot.state = state
+        currentSnapshot.accountConnection = status
+    }
+    func configureDownloads(account: String, request: String) {
+        downloadController?.configure(account: account)
+    }
+    func finishAccountRemoval() {
+        finished = true
+        accountRemovalID = nil
+        accountRemovalWatchdog?.cancel()
+        accountRemovalTask = nil
+        accountRemovalStatus = .idle
+        currentSnapshot.accountConnection = .disconnected
+    }
+__PRESENTATION__
+}
+struct Failure: Error, CustomStringConvertible { var description: String }
+@MainActor func require(_ condition: Bool, _ message: String) throws {
+    if !condition { throw Failure(description: message) }
+}
+@MainActor func until(_ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !condition() && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    try require(condition(), "fixture did not reach required suspension/state")
+}
+@main struct Main {
+    @MainActor static func main() async {
+        let name = CommandLine.arguments[1]
+        do {
+            let downloads = Downloads()
+            downloads.configure(account: "kept")
+            if name == "superseded" || name == "cancelled" {
+                let old = downloads.client!
+                let worker = Task { await downloads.removeAccountData() }
+                try await until { downloads.continuation != nil }
+                if name == "superseded" { downloads.configure(account: "new") }
+                else { worker.cancel() }
+                let active = downloads.client!
+                downloads.resume()
+                let result = await worker.value
+                try require(!result && active.removals == 0 && old.removals == 0 &&
+                            downloads.client === active && downloads.account != nil &&
+                            downloads.inboxRemovals == 0 && downloads.sessionTask.cancellations == 0,
+                            "stale cleanup mutated active account/client/tasks/inbox")
+            } else if name == "timeout-reconnect" {
+                let presentation = Presentation()
+                presentation.downloadController = downloads
+                presentation.removeAccount()
+                let worker = presentation.accountRemovalTask!
+                try await until { downloads.continuation != nil }
+                try await until { presentation.accountRemovalStatus == .failed }
+                presentation.dismissAccountRemovalFailure()
+                downloads.configure(account: "new")
+                let active = downloads.client!
+                downloads.resume()
+                await worker.value
+                try require(downloads.account == "new" && downloads.client === active &&
+                            active.removals == 0 && downloads.inboxRemovals == 0 &&
+                            downloads.sessionTask.cancellations == 0 &&
+                            presentation.credentialStore?.deletes == 0,
+                            "timed-out cleanup deleted reconnected account data")
+            } else {
+                let presentation = Presentation()
+                let artwork = Artwork()
+                downloads.shouldSuspend = false
+                artwork.shouldSuspend = name != "success"
+                presentation.downloadController = downloads
+                presentation.artworkFetcher = artwork
+                presentation.removeAccount()
+                let worker = presentation.accountRemovalTask!
+                if name == "keep-account" {
+                    try await until { artwork.continuation != nil }
+                    try require(downloads.account == nil, "cleanup must clear configuration before recovery")
+                    try await until { presentation.accountRemovalStatus == .failed }
+                    presentation.dismissAccountRemovalFailure()
+                    artwork.resume()
+                    await worker.value
+                    try require(downloads.account == "kept" && downloads.client != nil &&
+                                presentation.currentSnapshot.state == .accountConnected &&
+                                presentation.credentialStore?.deletes == 0 && !presentation.finished,
+                                "Keep Account returned connected with downloads unconfigured")
+                } else {
+                    await worker.value
+                    try require(presentation.finished && presentation.credentialStore?.deletes == 1 &&
+                                downloads.account == nil, "ordinary successful removal did not finish")
+                }
+            }
+            print("\(name): PASS")
+        } catch {
+            print("\(name): FAIL: \(error)")
+            exit(1)
+        }
+    }
+}
+'''.replace('__DOWNLOAD__', download).replace('__PRESENTATION__', methods)
+with tempfile.TemporaryDirectory(prefix='dulcet-removal-control-') as directory:
+    root = Path(directory)
+    fixture = root / 'control.swift'
+    fixture.write_text(harness)
+    subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', str(root / 'module-cache'),
+                    str(fixture), '-o', str(root / 'control')], check=True)
+    for control in [args.control] if args.control else CONTROLS:
+        result = subprocess.run([str(root / 'control'), control])
+        if result.returncode:
+            raise SystemExit(result.returncode)
