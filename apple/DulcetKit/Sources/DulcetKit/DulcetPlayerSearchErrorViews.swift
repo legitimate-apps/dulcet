@@ -443,9 +443,10 @@ struct DulcetSearchView: View {
                 }
             }
 #if os(iOS)
-            // The keyboard otherwise stays up over the lower results; a results drag is the
-            // platform's dismissal gesture, and it must work even when the list is too short
-            // to scroll. `automatic` does not guarantee that; interactive does.
+            // `automatic` would already dismiss on scroll here - it only keeps the keyboard for
+            // a TextEditor, and this is plain scrollable content. What `interactively` adds is that
+            // the keyboard tracks the drag itself, so a partial drag can be reversed to cancel the
+            // dismissal instead of committing to it the moment the scroll begins.
             .scrollDismissesKeyboard(.interactively)
 #endif
 #endif
