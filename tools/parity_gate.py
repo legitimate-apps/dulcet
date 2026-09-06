@@ -11,7 +11,8 @@ from required_checks import load_required_checks
 PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
 STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
 LOWER_THAN_SHIPPED = STATUSES - {"shipped"}
-TOP_KEYS = {"schema_version", "accepted_regressions", "features"}
+STATUS_RANK = {"planned": 0, "blocked": 1, "partial": 2, "shipped": 3}
+TOP_KEYS = {"schema_version", "accepted_regressions", "accepted_promotions", "features"}
 FEATURE_KEYS = {
     "id",
     "title",
@@ -135,6 +136,22 @@ def require_registry_matches_spec(conformance_text: str) -> None:
     )
 
 
+def validate_exceptions(document: dict, key: str, source: str) -> None:
+    exceptions = document.get(key)
+    if not isinstance(exceptions, list):
+        fail(f"{source}: {key} must be a list")
+    for item in exceptions:
+        if not isinstance(item, dict) or set(item) != {"id", "platform", "reason", "pr"}:
+            fail(f"{key} entries require exactly id, platform, reason, and pr")
+        if (
+            not isinstance(item["reason"], str)
+            or not item["reason"].strip()
+            or not isinstance(item["pr"], str)
+            or not re.fullmatch(r"#[0-9]+", item["pr"])
+        ):
+            fail(f"{key} entries require a reason and #<number> PR")
+
+
 def validate(document: dict, source: str) -> dict[str, dict]:
     unknown = set(document) - TOP_KEYS
     if unknown:
@@ -142,8 +159,8 @@ def validate(document: dict, source: str) -> dict[str, dict]:
     schema_version = document.get("schema_version")
     if schema_version not in {1, 2}:
         fail(f"{source}: schema_version must be 1 or 2")
-    if not isinstance(document.get("accepted_regressions"), list):
-        fail(f"{source}: accepted_regressions must be a list")
+    validate_exceptions(document, "accepted_regressions", source)
+    validate_exceptions(document, "accepted_promotions", source)
     features = document.get("features")
     if not isinstance(features, list):
         fail(f"{source}: features must be a list")
@@ -364,15 +381,19 @@ def validate(document: dict, source: str) -> dict[str, dict]:
     return by_id
 
 
-def accepted(document: dict, feature_id: str, platform: str) -> bool:
-    for item in document["accepted_regressions"]:
-        if not isinstance(item, dict) or set(item) != {"id", "platform", "reason", "pr"}:
-            fail("accepted_regressions entries require exactly id, platform, reason, and pr")
-        if not item["reason"] or not re.fullmatch(r"#[0-9]+", str(item["pr"])):
-            fail("accepted_regressions entries require a reason and #<number> PR")
+def accepted(document: dict, key: str, feature_id: str, platform: str) -> bool:
+    for item in document.get(key, []):
         if item["id"] == feature_id and item["platform"] == platform:
             return True
     return False
+
+
+def evidence_rows(cell: dict) -> set[frozenset[tuple[str, str]]]:
+    evidence = cell.get("evidence")
+    if evidence is None:
+        return set()
+    entries = evidence if isinstance(evidence, list) else [evidence]
+    return {frozenset(entry.items()) for entry in entries}
 
 
 def base_document() -> dict | None:
@@ -398,16 +419,37 @@ try:
     current = validate(current_document, "FEATURES.yml")
     previous_document = base_document()
     if previous_document is not None:
+        # `accepted_promotions` is introduced by this change. A pre-change merge base has no
+        # declarations, which is semantically the same as the new list being empty; current
+        # documents still have to carry the structural key and are validated above.
+        previous_document.setdefault("accepted_promotions", [])
         previous = validate(previous_document, "base FEATURES.yml")
         for feature_id, old_feature in previous.items():
             if feature_id not in current:
                 fail(f"feature row removed: {feature_id}")
             for platform in PLATFORMS:
-                old_status = old_feature["platforms"][platform]["status"]
-                new_status = current[feature_id]["platforms"][platform]["status"]
+                old_cell = old_feature["platforms"][platform]
+                new_cell = current[feature_id]["platforms"][platform]
+                old_status = old_cell["status"]
+                new_status = new_cell["status"]
                 if old_status == "shipped" and new_status in LOWER_THAN_SHIPPED:
-                    if not accepted(current_document, feature_id, platform):
+                    if not accepted(
+                        current_document, "accepted_regressions", feature_id, platform
+                    ):
                         fail(f"undeclared regression: {feature_id}/{platform} shipped -> {new_status}")
+                if (
+                    old_status in STATUS_RANK
+                    and new_status in STATUS_RANK
+                    and STATUS_RANK[new_status] > STATUS_RANK[old_status]
+                    and not evidence_rows(new_cell) - evidence_rows(old_cell)
+                    and not accepted(
+                        current_document, "accepted_promotions", feature_id, platform
+                    )
+                ):
+                    fail(
+                        f"promotion without added evidence: {feature_id}/{platform} "
+                        f"{old_status} -> {new_status}; no evidence row was added"
+                    )
     print(f"parity gate valid: {len(current)} feature rows")
 except (OSError, ValueError) as error:
     print(error, file=sys.stderr)

@@ -12,7 +12,14 @@ layout. `FEATURES.yml` evidence has a second row shape for exactly that claim, c
 prose instead of a `conformance` id (design spec §19.2). A `conformance` row asserts a contract
 against this registry; an `observes` row asserts a platform observation the registry has no id for.
 Citing a test under either shape proves that one named test executed and passed — it is not a status
-promotion, and it does not by itself justify moving a cell to `shipped`.
+promotion, and it does not by itself justify moving a cell to `shipped`. When a cell strengthens from
+`planned` through `blocked`, `partial`, and `shipped`, the changed document must add at least one
+complete evidence row that was absent from that cell in the base document. Reordering a row's keys,
+or editing `reason` or `promotion_condition`, does not meet that requirement. A missing `evidence`
+value and `evidence: null` are both the empty set; `n/a` is outside the ordered statuses. A future
+promotion that cannot structurally gain CI evidence must be declared in the initially empty
+`accepted_promotions` list with the cell id, platform, a non-empty reason, and a `#<number>` PR.
+Promotion exceptions and `accepted_regressions` are deliberately independent.
 
 | id | assertion |
 |---|---|

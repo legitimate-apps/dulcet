@@ -43,9 +43,12 @@ def materialize(root: Path) -> None:
         shutil.copytree(REPOSITORY / relative, root / relative)
 
 
-def invoke(root: Path) -> subprocess.CompletedProcess[str]:
+def invoke(root: Path, base_ref: str | None = None) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
-    environment.pop("GITHUB_BASE_REF", None)
+    if base_ref is None:
+        environment.pop("GITHUB_BASE_REF", None)
+    else:
+        environment["GITHUB_BASE_REF"] = base_ref
     return subprocess.run(
         [sys.executable, "tools/parity_gate.py"],
         cwd=root,
@@ -79,6 +82,62 @@ def mutate(root: Path, change: Callable[[dict[str, object]], None]) -> None:
     document = json.loads(path.read_text())
     change(document)
     path.write_text(json.dumps(document, indent=2) + "\n")
+
+
+def feature_cell(document: dict[str, object], feature_id: str, platform: str) -> dict[str, object]:
+    features = document["features"]
+    assert isinstance(features, list)
+    feature = next(item for item in features if item["id"] == feature_id)
+    platforms = feature["platforms"]
+    assert isinstance(platforms, dict)
+    cell = platforms[platform]
+    assert isinstance(cell, dict)
+    return cell
+
+
+def copy_document(document: dict[str, object]) -> dict[str, object]:
+    return json.loads(json.dumps(document))
+
+
+def write_document(root: Path, document: dict[str, object]) -> None:
+    (root / "FEATURES.yml").write_text(json.dumps(document, indent=2) + "\n")
+
+
+def invoke_comparison(
+    root: Path,
+    base: dict[str, object],
+    current: dict[str, object],
+) -> subprocess.CompletedProcess[str]:
+    """Run the gate against a controlled origin/main base and working-tree current document."""
+    write_document(root, base)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "FEATURES.yml"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=parity-gate-test",
+            "-c",
+            "user.email=parity-gate-test@example.invalid",
+            "commit",
+            "-qm",
+            "base fixture",
+        ],
+        cwd=root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+        cwd=root,
+        check=True,
+    )
+    write_document(root, current)
+    return invoke(root, base_ref="main")
+
+
+def comparison_documents() -> tuple[dict[str, object], dict[str, object]]:
+    document = json.loads((REPOSITORY / "FEATURES.yml").read_text())
+    return copy_document(document), copy_document(document)
 
 
 def macos_evidence(document: dict[str, object]) -> list[dict[str, str]]:
@@ -167,6 +226,30 @@ def expect_acceptance(label: str, change: Callable[[dict[str, object]], None]) -
             )
 
 
+def expect_comparison(
+    label: str,
+    arrange: Callable[[dict[str, object], dict[str, object]], None],
+    expected: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-comparison-") as directory:
+        root = Path(directory)
+        materialize(root)
+        base, current = comparison_documents()
+        arrange(base, current)
+        result = invoke_comparison(root, base, current)
+        if expected is None and result.returncode != 0:
+            raise AssertionError(
+                f"{label}: expected acceptance, returncode={result.returncode}, "
+                f"output={result.stdout!r}"
+            )
+        if expected is not None and (result.returncode == 0 or expected not in result.stdout):
+            raise AssertionError(
+                f"{label}: expected rejection containing {expected!r}, "
+                f"returncode={result.returncode}, output={result.stdout!r}"
+            )
+        return result
+
+
 def _valid_observation_entry(
     rows: list[dict[str, str]],
     observes: str = "the macOS job actually launched and drove the real UI, not a host-only unit test",
@@ -243,6 +326,231 @@ expect_rejection(
     "one test cited for two different observation claims",
     _cite_one_test_for_two_observation_claims,
     "observation claims",
+)
+
+
+PR65_LIBRARY_SYNC_EVIDENCE = [
+    {
+        "conformance": "CONF-31",
+        "workflow": "apple-ci",
+        "job": "apple-ci",
+        "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads",
+    },
+    {
+        "conformance": "CONF-32",
+        "workflow": "apple-ci",
+        "job": "apple-ci",
+        "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit",
+    },
+    {
+        "conformance": "CONF-33",
+        "workflow": "apple-ci",
+        "job": "apple-ci",
+        "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness",
+    },
+]
+PR65_PROMOTED_REASON = (
+    "apple-ci executes CONF-31, CONF-32 and CONF-33 in the macosArm64 core-conformance runtime, "
+    "retaining one exact test identity for each declared contract. In the same disposable-server "
+    "job, DulcetMacAccountConnectAppTest/"
+    "librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline runs inside the macOS "
+    "app host and closes the former integration gap: the production DulcetCoreLibraryBrowser "
+    "starts AppleLibrarySyncClient, independently reopens and displays each committed SQLDelight "
+    "generation, and preserves opaque folder, artist, album and track identifiers. The test "
+    "observes generations 1 and 2, with generation 2 started by the real ContinuousClock refresh "
+    "scheduler at a shortened test cadence; production uses the same scheduler for a 24-hour "
+    "full-import cadence. It then requires an actual connection refusal from 127.0.0.1:1 before "
+    "reconstructing a saved disconnected account over the same database and provider identity, "
+    "where zero connector or sync starts occur and committed generation 2 remains browsable."
+)
+
+
+def _pr65_promotion(base: dict[str, object], current: dict[str, object]) -> None:
+    """Reproduce PR #65's partial -> shipped edit with byte-identical evidence rows."""
+    base_cell = feature_cell(base, "library.sync", "macos")
+    assert base_cell["status"] == "partial"
+    assert base_cell["evidence"] == PR65_LIBRARY_SYNC_EVIDENCE
+    current_cell = feature_cell(current, "library.sync", "macos")
+    current_cell.clear()
+    current_cell.update(
+        status="shipped",
+        evidence=copy_document({"rows": PR65_LIBRARY_SYNC_EVIDENCE})["rows"],
+        reason=PR65_PROMOTED_REASON,
+    )
+
+
+pr65_control = expect_comparison(
+    "PR #65 library.sync/macos promoted with byte-identical evidence",
+    _pr65_promotion,
+    "promotion without added evidence: library.sync/macos partial -> shipped; "
+    "no evidence row was added",
+)
+print(f"PR #65 positive control rejected: {pr65_control.stdout.strip()}")
+
+
+def _promotion_with_new_row(base: dict[str, object], current: dict[str, object]) -> None:
+    current_cell = feature_cell(current, "library.sync", "macos")
+    current_cell["status"] = "shipped"
+    current_cell.pop("promotion_condition")
+    rows = current_cell["evidence"]
+    assert isinstance(rows, list)
+    rows.append(
+        {
+            "observes": "the macOS app host exercises the durable library-sync integration",
+            "workflow": rows[0]["workflow"],
+            "job": rows[0]["job"],
+            "test": rows[0]["test"],
+        }
+    )
+
+
+expect_comparison("promotion gains one evidence row", _promotion_with_new_row)
+
+
+def _add_exception(document: dict[str, object], key: str) -> dict[str, object]:
+    exceptions = document[key]
+    assert isinstance(exceptions, list)
+    item = {
+        "id": "library.sync",
+        "platform": "macos",
+        "reason": "A disclosed one-off observation cannot be represented as a CI evidence row.",
+        "pr": "#65",
+    }
+    exceptions.append(item)
+    return item
+
+
+def _promotion_with_exception(base: dict[str, object], current: dict[str, object]) -> None:
+    _pr65_promotion(base, current)
+    _add_exception(current, "accepted_promotions")
+
+
+expect_comparison("promotion without a row has a declared exception", _promotion_with_exception)
+
+
+def _promotion_with_regression_exception_only(
+    base: dict[str, object], current: dict[str, object]
+) -> None:
+    _pr65_promotion(base, current)
+    _add_exception(current, "accepted_regressions")
+
+
+expect_comparison(
+    "a regression exception cannot silence a promotion",
+    _promotion_with_regression_exception_only,
+    "promotion without added evidence",
+)
+
+
+def _regression_with_promotion_exception_only(
+    base: dict[str, object], current: dict[str, object]
+) -> None:
+    base_cell = feature_cell(base, "library.sync", "macos")
+    base_cell["status"] = "shipped"
+    base_cell.pop("promotion_condition")
+    _add_exception(current, "accepted_promotions")
+
+
+expect_comparison(
+    "a promotion exception cannot silence a regression",
+    _regression_with_promotion_exception_only,
+    "undeclared regression: library.sync/macos shipped -> partial",
+)
+
+
+def _regression_with_regression_exception(
+    base: dict[str, object], current: dict[str, object]
+) -> None:
+    base_cell = feature_cell(base, "library.sync", "macos")
+    base_cell["status"] = "shipped"
+    base_cell.pop("promotion_condition")
+    _add_exception(current, "accepted_regressions")
+
+
+expect_comparison("regression keeps its own declared exception", _regression_with_regression_exception)
+
+
+def _transition_into_na(base: dict[str, object], current: dict[str, object]) -> None:
+    current_cell = feature_cell(current, "library.sync", "macos")
+    current_cell["status"] = "n/a"
+    current_cell.pop("promotion_condition")
+
+
+expect_comparison("transition into n/a is outside the promotion order", _transition_into_na)
+
+
+def _transition_out_of_na(base: dict[str, object], current: dict[str, object]) -> None:
+    base_cell = feature_cell(base, "library.sync", "macos")
+    base_cell["status"] = "n/a"
+    base_cell.pop("promotion_condition")
+
+
+expect_comparison("transition out of n/a is outside the promotion order", _transition_out_of_na)
+
+
+def _reason_only_promotion(base: dict[str, object], current: dict[str, object]) -> None:
+    current_cell = feature_cell(current, "library.sync", "macos")
+    current_cell["status"] = "shipped"
+    current_cell.pop("promotion_condition")
+    current_cell["reason"] = "New prose claims the missing integration is complete."
+
+
+expect_comparison(
+    "reason-only edit accompanying a promotion",
+    _reason_only_promotion,
+    "promotion without added evidence",
+)
+
+
+def _key_order_only_promotion(base: dict[str, object], current: dict[str, object]) -> None:
+    current_cell = feature_cell(current, "library.sync", "macos")
+    current_cell["status"] = "shipped"
+    current_cell.pop("promotion_condition")
+    rows = current_cell["evidence"]
+    assert isinstance(rows, list)
+    current_cell["evidence"] = [dict(reversed(list(row.items()))) for row in rows]
+
+
+expect_comparison(
+    "evidence key-order edits do not count as new rows",
+    _key_order_only_promotion,
+    "promotion without added evidence",
+)
+
+
+def _missing_to_null_evidence_promotion(
+    base: dict[str, object], current: dict[str, object]
+) -> None:
+    current_cell = feature_cell(current, "library.sync", "ipados")
+    current_cell["status"] = "blocked"
+    current_cell["blocked_by"] = "OQ-1"
+    current_cell["evidence"] = None
+
+
+expect_comparison(
+    "missing and null evidence are both the empty set",
+    _missing_to_null_evidence_promotion,
+    "promotion without added evidence: library.sync/ipados planned -> blocked",
+)
+
+
+def _malformed_promotion_exception(
+    base: dict[str, object], current: dict[str, object], field: str, value: str
+) -> None:
+    _pr65_promotion(base, current)
+    item = _add_exception(current, "accepted_promotions")
+    item[field] = value
+
+
+expect_comparison(
+    "promotion exception requires a non-empty reason",
+    lambda base, current: _malformed_promotion_exception(base, current, "reason", "   "),
+    "accepted_promotions entries require a reason and #<number> PR",
+)
+expect_comparison(
+    "promotion exception requires a hash-number PR",
+    lambda base, current: _malformed_promotion_exception(base, current, "pr", "65"),
+    "accepted_promotions entries require a reason and #<number> PR",
 )
 
 expect_rejection(
