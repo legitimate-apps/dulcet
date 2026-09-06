@@ -234,26 +234,66 @@ def validate(document: dict, source: str) -> dict[str, dict]:
             if evidence is not None:
                 if schema_version == 1:
                     entries = [evidence]
-                    required_evidence_keys = {"workflow", "job", "test"}
+                    evidence_shapes = {"legacy": {"workflow", "job", "test"}}
                 else:
                     if not isinstance(evidence, list) or not evidence:
                         fail(f"{source}: {feature_id}/{platform} evidence must be a non-empty list")
                     entries = evidence
-                    required_evidence_keys = {"conformance", "workflow", "job", "test"}
+                    # Two evidence shapes, exact and mutually exclusive by key set.
+                    # `conformance` asserts a registry contract -- docs/CONFORMANCE.md is
+                    # server-protocol semantics, nothing else. `observes` asserts a platform
+                    # observation in prose, for exactly the claims the registry has no id for (a
+                    # UI activating, a build wiring the production client, a real device
+                    # rendering a layout). Citing a test under either shape proves that one named
+                    # test executed and passed; it is not a status promotion.
+                    evidence_shapes = {
+                        "conformance": {"conformance", "workflow", "job", "test"},
+                        "observation": {"observes", "workflow", "job", "test"},
+                    }
 
                 evidence_conformance: list[str] = []
+                conformance_cited_by: dict[str, list[str]] = {}
+                observation_cited_by: dict[str, list[str]] = {}
                 for entry in entries:
-                    if (
-                        not isinstance(entry, dict)
-                        or set(entry) != required_evidence_keys
-                        or any(not isinstance(value, str) or not value for value in entry.values())
-                    ):
+                    shape_matches = (
+                        [name for name, keys in evidence_shapes.items() if set(entry) == keys]
+                        if isinstance(entry, dict)
+                        else []
+                    )
+                    if len(shape_matches) != 1:
+                        expected = " or ".join(str(sorted(keys)) for keys in evidence_shapes.values())
                         fail(
-                            f"{source}: {feature_id}/{platform} evidence entries require "
-                            f"{sorted(required_evidence_keys)} strings"
+                            f"{source}: {feature_id}/{platform} evidence entries require exactly "
+                            f"{expected}"
                         )
-                    if schema_version == 2:
-                        evidence_conformance.append(entry["conformance"])
+                    shape = shape_matches[0]
+
+                    if shape == "observation":
+                        observes = entry["observes"]
+                        if not isinstance(observes, str) or not observes.strip():
+                            fail(
+                                f"{source}: {feature_id}/{platform} evidence observes must be "
+                                "a non-empty string"
+                            )
+                        if any(
+                            not isinstance(entry[key], str) or not entry[key]
+                            for key in ("workflow", "job", "test")
+                        ):
+                            fail(
+                                f"{source}: {feature_id}/{platform} evidence entries require "
+                                f"{sorted(evidence_shapes['observation'])} strings"
+                            )
+                        observation_cited_by.setdefault(entry["test"], []).append(observes)
+                    else:
+                        if any(not isinstance(value, str) or not value for value in entry.values()):
+                            fail(
+                                f"{source}: {feature_id}/{platform} evidence entries require "
+                                f"{sorted(evidence_shapes[shape])} strings"
+                            )
+                        if shape == "conformance":
+                            evidence_conformance.append(entry["conformance"])
+                            conformance_cited_by.setdefault(entry["test"], []).append(entry["conformance"])
+
                     if (entry["workflow"], entry["job"]) not in jobs:
                         fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
                     if entry["test"].split("/")[-1].split("#")[-1] not in tests:
@@ -282,18 +322,30 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                 #
                 # OBSERVED 2026-09-02: zero violations across all 144 evidence rows then on
                 # main, so this codifies existing practice rather than imposing a new one.
-                if schema_version == 2:
-                    cited_by: dict[str, list[str]] = {}
-                    for entry in entries:
-                        cited_by.setdefault(entry["test"], []).append(entry["conformance"])
-                    for cited_test, ids in sorted(cited_by.items()):
-                        if len(ids) > 1:
-                            fail(
-                                f"{source}: {feature_id}/{platform} cites one test for "
-                                f"{len(ids)} conformance ids ({', '.join(sorted(ids))}): "
-                                f"{cited_test}. A test that exists is not a test that "
-                                "exercises the id it is cited for; give each id its own evidence."
-                            )
+                for cited_test, ids in sorted(conformance_cited_by.items()):
+                    if len(ids) > 1:
+                        fail(
+                            f"{source}: {feature_id}/{platform} cites one test for "
+                            f"{len(ids)} conformance ids ({', '.join(sorted(ids))}): "
+                            f"{cited_test}. A test that exists is not a test that "
+                            "exercises the id it is cited for; give each id its own evidence."
+                        )
+
+                # The observation shape drops the conformance id, not the risk it guards
+                # against: a test cited for two different `observes` claims in one platform cell
+                # is the same laundering move as a test cited for two different conformance ids,
+                # so the identical one-test-one-claim rule applies here too, tracked separately
+                # from conformance citations because a conformance id and an observation string
+                # are different claims about the same test and neither should be free to hide
+                # behind the other's count.
+                for cited_test, claims in sorted(observation_cited_by.items()):
+                    if len(claims) > 1:
+                        fail(
+                            f"{source}: {feature_id}/{platform} cites one test for "
+                            f"{len(claims)} observation claims ({', '.join(sorted(claims))}): "
+                            f"{cited_test}. A test that exists is not a test that "
+                            "demonstrates the claim it is cited for; give each observation its own evidence."
+                        )
 
                 if schema_version == 2:
                     declared_conformance = [
