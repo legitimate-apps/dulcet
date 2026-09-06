@@ -493,7 +493,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .loadMoreSearchResults(kind):
             loadMoreSearchResults(kind)
         case .retrySearch:
-            startInitialSearch(debounce: false)
+            startInitialSearch(debounce: false, destination: currentSnapshot.selectedDestination)
         case let .activateSearchResult(id):
             activateSearchResult(id)
         case let .selectAlbum(id):
@@ -880,7 +880,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         if searchQuery.trimmedForSearch.count >= 2,
            searchResults.isEmpty,
            searchFailure == nil {
-            startInitialSearch(debounce: false)
+            // currentSnapshot.selectedDestination is still the OLD destination here: this method
+            // runs before anything has published the move to .search, so pass the destination we
+            // are switching to explicitly instead of letting startInitialSearch() read it back.
+            startInitialSearch(debounce: false, destination: .search)
             return
         }
         let state: DulcetPresentationState = if searchQuery.trimmedForSearch.count < 2 {
@@ -915,12 +918,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             )
             return
         }
-        startInitialSearch(debounce: true)
+        startInitialSearch(debounce: true, destination: currentSnapshot.selectedDestination)
     }
 
-    private func startInitialSearch(debounce: Bool) {
+    private func startInitialSearch(debounce: Bool, destination: DulcetSidebarDestination) {
         cancelSearchRequest()
-        guard currentSnapshot.selectedDestination == .search,
+        // `destination` is the destination this search is for, supplied explicitly by every
+        // caller rather than read back from currentSnapshot.selectedDestination. retrySearch and
+        // search-query updates only ever run while already on the search screen, so they pass the
+        // current snapshot's destination and this guard is exactly as protective as before.
+        // openSearch()'s fast path is different: it can run before the switch to .search has
+        // published anything at all, so it passes the destination it is switching TO instead of
+        // reading a snapshot that has not caught up yet.
+        guard destination == .search,
               case .connected = currentSnapshot.accountConnection,
               searchQuery.trimmedForSearch.count >= 2 else { return }
         searchResults = []
@@ -929,7 +939,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchFailure = nil
         publish(
             state: .searchLoading,
-            destination: .search,
+            destination: destination,
             form: currentSnapshot.accountForm,
             status: currentSnapshot.accountConnection
         )

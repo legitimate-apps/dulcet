@@ -483,6 +483,83 @@ func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent
     #expect(store.snapshot.selectedArtist == artist)
 }
 
+// Regression coverage for a navigation deadlock: PresentationStore.selectDestination moves its own
+// `selectedDestination` before the data source has published anything, so any destination handler
+// that silently returns without publishing leaves the sidebar highlight and the published snapshot
+// disagreeing forever (only a relaunch clears it). openSearch()'s fast path used to be reachable
+// with a stale `currentSnapshot.selectedDestination`, because it delegates to startInitialSearch(),
+// which guards on that same snapshot before anything has republished it.
+@Test @MainActor
+func navigatingBackToSearchAfterCancellingAPendingQueryStillPublishesSearch() {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+
+    store.selectDestination(.search)
+    store.searchQuery = "so"
+    #expect(store.snapshot.state == .searchLoading)
+
+    // Navigate away before the debounced request ever fires. cancelSearchRequest() cancels the
+    // pending work but does not clear searchResults, so entry condition (a) is now armed: a
+    // trimmed query of at least two characters, an empty result set, and no failure.
+    store.selectDestination(.settings)
+    #expect(store.snapshot.selectedDestination == .settings)
+
+    store.selectDestination(.search)
+
+    #expect(store.selectedDestination == .search)
+    #expect(store.snapshot.selectedDestination == .search)
+}
+
+@Test @MainActor
+func navigatingBackToSearchAfterAZeroResultQueryStillPublishesSearch() async {
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+
+    store.selectDestination(.search)
+    store.searchQuery = "zz"
+    await settleSearchTask(until: { search.requests.count == 1 })
+    search.complete(at: 0, .loaded(searchPage(results: [])))
+
+    #expect(store.snapshot.state == .searchEmpty)
+    #expect(store.snapshot.searchResults.isEmpty)
+
+    // Entry condition (b): a query that legitimately returned zero results leaves searchResults
+    // empty and searchFailure nil, the same shape openSearch() reads to decide it can start a
+    // fresh search inline instead of publishing the destination move itself.
+    store.selectDestination(.settings)
+    store.selectDestination(.search)
+
+    #expect(store.selectedDestination == .search)
+    #expect(store.snapshot.selectedDestination == .search)
+}
+
 @Test
 func credentialBearingSearchRequestCannotPrintCredentials() {
     let request = DulcetSearchPageRequest(
