@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from required_checks import load_required_checks
+from feature_json import loads as strict_loads
 
 PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
 STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
@@ -29,10 +30,12 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 
-def load_text(text: str, source: str) -> dict:
+def load_text(text: str, source: str, *, historical: bool = False) -> dict:
     try:
-        value = json.loads(text)
-    except json.JSONDecodeError as error:
+        # Preserve the historical effective baseline so old duplicate keys can be repaired.
+        # Every submitted matrix is strict, including duplicates nested in evidence/conditions.
+        value = json.loads(text) if historical else strict_loads(text)
+    except ValueError as error:
         fail(f"{source}: FEATURES.yml must remain JSON-compatible YAML: {error}")
     if not isinstance(value, dict):
         fail(f"{source}: top level must be an object")
@@ -415,7 +418,7 @@ def base_document() -> dict:
     )
     if result.returncode != 0:
         fail(f"cannot resolve base document {document_ref}; fetch the required history")
-    return load_text(result.stdout, candidate)
+    return load_text(result.stdout, candidate, historical=True)
 
 
 try:

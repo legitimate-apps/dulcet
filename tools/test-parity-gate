@@ -20,6 +20,7 @@ def materialize(root: Path) -> None:
         ".github/required-checks.json",
         "tools/parity_gate.py",
         "tools/required_checks.py",
+        "tools/feature_json.py",
         "tools/verify-parity-evidence",
     ):
         source = REPOSITORY / relative
@@ -795,6 +796,8 @@ passing_cases = """\
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testAccountConnectUsesRegularWidthSplitLayout" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
@@ -871,6 +874,27 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory
         raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
 
 execution_rejections = {
+    "iPad playback observation did not execute": (
+        passing_report.replace(
+            'name="testSimulatorPlaybackAdvancesPastScrobbleThreshold"',
+            'name="unrelatedPlaybackTest"',
+        ),
+        "evidence test did not execute",
+    ),
+    "iPad playback observation failed": (
+        passing_report.replace(
+            'name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />',
+            'name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1"><failure /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
+    "iPad playback observation skipped": (
+        passing_report.replace(
+            'name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />',
+            'name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1"><skipped /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
     "download integration report omits one declared conformance test": (
         passing_report.replace(
             """  <testcase classname="DulcetAppleDownloadIntegrationTest"
@@ -943,5 +967,37 @@ for label, (report, expected) in execution_rejections.items():
                 f"{label}: expected rejection containing {expected!r}, "
                 f"returncode={result.returncode}, output={result.stdout!r}"
             )
+
+# Exercise raw JSON: dict-based mutations cannot represent duplicate keys.
+for original, replacement, key in (
+    ('"schema_version": 2', '"schema_version": 2, "schema_version": 2', 'schema_version'),
+    ('"promotion_condition": {', '"promotion_condition": {}, "promotion_condition": {', 'promotion_condition'),
+    ('"blocked_on":', '"blocked_on": "discarded", "blocked_on":', 'blocked_on'),
+):
+    with tempfile.TemporaryDirectory(prefix="dulcet-duplicate-key-") as directory:
+        root = Path(directory)
+        materialize(root)
+        path = root / "FEATURES.yml"
+        text = path.read_text()
+        assert original in text
+        path.write_text(text.replace(original, replacement, 1))
+        result = invoke(root)
+        assert result.returncode != 0 and f"duplicate JSON key: {key}" in result.stdout, result.stdout
+
+# Historical duplicate repair must still enforce the effective baseline's regression guard.
+with tempfile.TemporaryDirectory(prefix="dulcet-duplicate-base-") as directory:
+    root = Path(directory)
+    materialize(root)
+    base, current = comparison_documents()
+    raw_base = json.dumps(base).replace('"schema_version": 2', '"schema_version": 2, "schema_version": 2', 1)
+    (root / "FEATURES.yml").write_text(raw_base)
+    commit_fixture_base(root)
+    write_document(root, current)
+    result = invoke(root)
+    assert result.returncode == 0, result.stdout
+    feature_cell(current, "playback.stream", "macos")["status"] = "partial"
+    write_document(root, current)
+    result = invoke(root)
+    assert result.returncode != 0 and "undeclared regression" in result.stdout, result.stdout
 
 print("parity-gate mutation and executed-evidence tests pass")
