@@ -12,7 +12,9 @@ struct DulcetTVApp: App {
         let arguments = ProcessInfo.processInfo.arguments
         // Published disposable credentials only: launch arguments appear in public test logs.
         // Restrict this account hook to the disposable loopback fixture, and compile it out
-        // of Release. The separate destination hook supplies neither query nor playback state.
+        // of Release. It supplies an account and nothing else: no destination, no query, no
+        // playback state. A UI control that needs a section reaches it the way a person does,
+        // through the section bar, so no hook can stand in for navigation that does not work.
         if arguments.contains("-dulcet-debug-connect-account"),
            let serverURL = Self.value("-dulcet-debug-account-server-url", in: arguments),
            serverURL == "http://127.0.0.1:4533",
@@ -40,13 +42,6 @@ struct DulcetTVApp: App {
     var body: some Scene {
         WindowGroup {
             DulcetRootView(store: presentation)
-#if DEBUG
-                .onChange(of: presentation.snapshot.accountConnected, initial: true) { _, connected in
-                    if connected && ProcessInfo.processInfo.arguments.contains("-dulcet-debug-open-search") {
-                        presentation.selectDestination(.search)
-                    }
-                }
-#endif
         }
     }
 }
