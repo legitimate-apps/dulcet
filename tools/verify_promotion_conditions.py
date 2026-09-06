@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import json
+from feature_json import loads as strict_loads
 from pathlib import Path
 import re
 import sys
@@ -139,8 +139,8 @@ def validate(root: Path, features_path: Path | None = None) -> list[str]:
     root = root.resolve()
     features_path = features_path or root / "FEATURES.yml"
     try:
-        features = json.loads(features_path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+        features = strict_loads(features_path.read_text())
+    except (OSError, ValueError) as error:
         return [f"cannot read {features_path}: {error}"]
     workflows = workflow_inventory(root)
     errors: list[str] = []

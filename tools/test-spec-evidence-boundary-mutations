@@ -16,6 +16,7 @@ def materialize(root: Path) -> None:
     for relative in (
         "tools/test-spec-evidence-boundaries",
         "tools/verify_promotion_conditions.py",
+        "tools/feature_json.py",
         "FEATURES.yml",
         "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
         "docs/superpowers/specs/2026-08-18-dulcet-design.md",

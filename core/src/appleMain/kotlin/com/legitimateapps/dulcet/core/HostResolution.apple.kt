@@ -41,23 +41,22 @@ internal actual suspend fun platformResolveHost(host: String): List<String> = me
             var current: CPointer<addrinfo>? = head
             while (current != null) {
                 val item = current.pointed
-                val address = item.ai_addr
-                if (address != null) {
-                    val buffer = allocArray<ByteVar>(NI_MAXHOST)
-                    if (
-                        getnameinfo(
-                            address,
-                            item.ai_addrlen,
-                            buffer,
-                            NI_MAXHOST.toUInt(),
-                            null,
-                            0u,
-                            NI_NUMERICHOST,
-                        ) == 0
-                    ) {
-                        add(buffer.toKString())
-                    }
-                }
+                // A partial answer could hide a public address and authorize plaintext HTTP.
+                // Abort the entire lookup; finally still releases the native result chain.
+                val address = item.ai_addr ?: return@memScoped emptyList()
+                val buffer = allocArray<ByteVar>(NI_MAXHOST)
+                if (
+                    getnameinfo(
+                        address,
+                        item.ai_addrlen,
+                        buffer,
+                        NI_MAXHOST.toUInt(),
+                        null,
+                        0u,
+                        NI_NUMERICHOST,
+                    ) != 0
+                ) return@memScoped emptyList()
+                add(buffer.toKString())
                 current = item.ai_next
             }
         }.distinct()
