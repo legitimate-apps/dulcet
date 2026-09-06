@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class DulcetiOSUITests: XCTestCase {
     /// A missing launch-screen declaration opts into the legacy 320-by-480 canvas.
@@ -730,6 +731,10 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            XCTFail("This experiment requires iPhone hardware identity, even in a compact iPad window")
+            return
+        }
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         app.launchArguments += [
@@ -753,6 +758,8 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The live account connection must succeed before playback is attempted")
             return
         }
+
+        print("DULCET IPHONE IDENTITY simulator=\(udid) width=\(window.frame.width) idiom=phone")
 
         // Compact navigation starts in detail. Return to the navigation list before choosing
         // Library, rather than assuming the iPad's simultaneously visible sidebar exists.
@@ -809,6 +816,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         guard let finalSample = waitUntilPastScrobbleThreshold(progress) else { return }
+        print("DULCET IPHONE PROGRESS elapsed=\(finalSample.elapsed) duration=\(finalSample.duration)")
         let threshold = min(finalSample.duration * 0.5, 4 * 60)
         XCTAssertGreaterThanOrEqual(
             finalSample.duration,
