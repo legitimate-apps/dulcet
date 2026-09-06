@@ -266,9 +266,15 @@ class AccountConnectConformanceTest {
 
     @Test
     fun slowSelfHostedServerCanCompleteAccountNegotiation() = runTest {
+        // Bind the result so the failure message can name it. `Failed` is a data class carrying
+        // `error: DomainError`, so interpolation renders e.g. `Failed(error=Transport.Timeout)` and
+        // separates a timeout from a 500 from an unreachable host. Without it this assertion prints
+        // only "actual Failed", and every red run costs a re-run to learn nothing about which.
+        val result = fixture().connect("${redirectConformanceRoot()}/slow-account")
         assertIs<AccountConnectionResult.Connected>(
-            fixture().connect("${redirectConformanceRoot()}/slow-account"),
-            "a self-hosted server responding after 10.5 seconds must remain connectable",
+            result,
+            "a self-hosted server responding after 10.5 seconds must remain connectable, " +
+                "but got $result",
         )
     }
 
