@@ -47,6 +47,14 @@ struct DulcetAccountConnectionView: View {
         return nil
     }
 
+    private func setInitialFocusIfNeeded() {
+        guard allowsProgrammaticFocus, focusedControl == nil else { return }
+        let initialFocus = preferredFocus(for: store.snapshot.accountConnection)
+        focusedControl = initialFocus
+        // onChange does not replay initial focus; report it at its source.
+        focusDidChange?(initialFocus)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
@@ -68,17 +76,25 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
+#if os(macOS)
+        .dulcetOnExitCommand {
+            if isConnecting { store.cancelAccountConnection() }
+        }
+#else
         .dulcetOnExitCommand(perform: isConnecting ? { store.cancelAccountConnection() } : nil)
+#endif
         .onAppear {
-            if allowsProgrammaticFocus, focusedControl == nil {
-                let initialFocus = preferredFocus(for: store.snapshot.accountConnection)
-                focusedControl = initialFocus
-                // `onChange` observes later focus-engine movement but does not replay the
-                // value assigned during this first appearance. Report that initial value
-                // at its source so focus instrumentation sees the same state as the field
-                // styling and FocusState binding.
-                focusDidChange?(initialFocus)
-            }
+#if os(macOS)
+            // OBSERVED while running DulcetMacTests on a developer Mac, not on a CI runner:
+            // synchronous initial focus during layout made AppKit reject a SwiftUI focus
+            // proxy whose window was nil, and Shift-Tab traversal then failed. Deferring to
+            // the next main-queue turn removed it. CI has not exhibited the rejection, so
+            // treat this as a latent ordering bug that one environment surfaces -- not as a
+            // fix for anything CI observed.
+            DispatchQueue.main.async { setInitialFocusIfNeeded() }
+#else
+            setInitialFocusIfNeeded()
+#endif
         }
         .onChange(of: store.snapshot.accountConnection) { previous, current in
             guard allowsProgrammaticFocus else { return }
