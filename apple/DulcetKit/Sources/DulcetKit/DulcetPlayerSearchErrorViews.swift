@@ -303,7 +303,7 @@ struct DulcetSearchView: View {
 #if os(macOS)
                     // The small AppKit field's SwiftUI ideal height differs from the hosted
                     // NSTextField's runtime intrinsic height. Use the native regular metric so
-                    // the header invariant below can preserve the control's actual ideal size.
+                    // the header priority below can preserve the control's actual ideal size.
                     .controlSize(.regular)
 #else
                     .controlSize(.small)
@@ -323,10 +323,11 @@ struct DulcetSearchView: View {
                     .lineLimit(nil)
             }
 #if os(macOS)
-            // The sibling result surface deliberately absorbs the remaining height. Preserve the
-            // header group's ideal vertical size so a finite deficit cannot be reassigned to its
-            // native field, while the outer stack and its table or scroll view remain flexible.
-            .fixedSize(horizontal: false, vertical: true)
+            // Allocate the header before the flexible result surface, preserving its native field.
+            // A vertical fixedSize here also preserves the header's wrapped ideal height during
+            // NavigationSplitView's zero-width minimum-size probe. That inflated the navigation
+            // minimum above the window height and clipped the first table row out of existence.
+            .layoutPriority(1)
 #endif
 
             searchContent
