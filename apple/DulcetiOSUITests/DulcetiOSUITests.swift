@@ -712,6 +712,116 @@ final class DulcetiOSUITests: XCTestCase {
         )
     }
 
+    /// Compact-width simulator evidence. The workflow independently asserts the disposable
+    /// server's canary count before and after; this runner never submits or reads a scrobble.
+    @MainActor
+    func testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold() {
+        guard let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"],
+              !udid.isEmpty else {
+            XCTFail("This playback proof requires an iPhone simulator UDID")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        guard let url = URLComponents(string: configuration.serverURL),
+              url.scheme == "http", url.host == "127.0.0.1", url.port == 4533,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              url.path.isEmpty else {
+            XCTFail("The iPhone automation requires the local disposable Navidrome endpoint")
+            return
+        }
+
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", configuration.serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        guard window.waitForExistence(timeout: 10) else {
+            XCTFail("The app window must exist")
+            return
+        }
+        // Portrait iPhone windows are compact; a full-screen iPad must fail this experiment.
+        guard window.frame.width > 0, window.frame.width < 600 else {
+            XCTFail("This proof requires a compact-width iPhone window; an iPad is invalid evidence")
+            return
+        }
+        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live account connection must succeed before playback is attempted")
+            return
+        }
+
+        // Compact navigation starts in detail. Return to the navigation list before choosing
+        // Library, rather than assuming the iPad's simultaneously visible sidebar exists.
+        let back = app.navigationBars.buttons["Back"].firstMatch
+        guard back.waitForExistence(timeout: 5), back.isHittable else {
+            XCTFail("The compact detail must expose its back navigation control")
+            return
+        }
+        back.tap()
+        let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
+        guard library.waitForExistence(timeout: 5), library.isHittable else {
+            XCTFail("Back navigation must expose the Library destination")
+            return
+        }
+        library.tap()
+
+        let thresholdAlbum = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "Threshold Boundary")
+        ).firstMatch
+        guard thresholdAlbum.waitForExistence(timeout: 30) else {
+            XCTFail("The disposable server must expose the Threshold Boundary album")
+            return
+        }
+        guard scrollIntoView(
+            thresholdAlbum,
+            in: app,
+            probingBlockingSystemAlerts: false
+        ) else {
+            XCTFail("The threshold canary album must be reachable in the library")
+            return
+        }
+        thresholdAlbum.tap()
+
+        let thresholdTrack = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "UI Playback Canary")
+        ).firstMatch
+        guard thresholdTrack.waitForExistence(timeout: 10) else {
+            XCTFail("The disposable server must expose the dedicated eligible UI playback canary")
+            return
+        }
+        guard scrollIntoView(
+            thresholdTrack,
+            in: app,
+            probingBlockingSystemAlerts: false
+        ) else {
+            XCTFail("The scrobble canary track must be reachable")
+            return
+        }
+        thresholdTrack.tap()
+
+        let progress = app.sliders["Now Playing"].firstMatch
+        guard progress.waitForExistence(timeout: 30) else {
+            XCTFail("Real playback must begin and expose progressing media time in Now Playing")
+            return
+        }
+        guard let finalSample = waitUntilPastScrobbleThreshold(progress) else { return }
+        let threshold = min(finalSample.duration * 0.5, 4 * 60)
+        XCTAssertGreaterThanOrEqual(
+            finalSample.duration,
+            30,
+            "The server-reported or decoded duration must be eligible for scrobbling"
+        )
+        XCTAssertGreaterThan(
+            finalSample.elapsed,
+            threshold,
+            "Observed progressing media time must move past the §15.2 scrobble threshold"
+        )
+    }
+
     private func livePlaybackConfiguration() -> LivePlaybackConfiguration? {
         let serverURL = runtimeValue(
             environment: "DULCET_UI_TEST_SERVER_URL",
