@@ -2331,7 +2331,10 @@ matrix; the CI regression gate; and the unit of work handed to a delegate.
   platforms:
     macos:     { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: macos-tests,  test: PlaybackSeekTests/testServerOffsetSeek }] }
     ios:       { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: ios-sim-tests, test: PlaybackSeekTests/testServerOffsetSeek }] }
-    ipados:    { status: shipped, evidence: [{ conformance: CONF-14a, workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekOnIPadLayout }] }
+    ipados:    { status: shipped, evidence: [
+                  { conformance: CONF-14a, workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekOnIPadLayout },
+                  { observes: "the iPad job launched the production build and drove a real seek gesture end to end, not a host-only unit test", workflow: apple-ci, job: ipad-sim-tests, test: PlaybackSeekUITests/testSeekGestureReachesTheEngine }
+                ] }
     tvos:      { status: planned }
     android:   { status: shipped, evidence: [{ conformance: CONF-14a, workflow: android-ci, job: instrumented, test: PlaybackSeekTest#serverOffsetSeek }] }
     androidtv: { status: planned }
@@ -2359,6 +2362,30 @@ present, executed, unskipped, and passing. A source method, log line, invented j
 or one representative testcase for a multi-CONF claim is not evidence. The manifest binding is a
 reviewed static pre-merge declaration, not proof that the live branch rule requires the job; §19.3
 records the accepted timing boundary for that live comparison.
+
+**A second evidence shape asserts a platform observation, not a registry contract.** A `conformance`
+entry is a claim against `docs/CONFORMANCE.md`, and that registry is server-protocol semantics only —
+generation-pinned reads, atomic commit, envelope shape, and the like. Nothing in it is UI, integration,
+or platform-wiring behavior, so a cell whose only honest evidence is "the macOS app actually launches
+the production client" or "the iPad layout activates search" had no legal shape to be written in: the
+schema required a `conformance` id that does not exist for what was being proven, so the claim went
+unrepresented. An `observes` entry is `{observes, workflow, job, test}` with no `conformance` key,
+where `observes` is the platform behavior this run witnessed, in prose. The two shapes are exact and
+mutually exclusive by key set — an entry is valid only if it matches one of them exactly, never a
+superset of either — and the gate applies every existing check (the named workflow and job exist, the
+job is named by the required-checks manifest, the job invokes the executed-evidence verifier, the named
+test exists in the repo and is confirmed executed and passing) to both shapes identically. **Citing a
+test is not a status promotion**: an `observes` row, like a `conformance` row, proves only that one
+named test executed and passed; it says nothing about what a cell's `status` should be, and the choice
+of which cells warrant an observation row at all stays with whoever edits `FEATURES.yml`. The
+one-test-one-claim rule that stops a conformance id from being proven by an unrelated already-cited
+test applies to observation rows too, tracked separately: a test cited for more than one `observes`
+claim on the same platform is rejected, because a test that exists in the tree is not a test that was
+written to demonstrate either claim pasted next to it — the laundering this shape must refuse is the
+same laundering the conformance rule refuses, not a weaker cousin of it. Coverage completeness — the
+requirement that a cell's evidence exactly covers its declared `conformance`/`platform_conformance`
+ids — is computed over `conformance`-shaped entries only, so an `observes` row can supplement a cell's
+evidence without being required for, substituting for, or able to mask an uncovered id.
 
 Swift Testing does not emit JUnit in this workflow. The Apple job therefore writes an Xcode result
 bundle and converts the structured `xcresulttool get test-results tests` tree after the test command
@@ -3361,6 +3388,32 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 93 (2026-09-06)** — `FEATURES.yml` evidence gained a second shape for platform
+observations that carry no conformance id.
+
+1. `docs/CONFORMANCE.md` is server-protocol semantics only, so a platform-integration or UI-wiring
+   proof had no legal shape: schema v2 required exactly `{conformance, workflow, job, test}` on every
+   evidence entry, and 153 of 153 evidence rows on `main` carried a `conformance` id with zero
+   exceptions. `tools/parity_gate.py` now also accepts `{observes, workflow, job, test}` — an exact,
+   mutually exclusive second key set, never a superset of either shape — where `observes` is a
+   non-empty prose description of what the run observed.
+2. Every existing check applies to both shapes identically: the named workflow and job must exist,
+   the job must be required by branch protection, the job must be wired to executed-test
+   verification, and the named test must exist in the repo and be confirmed executed and passing.
+   Coverage completeness (a cell's evidence must exactly cover its declared conformance ids) is
+   computed over `conformance`-shaped entries only, so `observes` rows can supplement a cell without
+   being able to substitute for or mask an uncovered id.
+3. The existing one-test-one-conformance-id uniqueness rule in `tools/parity_gate.py` gained an
+   analogue: one test may not stand as evidence for more than one distinct `observes` claim on the
+   same platform either, tracked
+   separately from conformance citations, because the risk — an existing test pasted against a claim
+   it was never written to demonstrate — is identical regardless of which shape carries it.
+   `tools/verify-parity-evidence` now carries the `observes` text into its claim label so a failed
+   observation row names what it was claiming, the same way a failed conformance row names its id.
+4. Citing a test under either shape proves that one named test executed and passed; it is not a
+   status promotion. This revision changes what evidence is expressible, not what any `FEATURES.yml`
+   cell currently claims — no row was added, removed, or reshaped by it.
 
 **Revision 92 (2026-09-04)** — one device-attached CI exception admitted; §21.3 amended, not reversed.
 

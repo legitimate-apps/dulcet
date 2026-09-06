@@ -4,6 +4,16 @@ This registry reserves stable identifiers for the tests required by the design. 
 stable when its test moves from planned to executable; the design's representative-test table carries
 the detailed assertion.
 
+**This registry is server-protocol semantics, and nothing else.** Every id below is a wire or
+sync-consistency contract (generation-pinned reads, atomic commit, envelope shape, and so on) that this
+project has committed to testing. It is not a place to register that a platform actually wires a
+capability up — a UI activating, a build launching the production client, a real device rendering a
+layout. `FEATURES.yml` evidence has a second row shape for exactly that claim, carrying `observes`
+prose instead of a `conformance` id (design spec §19.2). A `conformance` row asserts a contract
+against this registry; an `observes` row asserts a platform observation the registry has no id for.
+Citing a test under either shape proves that one named test executed and passed — it is not a status
+promotion, and it does not by itself justify moving a cell to `shipped`.
+
 | id | assertion |
 |---|---|
 | CONF-01 | unauthenticated extension discovery |

@@ -153,6 +153,98 @@ expect_rejection(
     "cites one test for",
 )
 
+
+def expect_acceptance(label: str, change: Callable[[dict[str, object]], None]) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-gate-") as directory:
+        root = Path(directory)
+        materialize(root)
+        mutate(root, change)
+        result = invoke(root)
+        if result.returncode != 0:
+            raise AssertionError(
+                f"{label}: expected acceptance, returncode={result.returncode}, "
+                f"output={result.stdout!r}"
+            )
+
+
+def _valid_observation_entry(
+    rows: list[dict[str, str]],
+    observes: str = "the macOS job actually launched and drove the real UI, not a host-only unit test",
+) -> dict[str, str]:
+    """Build an observation-shaped entry that reuses an existing row's workflow/job/test.
+
+    Reusing an already-valid citation keeps every other invariant (workflow/job exist, the job is
+    required and wired to executed-test verification, the test exists in the tree) satisfied by
+    construction, so each control below isolates the one thing it means to exercise.
+    """
+    template = rows[0]
+    return {
+        "observes": observes,
+        "workflow": template["workflow"],
+        "job": template["job"],
+        "test": template["test"],
+    }
+
+
+def _append_observation_entry(
+    document: dict[str, object],
+    observes: str = "the macOS job actually launched and drove the real UI, not a host-only unit test",
+) -> None:
+    rows = macos_evidence(document)
+    rows.append(_valid_observation_entry(rows, observes))
+
+
+expect_acceptance(
+    "valid observation row alongside its cell's existing conformance evidence",
+    _append_observation_entry,
+)
+
+expect_rejection(
+    "evidence entry mixes conformance and observes keys",
+    lambda document: macos_evidence(document)[0].update(
+        observes="pasted onto an already conformance-shaped row"
+    ),
+    "evidence entries require exactly",
+)
+
+
+def _observation_row_with_unknown_key(document: dict[str, object]) -> None:
+    _append_observation_entry(document)
+    macos_evidence(document)[-1]["note"] = "unknown key"
+
+
+expect_rejection(
+    "observation row carries an unknown extra key",
+    _observation_row_with_unknown_key,
+    "evidence entries require exactly",
+)
+
+for blank in ("", "   ", "\n\t"):
+    expect_rejection(
+        f"observation row observes is blank ({blank!r})",
+        lambda document, blank=blank: _append_observation_entry(document, observes=blank),
+        "evidence observes must be a non-empty string",
+    )
+
+
+def _cite_one_test_for_two_observation_claims(document: dict[str, object]) -> None:
+    """The observation analogue of _cite_one_test_for_every_id above.
+
+    Dropping the conformance id does not drop the risk: an existing test pasted against two
+    different prose claims is the same laundering move the conformance rule exists to stop, so it
+    must be rejected the same way.
+    """
+    rows = macos_evidence(document)
+    rows.append(_valid_observation_entry(rows, "first observation claim about this platform"))
+    rows.append(_valid_observation_entry(rows, "a second, different claim reusing the same test"))
+
+
+expect_rejection(
+    "one test cited for two different observation claims",
+    _cite_one_test_for_two_observation_claims,
+    "observation claims",
+)
+
 expect_rejection(
     "existing but non-required job",
     lambda document: macos_evidence(document)[0].update(workflow="core-ci", job="core-build"),
