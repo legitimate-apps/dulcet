@@ -151,11 +151,19 @@ public struct DulcetCaptureView: View {
 /// re-deriving the playback presentation.
 ///
 /// A `TabView` was the obvious way to express this and is not used, because on tvOS its
-/// selection does not durably accept a change the app makes for itself. OBSERVED: activating a
-/// search result moved the app to Now Playing, which rendered for about a second and was then
-/// replaced by the section the person had been on, because the tab view restored its own
-/// selection. Owning the selection here keeps the one destination the reducer publishes as the
-/// only one, so nothing can write a stale section back over it.
+/// selection does not durably accept a change the app makes for itself. Measured during
+/// development on a tvOS 26.5 simulator: activating a search result moved the app to Now Playing,
+/// which rendered for about a second and was then replaced by the section the person had been on,
+/// because the tab view restored its own selection. Two binding formulations behaved identically,
+/// so it is not a missing observation dependency.
+///
+/// That measurement is deliberately NOT marked OBSERVED: the TabView implementation it was taken
+/// from was a scratch experiment and was never committed, so nothing in this repository lets a
+/// reader reproduce it. Treat it as the recorded reason for the design, not as a verified claim
+/// about SwiftUI -- and re-measure before relying on it for a different surface.
+///
+/// Owning the selection here keeps the one destination the reducer publishes as the only one, so
+/// nothing can write a stale section back over it.
 private struct DulcetTVSectionNavigation: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedSection: DulcetSidebarDestination?
