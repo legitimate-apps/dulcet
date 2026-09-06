@@ -41,7 +41,13 @@ jobs:
     # Raised rather than trimming the default pair count, because the pair count is the statistical
     # power: at the measured 20% per-pair divergence rate, 30 pairs give P(zero | unfixed) = 0.12%
     # while 15 give 3.5%. Losing that resolution to fit a budget would defeat the instrument.
-    # This workflow is `workflow_dispatch` only and never competes with `apple-ci` for a slot.
+    # `workflow_dispatch` only means this workflow never AUTO-triggers. It does NOT mean it is free.
+    # A dispatched soak takes a hosted macOS runner from the same account-wide pool `apple-ci` draws
+    # from, and the concurrency group above is keyed per workflow, so a soak neither cancels nor is
+    # cancelled by an `apple-ci` run -- the two just queue against each other. At the timeout below
+    # that is up to 150 minutes of held slot, on a pool this project documents as capped well below
+    # Linux. Dispatch a soak when the trunk is quiet, not while pull requests are waiting on
+    # `apple-ci`.
     timeout-minutes: 150
     env:
       PAIR_COUNT: ${{ inputs.pair_count }}
