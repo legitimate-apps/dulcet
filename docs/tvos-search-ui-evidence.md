@@ -1,4 +1,4 @@
-# tvOS search UI evidence and navigation gap
+# tvOS search UI evidence and section navigation
 
 OBSERVED on 2026-09-04 with Xcode 26.6.0, tvOS Simulator 26.5, and the disposable
 Navidrome fixture at `http://127.0.0.1:4533`:
@@ -19,24 +19,34 @@ control and is retained as history, not as a description of the current one.
 
 ## Product gaps and the exact setup boundary
 
-**OBSERVED: ordinary tvOS root navigation supplies no control that selects
-Search. A person cannot reach Search through the current root's navigation.**
-Source inspection of `DulcetRootView.swift` shows that tvOS renders only
-`DulcetStateSurface` inside a `NavigationStack`; the sidebar is excluded on tvOS.
-The Search surface requires `.search` to have already been selected. The test's
-unseeded launch recorded a Connection screen with server, username, password,
-local-HTTP toggle, and Connect controls, without a Search navigation control.
-This runtime observation corroborates the root's source-level omission; it is
-not a claim that a complete interactive login/navigation tour was exercised.
+**CORRECTED 2026-09-05. The navigation gap described here is closed.** The
+paragraph below described the tvOS root as it stood before this repository grew
+a section bar, and is retained as the statement of the problem the bar solves,
+not as a description of the shipped shell. See "Section navigation" below.
+
+*Superseded:* OBSERVED, ordinary tvOS root navigation supplied no control that
+selected Search. Source inspection of `DulcetRootView.swift` showed that tvOS
+rendered only `DulcetStateSurface` inside a `NavigationStack`; the sidebar is
+excluded on tvOS. The Search surface required `.search` to have already been
+selected. The test's unseeded launch recorded a Connection screen with server,
+username, password, local-HTTP toggle, and Connect controls, without a Search
+navigation control.
 
 **OBSERVED: the original DulcetTV entry point had no account launch hook.**
-This change adds DEBUG-only `-dulcet-debug-connect-account` setup using the live
-production connector and Keychain store, restricted to the disposable loopback
-URL. The separate `-dulcet-debug-open-search` hook selects Search after connection.
-That hook was the only route used to reach Search in the passing control. Neither
-hook injects the query, ranked results, activation, queue, or playback state.
-Release builds contain neither hook. Interactive account entry, normal navigation
-to Search, and production-signed Keychain attributes remain outside this proof.
+DEBUG-only `-dulcet-debug-connect-account` setup uses the live production
+connector and Keychain store, restricted to the disposable loopback URL. It
+supplies an account and nothing else: no destination, no query, no ranked
+results, no activation, no queue, no playback state. It exists because typing
+credentials raises a system save-password dialog no app-side query can reach,
+which is a different thing from skipping the behaviour under test. Release
+builds contain no such hook. Interactive account entry and production-signed
+Keychain attributes remain outside this proof.
+
+**REMOVED 2026-09-05: the `-dulcet-debug-open-search` destination hook.** It
+existed only because the root had no way to reach Search. Leaving it in place
+alongside a working control would let the control's own evidence pass whether or
+not the control worked, because the app would already be on Search at launch, so
+it is deleted rather than merely unused by the test.
 
 OBSERVED: rendering results originally crashed the production tvOS root with:
 
@@ -126,6 +136,87 @@ production source was restored and verified byte-identical afterwards. Under the
 single-result query neither mutation could fail any of these controls, which is the coverage
 gap they were written to close.
 
+## Section navigation, OBSERVED 2026-09-05
+
+tvOS now renders a section bar across the top of the root, above the state
+surface, offering Library, Search, Now Playing and Connection. Its controls carry
+`dulcet.tab.<destination>` identifiers, naming the platform role this bar fills. Each control asks
+the store to change destination through the same reducer path the sidebar uses on
+the other platforms, so the per-destination work that reducer does -- cancelling a
+library browse, cancelling an in-flight search request, re-deriving the playback
+presentation -- happens exactly as it does elsewhere.
+
+The control now starts where a person starts and reaches Search by remote:
+
+```text
+DULCET TV LAUNCH section=Connection focus=dulcet.account-connect.server-address search-present=false
+DULCET TV REACHED-SEARCH via=section-bar control=dulcet.tab.search
+DULCET TV SEARCH PASS query=typed ranks=[...] activated-rank=2 activation=remote-select source=search title=UI Playback Canary progress=0:02 of 0:31->0:03 of 0:31 reached-search=section-bar returned-to=library setup=debug-account-only
+Executed 1 test, with 0 failures (0 unexpected) in 35.818 (35.820) seconds
+xcode test execution valid: test=DulcetTVUITests.DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack terminal=Passed individual-results=1
+```
+
+Green build exit 0 and test exit 0. The same run exercised the return leg: after
+playback moved the app to Now Playing on its own, the bar took it back to Library,
+which is the half a person needs after playing one track.
+
+### Reachability mutation controls
+
+Both mutations were gated on a recorded zero build exit before the run, because a
+mutant that does not compile re-runs the previous binary and reports a pass.
+
+| mutation | build exit | test exit | failed at |
+|---|---|---|---|
+| section bar removed from the tvOS root | 0 | 65 | `The unseeded root must offer the library section` |
+| section control renders but selects nothing | 0 | 65 | `Selecting Search in the section bar must present the search surface` |
+
+The second is the one that matters. A bar that exists but drives nothing still
+satisfies every assertion about the bar itself, and the control still fails,
+because reaching Search is what it asserts. The production source was restored
+afterwards and verified identical by digest; the restored build then reported
+build exit 0 and test exit 0, with 69 tvOS rendering tests in 3 suites passing in
+the same run.
+
+### FINDING, OBSERVED: `TabView` does not hold a section the app chooses for itself
+
+The first implementation expressed the bar as a `TabView` with its selection bound
+to the store, which is the obvious shape for this. Activating a search result
+moved the app to Now Playing, which rendered -- and was then replaced by the
+section the person had been on, roughly a second later, because the tab view
+restored its own selection over the one the store had published:
+
+```text
+post-select 0 navBar=Now Playing results=false
+post-select 1 navBar=Now Playing nowPlayingTitle=true
+post-select 3 navBar=Search results=true
+```
+
+Two different bindings were tried -- reading the store inside the getter, and
+reading it during body evaluation so observation registers the dependency -- and
+both behaved identically, so this is not a missing dependency. The shipped bar
+owns no selection of its own: the destination the reducer publishes is the only
+one, and the bar renders it.
+
+### FINDING, OBSERVED: an always-installed exit handler removes the way back
+
+The account surface installed `onExitCommand` unconditionally and acted only while
+a connection was in flight. On tvOS an installed handler consumes the exit press
+whether or not it does anything, so the press that takes a person from a surface
+back to the section bar was swallowed on that surface. The handler is now supplied
+only while it has work to do; a nil action leaves the press to the system.
+
+### Focus behaviour
+
+- OBSERVED: launch places remote focus on a named control inside the section --
+  the Connection surface's own field -- rather than on the bar or on nothing.
+- OBSERVED: from the Search surface, one Up press returns focus to the bar; from
+  the bar, one Down press reaches the search field.
+- OBSERVED: from the album grid on the Library surface, Up does not reach the bar
+  within 10 presses. The exit press does, and the shipped root handles it by
+  returning focus to the bar directly rather than leaving the focus engine to find
+  a control several scroll views away. From the bar the exit press stays unhandled,
+  because there the platform's own meaning is to leave the app.
+
 ## Reproduction and CI
 
 Generate the project from `apple/project.yml` with `xcodegen generate` in `apple/`.
@@ -170,8 +261,8 @@ The complete hosted workflow has not been run by this investigation.
 
 `FEATURES.yml` is unchanged. Its evidence-list schema requires a conformance ID;
 this UI control is not CONF-41's local/server merge test, so no misleading
-CONF-41 evidence entry is added. The root-navigation gap is deliberately left
-visible for product work rather than treated as solved by DEBUG setup.
+CONF-41 evidence entry is added. Promoting any cell on the strength of the
+evidence below is a separate decision and is not taken here.
 
 ## Activation mutation control
 
