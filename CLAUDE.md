@@ -452,9 +452,11 @@ account, where it previously returned the profile address. It is an account-owne
 anything a repository can configure, which is why no commit-time convention ever substituted for it.
 
 **What that does and does not settle.**
-- Going forward it is **ASSUMED**, not observed: no GitHub-synthesized commit has been created since
-  the setting changed. The first merge after 2026-09-06 is the measurement — check `%ae` **and**
-  `%ce` on it before recording this as closed.
+- ✅ **Going forward is now OBSERVED, not assumed.** The first squash merge after the setting change
+  is commit `31a7962`, and it is clean on both fields — author `legitimate-apps` with the `noreply`
+  address, committer `GitHub` with `noreply@github.com`. The exposed count stayed at 128 while the
+  total went 199 → 200. Squash merge is safe again, and the merge method no longer has to be chosen
+  around this.
 - The 128 commits already on `main` are unchanged. Rewriting them is a destructive history operation
   and is the repository owner's decision, not a cleanup task to be picked up.
 - `git commit` identity is still bound by *Identity* above. It was never the cause here, and it is
