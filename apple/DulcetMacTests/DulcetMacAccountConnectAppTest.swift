@@ -120,6 +120,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // are asserted separately.
         let queueTitles = ["Thirty One Seconds", "Twenty Nine Seconds", "UI Playback Canary"]
         let canaryQueueIndex = 2
+        // Apply the constrained frame while search is idle. Applying this same frame after
+        // loading retains already-measured rows and misses the minimum-height regression.
+        window.setFrame(NSRect(x: 0, y: 60, width: 1024, height: 677), display: true)
+        hostingView.layoutSubtreeIfNeeded()
+        reportSearchRealization(root: hostingView, phase: "before-typing")
         try sendText(query, to: window)
         try await waitUntil(
             timeout: .seconds(5),
@@ -145,15 +150,16 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(store.snapshot.searchResults.count, rankedTitles.count,
             "Exact fixture query result count")
         hostingView.layoutSubtreeIfNeeded()
-        // Record native row/cell presence and ancestor clipping before the legacy recovery.
-        // documentVisibleRect alone omits ancestor clipping; it cannot establish that a row
-        // fits. The recovery is retained for comparison, not as evidence of a notification bug.
-        reportSearchRealization(root: hostingView, phase: "before-recovery")
-        let resizeAttempts = growWindowUntilRanksRealize(
-            window, hostingView: hostingView, expectedRankCount: rankedLabels.count
+        reportSearchRealization(root: hostingView, phase: "results-without-recovery")
+        let navigationSplit = try XCTUnwrap(
+            accessibilityDescendants(in: hostingView).compactMap { $0 as? NSSplitView }.first,
+            "The production navigation split must exist"
         )
-        print("MACOS SEARCH UI RESIZE-RECOVERY attempts=\(resizeAttempts.map(String.init) ?? "exhausted")")
-        reportSearchRealization(root: hostingView, phase: "after-recovery")
+        let navigationRect = navigationSplit.convert(navigationSplit.bounds, to: hostingView)
+        XCTAssertGreaterThanOrEqual(navigationRect.minY, hostingView.bounds.minY,
+            "Navigation must not center an oversized minimum height above the hosting root")
+        XCTAssertLessThanOrEqual(navigationRect.maxY, hostingView.bounds.maxY,
+            "Navigation must fit the hosting root before any result lookup")
         // Every rank is resolved by its own identifier and checked against the row that belongs
         // there. A view that stamped one constant identifier on every row would satisfy rank zero
         // and then fail to produce rank one at all.
@@ -837,36 +843,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             }
             print("\(prefix) afterProbeNative table=\(tag(table)) rows=\(rows)")
         }
-    }
-
-    /// Legacy bounded resize recovery, retained unchanged while the probe diagnoses CI.
-    /// Local ancestor clipping can prevent row creation despite a large documentVisibleRect.
-    /// A successful resize alone does not establish a missing resize-notification mechanism.
-    @MainActor
-    private func growWindowUntilRanksRealize(
-        _ window: NSWindow,
-        hostingView: NSView,
-        expectedRankCount: Int,
-        bound: Int = 3,
-        increment: CGFloat = 300
-    ) -> Int? {
-        func realizedRankCount() -> Int {
-            Set(
-                accessibilityDescendants(in: hostingView)
-                    .compactMap { accessibilityIdentifier($0) }
-                    .filter { $0.hasPrefix("dulcet.search.result.") }
-            ).count
-        }
-        if realizedRankCount() >= expectedRankCount { return 0 }
-        for attempt in 1...bound {
-            let current = window.frame.size
-            window.setContentSize(NSSize(width: current.width, height: current.height + increment))
-            print("MACOS SEARCH PROBE resize=\(attempt) before=\(current) requestedContent=\(NSSize(width: current.width, height: current.height + increment)) actualWindow=\(window.frame)")
-            window.layoutIfNeeded()
-            hostingView.layoutSubtreeIfNeeded()
-            if realizedRankCount() >= expectedRankCount { return attempt }
-        }
-        return nil
     }
 
     private func accessibilityDescendants(in root: Any) -> [Any] {

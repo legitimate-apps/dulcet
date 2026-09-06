@@ -1,5 +1,10 @@
 # macOS hosted search UI evidence
 
+The resize-recovery explanation below is historical and superseded by
+[the minimum-height attribution and regression proof](macos-search-layout-cause.md).
+`documentVisibleRect` omits ancestor clipping; it does not establish that a row fits.
+The recovery has been removed in favor of a product layout fix.
+
 OBSERVED locally on 2026-09-04 with the disposable Navidrome fixture at
 `http://127.0.0.1:4533`, macOS 26.6.2, and Xcode 26.6.0.
 
@@ -247,62 +252,17 @@ Two findings, both OBSERVED and reproduced across repeated runs:
   SwiftUI's own diffing cycle -- this rules out any fix that pokes the resolved `NSTableView`
   directly, however tempting a one-line `reloadData()` looks.
 
-### The recovery that works: a genuine, later resize
+### Resize recovery retired
 
-At the reproducing height=400 geometry above, calling `window.setContentSize(...)` with a real,
-executed size delta *after* the initial layout had already settled, then re-running
-`layoutSubtreeIfNeeded()`, brought rank zero's node into existence on the first attempt:
+The earlier bounded resize loop sometimes exposed rank zero locally but exhausted its attempts
+on CI. The proposed missed-resize-notification mechanism was never established. The later
+instrument measured ancestor clipping, and the subsequent layout-proposal experiment attributed
+the oversized navigation minimum to the search header's vertical `fixedSize` modifier.
 
-```text
-pre-resize:  realized=["dulcet.search.result.1", "dulcet.search.result.2", "dulcet.search.result.3"]
-post-resize: realized=["dulcet.search.result.0", "dulcet.search.result.1", "dulcet.search.result.2",
-                        "dulcet.search.result.3"]
-```
-
-Repeated with an unconditional (not just on-failure) geometry snapshot: identical outcome. This is
-consistent with the outline table's realized-row set being decided once, during the window's
-initial creation-and-first-layout pass, and never revisited against the settled geometry unless a
-separate, genuine resize event fires the AppKit resize-notification chain that keeps an
-`NSClipView` and its `NSTableView` in sync. The fix, `growWindowUntilRanksRealize`, performs
-exactly this: a bounded (3 attempts, +300pt each), observable resize loop run once the model is
-confirmed correct and before any per-rank accessibility lookup. It reports how many attempts were
-needed (`MACOS SEARCH UI RESIZE-RECOVERY attempts=N`) rather than only the final pass/fail state,
-per CLAUDE.md trap 41 -- a control that cannot prove what it did is not a control.
-
-Verified against both the shipped geometry and the reproduction:
-
-```text
-height=760 (already healthy): RESIZE-RECOVERY attempts=0, test passed (0.66s)
-height=400 (reproduces CI):   RESIZE-RECOVERY attempts=1, test passed (0.70s)
-```
-
-**Not established**: the exact mechanism inside AppKit's private `SwiftUIOutlineTableView` that
-decides realization during the first layout pass, or precisely why CI's environment lands on the
-losing side of it at the same literal (760) that is comfortably safe on this session's own
-machine. Candidate contributors not distinguished from one another: CI's non-Retina backing scale
-against this machine's 2.0 (a scale-dependent row-height rounding difference), and CI's slower or
-differently-ordered first layout pass. This repository has direct precedent for a superficially
-similar "CI-only, text-layout-adjacent" hypothesis (cold vs. warm font-metric cache) being
-*refuted* by soak evidence for the capture-flake investigation
-([[project_dulcet_capture_h6_cache_warmth]]) -- that history is a reason for caution about
-asserting a specific cause here, not a reason to expect the same cause. No further CI run was
-available to this session to discriminate further (repository policy: no push to the branch under
-investigation), so this is reported as the mechanism's effect and a working, evidenced recovery,
-not as a fully attributed root cause.
-
-### Accessibility-only, or also invisible to a sighted user? Not established
-
-This session confirmed the *accessibility* node for rank zero is absent under the reproducing
-geometry -- a real VoiceOver user hitting this same layout state could not perceive or reach the
-top (best-match) search result through accessibility, independent of whatever a sighted user sees.
-Whether the row is *also* absent from the drawn pixels was attempted via
-`NSView.cacheDisplay(in:to:)` and was inconclusive: for this layer-backed, SwiftUI-hosted view
-hierarchy, an offscreen `cacheDisplay` render does not reliably reproduce the actual composited
-window contents (the captured image showed only a single row of content against blank white,
-matching neither the passing nor failing geometry's true on-screen appearance), so no claim is
-made either way about the visual truth. A proper answer would need a window-level capture (for
-example `CGWindowListCreateImage` keyed by the test window's `windowNumber`) and was not attempted
-here for lack of remaining budget in this investigation.
+The product now uses header layout priority, and the test applies the constrained frame before
+entering its query. It asserts navigation containment and the original complete rank order
+without any resize recovery. See [the cause report](macos-search-layout-cause.md) for the
+build-gated failing and passing controls and the separately measured real-window reachability.
 
 ### Mutation proof, gated on the BUILD exit code
 
