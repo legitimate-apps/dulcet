@@ -1274,6 +1274,13 @@ HLS again requires new evidence and a spec revision.
   production seam consumes all 30 exact ranges through byte 7,550,102 and terminates with two loading
   requests finished, one AVFoundation cancellation, zero failed, and zero active. The real DEV-app
   scrobble/play-count control remains operator verification and is not inferred from this test.
+  **OBSERVED 2026-09-06:** the production progressive-MP3 engine path returns non-zero
+  decoded PCM through a test-only AVFoundation post-effects processing tap on macOS and
+  iOS Simulator. Independent source decoding and a genuinely silent MP3 passed their
+  frame/sample-count controls; both music and silence thresholds were mutation-gated on
+  both destinations. See [the measurement and exact claim boundaries](../../APPLE_AUDIO_RENDER_OBSERVATION.md).
+  Delivery beyond that callback to the OS HAL and speaker remains **ASSUMED**; readiness
+  and media-time progress are still transport observations, not acoustic evidence.
 - **Android:** a custom `DataSource.Factory` wrapping the HTTP client, giving the same visibility for
   substantially less work.
 - **Preflight is demoted to an optional, advisory fast-fail** used only where inline validation is
