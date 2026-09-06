@@ -145,6 +145,24 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(store.snapshot.searchResults.count, rankedTitles.count,
             "Exact fixture query result count")
         hostingView.layoutSubtreeIfNeeded()
+        // OBSERVED 2026-09-06 (docs/macos-search-ui-evidence.md, "Realization geometry"): the
+        // production search table can leave rank zero's accessibility node permanently missing
+        // even though the model holds it and the table's own resolved viewport already has more
+        // room than its content needs -- this is not a "not enough space" gap, and neither
+        // waiting inside the existing accessibility poll (both CI and a byte-identical local
+        // reproduction exhausted a five-second poll with the identical row still missing) nor
+        // forcing AppKit's own reloadData() (crashes: SwiftUICore/Environment+Objects.swift:34,
+        // "No Observable object of type DulcetPresentationStore found") recovers it. A genuine,
+        // executed window resize performed AFTER the initial layout has already settled does: it
+        // forces the AppKit resize-notification chain that keeps the outline table's realized
+        // rows in sync with its clip view, which the window's own initial creation-plus-first-
+        // layout pass does not reliably trigger. This changes nothing about what is asserted
+        // below -- only gives AppKit the same second chance a person resizing their own window
+        // would give it for free.
+        let resizeAttempts = growWindowUntilRanksRealize(
+            window, hostingView: hostingView, expectedRankCount: rankedLabels.count
+        )
+        print("MACOS SEARCH UI RESIZE-RECOVERY attempts=\(resizeAttempts.map(String.init) ?? "exhausted")")
         // Every rank is resolved by its own identifier and checked against the row that belongs
         // there. A view that stamped one constant identifier on every row would satisfy rank zero
         // and then fail to produce rank one at all.
@@ -722,8 +740,83 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             "\(type(of: $0)):id=\(accessibilityIdentifier($0) ?? "nil"):label=\(accessibilityLabel($0) ?? "nil")"
         }.joined(separator: "; ")
         throw SearchHostedAppTestError.missingAccessibilityElement(
-            "\(identifier); count=\(elements.count); tree=\(diagnostic)"
+            "\(identifier); count=\(elements.count); geometry=\(realizationGeometryDiagnostic(root: root, elements: elements)); tree=\(diagnostic)"
         )
+    }
+
+    /// Reports the geometry a failed accessibility lookup ran under, so a single CI failure names
+    /// what it observed instead of just what it could not find. `count=N` alone cannot distinguish
+    /// "the row was never in the model" from "the model has it but AppKit never realized a node for
+    /// it at this geometry" -- those are different bugs with different fixes, and only the second
+    /// is this control's known gap (docs/macos-search-ui-evidence.md, "Realization geometry").
+    ///
+    /// The table is found by type name, not by accessibility identifier, because an unrealized row
+    /// has no identifier to search by; `OutlineTableView` names the production search-results
+    /// table's private AppKit backing class distinctly from the sidebar's `OutlineListView`. If
+    /// that private name ever changes this degrades to "no-table-resolved" rather than crashing --
+    /// the diagnostic must never itself become a new source of failure.
+    private func realizationGeometryDiagnostic(root: NSView, elements: [Any]) -> String {
+        let table = elements.first {
+            String(describing: type(of: $0)).contains("OutlineTableView")
+        } as? NSTableView
+        let tableDescription: String
+        if let table {
+            let visible = table.enclosingScrollView?.documentVisibleRect ?? table.visibleRect
+            tableDescription = "tableFrame=\(table.frame) numberOfRows=\(table.numberOfRows)"
+                + " documentVisibleRect=\(visible)"
+        } else {
+            tableDescription = "no-table-resolved"
+        }
+        let realizedRanks = elements.compactMap { accessibilityIdentifier($0) }
+            .filter { $0.hasPrefix("dulcet.search.result.") }
+            .sorted()
+        return "window=\(root.window.map { "\($0.frame)" } ?? "no-window") hostingView=\(root.frame)"
+            + " backingScaleFactor=\(root.window?.backingScaleFactor ?? -1) \(tableDescription)"
+            + " realizedRanks=\(realizedRanks)"
+    }
+
+    /// Recovers from the search table's row-realization gap (see `realizationGeometryDiagnostic`
+    /// above and docs/macos-search-ui-evidence.md, "Realization geometry", OBSERVED 2026-09-06):
+    /// a rank the model already has correct can be permanently missing its accessibility node even
+    /// though the table's own resolved viewport already has more room than its content needs.
+    /// Neither waiting inside the existing accessibility poll nor forcing AppKit's own
+    /// `reloadData()` recovers it -- the latter crashes this SwiftUI-hosted table outright
+    /// (`SwiftUICore/Environment+Objects.swift:34`, "No Observable object of type
+    /// DulcetPresentationStore found"), because its private backing view cannot be safely driven
+    /// outside SwiftUI's own diffing cycle. A genuine, executed `setContentSize` resize after the
+    /// initial layout has already settled is the one recovery this investigation found that
+    /// works: it forces the AppKit resize-notification chain the outline table relies on to keep
+    /// its realized rows in sync with its clip view, which the window's own initial creation and
+    /// first layout pass does not reliably trigger.
+    ///
+    /// Bounded and observable rather than an unbounded retry, per CLAUDE.md trap 41 ("a control
+    /// that cannot prove it fired is not a control"): returns how many resize attempts were
+    /// needed (0 if every rank was already realized without one), or nil if `bound` was exceeded,
+    /// so a caller reports what happened instead of only whether the final state was correct.
+    @MainActor
+    private func growWindowUntilRanksRealize(
+        _ window: NSWindow,
+        hostingView: NSView,
+        expectedRankCount: Int,
+        bound: Int = 3,
+        increment: CGFloat = 300
+    ) -> Int? {
+        func realizedRankCount() -> Int {
+            Set(
+                accessibilityDescendants(in: hostingView)
+                    .compactMap { accessibilityIdentifier($0) }
+                    .filter { $0.hasPrefix("dulcet.search.result.") }
+            ).count
+        }
+        if realizedRankCount() >= expectedRankCount { return 0 }
+        for attempt in 1...bound {
+            let current = window.frame.size
+            window.setContentSize(NSSize(width: current.width, height: current.height + increment))
+            window.layoutIfNeeded()
+            hostingView.layoutSubtreeIfNeeded()
+            if realizedRankCount() >= expectedRankCount { return attempt }
+        }
+        return nil
     }
 
     private func accessibilityDescendants(in root: Any) -> [Any] {
