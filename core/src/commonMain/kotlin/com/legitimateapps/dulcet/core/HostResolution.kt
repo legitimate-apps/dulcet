@@ -2,6 +2,16 @@ package com.legitimateapps.dulcet.core
 
 import io.ktor.http.Url
 import io.ktor.http.encodedPath
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.resume
 
 /** Resolver boundary used by the plaintext-local transport policy and deterministic tests. */
 public fun interface HostResolver {
@@ -9,6 +19,56 @@ public fun interface HostResolver {
 }
 
 internal expect suspend fun platformResolveHost(host: String): List<String>
+
+// Local DNS/mDNS gets time for retries without holding a connection UI indefinitely.
+// This is a deadline for the waiter, not a promise to interrupt the OS resolver.
+internal const val HOST_RESOLUTION_TIMEOUT_MS: Long = 3_000
+internal expect fun hostResolutionDispatcher(): CoroutineDispatcher
+
+// Process-lifetime dedicated workers. Keep permits until the blocking call really returns;
+// timed-out calls must not create an unbounded queue or exhaust the general coroutine pool.
+private val hostResolutionSlots = Semaphore(2)
+
+internal suspend fun boundedHostResolution(
+    timeoutMillis: Long = HOST_RESOLUTION_TIMEOUT_MS,
+    lookup: () -> List<String>,
+): List<String> = unresolvedOnFailure(timeoutMillis) {
+    currentCoroutineContext().ensureActive()
+    if (!hostResolutionSlots.tryAcquire()) return@unresolvedOnFailure emptyList()
+    suspendCancellableCoroutine { continuation ->
+        try {
+            hostResolutionDispatcher().dispatch(EmptyCoroutineContext, Runnable {
+                try {
+                    if (continuation.isActive) {
+                        val addresses = try {
+                            lookup()
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+                        continuation.resume(addresses)
+                    }
+                } finally {
+                    hostResolutionSlots.release()
+                }
+            })
+        } catch (failure: Exception) {
+            hostResolutionSlots.release()
+            throw failure
+        }
+    }
+}
+
+private suspend fun unresolvedOnFailure(
+    timeoutMillis: Long,
+    lookup: suspend () -> List<String>,
+): List<String> = try {
+    withTimeoutOrNull(timeoutMillis) { lookup() } ?: emptyList()
+} catch (_: CancellationException) {
+    // Only this security boundary translates cancellation to the existing deny decision.
+    emptyList()
+} catch (_: Exception) {
+    emptyList()
+}
 
 private object SystemHostResolver : HostResolver {
     override suspend fun resolve(host: String): List<String> = platformResolveHost(host)
@@ -31,6 +91,7 @@ internal class LocalHttpPolicyFailure(
  */
 internal class LocalHttpConnectionPolicy(
     private val resolver: HostResolver,
+    private val resolutionTimeoutMillis: Long = HOST_RESOLUTION_TIMEOUT_MS,
 ) {
     suspend fun targetFor(url: String, allowLocalHttp: Boolean): ConnectionTarget {
         val parsed = Url(url)
@@ -70,7 +131,7 @@ internal class LocalHttpConnectionPolicy(
         val addresses = if (normalizedHost.isIpAddressLiteral()) {
             listOf(host)
         } else {
-            resolver.resolve(host)
+            unresolvedOnFailure(resolutionTimeoutMillis) { resolver.resolve(host) }
         }
         return addresses.map { it.removeSurrounding("[", "]") }.distinct()
     }
