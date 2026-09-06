@@ -978,6 +978,12 @@ jobs:
       # tests: a first-run hosted audio or simulator failure must not skip their evidence.
       # Neither observation depends on the conformance servers, which have stopped here.
       - name: Observe decoded PCM with music and silence controls on macos
+        # No measured maximum exists for this step yet, so this is a hang guard, not a budget:
+        # it sits well above every comparable Apple build-and-test step (the slowest of those
+        # peaks at ~11 min) so it cannot kill a healthy run, and it makes a hang name itself
+        # instead of consuming the job cap. Re-derive it from real durations once several
+        # runs exist -- a cap taken from one run has already produced six that were too low.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodebuild test \
@@ -996,6 +1002,12 @@ jobs:
             DulcetPlaybackIntegrationTests.DulcetPlaybackIntegrationTests \
             testProductionEngineRendersNonZeroPCMAndDistinguishesSilence
       - name: Observe decoded PCM with music and silence controls on ios
+        # No measured maximum exists for this step yet, so this is a hang guard, not a budget:
+        # it sits well above every comparable Apple build-and-test step (the slowest of those
+        # peaks at ~11 min) so it cannot kill a healthy run, and it makes a hang name itself
+        # instead of consuming the job cap. Re-derive it from real durations once several
+        # runs exist -- a cap taken from one run has already produced six that were too low.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodebuild test \
