@@ -204,10 +204,58 @@ def expect_rejection(
             )
 
 
+COVERAGE_CONTROLS = (
+    "observation-only-stream-partial", "observation-only-stream-blocked",
+    "observation-only-scrobble-partial", "observation-only-scrobble-blocked",
+    "shipped-incomplete-coverage", "partial-conformance-incomplete-coverage",
+    "blocked-conformance-incomplete-coverage", "observation-only-promotion",
+)
+
+
+def coverage_control(root: Path, label: str) -> None:
+    base, current = comparison_documents()
+    feature_id = "playback.scrobble" if "scrobble" in label else "playback.stream"
+    old = feature_cell(base, feature_id, "ipados")
+    old.pop("evidence", None)
+    old["status"] = "blocked" if label.endswith("blocked") else "partial"
+    if old["status"] == "blocked":
+        old.pop("promotion_condition", None)
+        old["blocked_by"] = "coverage-control"
+    cell = feature_cell(current, feature_id, "ipados")
+    cell.clear()
+    cell.update(copy_document(old))
+    template = feature_cell(base, feature_id, "ios")["evidence"][0]
+    observation = {key: template[key] for key in ("workflow", "job", "test")}
+    observation["observes"] = "bounded observation independent of conformance coverage"
+    cell["evidence"] = [observation]
+    expected = None
+    if label.endswith("incomplete-coverage"):
+        cell["status"] = label.split("-")[0]
+        cell["evidence"].append(dict(template))
+        if cell["status"] == "blocked":
+            cell["blocked_by"] = "coverage-control"
+        expected = "evidence must cover each declared conformance id exactly once"
+    elif label == "observation-only-promotion":
+        cell["status"] = "shipped"
+        expected = "evidence must cover each declared conformance id exactly once"
+    if cell["status"] != "partial":
+        cell.pop("promotion_condition", None)
+    # An added observation satisfies the promotion-delta rule. Coverage must independently
+    # reject shipped, even when there are zero conformance-shaped rows.
+    result = invoke_comparison(root, base, current)
+    passed = (result.returncode == 0 if expected is None else
+              result.returncode != 0 and expected in result.stdout)
+    print(f"{label}: {'PASS' if passed else 'FAIL'}; gate exit={result.returncode}; {result.stdout.strip()}")
+    assert passed, f"{label}: expected {expected or 'acceptance'}"
+
+
 def review_control(label: str) -> None:
     with tempfile.TemporaryDirectory(prefix="dulcet-parity-review-") as directory:
         root = Path(directory)
         materialize(root)
+        if label in COVERAGE_CONTROLS:
+            coverage_control(root, label)
+            return
         if label in {"whitespace", "whitespace-internal", "new-row"}:
             base, current = comparison_documents()
             old = feature_cell(base, "library.sync", "macos")
@@ -251,7 +299,7 @@ REVIEW_CONTROLS = ("whitespace", "whitespace-internal", "new-row", "missing-pare
 if "--control" in sys.argv:
     review_control(sys.argv[sys.argv.index("--control") + 1])
     raise SystemExit(0)
-for review_label in REVIEW_CONTROLS:
+for review_label in (*REVIEW_CONTROLS, *COVERAGE_CONTROLS):
     review_control(review_label)
 
 
