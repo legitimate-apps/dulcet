@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Read-only, sequential GitHub API report; no workflow dispatch or local builds.
+
+Run with an authenticated gh CLI. Preserve the emitted run ids to replay a sample with
+--run-id; a rolling latest-25 query will change as subsequent successful runs complete.
+"""
+import argparse
+from collections import defaultdict
+from datetime import datetime
+import json
+import subprocess
+from urllib.parse import urlencode
+
+REPO = 'repos/legitimate-apps/dulcet'
+ALIASES = {
+    'Launch iPadOS shell and prove regular-width account layout':
+        'Launch iPadOS shell and prove layout plus stored Keychain attributes',
+    'Build DulcetTV and test DulcetKit on tvOS':
+        'Build DulcetTV and test DulcetKit plus stored Keychain attributes on tvOS',
+    'Build iOS shell and test DulcetKit on iPhone':
+        'Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone',
+}
+
+
+def api(path, paginate=False):
+    command = ['gh', 'api', path]
+    if paginate:
+        command += ['--paginate', '--slurp']
+    return json.loads(subprocess.check_output(command, text=True))
+
+
+def minutes(item):
+    return (datetime.fromisoformat(item['completed_at'].replace('Z', '+00:00')) -
+            datetime.fromisoformat(item['started_at'].replace('Z', '+00:00'))).total_seconds() / 60
+
+
+def aggregate(jobs):
+    raw = defaultdict(list)
+    paired = defaultdict(list)
+    totals = []
+    for job in jobs:
+        if job['name'] != 'apple-ci' or job['conclusion'] != 'success':
+            continue
+        totals.append(minutes(job))
+        for step in job['steps']:
+            if step['conclusion'] != 'success':
+                continue
+            raw[step['name']].append(minutes(step))
+            paired[ALIASES.get(step['name'], step['name'])].append(minutes(step))
+    if not totals:
+        raise ValueError('sample contains no successful apple-ci jobs')
+    def rows(groups):
+        return [dict(step=name, n=len(values), max_minutes=round(max(values), 2))
+                for name, values in sorted(groups.items(), key=lambda row: -max(row[1]))]
+    return dict(job_max_minutes=round(max(totals), 2), jobs=len(totals),
+                raw_names=rows(raw), across_renames=rows(paired))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--limit', type=int, default=25)
+    parser.add_argument('--run-id', type=int, action='append', help='replay exact run ids')
+    parser.add_argument('--before', help='optional ISO timestamp upper bound for run creation')
+    args = parser.parse_args()
+    if not 1 <= args.limit <= 100:
+        parser.error('--limit must be between 1 and 100')
+    ids = args.run_id
+    if ids is None:
+        query = dict(status='success', per_page=args.limit)
+        if args.before:
+            query['created'] = '<=' + args.before
+        runs = api(f'{REPO}/actions/workflows/apple-ci.yml/runs?{urlencode(query)}')['workflow_runs']
+        if len(runs) < args.limit:
+            raise ValueError(f'requested {args.limit} successful runs, API returned {len(runs)}')
+        ids = [run['id'] for run in runs]
+    jobs = []
+    # One account, sequential requests; default sample is one run-list request plus 25 job lists.
+    for run_id in ids:
+        for page in api(f'{REPO}/actions/runs/{run_id}/jobs?per_page=100', paginate=True):
+            jobs.extend(page['jobs'])
+    print(json.dumps(dict(run_ids=ids, **aggregate(jobs)), indent=2))
+
+
+if __name__ == '__main__':
+    main()

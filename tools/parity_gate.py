@@ -257,12 +257,11 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                         fail(f"{source}: {feature_id}/{platform} evidence must be a non-empty list")
                     entries = evidence
                     # Two evidence shapes, exact and mutually exclusive by key set.
-                    # `conformance` asserts a registry contract -- docs/CONFORMANCE.md is
-                    # server-protocol semantics, nothing else. `observes` asserts a platform
-                    # observation in prose, for exactly the claims the registry has no id for (a
-                    # UI activating, a build wiring the production client, a real device
-                    # rendering a layout). Citing a test under either shape proves that one named
-                    # test executed and passed; it is not a status promotion.
+                    # `conformance` cites a registered contract, including protocol, presentation
+                    # and platform-security contracts. `observes` supplies a claim without a
+                    # matching registry id; platform/UI behavior is not excluded from the registry.
+                    # Either shape still requires an executed, passing test and is not by itself
+                    # a status promotion.
                     evidence_shapes = {
                         "conformance": {"conformance", "workflow", "job", "test"},
                         "observation": {"observes", "workflow", "job", "test"},
@@ -393,63 +392,65 @@ def evidence_rows(cell: dict) -> set[frozenset[tuple[str, str]]]:
     if evidence is None:
         return set()
     entries = evidence if isinstance(evidence, list) else [evidence]
-    return {frozenset(entry.items()) for entry in entries}
+    # Normalize prose whitespace, including wrapped lines and repeated separators. Keep
+    # every key, prose word, case/punctuation and executable identifier in the row identity.
+    return {
+        frozenset((key, " ".join(value.split()) if key == "observes" else value)
+                  for key, value in entry.items())
+        for entry in entries
+    }
 
 
-def base_document() -> dict | None:
+def base_document() -> dict:
     base_ref = os.environ.get("GITHUB_BASE_REF")
-    candidates = []
-    if base_ref:
-        candidates.append(f"origin/{base_ref}")
-    candidates.append("HEAD^")
-    for candidate in candidates:
-        result = subprocess.run(
-            ["git", "show", f"{candidate}:FEATURES.yml"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if result.returncode == 0:
-            return load_text(result.stdout, candidate)
-    return None
+    candidate = f"origin/{base_ref}" if base_ref else "HEAD^"
+    document_ref = f"{candidate}:FEATURES.yml"
+    result = subprocess.run(
+        ["git", "show", document_ref],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        fail(f"cannot resolve base document {document_ref}; fetch the required history")
+    return load_text(result.stdout, candidate)
 
 
 try:
     current_document = load_text(Path("FEATURES.yml").read_text(), "FEATURES.yml")
     current = validate(current_document, "FEATURES.yml")
     previous_document = base_document()
-    if previous_document is not None:
-        # `accepted_promotions` is introduced by this change. A pre-change merge base has no
-        # declarations, which is semantically the same as the new list being empty; current
-        # documents still have to carry the structural key and are validated above.
-        previous_document.setdefault("accepted_promotions", [])
-        previous = validate(previous_document, "base FEATURES.yml")
-        for feature_id, old_feature in previous.items():
-            if feature_id not in current:
-                fail(f"feature row removed: {feature_id}")
-            for platform in PLATFORMS:
-                old_cell = old_feature["platforms"][platform]
-                new_cell = current[feature_id]["platforms"][platform]
-                old_status = old_cell["status"]
-                new_status = new_cell["status"]
-                if old_status == "shipped" and new_status in LOWER_THAN_SHIPPED:
-                    if not accepted(
-                        current_document, "accepted_regressions", feature_id, platform
-                    ):
-                        fail(f"undeclared regression: {feature_id}/{platform} shipped -> {new_status}")
-                if (
-                    old_status in STATUS_RANK
-                    and new_status in STATUS_RANK
-                    and STATUS_RANK[new_status] > STATUS_RANK[old_status]
-                    and not evidence_rows(new_cell) - evidence_rows(old_cell)
-                    and not accepted(
-                        current_document, "accepted_promotions", feature_id, platform
-                    )
+    # `accepted_promotions` is introduced by this change. A pre-change merge base has no
+    # declarations, which is semantically the same as the new list being empty; current
+    # documents still have to carry the structural key and are validated above.
+    previous_document.setdefault("accepted_promotions", [])
+    previous = validate(previous_document, "base FEATURES.yml")
+    for feature_id, old_feature in previous.items():
+        if feature_id not in current:
+            fail(f"feature row removed: {feature_id}")
+        for platform in PLATFORMS:
+            old_cell = old_feature["platforms"][platform]
+            new_cell = current[feature_id]["platforms"][platform]
+            old_status = old_cell["status"]
+            new_status = new_cell["status"]
+            if old_status == "shipped" and new_status in LOWER_THAN_SHIPPED:
+                if not accepted(
+                    current_document, "accepted_regressions", feature_id, platform
                 ):
-                    fail(
-                        f"promotion without added evidence: {feature_id}/{platform} "
-                        f"{old_status} -> {new_status}; no evidence row was added"
-                    )
+                    fail(f"undeclared regression: {feature_id}/{platform} shipped -> {new_status}")
+            if (
+                old_status in STATUS_RANK
+                and new_status in STATUS_RANK
+                and STATUS_RANK[new_status] > STATUS_RANK[old_status]
+                and not evidence_rows(new_cell) - evidence_rows(old_cell)
+                and not accepted(
+                    current_document, "accepted_promotions", feature_id, platform
+                )
+            ):
+                fail(
+                    f"promotion without added evidence: {feature_id}/{platform} "
+                    f"{old_status} -> {new_status}; no evidence row was added"
+                )
     print(f"parity gate valid: {len(current)} feature rows")
 except (OSError, ValueError) as error:
     print(error, file=sys.stderr)

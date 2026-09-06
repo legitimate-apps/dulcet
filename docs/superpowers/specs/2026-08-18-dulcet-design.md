@@ -2364,12 +2364,11 @@ reviewed static pre-merge declaration, not proof that the live branch rule requi
 records the accepted timing boundary for that live comparison.
 
 **A second evidence shape asserts a platform observation, not a registry contract.** A `conformance`
-entry is a claim against `docs/CONFORMANCE.md`, and that registry is server-protocol semantics only —
-generation-pinned reads, atomic commit, envelope shape, and the like. Nothing in it is UI, integration,
-or platform-wiring behavior, so a cell whose only honest evidence is "the macOS app actually launches
-the production client" or "the iPad layout activates search" had no legal shape to be written in: the
-schema required a `conformance` id that does not exist for what was being proven, so the claim went
-unrepresented. An `observes` entry is `{observes, workflow, job, test}` with no `conformance` key,
+entry is a claim against `docs/CONFORMANCE.md`, whose contracts include protocol and sync behavior,
+render-state inventory, actionable errors, secure storage, and observed Keychain attributes. A
+supplementary integration or UI-wiring claim may have no matching registered id; it is this absence,
+not a registry-wide exclusion of platform behavior, that motivates the second shape.
+An `observes` entry is `{observes, workflow, job, test}` with no `conformance` key,
 where `observes` is the platform behavior this run witnessed, in prose. The two shapes are exact and
 mutually exclusive by key set — an entry is valid only if it matches one of them exactly, never a
 superset of either — and the gate applies every existing check (the named workflow and job exist, the
@@ -3407,8 +3406,9 @@ argue against the recorded rationale — not as filling in a blank.
 **Revision 93 (2026-09-06)** — `FEATURES.yml` evidence gained a second shape for platform
 observations that carry no conformance id.
 
-1. `docs/CONFORMANCE.md` is server-protocol semantics only, so a platform-integration or UI-wiring
-   proof had no legal shape: schema v2 required exactly `{conformance, workflow, job, test}` on every
+1. The registry includes protocol, presentation and platform-security contracts. A supplementary
+   claim without a matching registered id had no legal shape: schema v2 required exactly
+   `{conformance, workflow, job, test}` on every
    evidence entry, and 153 of 153 evidence rows on `main` carried a `conformance` id with zero
    exceptions. `tools/parity_gate.py` now also accepts `{observes, workflow, job, test}` — an exact,
    mutually exclusive second key set, never a superset of either shape — where `observes` is a

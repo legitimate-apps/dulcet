@@ -661,6 +661,44 @@ func accountRemovalCancellationRecoversBeforeUncooperativeCleanupReturns() async
 }
 
 @Test(arguments: [false, true]) @MainActor
+func recoveryAfterDownloadCleanupRestoresConfigurationBeforeKeepAccount(cancelExplicitly: Bool) async throws {
+    let connector = ControlledAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let downloads = ControlledDownloadController()
+    let artwork = ControlledArtworkFetcher()
+    artwork.suspendRemoval = true
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials,
+        artworkFetcher: artwork,
+        downloadController: downloads,
+        accountRemovalTimeout: cancelExplicitly ? .seconds(60) : .milliseconds(50)
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    let originalAccount = try #require(downloads.configuredAccount)
+    store.removeAccount()
+    await settleSearchTask(until: { artwork.removalContinuation != nil })
+    #expect(artwork.removalContinuation != nil)
+    #expect(downloads.configuredAccount == nil)
+    if cancelExplicitly { source.cancelAccountRemoval() }
+    await settleSearchTask(until: { store.snapshot.accountRemoval == .failed })
+    #expect(store.snapshot.accountRemoval == .failed)
+    #expect(downloads.configuredAccount?.providerInstanceID == originalAccount.providerInstanceID)
+    store.dismissAccountRemovalFailure()
+    #expect(store.snapshot.accountConnected)
+    #expect(downloads.configuredAccount != nil)
+    artwork.removalContinuation?.resume()
+    artwork.removalContinuation = nil
+    await Task.yield()
+    #expect(credentials.deleteCount == 0)
+    #expect(try credentials.load() != nil)
+}
+
+@Test(arguments: [false, true]) @MainActor
 func keepingAccountAfterCleanupFailurePreservesPersistedCredential(cleanupTimesOut: Bool) async throws {
     let connector = ControlledAccountConnector()
     let credentials = MemoryCredentialStore(persisted: nil)
@@ -696,7 +734,8 @@ func keepingAccountAfterCleanupFailurePreservesPersistedCredential(cleanupTimesO
     #expect(store.snapshot.accountConnected)
     #expect(try credentials.load() == savedCredential)
     #expect(credentials.deleteCount == 0)
-    // A failed sign-out retains this account's artwork; a successful retry removes it.
+    // This download-stage failure occurs before artwork cleanup, so artwork is retained here.
+    // A later-stage failure can follow artwork removal; retry invokes cleanup again.
     #expect(artwork.removedServerIDs.isEmpty)
     let relaunched = DulcetAccountDataSource(
         connector: ControlledAccountConnector(), credentialStore: credentials
@@ -1244,6 +1283,8 @@ private final class ControlledArtworkFetcher: DulcetArtworkFetching, DulcetArtwo
     private let onRemove: @MainActor (String) -> Void
     private(set) var requests: [DulcetArtworkFetchRequest] = []
     private(set) var removedServerIDs: [String] = []
+    var suspendRemoval = false
+    var removalContinuation: CheckedContinuation<Void, Never>?
     private let operation = ControlledArtworkOperation()
     private var completion: (@MainActor (DulcetArtworkFetchOutcome) -> Void)?
 
@@ -1268,6 +1309,9 @@ private final class ControlledArtworkFetcher: DulcetArtworkFetching, DulcetArtwo
     func removeCachedArtwork(serverID: String) async {
         removedServerIDs.append(serverID)
         onRemove(serverID)
+        if suspendRemoval {
+            await withCheckedContinuation { removalContinuation = $0 }
+        }
     }
 }
 
