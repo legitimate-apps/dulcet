@@ -225,8 +225,14 @@ extension View {
         onPreferenceChange(DulcetRegisteredContrastPairPreferenceKey.self, perform: action)
     }
 
+    /// Handles the platform's exit press -- Menu on a remote, Escape on a keyboard.
+    ///
+    /// A nil action leaves the press to the system. That distinction is load-bearing on tvOS:
+    /// an installed handler consumes Menu whether or not it does anything, and Menu is how a
+    /// person leaves a surface for the section bar, so a handler that is present "just in case"
+    /// silently removes the way back out.
     @ViewBuilder
-    func dulcetOnExitCommand(perform action: @escaping () -> Void) -> some View {
+    func dulcetOnExitCommand(perform action: (() -> Void)?) -> some View {
 #if os(macOS) || os(tvOS)
         onExitCommand(perform: action)
 #else

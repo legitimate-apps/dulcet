@@ -68,11 +68,7 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
-        .dulcetOnExitCommand {
-            if isConnecting {
-                store.cancelAccountConnection()
-            }
-        }
+        .dulcetOnExitCommand(perform: isConnecting ? { store.cancelAccountConnection() } : nil)
         .onAppear {
             if allowsProgrammaticFocus, focusedControl == nil {
                 let initialFocus = preferredFocus(for: store.snapshot.accountConnection)

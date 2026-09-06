@@ -1030,10 +1030,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
-          # tvOS setup opens Search explicitly: the root currently has no Search navigation.
-          # The control types into the real field and activates the focused result by remote.
-          # Keep this inside the disposable fixture lifetime and retain simulator signing:
-          # the account hook uses the production Keychain store.
+          # tvOS setup supplies an account and nothing else. The control reaches Search through
+          # the section bar by remote, types into the real field, activates the focused result,
+          # and returns to Library the same way, so it evidences reachability and not only that
+          # the surface works once something else reaches it. Keep this inside the disposable
+          # fixture lifetime and retain simulator signing: the account hook uses the production
+          # Keychain store.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
