@@ -176,4 +176,169 @@ actionlint .github/workflows/apple-ci.yml
 ```
 
 The workflow now runs the control beside the existing macOS app tests and requires its exact
-named passing xcresult. Remote CI execution is unobserved: no apple-ci run has reported on this branch yet.
+named passing xcresult.
+
+## Realization geometry, OBSERVED 2026-09-06
+
+**Remote CI execution happened and failed on this branch's first hosted run**, on PR #83, run
+`34009275978`, job `101422106033`:
+
+```text
+DulcetMacTests/DulcetMacAccountConnectAppTest.swift:724: error: ... failed: caught error:
+"missingAccessibilityElement("dulcet.search.result.0; count=161; tree=...")"
+Test Case '...searchQueryRanksAndActivatesTrackThroughHostedAppUI' failed (6.467 seconds).
+```
+
+The dumped tree held `dulcet.search.result.3`, `.2` and `.1` with exactly their expected rank
+labels, a `4 results` label and the typed query -- search worked and ranked correctly. Rank zero
+alone had no accessibility node. Immediately before the three realized ranks, the tree carried
+four bare `NSOutlineRow` placeholder objects with no identifier or label -- the outline table's
+generic per-row proxies exist for all four logical rows; only three had a fully-realized
+`SwiftUITableRowView`/`AccessibilityNode` subtree with the row's actual content.
+
+### It is not a "not enough room" gap
+
+Reproduced locally by changing only the test's `hostingView.frame` height literal (760 -> 400),
+build-for-testing then test-without-building each time, same disposable fixture. 400 failed with
+the identical signature, `dulcet.search.result.0` missing, `.1`-`.3` present, in three independent
+rebuilds. Instrumenting the failure path (`realizationGeometryDiagnostic`, added by this session)
+to report the window frame, hosting view frame, and the resolved table's own `numberOfRows` and
+`documentVisibleRect` gave a result that rules out simple undersizing:
+
+```text
+height=400 (fails): window=(51, -168, 1180, 652) hostingView=(0, 0, 1180, 600)
+                     table.frame=(0, 0, 892, 931) documentVisibleRect=(0, -28, 892, 959)
+height=760 (passes): window=(51, 0, 1180, 844)   hostingView=(0, 0, 1180, 792)
+                     table.frame=(0, 0, 892, 931) documentVisibleRect=(0, -28, 892, 959)
+```
+
+Two findings, both OBSERVED and reproduced across repeated runs:
+
+1. **The window does not stay at the requested size.** Asking for content height 400 does not
+   produce a 400pt-tall window -- something in the production view hierarchy enforces a larger
+   floor, and AppKit grows the window past the request, shifting its origin negative (the window's
+   bottom edge ends up 168pt below the screen's own origin) rather than simply refusing or
+   clamping. This means "pick a bigger literal" cannot be verified by reasoning about the
+   requested number alone; only the resolved geometry says what the table actually received.
+2. **`table.frame` and `documentVisibleRect` are byte-identical between the failing and passing
+   run**, and the visible rect (959pt) is already taller than the table's own content (931pt) in
+   *both* cases. The final, settled geometry cannot be what decides realization -- if it were,
+   these two runs would behave identically. Whatever decides which rows get realized must be
+   evaluated against a transient, earlier layout state that this snapshot, taken after
+   `layoutSubtreeIfNeeded()` has already run, cannot see. This is why CI can fail at the shipped
+   760: that literal is not what makes 760 safe locally, so nothing here shows CI's environment
+   must fall on the same side of it.
+
+### Two dead ends, each cheap and worth recording
+
+- **Waiting longer does not recover it.** The existing accessibility-lookup poll already retries
+  every 50ms for 5 seconds, calling `layoutSubtreeIfNeeded()` each time. CI's own failure exhausted
+  that timeout (6.467s wall time including the earlier waits) with the row still missing, and the
+  local height=400 reproduction exhausted the identical timeout the same way. A longer poll is not
+  a fix for a state that does not change on its own.
+- **Forcing AppKit's `reloadData()` on the resolved table crashes the process**, not merely
+  failing to help:
+  ```text
+  SwiftUICore/Environment+Objects.swift:34: Fatal error: No Observable object of type
+  DulcetPresentationStore found. A View.environmentObject(_:) for DulcetPresentationStore may be
+  missing as an ancestor of this view.
+  ```
+  SwiftUI's `Table` backing view cannot be safely driven through public AppKit reload APIs outside
+  SwiftUI's own diffing cycle -- this rules out any fix that pokes the resolved `NSTableView`
+  directly, however tempting a one-line `reloadData()` looks.
+
+### The recovery that works: a genuine, later resize
+
+At the reproducing height=400 geometry above, calling `window.setContentSize(...)` with a real,
+executed size delta *after* the initial layout had already settled, then re-running
+`layoutSubtreeIfNeeded()`, brought rank zero's node into existence on the first attempt:
+
+```text
+pre-resize:  realized=["dulcet.search.result.1", "dulcet.search.result.2", "dulcet.search.result.3"]
+post-resize: realized=["dulcet.search.result.0", "dulcet.search.result.1", "dulcet.search.result.2",
+                        "dulcet.search.result.3"]
+```
+
+Repeated with an unconditional (not just on-failure) geometry snapshot: identical outcome. This is
+consistent with the outline table's realized-row set being decided once, during the window's
+initial creation-and-first-layout pass, and never revisited against the settled geometry unless a
+separate, genuine resize event fires the AppKit resize-notification chain that keeps an
+`NSClipView` and its `NSTableView` in sync. The fix, `growWindowUntilRanksRealize`, performs
+exactly this: a bounded (3 attempts, +300pt each), observable resize loop run once the model is
+confirmed correct and before any per-rank accessibility lookup. It reports how many attempts were
+needed (`MACOS SEARCH UI RESIZE-RECOVERY attempts=N`) rather than only the final pass/fail state,
+per CLAUDE.md trap 41 -- a control that cannot prove what it did is not a control.
+
+Verified against both the shipped geometry and the reproduction:
+
+```text
+height=760 (already healthy): RESIZE-RECOVERY attempts=0, test passed (0.66s)
+height=400 (reproduces CI):   RESIZE-RECOVERY attempts=1, test passed (0.70s)
+```
+
+**Not established**: the exact mechanism inside AppKit's private `SwiftUIOutlineTableView` that
+decides realization during the first layout pass, or precisely why CI's environment lands on the
+losing side of it at the same literal (760) that is comfortably safe on this session's own
+machine. Candidate contributors not distinguished from one another: CI's non-Retina backing scale
+against this machine's 2.0 (a scale-dependent row-height rounding difference), and CI's slower or
+differently-ordered first layout pass. This repository has direct precedent for a superficially
+similar "CI-only, text-layout-adjacent" hypothesis (cold vs. warm font-metric cache) being
+*refuted* by soak evidence for the capture-flake investigation
+([[project_dulcet_capture_h6_cache_warmth]]) -- that history is a reason for caution about
+asserting a specific cause here, not a reason to expect the same cause. No further CI run was
+available to this session to discriminate further (repository policy: no push to the branch under
+investigation), so this is reported as the mechanism's effect and a working, evidenced recovery,
+not as a fully attributed root cause.
+
+### Accessibility-only, or also invisible to a sighted user? Not established
+
+This session confirmed the *accessibility* node for rank zero is absent under the reproducing
+geometry -- a real VoiceOver user hitting this same layout state could not perceive or reach the
+top (best-match) search result through accessibility, independent of whatever a sighted user sees.
+Whether the row is *also* absent from the drawn pixels was attempted via
+`NSView.cacheDisplay(in:to:)` and was inconclusive: for this layer-backed, SwiftUI-hosted view
+hierarchy, an offscreen `cacheDisplay` render does not reliably reproduce the actual composited
+window contents (the captured image showed only a single row of content against blank white,
+matching neither the passing nor failing geometry's true on-screen appearance), so no claim is
+made either way about the visual truth. A proper answer would need a window-level capture (for
+example `CGWindowListCreateImage` keyed by the test window's `windowNumber`) and was not attempted
+here for lack of remaining budget in this investigation.
+
+### Mutation proof, gated on the BUILD exit code
+
+Ranks 0 and 1 swapped in both `rankedLabels` and `rankedTitles` (not a real query result):
+
+```text
+build exit: 0
+test exit:  65
+"Thirty One Seconds", ...] is not equal to ["Twenty Nine Seconds", "Thirty One Seconds", ...] - Rendered search rank order
+dulcet.search.result.0 rendered accessibility text (title, credits, album, kind) mismatch
+```
+
+The order assertion, the per-rank accessibility-text check, and the `waitUntil` guard on the
+model's own ranked titles all independently named the drift. Reverted afterward; restored file
+confirmed to build and pass again (build exit 0, test exit 0) before this fix was considered done.
+
+### Siblings: does this fix apply to iOS, iPadOS, or tvOS?
+
+No, by mechanism, and none of the three sibling tests were changed:
+
+- **tvOS** (`DulcetTVUITests.testSimulatorSearchQueryRanksAndActivatesTrack`) already has its own
+  defense, unrelated to this fix: when rank zero's `waitForExistence(timeout: 30)` fails, it
+  presses the remote's Down button up to 8 times, re-checking `.exists` after each press. This is
+  the right recovery for a remote-driven, focus-based navigation model and needed no change.
+- **iOS and iPadOS** (`DulcetiOSUITests`, shared implementation for both) read all four ranks via
+  a plain `waitForExistence(timeout: 10)` with no analogous retry, then separately swipe-scroll
+  the list to reach the *canary's* row for activation (not rank zero, and only after every rank's
+  label was already read). These remain what the prior session called them: architecturally
+  exposed, not confirmed broken. This session did not attempt a fix here.
+- **Why no fix was ported**: this test hosts the production view in-process via a raw
+  `NSHostingView`/`NSWindow` the test itself creates and can resize; the macOS search table is a
+  SwiftUI `Table` backed by AppKit's `NSOutlineView`/`NSClipView`. The iOS/iPadOS/tvOS siblings
+  drive a real app process through `XCUIApplication` on a simulator, whose search list is a
+  `ScrollView`/`LazyVStack` -- a different framework (UIKit-hosted SwiftUI, not AppKit) with a
+  different virtualization implementation. `window.setContentSize` has no equivalent there: there
+  is no test-owned window to resize, and no evidence ties this AppKit-specific notification-chain
+  gap to SwiftUI's iOS/tvOS list virtualization. Applying an unmotivated, unverified "just in case"
+  retry to a currently-untested-but-not-observed-failing sibling would add complexity without
+  evidence, which is the same standard this fix itself was held to.
