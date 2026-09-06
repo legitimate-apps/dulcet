@@ -68,10 +68,8 @@ public struct DulcetRootView: View {
             } else {
                 ZStack {
                     Color.dulcetWindow.ignoresSafeArea()
-                    NavigationStack {
-                        DulcetStateSurface(store: store)
-                    }
-                    .dulcetForeground(.primaryTextOnWindow)
+                    DulcetTVSectionNavigation(store: store)
+                        .dulcetForeground(.primaryTextOnWindow)
                 }
             }
         }
@@ -134,6 +132,88 @@ public struct DulcetCaptureView: View {
             }
         }
         .environment(store)
+    }
+}
+#endif
+
+#if os(tvOS)
+/// Top-level section navigation for the remote.
+///
+/// tvOS puts top-level sections in a focusable bar across the top of the screen, above the
+/// content, which the remote reaches by moving focus up out of a surface or by pressing the
+/// platform's exit button. Following that convention -- rather than porting the sidebar column
+/// -- is what makes every section reachable from every other one, including the return to
+/// Library after playback has moved the app to Now Playing on its own.
+///
+/// The store owns which section is showing, and this bar only ever asks it to change: each
+/// control calls the same reducer path the sidebar uses, and that reducer does real
+/// per-destination work -- cancelling a library browse, cancelling an in-flight search request,
+/// re-deriving the playback presentation.
+///
+/// A `TabView` was the obvious way to express this and is not used, because on tvOS its
+/// selection does not durably accept a change the app makes for itself. OBSERVED: activating a
+/// search result moved the app to Now Playing, which rendered for about a second and was then
+/// replaced by the section the person had been on, because the tab view restored its own
+/// selection. Owning the selection here keeps the one destination the reducer publishes as the
+/// only one, so nothing can write a stale section back over it.
+private struct DulcetTVSectionNavigation: View {
+    @Bindable var store: DulcetPresentationStore
+    @FocusState private var focusedSection: DulcetSidebarDestination?
+
+    var body: some View {
+        let selected = store.selectedDestination
+        VStack(spacing: 0) {
+            sectionBar(selected: selected)
+            NavigationStack {
+                DulcetStateSurface(store: store)
+            }
+        }
+        // The exit button is how a person leaves a surface on this platform, so it returns focus
+        // to the bar -- deterministically, rather than relying on the focus engine to find a
+        // control several scroll views away. From the bar itself it stays unhandled, because
+        // there the platform's own meaning is to leave the app, and consuming it would strand
+        // the person inside.
+        .dulcetOnExitCommand(perform: focusedSection == nil ? { focusedSection = selected } : nil)
+    }
+
+    private func sectionBar(selected: DulcetSidebarDestination) -> some View {
+        HStack(spacing: DulcetSpacing.xs) {
+            ForEach(DulcetSidebarDestination.allCases) { destination in
+                Button {
+                    store.selectDestination(destination)
+                } label: {
+                    Label(destination.windowTitle, systemImage: Self.symbolName(for: destination))
+                        .font(.callout.weight(destination == selected ? .semibold : .regular))
+                        .padding(.horizontal, DulcetSpacing.sm)
+                        .padding(.vertical, DulcetSpacing.xxs)
+                        .background(
+                            destination == selected ? Color.dulcetControl : Color.clear,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.borderless)
+                .focused($focusedSection, equals: destination)
+                .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                .accessibilityLabel(destination.windowTitle)
+                .accessibilityAddTraits(destination == selected ? .isSelected : [])
+            }
+        }
+        .padding(.top, DulcetSpacing.sm)
+        .padding(.bottom, DulcetSpacing.xs)
+        .frame(maxWidth: .infinity)
+        .background(Color.dulcetWindow)
+        // Its own focus region, so moving up out of a surface reaches the bar as a whole rather
+        // than searching for a control that happens to line up with what focus was on.
+        .focusSection()
+    }
+
+    private static func symbolName(for destination: DulcetSidebarDestination) -> String {
+        switch destination {
+        case .library: "rectangle.grid.2x2"
+        case .search: "magnifyingglass"
+        case .nowPlaying: "waveform"
+        case .settings: "server.rack"
+        }
     }
 }
 #endif
