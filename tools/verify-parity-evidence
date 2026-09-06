@@ -48,6 +48,13 @@ for feature in document.get("features", []):
                 claim = f"{feature.get('id')}/{platform}"
                 if entry.get("conformance"):
                     claim += f"/{entry['conformance']}"
+                elif entry.get("observes"):
+                    # An observation row carries no conformance id, so without this the claim
+                    # label collapses to the bare feature/platform pair -- the failure below would
+                    # still fire, but silently drop which of possibly several observation claims on
+                    # this cell it was. Carrying the prose through keeps "did not execute" naming
+                    # the same thing a human reading FEATURES.yml would call it.
+                    claim += f" (observes: {entry['observes']})"
                 expected.setdefault((parts[0], parts[1]), []).append(claim)
 
 if not expected:
