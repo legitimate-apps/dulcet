@@ -17,33 +17,17 @@ jobs:
   apple-ci:
     name: apple-ci
     runs-on: macos-26
-    # 45, not 30. MEASURED 2026-08-27: this job took 25m27s on the run before the first database
-    # landed -- 4.5 minutes of headroom against a 30-minute cap. Adding SQLDelight code generation, a
-    # larger framework and the migration gate pushed it to 30m36s, and it was cancelled.
-    #
-    # A timeout cancellation reports as a failure at whatever step happened to be running at minute
-    # 30, which twice looked like "Assert Darwin conformance preconditions" failing and is not that
-    # at all. That is the expensive part: the job says the wrong thing about why it stopped, and the
-    # reader goes to debug a conformance assertion that never ran.
-    #
-    # The timeout exists as queue hygiene -- a hung job must not hold a capped macOS slot away from
-    # the run that replaced it -- so it stays bounded rather than being removed. It is set with real
-    # headroom so ordinary growth does not present as a conformance failure.
-    # MEASURED 2026-08-30 across 12 apple-ci runs. Successful job durations (job time, not queue
-    # time): 28, 29, 34, 34, 38, 41, 41 minutes. The spread is the point.
-    #
-    # CORRECTION to the reasoning that first raised this from 45: that commit claimed main had grown
-    # to 41m and that added work "tipped the job over". The branch blamed for tipping it then ran the
-    # SAME content in 29m once the machine was quiet, so the added work was not the cause. What the
-    # data actually shows is variance -- the same branch hit 45m twice and 29m once -- and the two
-    # 45m runs coincided with a fleet-wide load storm.
-    #
-    # So this budget exists to absorb runner-condition variance, not incremental suite growth. A
-    # timeout surfaces as `cancelled`, which reads as the conformance step failing and is not that;
-    # that misdiagnosis is the expensive part, and it has now happened four times. Re-measure the
-    # spread before assuming 75 is still right, and do not read a single fast run as proof it can
-    # come back down.
-    timeout-minutes: 75
+    # MEASURED 2026-09-06: slowest successful job 73.9m; the old 75m cap
+    # killed run 34040853135 (77.9m). Use 120m = 1.624x the successful maximum
+    # as the compound-workload backstop, not the sum of individual step caps.
+    # Eleven steps with supplied healthy maxima >=1m get ceil(2 * maximum)
+    # minute caps, using the 25 most recent SUCCESSFUL runs across step renames.
+    # In particular iPadOS uses 11.30m from its regular-width account-layout
+    # predecessor, not just the current name's 7.87m; tvOS uses max(8.37, 8.62)
+    # and iOS uses max(5.63, 8.07). The commit records every maximum and ratio.
+    # Leave the other 41 steps uncapped individually; the job bounds them.
+    # Re-measure across renames when observed healthy maxima or workloads change.
+    timeout-minutes: 120
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -91,7 +75,9 @@ jobs:
           distribution: temurin
           java-version: ${{ steps.pins.outputs.jdk }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
       - name: Build all Apple frameworks
+        timeout-minutes: 10
         run: >-
           ./gradlew --no-daemon
           :core:linkDebugFrameworkMacosArm64
@@ -101,6 +87,7 @@ jobs:
           :core:linkDebugFrameworkTvosSimulatorArm64
           :core:macosArm64Test
       - name: Build macOS shell
+        timeout-minutes: 6
         run: >-
           xcodebuild build
           -project apple/Dulcet.xcodeproj
@@ -114,6 +101,7 @@ jobs:
       - name: Require direct custom foreground modifiers to use the contrast registry
         run: python3 tools/verify_contrast_foreground_policy.py
       - name: Test native macOS presentation and registered-pair contrast ratios
+        timeout-minutes: 4
         run: |
           set -o pipefail
           cd apple/DulcetKit
@@ -173,6 +161,7 @@ jobs:
           test -z "$(find "$RUNNER_TEMP/rejected-focused-responder" -name '*.jpg' -print -quit)"
           echo "FOCUS STATE NEGATIVE CONTROL PASS wrong-responder=created assertion=rejected-before-bitmap-write"
       - name: Capture deterministic macOS design evidence twice
+        timeout-minutes: 9
         id: deterministic_design_capture
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
@@ -310,6 +299,7 @@ jobs:
           compression-level: 0
           retention-days: 14
       - name: Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone
+        timeout-minutes: 17
         run: |
           set -o pipefail
           xcodebuild test \
@@ -345,6 +335,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
       - name: Boot iPadOS simulator before the layout launch
+        timeout-minutes: 6
         id: ipados_layout_destination
         run: |
           set -o pipefail
@@ -368,6 +359,7 @@ jobs:
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Launch iPadOS shell and prove layout plus stored Keychain attributes
+        timeout-minutes: 23
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
@@ -447,6 +439,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
       - name: Build DulcetTV and test DulcetKit plus stored Keychain attributes on tvOS
+        timeout-minutes: 18
         run: |
           set -o pipefail
           xcodebuild test \
@@ -498,6 +491,7 @@ jobs:
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
       - name: Install and verify checksum-pinned Darwin conformance closure
+        timeout-minutes: 9
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
@@ -551,6 +545,7 @@ jobs:
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
       - name: Assert Darwin conformance preconditions
+        timeout-minutes: 67
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -924,7 +919,7 @@ jobs:
           echo "iPadOS playback destination: $IPAD_PLAYBACK_DESTINATION"
           # test-without-building: the iPadOS step above already built this scheme into this same
           # derived-data tree. Rebuilding re-enters the Gradle run-script phase while Navidrome and
-          # three python servers are live, on a job capped at 75 minutes.
+          # three python servers are live, consuming the conformance step budget.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -981,9 +976,8 @@ jobs:
       # This does not attempt to fix that flake -- two proposed causes have already been refuted.
       #
       # `!success()` covers BOTH failure and cancellation. A `timeout-minutes` expiry cancels the job
-      # rather than failing it, and this file's header records that as MEASURED 2026-08-30 across 12
-      # runs; the older 2026-08-27 paragraph saying a timeout "reports as a failure" is superseded by
-      # it. A `failure()`-only condition would therefore miss the long-hang case, which is the one
+      # rather than failing it (observed in the 2026-08-30 sample of 12 runs).
+      # A `failure()`-only condition would therefore miss the long-hang case, which is the one
       # worth the most here. `concurrency.cancel-in-progress` supersessions also land in this branch,
       # but they are killed early and so have little on disk for the globs to match.
       #
