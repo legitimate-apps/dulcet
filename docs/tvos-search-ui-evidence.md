@@ -318,3 +318,71 @@ against the disposable server". They are named rather than cited by hash because
 this branch is rebased onto `main` before merging under `strict: true`, which
 rewrites every hash on it - the previous revision of this line cited two hashes
 that no longer existed in any published history.
+
+## Focus-bar mechanism attribution, OBSERVED 2026-09-06
+
+Adversarial review of this PR found that `focusSectionBar()` pressed Up up to eight times and
+fell back to Menu only if those failed, with neither the helper nor its two call sites recording
+which one actually moved focus -- CLAUDE.md trap 41 (a control that cannot prove it fired is not
+a control). Both call sites reach the bar from shallow surfaces (Connection, Now Playing), so the
+Menu branch was suspected dead code, making the one test that touches the exit-command mechanism
+this PR is centrally about a test that would plausibly still pass with that mechanism reverted.
+
+### The damning demonstration, before anything was changed
+
+The production `onExitCommand` change was reverted (`DulcetAccountConnectionView.swift` back to
+the pre-PR unconditional form; `DulcetTVSectionNavigation`'s outer handler in `DulcetRootView.swift`
+neutralised to `perform: nil`), the test left exactly as it shipped, and run against a leased tvOS
+simulator with the disposable fixture:
+
+```text
+control (unmodified code, unmodified test):   BUILD_EXIT=0  Executed 1 test, 0 failures, 36.751s
+experiment (reverted code, unmodified test):  BUILD_EXIT=0  Executed 1 test, 0 failures, 36.893s
+```
+
+Both runs produced the same marker line, `reached-search=section-bar returned-to=library`. **The
+review's claim is confirmed**: with the exit-command mechanism completely disabled, the shipped
+test cannot tell.
+
+### The rework
+
+`focusSectionBar()` is replaced by `focusSectionBarViaUpNavigation()`, which presses Up alone (no
+Menu fallback) and returns the press count that reached the bar, bounded at 4 -- a four-times
+margin over the OBSERVED one-press minimum for these two shallow surfaces (see "Focus behaviour"
+above), not a search for an unbounded retry. `selectSection` prints
+`DULCET TV FOCUS-BAR mechanism=up-navigation outcome=<reached|not-reached> ...` unconditionally.
+The exit command gets its own test, `testExitCommandAtIdleConnectionReturnsFocusToSectionBar`,
+which presses Menu exactly once from the idle Connection surface with no preceding Up press, and
+prints `DULCET TV EXITCOMMAND outcome=<fell-through-to-bar|swallowed|app-exited> ...`. It is a
+separate test so a broken exit command reports as its own failure rather than taking the
+currently-working search/ranking control down with it, or hiding behind it.
+
+Run against the unmodified, shipped production code:
+
+```text
+BUILD_EXIT=0
+DULCET TV EXITCOMMAND outcome=fell-through-to-bar landed-section=settings prior-focus=dulcet.account-connect.server-address
+DULCET TV FOCUS-BAR mechanism=up-navigation outcome=reached presses=1 target=search
+DULCET TV FOCUS-BAR mechanism=up-navigation outcome=reached presses=0 target=library
+Executed 2 tests, with 0 failures (0 unexpected) in 41.895 seconds
+```
+
+**Open-question finding, OBSERVED:** a `nil` inner `onExitCommand` on `DulcetAccountConnectionView`
+(`isConnecting == false`) DOES fall through to `DulcetTVSectionNavigation`'s outer handler. This
+was previously unconfirmed -- the "Focus behaviour" observations above cover the album grid, which
+has no inner handler at all, a different case.
+
+### Mutation proof, gated on the BUILD exit code
+
+| mutation | build exit | test exit | result |
+|---|---|---|---|
+| both onExitCommand changes reverted (the demonstration above, replayed against the reworked suite) | 0 | 65 | `testExitCommandAtIdleConnectionReturnsFocusToSectionBar` failed (5.540s); `testSimulatorSearchQueryRanksAndActivatesTrack` still passed (36.720s), correctly unaffected |
+| undefined identifier in place of the inner `nil` (non-compiling) | 65 | not run | `error: cannot find 'nonCompilingMutationMarker' in scope`; per feedback_a_mutation_that_does_not_compile_proves_nothing, a failed build is never evidence and `test-without-building` was not invoked |
+
+The production files were restored after each mutation and verified byte-identical by SHA-256
+digest against the pre-experiment baseline, not merely by `git status`.
+
+**Not verified**: isolating the inner-only and outer-only reverts separately (a third mutation) to
+attribute the fallthrough to one specific handler rather than the pair; this session inferred the
+outer handler is what performs the move from the baseline pass plus the combined-revert failure,
+but did not measure the two halves independently.
