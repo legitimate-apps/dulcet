@@ -117,6 +117,19 @@ with tempfile.TemporaryDirectory(prefix="dulcet-nonpartial-promotion-") as direc
     if not any("only while status is partial" in error for error in errors):
         raise AssertionError(f"non-partial cell retained a promotion condition: {errors}")
 
+for original, replacement, key in (
+    ('"schema_version": 2', '"schema_version": 2, "schema_version": 2', 'schema_version'),
+    ('"promotion_condition": {', '"promotion_condition": {}, "promotion_condition": {', 'promotion_condition'),
+    ('"blocked_on":', '"blocked_on": "discarded", "blocked_on":', 'blocked_on'),
+):
+    with tempfile.TemporaryDirectory(prefix="dulcet-duplicate-promotion-") as directory:
+        path = Path(directory) / "FEATURES.yml"
+        text = (REPOSITORY / "FEATURES.yml").read_text()
+        assert original in text
+        path.write_text(text.replace(original, replacement, 1))
+        errors = verifier.validate(REPOSITORY, path)
+        assert any(f"duplicate JSON key: {key}" in error for error in errors), errors
+
 print(
     "promotion conditions resolve real workflow/job/test targets and reject the nonexistent "
     "signed-release-validation candidate"
