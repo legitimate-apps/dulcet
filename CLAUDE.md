@@ -416,58 +416,57 @@ commit to the *pull request's* author, not to the commit author, and it uses tha
 email** — the `noreply` address only when the account has email privacy enabled. **Open pull requests
 as `legitimate-apps`.**
 
-🚨 **Corrected 2026-09-01. This previously said the exposure "happened once, commit `0e3566e`". That
-is wrong, and understating it is what let it persist.** Measured across **all** of `origin/main`:
+🚨 **Corrected 2026-09-06, and the previous correction was itself understated twice over.** It said
+"31 of 103" and that *zero* of our own commits were affected. Re-measured across all of `origin/main`
+by classifying **both** the author and committer email of every commit:
 
 ```
-72 commits   ...@users.noreply.github.com     committer = us          ok
-31 commits   the account's profile address    committer = GitHub      exposed
-----
-103 total
+199 commits total
+ 31  the account's profile address as AUTHOR       (GitHub-synthesized squash merges)
+ 97  the account's profile address as COMMITTER    (committer name: legitimate-apps)
+---
+128 exposed on at least one side  =  64% of main, one single address throughout
 ```
 
-**31 of 103, not one** — and the correlation is total: *every* exposed commit is GitHub-synthesized
-(committer `GitHub`), and *zero* of our own commits are affected. That is not an isolated slip, it is
-an ongoing systematic exposure that has been described here as a one-off, which is why nobody treated
-it as live.
+**Both earlier claims were wrong in the same direction.** The exposure is 64%, not 30%; and it is not
+confined to GitHub-synthesized commits, because 97 commits carry the address as *committer* while
+naming `legitimate-apps` as the committer. Reading only `%ae` finds 31 and looks like a contained
+problem. **Classify both sides, or the measurement flatters the answer.**
 
-🚨 **The remedy stated below is necessary and NOT sufficient, which is worse than a wrong fact.**
-"Open pull requests as `legitimate-apps`" is already being followed — and the exposure still happens,
-because a squash merge attributes to the pull request author's *account commit email*, which is the
-profile address unless that account has email privacy enabled. **A control that reads as sufficient
-and is not will not be questioned when it fails.**
+❌ **Withdrawn: "Rebase-merge is CONFIRMED to fix it."** That claim, carrying a ✅ and an OBSERVED
+date, is false and was load-bearing — it is the reason rebase was chosen deliberately, and rebase is
+what produced the 97. GitHub's rebase-merge replays each commit with its **original author** and sets
+the **committer** to the account performing the merge, using that account's commit email. So rebase
+did exactly what the note said — the `noreply` address is on the author line — while moving the
+private address onto the committer line, where nobody was looking. The earlier evidence was not
+faked; it inspected `%ae` and stopped there.
 
-**The convention cannot fix this, and that is the point.** A squash merge does not preserve the
-authorship of the commits it squashes — GitHub synthesises a new commit and sets the author itself.
-So no amount of care at `git commit` time changes the result. The two things that do are enabling
-email privacy on the opening account, or merging with **rebase** (which replays the original commits
-with their original authorship) instead of squash. Both are repository-policy decisions; neither is
-something a commit-time convention can substitute for.
+➡️ **A ✅CONFIRMED that only ever checked one field is worse than no note at all**, because it ends
+the investigation. Neither merge method avoids this: squash exposes the author, rebase exposes the
+committer.
 
-✅ **Rebase-merge is CONFIRMED to fix it — OBSERVED 2026-09-01 on `main`.** PR #35 was a single
-commit already authored `legitimate-apps <...noreply...>`; merging it with **rebase** replayed that
-commit unchanged, so `main` gained a commit carrying the `noreply` address, directly above two
-squash-merged commits carrying the profile address:
+✅ **The durable fix is done — OBSERVED 2026-09-06.** "Keep my email addresses private" is now
+enabled on the account that opens pull requests. Verified two independent ways: the setting's toggle
+reads `aria-pressed="true"` on a fresh page load, and the public API returns `email: null` for the
+account, where it previously returned the profile address. It is an account-owner setting, not
+anything a repository can configure, which is why no commit-time convention ever substituted for it.
 
+**What that does and does not settle.**
+- Going forward it is **ASSUMED**, not observed: no GitHub-synthesized commit has been created since
+  the setting changed. The first merge after 2026-09-06 is the measurement — check `%ae` **and**
+  `%ce` on it before recording this as closed.
+- The 128 commits already on `main` are unchanged. Rewriting them is a destructive history operation
+  and is the repository owner's decision, not a cleanup task to be picked up.
+- `git commit` identity is still bound by *Identity* above. It was never the cause here, and it is
+  still what keeps the 158 commits we authored ourselves correct on the author line.
+
+**Re-measure before restating any figure here.** Every number above grows with each merge, and each
+previous version of this paragraph was accurate when written and wrong within days. The command is
+
+```sh
+git log --format='%ae%x09%ce' origin/main | awk -F'\t' \
+  '{a=($1 ~ /users\.noreply\.github\.com$/); c=($2 ~ /users\.noreply\.github\.com$/ || $2=="noreply@github.com"); n++; if(!a||!c) x++} END{print x" of "n" exposed"}'
 ```
-f254e2e  Promote account.connect on Android …   309192374+legitimate-apps@users.noreply.github.com   <- rebase
-c98581b  Implement the six account-connect …    <profile address>                                    <- squash
-074691f  Implement the download policy core …   <profile address>                                    <- squash
-```
-
-For a single-commit pull request, rebase produces the **same one-commit history shape** as squash
-with none of the exposure, so there is no trade-off to weigh in that case. A multi-commit branch is a
-genuine judgement call between history hygiene and exposure, and remains one — the value here is that
-the *no-trade-off* case is now identified precisely, not that rebase always wins.
-
-**The durable fix is an account setting, not a merge habit.** Enabling "Keep my email addresses
-private" on the account that opens pull requests makes squash merges use the `noreply` address
-automatically and retires this whole class. That is an account-owner action; it cannot be done from a
-repository, and a token needs `user` scope even to read the current state. Until it is done, choose
-the merge method deliberately.
-
-**Re-measure before restating any figure here.** The count above is dated because it grows with every
-merge, and the previous version of this paragraph was accurate when written and wrong within days.
 
 Pull-request authorship and commit authorship are separate fields. Commits are authored
 `legitimate-apps` by the convention in *Identity* above; that is an instruction here, not something
