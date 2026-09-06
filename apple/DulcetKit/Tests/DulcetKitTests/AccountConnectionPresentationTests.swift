@@ -586,6 +586,77 @@ func credentialBearingSearchRequestCannotPrintCredentials() {
 }
 
 @Test @MainActor
+func accountRemovalTimeoutRecoversFromUncooperativeDownloadCleanup() async throws {
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    downloads.suspendRemoval = true
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        downloadController: downloads,
+        accountRemovalTimeout: .milliseconds(50)
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.removeAccount()
+    // This continuation ignores cancellation and does not return during the deadline.
+    defer { downloads.removalContinuation?.resume(returning: true) }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(downloads.removeAccountDataCount == 1)
+    #expect(store.snapshot.accountRemoval == .failed)
+    #expect(store.snapshot.state == .accountRemovalError)
+    store.dismissAccountRemovalFailure()
+    store.selectDestination(.library)
+    #expect(store.selectedDestination == .library)
+    #expect(store.snapshot.accountRemoval == .idle)
+}
+
+@Test @MainActor
+func accountRemovalCancellationRecoversBeforeUncooperativeCleanupReturns() async throws {
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    downloads.suspendRemoval = true
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        downloadController: downloads,
+        accountRemovalTimeout: .seconds(60)
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.removeAccount()
+    let startDeadline = ContinuousClock.now + .seconds(5)
+    while downloads.removalContinuation == nil && ContinuousClock.now < startDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(downloads.removalContinuation != nil)
+    source.cancelAccountRemoval()
+    let deadline = ContinuousClock.now + .seconds(5)
+    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.snapshot.accountRemoval == .failed)
+    #expect(store.snapshot.state == .accountRemovalError)
+    store.dismissAccountRemovalFailure()
+    store.selectDestination(.library)
+    #expect(store.selectedDestination == .library)
+    // A late success from the cancelled adapter must not sign out the recovered account.
+    downloads.removalContinuation?.resume(returning: true)
+    downloads.removalContinuation = nil
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.accountRemoval == .idle)
+    #expect(store.selectedDestination == .library)
+}
+
+@Test @MainActor
 func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState() async {
     var events: [String] = []
     let connector = ControlledAccountConnector()
@@ -1200,6 +1271,8 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     private var handler: (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private(set) var configuredAccount: DulcetPlaybackAccount?
     private(set) var requestedTracks: [DulcetTrack] = []
+    var suspendRemoval = false
+    var removalContinuation: CheckedContinuation<Bool, Never>?
     private(set) var removeAccountDataCount = 0
     private let onRemove: @MainActor () -> Void
 
@@ -1232,6 +1305,9 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     func removeAccountData() async -> Bool {
         removeAccountDataCount += 1
         onRemove()
+        if suspendRemoval {
+            return await withCheckedContinuation { removalContinuation = $0 }
+        }
         return true
     }
 

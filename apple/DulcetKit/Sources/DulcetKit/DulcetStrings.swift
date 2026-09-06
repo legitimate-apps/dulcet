@@ -145,7 +145,7 @@ enum DulcetStrings {
     static let signOutConfirmationBody = text("account.remove.confirm.body", "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.")
     static let signingOut = text("account.remove.progress.title", "Signing out…")
     static let signingOutBody = text("account.remove.progress.body", "Dulcet is deleting the saved credential before clearing account data.")
-    static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t delete the saved credential")
+    static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t finish signing out")
     static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
     static let keepAccount = text("account.remove.keep", "Keep Account")
 
