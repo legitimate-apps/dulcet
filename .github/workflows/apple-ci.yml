@@ -959,6 +959,9 @@ jobs:
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
+            python3 tools/capture-conformance-stall \
+            --binary "$PWD/core-conformance/build/bin/iosSimulatorArm64/debugTest/test.kexe" \
+            --output "$RUNNER_TEMP" -- \
             ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
             -Pdulcet.iosSimulatorUdid="$conformance_sim"
           xcrun simctl shutdown "$conformance_sim" || true

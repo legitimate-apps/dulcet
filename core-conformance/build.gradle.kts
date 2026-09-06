@@ -88,6 +88,7 @@ kotlin {
 tasks.withType<AbstractTestTask>().configureEach {
     testLogging {
         events("failed")
+        showStandardStreams = true
         exceptionFormat = TestExceptionFormat.FULL
         showStackTraces = true
         showCauses = true

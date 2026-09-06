@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+import importlib.machinery
+import pathlib
+import subprocess
+import sys
+import tempfile
+import unittest
+
+TOOL = pathlib.Path(__file__).with_name("capture-conformance-stall")
+module = importlib.machinery.SourceFileLoader("stall_capture", str(TOOL)).load_module()
+
+
+class CaptureTest(unittest.TestCase):
+    def test_watchdog_output_does_not_disguise_stalled_phase(self):
+        progress = module.Progress()
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=0 begin test-body", 0)
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=10 event engine-send", 0.01)
+        progress.observe("CONFORMANCE_SNAPSHOT conf06 elapsedMs=40000 pending=[connect]", 40)
+        self.assertEqual([], progress.overdue(40, 40))
+        self.assertEqual(["conf06"], progress.overdue(41, 40))
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=42000 end test-body", 42)
+        self.assertEqual([], progress.overdue(100, 40))
+
+    def test_preserves_output_and_nonzero_test_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(TOOL), "--binary", "unused.kexe", "--output", directory,
+                 "--", sys.executable, "-c", "print('test-output'); raise SystemExit(7)"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(7, result.returncode)
+            self.assertIn("test-output", result.stdout)
+            self.assertEqual("test-output\n", (pathlib.Path(directory) / "dulcet-stall-console.log").read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()

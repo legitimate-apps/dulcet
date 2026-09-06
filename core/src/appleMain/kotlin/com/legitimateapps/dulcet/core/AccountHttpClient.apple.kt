@@ -16,6 +16,10 @@ internal actual fun createAccountHttpClient(
 ): HttpClient = HttpClient(Darwin) {
     engine {
         configureSession {
+            transport.diagnostics?.write(
+                "account.phase event darwin-session-defaults requestSeconds=$timeoutIntervalForRequest " +
+                    "resourceSeconds=$timeoutIntervalForResource",
+            )
             setURLCredentialStorage(null)
             if (transport is AccountClientTransport.ForwardProxy) {
                 val proxy = transport.proxy
@@ -32,6 +36,7 @@ internal actual fun createAccountHttpClient(
             }
         }
         handleChallenge { _, _, challenge, completionHandler ->
+            transport.diagnostics?.write("account.phase event darwin-challenge-enter")
             if (challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust) {
                 completionHandler(
                     NSURLSessionAuthChallengePerformDefaultHandling,
@@ -41,6 +46,7 @@ internal actual fun createAccountHttpClient(
                 transport.challengeTracker.markUnsupported()
                 completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, null)
             }
+            transport.diagnostics?.write("account.phase event darwin-challenge-completed")
         }
     }
     configure()
@@ -57,6 +63,7 @@ public class DarwinForwardProxyAccountConnector(
     proxyHost: String,
     proxyPort: Int,
     saltSource: SaltSource? = null,
+    logSink: LogSink? = null,
 ) {
     private val connector: AccountConnector
 
@@ -68,6 +75,7 @@ public class DarwinForwardProxyAccountConnector(
         connector = AccountConnector(
             forwardProxy = AccountForwardProxy(proxyHost, proxyPort),
             saltSource = saltSource,
+            logSink = logSink,
         )
     }
 

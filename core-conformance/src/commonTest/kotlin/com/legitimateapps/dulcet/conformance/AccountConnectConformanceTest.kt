@@ -280,26 +280,28 @@ class AccountConnectConformanceTest {
 
     @Test
     fun conf06DistinguishesAuthenticationAndTransportFailures() = runTest {
-        val unreachable = AccountConnector().connect(
-            AccountConnectionRequest(
-                serverUrl = "http://127.0.0.1:1",
-                username = ADMIN_USER,
-                password = ADMIN_PASSWORD,
-                allowLocalHttp = true,
-            ),
-        )
-        assertIs<DomainError.Transport.Unreachable>(
-            assertIs<AccountConnectionResult.Failed>(unreachable).error,
-        )
+        withStallDiagnostics("conf06") { diagnostics ->
+            val unreachable = AccountConnector(logSink = diagnostics).connect(
+                AccountConnectionRequest(
+                    serverUrl = "http://127.0.0.1:1",
+                    username = ADMIN_USER,
+                    password = ADMIN_PASSWORD,
+                    allowLocalHttp = true,
+                ),
+            )
+            assertIs<DomainError.Transport.Unreachable>(
+                assertIs<AccountConnectionResult.Failed>(unreachable).error,
+            )
 
-        val unknown = AccountConnectionContract.mapSubsonicError(
-            code = 999,
-            message = "future server error",
-            requestUrl = "https://music.invalid/rest/ping.view?u=canary&t=token&s=salt",
-        )
-        val unknownError = assertIs<DomainError.Server.Unknown>(unknown)
-        assertEquals(999, unknownError.code)
-        assertFalse(unknownError.toString().contains("u=canary"))
+            val unknown = AccountConnectionContract.mapSubsonicError(
+                code = 999,
+                message = "future server error",
+                requestUrl = "https://music.invalid/rest/ping.view?u=canary&t=token&s=salt",
+            )
+            val unknownError = assertIs<DomainError.Server.Unknown>(unknown)
+            assertEquals(999, unknownError.code)
+            assertFalse(unknownError.toString().contains("u=canary"))
+        }
     }
 
     @Test

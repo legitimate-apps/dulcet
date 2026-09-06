@@ -402,7 +402,7 @@ public class AccountConnector private constructor(
         saltSource = saltSource,
         logSink = logSink,
         hostResolver = hostResolver,
-        clientTransport = AccountClientTransport.Default(),
+        clientTransport = AccountClientTransport.Default(diagnostics = logSink as? AccountConnectionDiagnostics),
     )
 
     internal constructor(
@@ -414,12 +414,18 @@ public class AccountConnector private constructor(
         saltSource = saltSource,
         logSink = logSink,
         hostResolver = hostResolver,
-        clientTransport = AccountClientTransport.ForwardProxy(forwardProxy),
+        clientTransport = AccountClientTransport.ForwardProxy(
+            forwardProxy,
+            diagnostics = logSink as? AccountConnectionDiagnostics,
+        ),
     )
 
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
 
-    public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult {
+    public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult =
+        logSink.accountPhase("connect") { connectObserved(request) }
+
+    private suspend fun connectObserved(request: AccountConnectionRequest): AccountConnectionResult {
         val normalized = normalizeServerUrl(request.serverUrl, request.allowLocalHttp)
         if (normalized is NormalizedServerUrl.Invalid) {
             return AccountConnectionResult.Failed(normalized.error)
@@ -427,16 +433,21 @@ public class AccountConnector private constructor(
         normalized as NormalizedServerUrl.Valid
 
         val traceRecorder = RequestTraceRecorder(logSink)
-        val client = createAccountHttpClient(clientTransport) {
-            expectSuccess = false
-            followRedirects = false
-            install(RequestTracePlugin) {
-                observe = traceRecorder::observe
-            }
-            install(HttpTimeout) {
-                connectTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
-                requestTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
-                socketTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
+        val client = logSink.accountPhase("client-create") {
+            createAccountHttpClient(clientTransport) {
+                expectSuccess = false
+                followRedirects = false
+                install(RequestTracePlugin) {
+                    observe = { request, content ->
+                        (logSink as? AccountConnectionDiagnostics)?.observeRequest(request.executionContext)
+                        traceRecorder.observe(request, content)
+                    }
+                }
+                install(HttpTimeout) {
+                    connectTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
+                    requestTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
+                    socketTimeoutMillis = ACCOUNT_REQUEST_TIMEOUT_MILLIS
+                }
             }
         }
         return try {
@@ -477,7 +488,7 @@ public class AccountConnector private constructor(
             }
             lastResult
         } finally {
-            client.close()
+            logSink.accountPhase("client-close") { client.close() }
         }
     }
 
@@ -666,22 +677,24 @@ public class AccountConnector private constructor(
         }
         var followedRedirects = 0
         while (true) {
-            val response = sendRequest(
-                client = client,
-                url = currentUrl,
-                queryParameters = queryParameters,
-                formParameters = formParameters,
-                useForm = useForm,
-                allowLocalHttp = allowLocalHttp,
-            )
+            val response = logSink.accountPhase("$endpoint.send") {
+                sendRequest(
+                    client = client,
+                    url = currentUrl,
+                    queryParameters = queryParameters,
+                    formParameters = formParameters,
+                    useForm = useForm,
+                    allowLocalHttp = allowLocalHttp,
+                )
+            }
             if (response.status.value == 407) {
-                response.bodyAsText()
+                logSink.accountPhase("$endpoint.body") { response.bodyAsText() }
                 throw UnsupportedAuthenticationChallengeFailure()
             }
             if (response.status.value !in REDIRECT_STATUS_CODES) {
                 return WireResponse(
                     statusCode = response.status.value,
-                    body = response.bodyAsText(),
+                    body = logSink.accountPhase("$endpoint.body") { response.bodyAsText() },
                     logicalRequestUrl = traceRecorder.latestRedactedUrl(),
                 )
             }
@@ -689,10 +702,10 @@ public class AccountConnector private constructor(
             val location = response.headers[HttpHeaders.Location]
                 ?: return WireResponse(
                     statusCode = response.status.value,
-                    body = response.bodyAsText(),
+                    body = logSink.accountPhase("$endpoint.body") { response.bodyAsText() },
                     logicalRequestUrl = traceRecorder.latestRedactedUrl(),
                 )
-            response.bodyAsText()
+            logSink.accountPhase("$endpoint.body") { response.bodyAsText() }
             val nextUrl = resolveRedirectUrl(currentUrl, location)
                 ?: throw RedirectPolicyFailure(
                     DomainError.Security.RedirectRejected(
@@ -700,7 +713,9 @@ public class AccountConnector private constructor(
                         SuppressedRedirectUrl,
                     ),
                 )
-            if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
+            if (logSink.accountPhase("redirect-policy") {
+                    localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)
+                }) {
                 throw RedirectPolicyFailure(
                     DomainError.Auth.CrossOriginRedirectRejected(
                         targetHost = nextUrl.redirectTargetHost(),
@@ -744,7 +759,9 @@ public class AccountConnector private constructor(
         useForm: Boolean,
         allowLocalHttp: Boolean,
     ): HttpResponse {
-        val target = localHttpPolicy.targetFor(url, allowLocalHttp)
+        val target = logSink.accountPhase("local-http-policy") {
+            localHttpPolicy.targetFor(url, allowLocalHttp)
+        }
         return if (useForm) {
             client.submitForm(
                 url = target.url,
@@ -826,14 +843,17 @@ internal data class AccountForwardProxy(
 
 internal sealed interface AccountClientTransport {
     val challengeTracker: UnsupportedAuthenticationChallengeTracker
+    val diagnostics: AccountConnectionDiagnostics?
 
     class Default(
+        override val diagnostics: AccountConnectionDiagnostics? = null,
         override val challengeTracker: UnsupportedAuthenticationChallengeTracker =
             UnsupportedAuthenticationChallengeTracker(),
     ) : AccountClientTransport
 
     data class ForwardProxy(
         val proxy: AccountForwardProxy,
+        override val diagnostics: AccountConnectionDiagnostics? = null,
         override val challengeTracker: UnsupportedAuthenticationChallengeTracker =
             UnsupportedAuthenticationChallengeTracker(),
     ) : AccountClientTransport

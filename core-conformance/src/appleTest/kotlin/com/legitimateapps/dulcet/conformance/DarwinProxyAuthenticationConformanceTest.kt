@@ -28,63 +28,74 @@ import kotlin.test.assertNotNull
 class DarwinProxyAuthenticationConformanceTest {
     @Test
     fun proxyChallengeFailsClosedWithoutAmbientCredentials() = runTest {
-        val protectionSpace = NSURLProtectionSpace(
-            proxyHost = PROXY_HOST,
-            port = PROXY_PORT.toLong(),
-            type = NSURLProtectionSpaceHTTPProxy,
-            realm = PROXY_REALM,
-            authenticationMethod = NSURLAuthenticationMethodHTTPBasic,
-        )
-        val credential = NSURLCredential.create(
-            user = "ambient-proxy-user",
-            password = "ambient-proxy-password",
-            persistence = NSURLCredentialPersistence.NSURLCredentialPersistenceForSession,
-        )
-        val storage = NSURLCredentialStorage.sharedCredentialStorage
-        storage.setCredential(credential, protectionSpace)
-        storage.setDefaultCredential(credential, protectionSpace)
-        assertNotNull(
-            storage.defaultCredentialForProtectionSpace(protectionSpace),
-            "shared credential storage did not return the ambient proxy credential just written; " +
-                "the fixture precondition never held, so the rest of this test proves nothing",
-        )
-
-        val observationClient = HttpClient(Darwin) { expectSuccess = false }
-        try {
-            val result = DarwinForwardProxyAccountConnector(
+        withStallDiagnostics("proxy-auth") { diagnostics ->
+            diagnostics.write("account.phase begin credential-fixture")
+            val protectionSpace = NSURLProtectionSpace(
                 proxyHost = PROXY_HOST,
-                proxyPort = PROXY_PORT,
-                saltSource = SaltSource { "0123456789abcdef0123456789abcdef" },
-            ).connect(
-                AccountConnectionRequest(
-                    serverUrl = "https://proxy-target.example.invalid/account",
-                    username = "dulcet-proxy-auth",
-                    password = "fixture-password",
-                    allowLocalHttp = false,
-                ),
+                port = PROXY_PORT.toLong(),
+                type = NSURLProtectionSpaceHTTPProxy,
+                realm = PROXY_REALM,
+                authenticationMethod = NSURLAuthenticationMethodHTTPBasic,
             )
-            val failure = assertIs<AccountConnectionResult.Failed>(
-                result,
-                "connecting through the forward proxy was expected to fail closed, but returned $result",
+            val credential = NSURLCredential.create(
+                user = "ambient-proxy-user",
+                password = "ambient-proxy-password",
+                persistence = NSURLCredentialPersistence.NSURLCredentialPersistenceForSession,
             )
-            assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(
-                failure.error,
-                "expected the proxy challenge to surface as UnsupportedAuthenticationChallenge, " +
-                    "observed ${failure.error}",
+            val storage = NSURLCredentialStorage.sharedCredentialStorage
+            storage.setCredential(credential, protectionSpace)
+            storage.setDefaultCredential(credential, protectionSpace)
+            assertNotNull(
+                storage.defaultCredentialForProtectionSpace(protectionSpace),
+                "shared credential storage did not return the ambient proxy credential just written; " +
+                    "the fixture precondition never held, so the rest of this test proves nothing",
             )
 
-            val observation = observationClient.get(
-                "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
-            )
-            assertEquals(
-                200,
-                observation.status.value,
-                "Darwin sent ambient proxy credentials below the wire boundary: " +
-                    observation.bodyAsText(),
-            )
-        } finally {
-            observationClient.close()
-            storage.removeCredential(credential, protectionSpace)
+            diagnostics.write("account.phase end credential-fixture")
+            val observationClient = diagnostics.phase("observation-client-create") {
+                HttpClient(Darwin) { expectSuccess = false }
+            }
+            try {
+                val result = DarwinForwardProxyAccountConnector(
+                    proxyHost = PROXY_HOST,
+                    proxyPort = PROXY_PORT,
+                    logSink = diagnostics,
+                    saltSource = SaltSource { "0123456789abcdef0123456789abcdef" },
+                ).connect(
+                    AccountConnectionRequest(
+                        serverUrl = "https://proxy-target.example.invalid/account",
+                        username = "dulcet-proxy-auth",
+                        password = "fixture-password",
+                        allowLocalHttp = false,
+                    ),
+                )
+                val failure = assertIs<AccountConnectionResult.Failed>(
+                    result,
+                    "connecting through the forward proxy was expected to fail closed, but returned $result",
+                )
+                assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(
+                    failure.error,
+                    "expected the proxy challenge to surface as UnsupportedAuthenticationChallenge, " +
+                        "observed ${failure.error}",
+                )
+
+                val observation = diagnostics.phase("observation-get") {
+                    observationClient.get(
+                        "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
+                    )
+                }
+                assertEquals(
+                    200,
+                    observation.status.value,
+                    "Darwin sent ambient proxy credentials below the wire boundary: " +
+                        diagnostics.phase("observation-body") { observation.bodyAsText() },
+                )
+            } finally {
+                diagnostics.phase("observation-client-close") { observationClient.close() }
+                diagnostics.phase("credential-cleanup") {
+                    storage.removeCredential(credential, protectionSpace)
+                }
+            }
         }
     }
 
