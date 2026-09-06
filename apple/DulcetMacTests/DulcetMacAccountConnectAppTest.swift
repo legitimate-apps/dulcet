@@ -145,24 +145,15 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(store.snapshot.searchResults.count, rankedTitles.count,
             "Exact fixture query result count")
         hostingView.layoutSubtreeIfNeeded()
-        // OBSERVED 2026-09-06 (docs/macos-search-ui-evidence.md, "Realization geometry"): the
-        // production search table can leave rank zero's accessibility node permanently missing
-        // even though the model holds it and the table's own resolved viewport already has more
-        // room than its content needs -- this is not a "not enough space" gap, and neither
-        // waiting inside the existing accessibility poll (both CI and a byte-identical local
-        // reproduction exhausted a five-second poll with the identical row still missing) nor
-        // forcing AppKit's own reloadData() (crashes: SwiftUICore/Environment+Objects.swift:34,
-        // "No Observable object of type DulcetPresentationStore found") recovers it. A genuine,
-        // executed window resize performed AFTER the initial layout has already settled does: it
-        // forces the AppKit resize-notification chain that keeps the outline table's realized
-        // rows in sync with its clip view, which the window's own initial creation-plus-first-
-        // layout pass does not reliably trigger. This changes nothing about what is asserted
-        // below -- only gives AppKit the same second chance a person resizing their own window
-        // would give it for free.
+        // Record native row/cell presence and ancestor clipping before the legacy recovery.
+        // documentVisibleRect alone omits ancestor clipping; it cannot establish that a row
+        // fits. The recovery is retained for comparison, not as evidence of a notification bug.
+        reportSearchRealization(root: hostingView, phase: "before-recovery")
         let resizeAttempts = growWindowUntilRanksRealize(
             window, hostingView: hostingView, expectedRankCount: rankedLabels.count
         )
         print("MACOS SEARCH UI RESIZE-RECOVERY attempts=\(resizeAttempts.map(String.init) ?? "exhausted")")
+        reportSearchRealization(root: hostingView, phase: "after-recovery")
         // Every rank is resolved by its own identifier and checked against the row that belongs
         // there. A view that stamped one constant identifier on every row would satisfy rank zero
         // and then fail to produce rank one at all.
@@ -736,6 +727,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         } while clock.now < deadline
         let elements = accessibilityDescendants(in: root)
+        reportSearchRealization(root: root, phase: "lookup-timeout")
         let diagnostic = elements.map {
             "\(type(of: $0)):id=\(accessibilityIdentifier($0) ?? "nil"):label=\(accessibilityLabel($0) ?? "nil")"
         }.joined(separator: "; ")
@@ -744,17 +736,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
     }
 
-    /// Reports the geometry a failed accessibility lookup ran under, so a single CI failure names
-    /// what it observed instead of just what it could not find. `count=N` alone cannot distinguish
-    /// "the row was never in the model" from "the model has it but AppKit never realized a node for
-    /// it at this geometry" -- those are different bugs with different fixes, and only the second
-    /// is this control's known gap (docs/macos-search-ui-evidence.md, "Realization geometry").
-    ///
-    /// The table is found by type name, not by accessibility identifier, because an unrealized row
-    /// has no identifier to search by; `OutlineTableView` names the production search-results
-    /// table's private AppKit backing class distinctly from the sidebar's `OutlineListView`. If
-    /// that private name ever changes this degrades to "no-table-resolved" rather than crashing --
-    /// the diagnostic must never itself become a new source of failure.
+    /// Compact legacy summary. See reportSearchRealization for native rows and ancestor clipping;
+    /// documentVisibleRect and the presence of AX row proxies do not establish realization.
     private func realizationGeometryDiagnostic(root: NSView, elements: [Any]) -> String {
         let table = elements.first {
             String(describing: type(of: $0)).contains("OutlineTableView")
@@ -775,24 +758,90 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             + " realizedRanks=\(realizedRanks)"
     }
 
-    /// Recovers from the search table's row-realization gap (see `realizationGeometryDiagnostic`
-    /// above and docs/macos-search-ui-evidence.md, "Realization geometry", OBSERVED 2026-09-06):
-    /// a rank the model already has correct can be permanently missing its accessibility node even
-    /// though the table's own resolved viewport already has more room than its content needs.
-    /// Neither waiting inside the existing accessibility poll nor forcing AppKit's own
-    /// `reloadData()` recovers it -- the latter crashes this SwiftUI-hosted table outright
-    /// (`SwiftUICore/Environment+Objects.swift:34`, "No Observable object of type
-    /// DulcetPresentationStore found"), because its private backing view cannot be safely driven
-    /// outside SwiftUI's own diffing cycle. A genuine, executed `setContentSize` resize after the
-    /// initial layout has already settled is the one recovery this investigation found that
-    /// works: it forces the AppKit resize-notification chain the outline table relies on to keep
-    /// its realized rows in sync with its clip view, which the window's own initial creation and
-    /// first layout pass does not reliably trigger.
-    ///
-    /// Bounded and observable rather than an unbounded retry, per CLAUDE.md trap 41 ("a control
-    /// that cannot prove it fired is not a control"): returns how many resize attempts were
-    /// needed (0 if every rank was already realized without one), or nil if `bound` was exceeded,
-    /// so a caller reports what happened instead of only whether the final state was correct.
+    /// Observation only: never ask AppKit to manufacture a row or cell. AX getters can themselves
+    /// materialize AX proxies, so native row/cell presence is sampled BEFORE walking those getters.
+    /// Keep row indices, object identities, and graph paths: the lookup walk's LIFO order is not
+    /// visual order, and an NSOutlineRow proxy alone does not prove a native row view exists.
+    private func reportSearchRealization(root: NSView, phase: String) {
+        func tag(_ value: Any) -> String {
+            "\(type(of: value))@\(ObjectIdentifier(value as AnyObject))"
+        }
+        func nativeViews(_ view: NSView) -> [NSView] {
+            [view] + view.subviews.flatMap { nativeViews($0) }
+        }
+        let prefix = "MACOS SEARCH PROBE \(phase)"
+        let window = root.window
+        print("\(prefix) os=\(ProcessInfo.processInfo.operatingSystemVersionString) window=\(String(describing: window?.frame)) root=\(root.frame) screen=\(String(describing: window?.screen?.frame)) screenVisible=\(String(describing: window?.screen?.visibleFrame)) scale=\(window?.backingScaleFactor ?? -1)")
+        let tables = nativeViews(root).compactMap { $0 as? NSTableView }
+        var nativeAnchors: [(Any, String)] = []
+        for table in tables {
+            print("\(prefix) TABLE \(tag(table)) rows=\(table.numberOfRows) columns=\(table.numberOfColumns) rowHeight=\(table.rowHeight) automaticHeights=\(table.usesAutomaticRowHeights) rowsInVisible=\(table.rows(in: table.visibleRect)) bounds=\(table.bounds) visible=\(table.visibleRect) documentVisible=\(String(describing: table.enclosingScrollView?.documentVisibleRect))")
+            var ancestor: NSView? = table
+            while let view = ancestor {
+                print("\(prefix) ANCESTOR \(tag(view)) frame=\(view.frame) bounds=\(view.bounds) visible=\(view.visibleRect) flipped=\(view.isFlipped) hidden=\(view.isHiddenOrHasHiddenAncestor) windowRect=\(view.convert(view.bounds, to: nil))")
+                ancestor = view.superview
+            }
+            for row in 0..<table.numberOfRows {
+                let rowView = table.rowView(atRow: row, makeIfNecessary: false)
+                if let rowView { nativeAnchors.append((rowView, "nativeTable[\(tag(table))].row[\(row)]")) }
+                let rect = table.rect(ofRow: row)
+                let screenRect = window?.convertToScreen(table.convert(rect, to: nil)) ?? .zero
+                print("\(prefix) ROW table=\(tag(table)) index=\(row) rect=\(rect) screenRect=\(screenRect) intersectsVisible=\(rect.intersects(table.visibleRect)) native=\(rowView.map { tag($0) } ?? "nil") group=\(String(describing: rowView?.isGroupRowStyle))")
+                for column in 0..<table.numberOfColumns {
+                    let cell = table.view(atColumn: column, row: row, makeIfNecessary: false)
+                    if let cell { nativeAnchors.append((cell, "nativeTable[\(tag(table))].row[\(row)].cell[\(column)]")) }
+                    print("\(prefix) CELL table=\(tag(table)) row=\(row) column=\(column) native=\(cell.map { tag($0) } ?? "nil")")
+                }
+            }
+        }
+        let original = accessibilityDescendants(in: root)
+        let before = original.compactMap { accessibilityIdentifier($0) }
+            .filter { $0.hasPrefix("dulcet.search.result.") }.sorted()
+        print("\(prefix) beforeGraphRanks=\(before)")
+        let originalIDs = Set(original.map { ObjectIdentifier($0 as AnyObject) })
+        // Retain objects throughout the traversal, preventing temporary proxy addresses from reuse.
+        var retained: [Any] = []
+        var visited = Set<ObjectIdentifier>()
+        var pending: [(Any, String)] = [(root, "root"), (NSApp, "application")]
+        pending += NSApp.windows.enumerated().map { ($0.element, "window[\($0.offset)]") }
+        pending += nativeAnchors
+        let edges = ["accessibilityChildren", "accessibilityRows", "accessibilityVisibleRows",
+                     "accessibilityColumns", "accessibilityContents"]
+        while let (current, path) = pending.popLast() {
+            guard visited.insert(ObjectIdentifier(current as AnyObject)).inserted else { continue }
+            retained.append(current)
+            let identifier = accessibilityIdentifier(current)
+            let label = accessibilityLabel(current)
+            let frame = (current as? NSAccessibilityElementProtocol)?.accessibilityFrame()
+            let parent = accessibilityObjectValue("accessibilityParent", of: current)
+            print("\(prefix) NODE \(tag(current)) path=\(path) inLookup=\(originalIDs.contains(ObjectIdentifier(current as AnyObject))) id=\(identifier ?? "nil") label=\(label ?? "nil") role=\(String(describing: accessibilityObjectValue("accessibilityRole", of: current))) frame=\(String(describing: frame)) parent=\(parent.map { tag($0) } ?? "nil")")
+            var links: [(Any, String)] = []
+            for edge in edges {
+                let children = accessibilityObjectValue(edge, of: current) as? [Any] ?? []
+                for (index, child) in children.enumerated() {
+                    print("\(prefix) EDGE \(tag(current)) \(edge)[\(index)]=\(tag(child))")
+                    links.append((child, "\(path).\(edge)[\(index)]"))
+                }
+            }
+            if let view = current as? NSView {
+                links += view.subviews.enumerated().map { ($0.element, "\(path).subviews[\($0.offset)]") }
+            }
+            pending.append(contentsOf: links.reversed())
+        }
+        let after = accessibilityDescendants(in: root).compactMap { accessibilityIdentifier($0) }
+            .filter { $0.hasPrefix("dulcet.search.result.") }.sorted()
+        print("\(prefix) END nodes=\(retained.count) afterProbeRanks=\(after)")
+        for table in tables {
+            let rows = (0..<table.numberOfRows).map {
+                "\($0):\(table.rowView(atRow: $0, makeIfNecessary: false).map { tag($0) } ?? "nil")"
+            }
+            print("\(prefix) afterProbeNative table=\(tag(table)) rows=\(rows)")
+        }
+    }
+
+    /// Legacy bounded resize recovery, retained unchanged while the probe diagnoses CI.
+    /// Local ancestor clipping can prevent row creation despite a large documentVisibleRect.
+    /// A successful resize alone does not establish a missing resize-notification mechanism.
     @MainActor
     private func growWindowUntilRanksRealize(
         _ window: NSWindow,
@@ -812,6 +861,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         for attempt in 1...bound {
             let current = window.frame.size
             window.setContentSize(NSSize(width: current.width, height: current.height + increment))
+            print("MACOS SEARCH PROBE resize=\(attempt) before=\(current) requestedContent=\(NSSize(width: current.width, height: current.height + increment)) actualWindow=\(window.frame)")
             window.layoutIfNeeded()
             hostingView.layoutSubtreeIfNeeded()
             if realizedRankCount() >= expectedRankCount { return attempt }
