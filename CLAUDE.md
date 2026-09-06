@@ -460,7 +460,8 @@ anything a repository can configure, which is why no commit-time convention ever
 - The 128 commits already on `main` are unchanged. Rewriting them is a destructive history operation
   and is the repository owner's decision, not a cleanup task to be picked up.
 - `git commit` identity is still bound by *Identity* above. It was never the cause here, and it is
-  still what keeps the 168 commits that carry the `noreply` address as author correct there.
+  still what keeps every commit we author ourselves correct on the author line — a majority of
+  `main`, and a figure that moves with every merge, so run the command below rather than quoting one.
 
 **Re-measure before restating any figure here.** Every number above grows with each merge, and each
 previous version of this paragraph was accurate when written and wrong within days. The command is

@@ -27,7 +27,7 @@ def materialize(root: Path) -> None:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    for relative in (
+    trees = (
         ".github/workflows",
         "docs",
         "core-conformance",
@@ -35,10 +35,10 @@ def materialize(root: Path) -> None:
         "apple/DulcetPlaybackIntegrationTests",
         "apple/DulcetKeychainAppTests",
         "apple/DulcetiOSUITests",
-        # The search cells cite the macOS app-host proof and the tvOS UI proof, and the gate
-        # verifies every cited test NAME exists in the tree. Without these the fixture rejects a
-        # correct FEATURES.yml for citing tests that do not exist -- a false negative that reads
-        # exactly like a bad promotion.
+        # library.sync/macos and the search cells cite the macOS app-host proofs, and the search
+        # cells also cite the tvOS UI proof. The gate verifies every cited test NAME exists in
+        # the tree, so without these the fixture rejects a correct FEATURES.yml for citing tests
+        # that do not exist -- a false negative that reads exactly like a bad promotion.
         "apple/DulcetMacTests",
         "apple/DulcetTVUITests",
         # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
@@ -49,10 +49,12 @@ def materialize(root: Path) -> None:
         # Android TV has its own app/runtime and evidence class; copying only the mobile sources
         # would make this fixture reject a valid TV promotion before its mutation cases run.
         "android/tv/src",
-        # library.sync/macos cites the macOS app-host integration observation, so this fixture
-        # needs the DulcetMacTests sources for the same reason as the line above.
-        "apple/DulcetMacTests",
-    ):
+    )
+    # Two branches adding the same directory here is a real merge outcome, and copytree's
+    # FileExistsError names a temp path rather than the duplicate. Say which entry it is.
+    duplicates = [d for d in trees if trees.count(d) > 1]
+    assert not duplicates, f"materialize lists a directory twice: {sorted(set(duplicates))}"
+    for relative in trees:
         shutil.copytree(REPOSITORY / relative, root / relative)
     if "--source-ref" in sys.argv:
         reference = sys.argv[sys.argv.index("--source-ref") + 1]
