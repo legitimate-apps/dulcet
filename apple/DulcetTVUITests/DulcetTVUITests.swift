@@ -10,6 +10,15 @@ final class DulcetTVUITests: XCTestCase {
     /// runs through the production tvOS UI. Nothing selects a destination for this control:
     /// the section bar is the only route to Search, which is what makes the run evidence of
     /// reachability rather than evidence that the surface works once something else reaches it.
+    ///
+    /// Both section-bar reaches below go through `focusSectionBarViaUpNavigation` only, never
+    /// the exit command: OBSERVED (docs/tvos-search-ui-evidence.md, "Focus behaviour"), the
+    /// Connection and Now Playing surfaces are shallow single-panel surfaces that reach the bar
+    /// in one Up press, unlike the Library album grid, which does not reach it in ten. This
+    /// control therefore has nothing to say about whether the exit command moves focus to the
+    /// bar -- that claim belongs to `testExitCommandAtIdleConnectionReturnsFocusToSectionBar`,
+    /// asserted on its own, so a broken exit command reports as its own failure instead of
+    /// hiding behind, or taking down, this one.
     @MainActor
     func testSimulatorSearchQueryRanksAndActivatesTrack() throws {
         continueAfterFailure = false
@@ -92,7 +101,8 @@ final class DulcetTVUITests: XCTestCase {
         )
         print("DULCET TV LAUNCH section=Connection focus=\(launchFocus) search-present=false")
 
-        // Reach Search the way a person does.
+        // Reach Search the way a person does. Up-navigation, not the exit command: see
+        // focusSectionBarViaUpNavigation.
         XCTAssertTrue(
             selectSection(app, "search"),
             "The section bar must reach Search from Connection: " + app.debugDescription
@@ -212,7 +222,8 @@ final class DulcetTVUITests: XCTestCase {
 
         // Playback moved the app to Now Playing on its own. Leaving a section the app chose, and
         // deliberately returning to the library, is the other half of navigation: without it a
-        // person who plays one track has no way back to what they were browsing.
+        // person who plays one track has no way back to what they were browsing. Up-navigation
+        // again, not the exit command.
         XCTAssertTrue(
             selectSection(app, "library"),
             "The section bar must return to Library from Now Playing: " + app.debugDescription
@@ -230,6 +241,78 @@ final class DulcetTVUITests: XCTestCase {
             + " activated-rank=\(canaryRank) activation=remote-select source=search"
             + " title=\(observedTitle) progress=\(initialValue)->\(observedProgress)"
             + " reached-search=section-bar returned-to=library setup=debug-account-only")
+    }
+
+    /// DulcetAccountConnectionView installs its own onExitCommand and supplies `nil` while idle:
+    /// `.dulcetOnExitCommand(perform: isConnecting ? { ... } : nil)`. SwiftUI does not document
+    /// whether a `nil` action still consumes the exit press at that view or lets it fall through
+    /// to an ancestor's own `onExitCommand` -- here, `DulcetTVSectionNavigation`'s outer handler,
+    /// which returns focus to the bar. This test settles that empirically, by pressing Menu
+    /// exactly once with no preceding Up press, so the outcome is a claim about the exit command
+    /// alone -- not about whether Up would also have worked. It is a separate test from the
+    /// search/ranking control above so a broken exit command reports as its own failure instead
+    /// of taking an unrelated, currently-working control down with it.
+    @MainActor
+    func testExitCommandAtIdleConnectionReturnsFocusToSectionBar() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(
+            ProcessInfo.processInfo.environment["SIMULATOR_UDID"],
+            "This control requires a tvOS simulator"
+        )
+        let environment = ProcessInfo.processInfo.environment
+        let serverURL = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"], "Missing disposable server URL")
+        let username = try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"], "Missing disposable username")
+        let password = try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"], "Missing disposable password")
+        XCTAssertEqual(serverURL, "http://127.0.0.1:4533", "Only the disposable loopback fixture is allowed")
+        XCTAssertFalse(username.isEmpty)
+        XCTAssertFalse(password.isEmpty)
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", username,
+            "-dulcet-debug-account-password", password,
+        ]
+        app.launch()
+        XCTAssertTrue(
+            app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60),
+            "The live account connection must succeed before the exit command is exercised: " + app.debugDescription
+        )
+        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Connection")
+        XCTAssertNil(focusedSection(app), "Must start with focus inside the Connection surface, not on the bar")
+        let priorFocus = try XCTUnwrap(
+            focusedControlIdentifier(app),
+            "Launch must place remote focus on a named control: " + app.debugDescription
+        )
+
+        // The press under test. Deliberately no Up presses precede it: Up reaching the bar from
+        // this surface (proven by the sibling control) says nothing about whether Menu also
+        // does, and folding both into one press loop is exactly the defect this test exists not
+        // to repeat.
+        XCUIRemote.shared.press(.menu)
+
+        guard app.state == .runningForeground else {
+            print("DULCET TV EXITCOMMAND outcome=app-exited state=\(app.state) prior-focus=\(priorFocus)")
+            XCTFail(
+                "The exit press left the app instead of returning focus to the bar (state=\(app.state)): "
+                    + "a nil inner onExitCommand did not fall through to the outer handler, and the press "
+                    + "reached the platform's own default action instead of either handler: " + app.debugDescription
+            )
+            return
+        }
+        let landedSection = focusedSection(app)
+        let outcome = landedSection == "settings" ? "fell-through-to-bar" : "swallowed"
+        print(
+            "DULCET TV EXITCOMMAND outcome=\(outcome) landed-section=\(landedSection ?? "none")"
+                + " prior-focus=\(priorFocus)"
+        )
+        XCTAssertEqual(
+            landedSection,
+            "settings",
+            "A nil inner onExitCommand on the idle Connection surface must fall through to "
+                + "DulcetTVSectionNavigation's outer handler and return focus to the bar: " + app.debugDescription
+        )
     }
 
     /// The section whose bar control currently holds remote focus, or nil while focus is inside
@@ -255,28 +338,50 @@ final class DulcetTVUITests: XCTestCase {
         return nil
     }
 
-    /// Moves remote focus from a section's content back onto the section bar.
+    /// Margin over the OBSERVED minimum for `focusSectionBarViaUpNavigation`. OBSERVED
+    /// (docs/tvos-search-ui-evidence.md, "Focus behaviour"): one Up press reaches the bar from a
+    /// shallow single-panel surface. 4 is a four-times margin over that minimum for the two
+    /// shallow surfaces this file drives (Connection, Now Playing) -- not a search for an
+    /// unbounded retry. A surface that needs more than this is a different, deeper shape
+    /// (OBSERVED: the Library album grid does not reach the bar within ten), and reaching the
+    /// bar from one of those is the exit command's job, proven separately in
+    /// `testExitCommandAtIdleConnectionReturnsFocusToSectionBar`, not this loop's.
+    private static let sectionBarUpNavigationBound = 4
+
+    /// Moves remote focus from a section's content back onto the section bar by Up-navigation
+    /// alone. Deliberately not a fallback chain to the exit command: a call site that needs the
+    /// exit command should exercise it directly and say so, the way
+    /// `testExitCommandAtIdleConnectionReturnsFocusToSectionBar` does, rather than reaching for a
+    /// loop that can pass whether or not the exit command works.
     ///
-    /// Up first, because that is how a person leaves the top of a surface. Menu -- the platform's
-    /// Back press -- is the fallback, and is pressed only while focus is still inside content:
-    /// OBSERVED, Menu on the bar itself leaves the app, so pressing it blind would end the run
-    /// somewhere no assertion could describe.
+    /// Returns the number of Up presses actually needed (0 if the bar already had focus), or nil
+    /// if `sectionBarUpNavigationBound` was exceeded without reaching it. The count is the
+    /// marker: a caller that only recorded true/false could not tell "reached on press one" from
+    /// "reached on the last try before the bound", which is exactly the ambiguity a bounded
+    /// retry loop must not leave behind.
     @MainActor
-    private func focusSectionBar(_ app: XCUIApplication) -> Bool {
-        for _ in 0..<8 {
-            if focusedSection(app) != nil { return true }
+    private func focusSectionBarViaUpNavigation(_ app: XCUIApplication) -> Int? {
+        if focusedSection(app) != nil { return 0 }
+        for attempt in 1...Self.sectionBarUpNavigationBound {
             XCUIRemote.shared.press(.up)
+            if focusedSection(app) != nil { return attempt }
         }
-        if focusedSection(app) != nil { return true }
-        XCUIRemote.shared.press(.menu)
-        return focusedSection(app) != nil
+        return nil
     }
 
-    /// Reaches one section through the bar, by remote, the way a person does: focus the bar, walk
-    /// to the section's own control, press it.
+    /// Reaches one section through the bar, by remote, the way a person does: focus the bar by
+    /// Up-navigation, walk to the section's own control, press it.
     @MainActor
     private func selectSection(_ app: XCUIApplication, _ section: String) -> Bool {
-        guard let target = Self.sections.firstIndex(of: section), focusSectionBar(app) else { return false }
+        guard let target = Self.sections.firstIndex(of: section) else { return false }
+        guard let presses = focusSectionBarViaUpNavigation(app) else {
+            print(
+                "DULCET TV FOCUS-BAR mechanism=up-navigation outcome=not-reached"
+                    + " bound=\(Self.sectionBarUpNavigationBound) target=\(section)"
+            )
+            return false
+        }
+        print("DULCET TV FOCUS-BAR mechanism=up-navigation outcome=reached presses=\(presses) target=\(section)")
         for _ in 0...Self.sections.count {
             guard let current = focusedSection(app),
                   let index = Self.sections.firstIndex(of: current) else { return false }
