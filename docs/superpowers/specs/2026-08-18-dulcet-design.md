@@ -2387,6 +2387,18 @@ requirement that a cell's evidence exactly covers its declared `conformance`/`pl
 ids — is computed over `conformance`-shaped entries only, so an `observes` row can supplement a cell's
 evidence without being required for, substituting for, or able to mask an uncovered id.
 
+**A stronger status requires an evidence delta.** The ordered statuses are `planned` (0), `blocked`
+(1), `partial` (2), and `shipped` (3). If a cell moves upward in that order, its current `evidence`
+must contain at least one complete row that was absent from that cell in the base document. Row key
+order is immaterial because the complete set of key/value pairs is the identity; replacing or editing
+a row therefore counts only when the resulting complete row is new. Missing `evidence` and
+`evidence: null` both mean the empty set. `n/a` is outside the order, so entering or leaving it is not
+a promotion. Neither `reason` nor `promotion_condition` is evidence, and editing either can never
+satisfy this rule. The initially empty `accepted_promotions` list declares the structurally exceptional
+case in the same reviewed shape as `accepted_regressions`: exactly `{id, platform, reason, pr}`, with
+a non-empty reason and `pr` matching `#<number>`. The two exception lists are independent: a promotion
+exception cannot authorize a regression, and a regression exception cannot authorize a promotion.
+
 Swift Testing does not emit JUnit in this workflow. The Apple job therefore writes an Xcode result
 bundle and converts the structured `xcresulttool get test-results tests` tree after the test command
 succeeds. The converter requires an individual Test Case node with a unique `nodeIdentifier` and a
@@ -2407,8 +2419,11 @@ platform's device or simulator, not a shared core job.
 
 A `parity-gate` job on `ubuntu-latest` on every PR:
 
-1. **No silent downgrade.** Diff against the merge base. **Any cell moving from `shipped` to a lower
-   status fails the job, unconditionally. The gate itself has no escape hatch.**
+1. **No unsupported status transition.** Diff against the merge base. A cell moving from `shipped`
+   to a lower status requires a matching `accepted_regressions` declaration. A cell strengthening in
+   the `planned` → `blocked` → `partial` → `shipped` order must gain at least one evidence row absent
+   from the base cell, unless a matching `accepted_promotions` declaration records why that is
+   structurally impossible. `n/a` is outside the order. The two exception lists do not cross-authorize.
 
    ⚠️ **Revision 2's mechanism does not exist and has been replaced.** It said a protected
    `regression-approved` label "may only be applied by a CODEOWNER." **OBSERVED** (GitHub, Managing
@@ -3411,9 +3426,15 @@ observations that carry no conformance id.
    it was never written to demonstrate — is identical regardless of which shape carries it.
    `tools/verify-parity-evidence` now carries the `observes` text into its claim label so a failed
    observation row names what it was claiming, the same way a failed conformance row names its id.
-4. Citing a test under either shape proves that one named test executed and passed; it is not a
-   status promotion. This revision changes what evidence is expressible, not what any `FEATURES.yml`
-   cell currently claims — no row was added, removed, or reshaped by it.
+4. Citing a test under either shape proves that one named test executed and passed; it is not by
+   itself a status promotion. A cell strengthening through `planned`, `blocked`, `partial`, and
+   `shipped` must now gain at least one complete evidence row absent from the base cell. Key order is
+   immaterial; missing and null evidence are empty; `n/a` is outside the order; and prose-only edits
+   to `reason` or `promotion_condition` never qualify. This revision changes what evidence is
+   expressible and how future status changes are justified, not what any existing cell claims.
+5. `accepted_promotions` starts empty and uses the same exact `{id, platform, reason, pr}` declaration
+   shape as `accepted_regressions`, including a non-empty reason and `#<number>` PR. The lists are
+   intentionally separate and cannot silence one another's transition check.
 
 **Revision 92 (2026-09-04)** — one device-attached CI exception admitted; §21.3 amended, not reversed.
 
