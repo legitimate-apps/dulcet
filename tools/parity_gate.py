@@ -363,7 +363,9 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                             "demonstrates the claim it is cited for; give each observation its own evidence."
                         )
 
-                if schema_version == 2:
+                # Observation-only cells do not assert conformance coverage. Once any
+                # conformance row is cited, or the cell is shipped, require every declared id.
+                if schema_version == 2 and (evidence_conformance or status == "shipped"):
                     declared_conformance = [
                         *universal_conformance,
                         *platform_conformance.get(platform, []),
