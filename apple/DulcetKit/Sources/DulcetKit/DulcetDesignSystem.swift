@@ -227,18 +227,29 @@ extension View {
 
     /// Handles the platform's exit press -- Menu on a remote, Escape on a keyboard.
     ///
-    /// A nil action leaves the press to the system. That distinction is load-bearing on tvOS:
+    /// On tvOS, a nil action leaves the press to the system. That distinction is load-bearing:
     /// an installed handler consumes Menu whether or not it does anything, and Menu is how a
     /// person leaves a surface for the section bar, so a handler that is present "just in case"
     /// silently removes the way back out.
+#if os(macOS)
+    func dulcetOnExitCommand(perform action: @escaping () -> Void) -> some View {
+        // OBSERVED in the macOS keyboard regression: a permanently installed wrapper around
+        // an optional action still received Escape with its initial nil capture after Connect.
+        // Keep a nonoptional handler and let it read current connection state when invoked.
+        // Why SwiftUI retains that earlier action is not observed; do not assume re-registration
+        // or focus routing will refresh it. tvOS must keep its nil-means-unhandled path below.
+        onExitCommand(perform: action)
+    }
+#else
     @ViewBuilder
     func dulcetOnExitCommand(perform action: (() -> Void)?) -> some View {
-#if os(macOS) || os(tvOS)
+#if os(tvOS)
         onExitCommand(perform: action)
 #else
         self
 #endif
     }
+#endif
 
     @ViewBuilder
     func dulcetLinkButtonStyle() -> some View {
