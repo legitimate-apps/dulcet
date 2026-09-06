@@ -11,6 +11,10 @@ import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.newFixedThreadPoolContext
 import platform.posix.AF_UNSPEC
 import platform.posix.NI_MAXHOST
 import platform.posix.NI_NUMERICHOST
@@ -20,8 +24,16 @@ import platform.posix.freeaddrinfo
 import platform.posix.getaddrinfo
 import platform.posix.getnameinfo
 
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+private val resolverDispatcher by lazy { newFixedThreadPoolContext(2, "host-resolution") }
+
+internal actual fun hostResolutionDispatcher(): CoroutineDispatcher = resolverDispatcher
+
+internal actual suspend fun platformResolveHost(host: String): List<String> =
+    boundedHostResolution { resolveHostBlocking(host) }
+
 @OptIn(ExperimentalForeignApi::class)
-internal actual suspend fun platformResolveHost(host: String): List<String> = memScoped {
+private fun resolveHostBlocking(host: String): List<String> = memScoped {
     val hints = alloc<addrinfo> {
         ai_flags = 0
         ai_family = AF_UNSPEC
