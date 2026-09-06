@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "accepted_regressions": [],
+  "accepted_promotions": [],
   "features": [
     {
       "id": "account.connect",
