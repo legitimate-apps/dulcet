@@ -171,12 +171,23 @@ PINNED_FIXTURE_PROMOTION_CONDITION = {
 }
 
 
+# The second fixture cell, for the controls that need a `planned` starting point. Same reasoning:
+# `library.sync/ipados` is bare `planned` in the live document today, and one control asserts the
+# gate rejects `planned -> blocked` by name. The day that cell gains a real status -- which is
+# already on the follow-up list -- the control breaks for a reason that has nothing to do with the
+# rule it guards.
+PINNED_PLANNED_CELL = ("library.sync", "ipados")
+
+
 def pin_fixture_cell(document: dict[str, object]) -> None:
     cell = feature_cell(document, *PINNED_FIXTURE_CELL)
     cell["status"] = "partial"
     cell["promotion_condition"] = copy_document(
         {"value": PINNED_FIXTURE_PROMOTION_CONDITION}
     )["value"]
+    planned = feature_cell(document, *PINNED_PLANNED_CELL)
+    planned.clear()
+    planned["status"] = "planned"
 
 
 def comparison_documents() -> tuple[dict[str, object], dict[str, object]]:
