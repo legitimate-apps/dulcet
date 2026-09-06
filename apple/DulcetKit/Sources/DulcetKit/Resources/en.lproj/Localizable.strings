@@ -139,7 +139,7 @@
 "account.remove.confirm.body" = "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.";
 "account.remove.progress.title" = "Signing out…";
 "account.remove.progress.body" = "Dulcet is deleting the saved credential before clearing account data.";
-"account.remove.error.title" = "Dulcet couldn’t delete the saved credential";
+"account.remove.error.title" = "Dulcet couldn’t finish signing out";
 "account.remove.error.body" = "The account is still connected and its loaded library has not been cleared.";
 "account.remove.keep" = "Keep Account";
 "account.connect.connected" = "Connected to %@";
