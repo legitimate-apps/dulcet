@@ -1112,17 +1112,6 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             status: connectedStatus
         )
 
-        do {
-            try credentialStore?.delete()
-        } catch {
-            accountRemovalStatus = .failed
-            publishAccountRemovalState(
-                state: .accountRemovalError,
-                status: connectedStatus
-            )
-            return
-        }
-
         generation += 1
         activeOperation?.cancel()
         activeOperation = nil
@@ -1138,6 +1127,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalTask = Task { [weak self] in
             await withTaskCancellationHandler {
                 let downloadsRemoved = await downloadController?.removeAccountData() ?? true
+                // On download timeout, retain artwork with the still-saved account.
                 guard !Task.isCancelled else {
                     self?.failAccountRemoval(removalID)
                     return
@@ -1155,7 +1145,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     return
                 }
                 guard self?.accountRemovalID == removalID else { return }
-                self?.finishAccountRemoval()
+                guard let self else { return }
+                // Credential deletion is the commit point. Until all cleanup returns,
+                // failure or cancellation must leave Keep Account durable across launches.
+                do {
+                    try self.credentialStore?.delete()
+                } catch {
+                    if case let .connected(account) = self.currentSnapshot.accountConnection {
+                        self.configureDownloads(account: account, request: self.currentSnapshot.accountForm)
+                    }
+                    self.failAccountRemoval(removalID)
+                    return
+                }
+                self.finishAccountRemoval()
             } onCancel: { [weak self] in
                 Task { @MainActor [weak self] in
                     self?.failAccountRemoval(removalID)
@@ -1198,6 +1200,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalWatchdog = nil
         accountRemovalTask = nil
         providerInstanceID = nil
+        savedServerName = nil
         playbackController?.disconnect()
         libraryMusicFolders = []
         libraryArtists = []
@@ -1229,6 +1232,14 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             allowLocalHTTP: request.allowLocalHTTP,
             credentialGeneration: credentialStore?.credentialGeneration ?? 0
         ))
+        configureDownloads(account: account, request: request)
+    }
+
+    private func configureDownloads(
+        account: DulcetConnectedAccountSummary,
+        request: DulcetAccountConnectRequest
+    ) {
+        guard let providerInstanceID else { return }
         downloadController?.configure(account: DulcetPlaybackAccount(
             providerInstanceID: providerInstanceID,
             normalizedServerURL: account.normalizedServerURL,

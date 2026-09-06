@@ -619,10 +619,12 @@ func accountRemovalTimeoutRecoversFromUncooperativeDownloadCleanup() async throw
 @Test @MainActor
 func accountRemovalCancellationRecoversBeforeUncooperativeCleanupReturns() async throws {
     let connector = ControlledAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
     let downloads = ControlledDownloadController()
     downloads.suspendRemoval = true
     let source = DulcetAccountDataSource(
         connector: connector,
+        credentialStore: credentials,
         downloadController: downloads,
         accountRemovalTimeout: .seconds(60)
     )
@@ -652,12 +654,58 @@ func accountRemovalCancellationRecoversBeforeUncooperativeCleanupReturns() async
     downloads.removalContinuation = nil
     try await Task.sleep(for: .milliseconds(50))
     #expect(store.snapshot.accountConnected)
+    #expect(try credentials.load() != nil)
+    #expect(credentials.deleteCount == 0)
     #expect(store.snapshot.accountRemoval == .idle)
     #expect(store.selectedDestination == .library)
 }
 
+@Test(arguments: [false, true]) @MainActor
+func keepingAccountAfterCleanupFailurePreservesPersistedCredential(cleanupTimesOut: Bool) async throws {
+    let connector = ControlledAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let downloads = ControlledDownloadController()
+    downloads.removalResult = false
+    downloads.suspendRemoval = cleanupTimesOut
+    let artwork = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: credentials,
+        artworkFetcher: artwork,
+        downloadController: downloads,
+        accountRemovalTimeout: .milliseconds(50)
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    let savedCredential = try #require(try credentials.load())
+    store.removeAccount()
+    defer { downloads.removalContinuation?.resume(returning: true) }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.snapshot.accountRemoval == .failed)
+    store.dismissAccountRemovalFailure()
+    #expect(store.snapshot.state == .accountConnected)
+    #expect(store.snapshot.accountConnected)
+    #expect(try credentials.load() == savedCredential)
+    #expect(credentials.deleteCount == 0)
+    // A failed sign-out retains this account's artwork; a successful retry removes it.
+    #expect(artwork.removedServerIDs.isEmpty)
+    let relaunched = DulcetAccountDataSource(
+        connector: ControlledAccountConnector(), credentialStore: credentials
+    )
+    #expect(relaunched.currentSnapshot.state == .accountSavedDisconnected)
+}
+
 @Test @MainActor
-func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState() async {
+func accountRemovalDeletesCredentialOnlyAfterCleanupAndBeforeClearingAccountState() async throws {
     var events: [String] = []
     let connector = ControlledAccountConnector()
     let libraryBrowser = ControlledLibraryBrowser(onCancel: { events.append("library-cancel") })
@@ -689,8 +737,9 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
 
     store.removeAccount()
 
-    #expect(events == ["credential-delete", "library-cancel"])
-    #expect(credentials.deleteCount == 1)
+    #expect(events == ["library-cancel"])
+    #expect(credentials.deleteCount == 0)
+    #expect(try credentials.load() != nil)
     #expect(store.snapshot.state == .accountRemoving)
     #expect(store.snapshot.accountRemoval == .removing)
     #expect(store.snapshot.accountConnected)
@@ -701,11 +750,13 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
     await settleSearchTask(until: { events.count == 4 })
 
     #expect(events == [
-        "credential-delete",
         "library-cancel",
         "download-remove",
         "artwork-remove",
+        "credential-delete",
     ])
+    #expect(credentials.deleteCount == 1)
+    #expect(try credentials.load() == nil)
     #expect(downloads.removeAccountDataCount == 1)
     #expect(artworkFetcher.removedServerIDs == ["provider-instance-fixture"])
     #expect(store.snapshot.state == .accountConnectIdle)
@@ -717,11 +768,14 @@ func accountRemovalDeletesCredentialBeforeCancellingWorkAndClearingAccountState(
     #expect(store.accountServerURL.isEmpty)
     #expect(store.accountUsername.isEmpty)
     #expect(store.accountPassword.isEmpty)
+    store.selectDestination(.library)
+    #expect(store.snapshot.state == .emptyLibraryNoAccount)
 }
 
 @Test @MainActor
-func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async {
+func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async throws {
     enum DeleteFailure: Error { case denied }
+    let downloads = ControlledDownloadController()
     let deleteDecision = ControlledDeleteDecision()
     var events: [String] = []
     let connector = ControlledAccountConnector()
@@ -739,6 +793,7 @@ func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async 
         credentialStore: credentials,
         libraryBrowser: libraryBrowser,
         artworkFetcher: artworkFetcher,
+        downloadController: downloads,
         providerInstanceIDFactory: { "provider-instance-fixture" }
     )
     let store = DulcetPresentationStore(source: source)
@@ -756,14 +811,17 @@ func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async 
 
     store.removeAccount()
 
-    #expect(events == ["credential-delete"])
+    await settleSearchTask(until: { store.snapshot.accountRemoval == .failed })
+    #expect(events == ["artwork-remove", "credential-delete"])
     #expect(credentials.deleteCount == 1)
     #expect(store.snapshot.state == .accountRemovalError)
     #expect(store.snapshot.accountRemoval == .failed)
     #expect(store.snapshot.accountConnected)
     #expect(store.snapshot.albums == [album])
     #expect(store.accountPassword == "fixture-password")
-    #expect(artworkFetcher.removedServerIDs.isEmpty)
+    #expect(artworkFetcher.removedServerIDs == ["provider-instance-fixture"])
+    #expect(try credentials.load() != nil)
+    #expect(downloads.configuredAccount != nil)
     #expect(libraryBrowser.operations.single?.cancelCount == 0)
 
     store.dismissAccountRemovalFailure()
@@ -773,10 +831,11 @@ func failedCredentialDeletionKeepsConnectedLibraryIntactAndCanBeRetried() async 
 
     deleteDecision.shouldFail = false
     store.removeAccount()
-    await settleSearchTask(until: { events.count == 3 })
+    await settleSearchTask(until: { store.snapshot.accountRemoval == .idle })
 
     #expect(credentials.deleteCount == 2)
-    #expect(events == ["credential-delete", "credential-delete", "artwork-remove"])
+    #expect(events == ["artwork-remove", "credential-delete", "artwork-remove", "credential-delete"])
+    #expect(try credentials.load() == nil)
     #expect(store.snapshot.state == .accountConnectIdle)
     #expect(!store.snapshot.accountConnected)
     #expect(store.snapshot.albums.isEmpty)
@@ -1271,6 +1330,7 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     private var handler: (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private(set) var configuredAccount: DulcetPlaybackAccount?
     private(set) var requestedTracks: [DulcetTrack] = []
+    var removalResult = true
     var suspendRemoval = false
     var removalContinuation: CheckedContinuation<Bool, Never>?
     private(set) var removeAccountDataCount = 0
@@ -1308,7 +1368,8 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
         if suspendRemoval {
             return await withCheckedContinuation { removalContinuation = $0 }
         }
-        return true
+        if removalResult { configuredAccount = nil }
+        return removalResult
     }
 
     func disconnect() {}
@@ -1440,7 +1501,7 @@ private final class SequencedAccountConnector: DulcetAccountConnecting {
 
 @MainActor
 private final class MemoryCredentialStore: DulcetCredentialStoring {
-    private let persisted: DulcetAccountConnectRequest?
+    private var persisted: DulcetAccountConnectRequest?
     private(set) var saved: [DulcetAccountConnectRequest] = []
     private(set) var deleteCount = 0
     private let deleteAction: @MainActor () throws -> Void
@@ -1459,11 +1520,13 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
 
     func save(_ request: DulcetAccountConnectRequest) throws {
         saved.append(request)
+        persisted = request
     }
 
     func delete() throws {
         deleteCount += 1
         try deleteAction()
+        persisted = nil
     }
 }
 
