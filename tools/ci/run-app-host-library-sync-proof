@@ -47,35 +47,36 @@ esac
 proof() {
     slug="$1"
     derived_data="$2"
-    xctestrun_glob="$3"
+    scheme="$3"
     target="$4"
     destination="$5"
     test_method="$6"
     junit="$7"
 
-    # Reuse the app-host bundle built earlier; the disposable server is live only here.
-    xctestrun="$(find "$derived_data/Build/Products" -name "$xctestrun_glob" -print -quit)"
-    if [ -z "$xctestrun" ]; then
-        echo "run-app-host-library-sync-proof: no $xctestrun_glob under $derived_data/Build/Products" >&2
-        exit 1
-    fi
-
-    # The test runner does not inherit this shell's environment; inject the disposable contract into
-    # the launch manifest itself. The test independently rejects anything but the loopback fixture.
-    /usr/libexec/PlistBuddy -c \
-        "Add :$target:EnvironmentVariables:DULCET_CONFORMANCE_BASE_URL string http://127.0.0.1:4533" "$xctestrun"
-    /usr/libexec/PlistBuddy -c \
-        "Add :$target:EnvironmentVariables:DULCET_CONFORMANCE_DISPOSABLE string true" "$xctestrun"
-
     result_bundle="$RUNNER_TEMP/dulcet-$slug-library-sync.xcresult"
 
-    xcodebuild test-without-building \
-        -xctestrun "$xctestrun" \
-        -destination "$destination" \
-        -derivedDataPath "$derived_data" \
-        -resultBundlePath "$result_bundle" \
-        -parallel-testing-enabled NO \
-        -only-testing:"$target/DulcetLibrarySyncAppTests/$test_method" 2>&1 |
+    # Reuse the products built earlier; the disposable server is live only here.
+    #
+    # -project/-scheme, NOT -xctestrun. MEASURED 2026-09-07: those earlier steps use
+    # `xcodebuild test`, which does not leave a .xctestrun in Build/Products -- only
+    # `build-for-testing` does. An -xctestrun form failed the whole job with
+    # "no DulcetiOS_*.xctestrun under .../DulcetiOSDerivedData/Build/Products".
+    #
+    # A simulator test process does not inherit this shell's environment. TEST_RUNNER_-prefixed
+    # variables must be in XCODEBUILD's OWN environment; the prefix is stripped on the way into the
+    # runner, so the test reads the unprefixed names. A trailing `KEY=value` on the xcodebuild line
+    # would instead be parsed as a BUILD SETTING and never arrive.
+    TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+        TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
+        xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme "$scheme" \
+            -configuration Debug \
+            -destination "$destination" \
+            -derivedDataPath "$derived_data" \
+            -resultBundlePath "$result_bundle" \
+            -parallel-testing-enabled NO \
+            -only-testing:"$target/DulcetLibrarySyncAppTests/$test_method" 2>&1 |
         tee "$RUNNER_TEMP/dulcet-$slug-library-sync.log"
 
     # The execution guard comes BEFORE junit generation: `swift-testing-junit` writes a well-formed
@@ -132,17 +133,17 @@ if [ "$mode" = macos ]; then
     exit 0
 fi
 
-proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" 'DulcetiOS_*.xctestrun' \
+proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" DulcetiOS \
     DulcetKeychainIOSTests 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator \
     "$RUNNER_TEMP/dulcet-ios-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
 
-proof ipados "$RUNNER_TEMP/DulcetiPadOSDerivedData" 'DulcetiOS_*.xctestrun' \
+proof ipados "$RUNNER_TEMP/DulcetiPadOSDerivedData" DulcetiOS \
     DulcetKeychainIOSTests "platform=iOS Simulator,id=$ipad_udid" \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator \
     "$RUNNER_TEMP/dulcet-ipados-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
 
-proof tvos "$RUNNER_TEMP/DulcetTVDerivedData" 'DulcetTV_*.xctestrun' \
+proof tvos "$RUNNER_TEMP/DulcetTVDerivedData" DulcetTV \
     DulcetKeychainTVOSTests 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator \
     "$RUNNER_TEMP/dulcet-tvos-library-sync-junit/TEST-DulcetKeychainTVOSTests.xml"
