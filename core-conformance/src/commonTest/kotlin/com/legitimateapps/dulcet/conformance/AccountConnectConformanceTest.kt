@@ -635,7 +635,11 @@ class AccountConnectConformanceTest {
 
         assertIs<DomainError.Security.LocalExceptionViolated>(error)
 
-        val consented = assertIs<AccountConnectionResult.Connected>(fixture().connect()).account
+        val consentedResult = fixture().connect()
+        val consented = assertIs<AccountConnectionResult.Connected>(
+            consentedResult,
+            "consented plaintext local HTTP did not connect: $consentedResult",
+        ).account
         assertTrue(consented.allowsLocalHttp)
 
         val schemeLess = assertIs<AccountConnectionResult.Connected>(
