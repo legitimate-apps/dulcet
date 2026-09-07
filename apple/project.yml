@@ -188,6 +188,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
+        # Declare a launch screen so iOS uses the device's native window geometry.
+        # Without it, iPhone launches in a scaled, letterboxed 320x480 compatibility space.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
     preBuildScripts:
       - name: Compile Kotlin Framework

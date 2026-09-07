@@ -266,6 +266,8 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        recordWindowGeometry(app, context: "search")
+
         // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
         // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
         let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
@@ -503,6 +505,7 @@ final class DulcetiOSUITests: XCTestCase {
         // split needs a window far wider than any iPhone.
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        recordWindowGeometry(app, context: "ipad-account-layout")
         XCTAssertGreaterThan(
             window.frame.width,
             700,
@@ -652,6 +655,8 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        recordWindowGeometry(app, context: "ipad-playback")
+
         // staticTexts avoids the duplicate Image/StaticText identifier carried by sidebar Labels.
         let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
         guard library.waitForExistence(timeout: 5) else {
@@ -700,6 +705,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         guard let finalSample = waitUntilPastScrobbleThreshold(progress) else { return }
+        print("DULCET IPAD PROGRESS elapsed=\(finalSample.elapsed) duration=\(finalSample.duration)")
         let threshold = min(finalSample.duration * 0.5, 4 * 60)
         XCTAssertGreaterThanOrEqual(
             finalSample.duration,
@@ -759,6 +765,12 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        recordWindowGeometry(app, context: "iphone-playback")
+        XCTAssertEqual(app.frame, window.frame,
+            "The iPhone app must use native coordinates, not a scaled compatibility space")
+        XCTAssertEqual(window.frame, UIScreen.main.bounds,
+            "The iPhone app must fill the screen without compatibility letterboxing")
+
         print("DULCET IPHONE IDENTITY simulator=\(udid) width=\(window.frame.width) idiom=phone")
 
         // Compact navigation starts in detail. Return to the navigation list before choosing
@@ -799,26 +811,9 @@ final class DulcetiOSUITests: XCTestCase {
             )
             return
         }
-        // OBSERVED on iPhone 17 Pro: this app runs in a letterboxed compatibility window.
-        // XCTest reports the track in app coordinates (320x480), but the displayed window is
-        // 402x603 at y=135.5. Element.tap() synthesized the unconverted point and left the album
-        // open without a stream request. Map the visible row midpoint through the actual window;
-        // this also becomes the identity mapping when the app occupies an unscaled window.
-        let appFrame = app.frame
-        let visibleTrack = thresholdTrack.frame.intersection(appFrame)
-        guard appFrame.width > 0, appFrame.height > 0,
-              !visibleTrack.isNull, !visibleTrack.isEmpty else {
-            XCTFail("The canary must have a visible tap point in the app's coordinate space")
-            return
-        }
-        let tap = window.coordinate(withNormalizedOffset: CGVector(
-            dx: (visibleTrack.midX - appFrame.minX) / appFrame.width,
-            dy: (visibleTrack.midY - appFrame.minY) / appFrame.height
-        ))
-        print("DULCET IPHONE TAP app=\(appFrame) window=\(window.frame)"
-            + " track=\(thresholdTrack.frame) screenPoint=\(tap.screenPoint)")
+        print("DULCET IPHONE TAP track=\(thresholdTrack.frame)")
         let tappedAt = ProcessInfo.processInfo.systemUptime
-        tap.tap()
+        thresholdTrack.tap()
 
         let progress = app.sliders["Now Playing"].firstMatch
         guard progress.waitForExistence(timeout: 30) else {
@@ -846,6 +841,12 @@ final class DulcetiOSUITests: XCTestCase {
             threshold,
             "Observed progressing media time must move past the §15.2 scrobble threshold"
         )
+    }
+
+    @MainActor
+    private func recordWindowGeometry(_ app: XCUIApplication, context: String) {
+        print("DULCET WINDOW GEOMETRY context=\(context) simulator=\(ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "physical")"
+            + " content=\(app.frame) window=\(app.windows.firstMatch.frame)")
     }
 
     private func livePlaybackConfiguration() -> LivePlaybackConfiguration? {
