@@ -33,7 +33,7 @@ def materialize(root: Path) -> None:
         "core-conformance",
         "apple/DulcetKit/Tests",
         "apple/DulcetPlaybackIntegrationTests",
-        "apple/DulcetKeychainAppTests",
+        "apple/DulcetAppleAppHostTests",
         "apple/DulcetiOSUITests",
         # library.sync/macos and the search cells cite the macOS app-host proofs, and the search
         # cells also cite the tvOS UI proof. The gate verifies every cited test NAME exists in
@@ -917,6 +917,12 @@ passing_cases = """\
             name="conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping[macosArm64]" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline" time="0.1" />
+  <testcase classname="DulcetKeychainTVOSTests"
+            name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator" time="0.1" />
   <testcase classname="DulcetAppleDownloadIntegrationTest"
             name="downloadTriggerPromotesValidatedResponseAtomically" time="0.1" />
   <testcase classname="DulcetAppleDownloadIntegrationTest"

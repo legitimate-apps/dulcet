@@ -508,36 +508,94 @@
           "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the macosArm64 core-conformance runtime, retaining one exact test identity for each declared contract. In the same disposable-server job, DulcetMacAccountConnectAppTest/librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline runs inside the macOS app host and closes the former integration gap: the production DulcetCoreLibraryBrowser starts AppleLibrarySyncClient, independently reopens and displays each committed SQLDelight generation, and preserves opaque folder, artist, album and track identifiers. The test observes generations 1 and 2, with generation 2 started by the real ContinuousClock refresh scheduler at a shortened test cadence; production uses the same scheduler for a 24-hour full-import cadence. It then requires an actual connection refusal from 127.0.0.1:1 before reconstructing a saved disconnected account over the same database and provider identity, where zero connector or sync starts occur and committed generation 2 remains browsable."
         },
         "ios": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "ios-library-sync-app-integration",
-            "reason": "Promotion requires an iOS app workflow and test that invoke the production AppleLibrarySyncClient, browse the committed SQLDelight generation, exercise scheduled refresh, and prove saved metadata remains browsable offline. No such app integration or test exists yet."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-31", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
-            {"conformance": "CONF-32", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
-            {"conformance": "CONF-33", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+            {
+              "conformance": "CONF-31",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
+            },
+            {
+              "conformance": "CONF-32",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
+            },
+            {
+              "conformance": "CONF-33",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
+            },
+            {
+              "observes": "inside the ios app host on its own simulator destination and fresh database, the production library browser starts a real sync against the live fixture, displays committed generations 1 and 2 with the second started by the monotonic refresh scheduler, and a reopened store serves generation 2 with zero sync starts after an asserted connection refusal",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator"
+            }
           ],
-          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the iosSimulatorArm64 core-conformance runtime, so the durable core engine is evidenced on iOS. No production iOS library surface starts that sync, browses its committed generation, schedules refreshes, or proves real saved metadata offline, so the platform cell is partial rather than shipped."
+          "reason": "apple-ci executes the platform-specific app-host test on ios, with its own execution guard and JUnit directory. DulcetCoreLibraryBrowser invokes production AppleLibrarySyncClient against the disposable fixture using a fresh platform-prefixed UUID database. The test independently reads SQLDelight generations 1 and 2, compares displayed opaque identifiers, asserts and emits the real monotonic scheduled-refresh firing, then asserts connection refusal before reopening saved metadata offline with zero connector or sync starts. This proves the production persistence and presentation integration on this destination; it does not claim physical-device or interaction coverage."
         },
         "ipados": {
-          "status": "planned",
-          "reason": "The branch has no iPadOS-specific conformance execution or production app integration test. The iPhone simulator run is not substituted as iPadOS evidence, so this cell remains planned."
+          "status": "shipped",
+          "reason": "CONF-31, CONF-32 and CONF-33 retain the shared iosSimulatorArm64 core controls. The separate iPad app-host execution supplies iPadOS integration evidence; the iPhone app-host run cannot satisfy its distinct test identity. apple-ci executes the platform-specific app-host test on ipados, with its own execution guard and JUnit directory. DulcetCoreLibraryBrowser invokes production AppleLibrarySyncClient against the disposable fixture using a fresh platform-prefixed UUID database. The test independently reads SQLDelight generations 1 and 2, compares displayed opaque identifiers, asserts and emits the real monotonic scheduled-refresh firing, then asserts connection refusal before reopening saved metadata offline with zero connector or sync starts. This proves the production persistence and presentation integration on this destination; it does not claim physical-device or interaction coverage.",
+          "evidence": [
+            {
+              "conformance": "CONF-31",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
+            },
+            {
+              "conformance": "CONF-32",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
+            },
+            {
+              "conformance": "CONF-33",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
+            },
+            {
+              "observes": "inside the ipados app host on its own simulator destination and fresh database, the production library browser starts a real sync against the live fixture, displays committed generations 1 and 2 with the second started by the monotonic refresh scheduler, and a reopened store serves generation 2 with zero sync starts after an asserted connection refusal",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator"
+            }
+          ]
         },
         "tvos": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "tvos-library-sync-app-integration",
-            "reason": "Promotion requires a tvOS app workflow and test that invoke the production AppleLibrarySyncClient, browse the committed SQLDelight generation, exercise scheduled refresh, and prove saved metadata remains browsable offline. No such app integration or test exists yet."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-31", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
-            {"conformance": "CONF-32", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
-            {"conformance": "CONF-33", "workflow": "apple-ci", "job": "apple-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+            {
+              "conformance": "CONF-31",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
+            },
+            {
+              "conformance": "CONF-32",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
+            },
+            {
+              "conformance": "CONF-33",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
+            },
+            {
+              "observes": "inside the tvos app host on its own simulator destination and fresh database, the production library browser starts a real sync against the live fixture, displays committed generations 1 and 2 with the second started by the monotonic refresh scheduler, and a reopened store serves generation 2 with zero sync starts after an asserted connection refusal",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainTVOSTests/testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator"
+            }
           ],
-          "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the tvosSimulatorArm64 core-conformance runtime, so the durable core engine is evidenced on tvOS. No production tvOS library surface starts that sync, browses its committed generation, schedules refreshes, or proves real saved metadata offline, so the platform cell is partial rather than shipped."
+          "reason": "apple-ci executes the platform-specific app-host test on tvos, with its own execution guard and JUnit directory. DulcetCoreLibraryBrowser invokes production AppleLibrarySyncClient against the disposable fixture using a fresh platform-prefixed UUID database. The test independently reads SQLDelight generations 1 and 2, compares displayed opaque identifiers, asserts and emits the real monotonic scheduled-refresh firing, then asserts connection refusal before reopening saved metadata offline with zero connector or sync starts. This proves the production persistence and presentation integration on this destination; it does not claim physical-device or interaction coverage."
         },
         "android": {
           "status": "shipped",
