@@ -745,72 +745,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
-          # Reuse the app-host bundle built earlier; the disposable server is live only here.
-          library_xctestrun="$(find "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products" \
-            -name 'DulcetiOS_*.xctestrun' -print -quit)"
-          test -n "$library_xctestrun"
-          /usr/libexec/PlistBuddy -c 'Add :DulcetKeychainIOSTests:EnvironmentVariables:DULCET_CONFORMANCE_BASE_URL string http://127.0.0.1:4533' "$library_xctestrun"
-          /usr/libexec/PlistBuddy -c 'Add :DulcetKeychainIOSTests:EnvironmentVariables:DULCET_CONFORMANCE_DISPOSABLE string true' "$library_xctestrun"
-          xcodebuild test-without-building \
-            -xctestrun "$library_xctestrun" \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
-            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-library-sync.xcresult" \
-            -parallel-testing-enabled NO \
-            -only-testing:DulcetKeychainIOSTests/DulcetLibrarySyncAppTests/testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator 2>&1 | \
-          tee "$RUNNER_TEMP/dulcet-ios-library-sync.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ios-library-sync.xcresult" \
-            DulcetKeychainIOSTests.DulcetLibrarySyncAppTests \
-            testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ios-library-sync.xcresult" \
-            "$RUNNER_TEMP/dulcet-ios-library-sync-junit/TEST-DulcetKeychainIOSTests.xml" \
-            DulcetKeychainIOSTests
-          # Reuse the app-host bundle built earlier; the disposable server is live only here.
-          library_xctestrun="$(find "$RUNNER_TEMP/DulcetiPadOSDerivedData/Build/Products" \
-            -name 'DulcetiOS_*.xctestrun' -print -quit)"
-          test -n "$library_xctestrun"
-          /usr/libexec/PlistBuddy -c 'Add :DulcetKeychainIOSTests:EnvironmentVariables:DULCET_CONFORMANCE_BASE_URL string http://127.0.0.1:4533' "$library_xctestrun"
-          /usr/libexec/PlistBuddy -c 'Add :DulcetKeychainIOSTests:EnvironmentVariables:DULCET_CONFORMANCE_DISPOSABLE string true' "$library_xctestrun"
-          xcodebuild test-without-building \
-            -xctestrun "$library_xctestrun" \
-            -destination "platform=iOS Simulator,id=${{ steps.ipados_layout_destination.outputs.udid }}" \
-            -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-library-sync.xcresult" \
-            -parallel-testing-enabled NO \
-            -only-testing:DulcetKeychainIOSTests/DulcetLibrarySyncAppTests/testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator 2>&1 | \
-          tee "$RUNNER_TEMP/dulcet-ipados-library-sync.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ipados-library-sync.xcresult" \
-            DulcetKeychainIOSTests.DulcetLibrarySyncAppTests \
-            testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ipados-library-sync.xcresult" \
-            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit/TEST-DulcetKeychainIOSTests.xml" \
-            DulcetKeychainIOSTests
-          # Reuse the app-host bundle built earlier; the disposable server is live only here.
-          library_xctestrun="$(find "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products" \
-            -name 'DulcetTV_*.xctestrun' -print -quit)"
-          test -n "$library_xctestrun"
-          /usr/libexec/PlistBuddy -c 'Add :DulcetKeychainTVOSTests:EnvironmentVariables:DULCET_CONFORMANCE_BASE_URL string http://127.0.0.1:4533' "$library_xctestrun"
-          /usr/libexec/PlistBuddy -c 'Add :DulcetKeychainTVOSTests:EnvironmentVariables:DULCET_CONFORMANCE_DISPOSABLE string true' "$library_xctestrun"
-          xcodebuild test-without-building \
-            -xctestrun "$library_xctestrun" \
-            -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
-            -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-library-sync.xcresult" \
-            -parallel-testing-enabled NO \
-            -only-testing:DulcetKeychainTVOSTests/DulcetLibrarySyncAppTests/testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator 2>&1 | \
-          tee "$RUNNER_TEMP/dulcet-tvos-library-sync.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-tvos-library-sync.xcresult" \
-            DulcetKeychainTVOSTests.DulcetLibrarySyncAppTests \
-            testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-tvos-library-sync.xcresult" \
-            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit/TEST-DulcetKeychainTVOSTests.xml" \
-            DulcetKeychainTVOSTests
+          # Extracted to a file: this step is at a hard GitHub workflow size ceiling (see the
+          # script header). It stays inside this step, whose shell owns the disposable server.
+          tools/ci/run-app-host-library-sync-proof "${{ steps.ipados_layout_destination.outputs.udid }}"
           # A macOS host test does not inherit xcodebuild's shell environment. Build its launch
           # manifest, inject only the disposable loopback contract, then execute that manifest.
           xcodebuild build-for-testing \

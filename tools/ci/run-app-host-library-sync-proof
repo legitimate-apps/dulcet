@@ -1,0 +1,95 @@
+#!/bin/bash
+# Run one app-hosted library-sync proof and turn its result bundle into cited evidence.
+#
+# This lives in a file rather than inline in apple-ci.yml because the "Assert Darwin conformance
+# preconditions" step is at a hard GitHub size ceiling. MEASURED 2026-09-07: 29,893 characters of
+# inline `run:` loads; 34,557 makes the WHOLE workflow file invalid, so no job is created at all,
+# `apple-ci` never appears as a check, and the pull request sits blocked with nothing to click.
+# Every local validator -- PyYAML, a duplicate-key loader, actionlint -- calls that file fine.
+# GitHub's own remedy for the ceiling is exactly this: extract the script and invoke it.
+#
+# The three proofs differ only in destination and identifiers, so they are one script, not three
+# near-identical blocks. It must run INSIDE the step that owns the disposable server, because that
+# server's lifetime is that step's shell.
+#
+# Usage:
+#   run-app-host-library-sync-proof <ipad-simulator-udid>
+#
+# Runs all three destinations. The caller passes only the iPad udid because that is the one value
+# the workflow resolves at run time; everything else is fixed and belongs here, not in the YAML.
+
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+    echo "run-app-host-library-sync-proof: expected the iPad simulator udid, got $# argument(s)" >&2
+    exit 2
+fi
+
+ipad_udid="$1"
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
+# Each call spells its JUnit directory out in full rather than deriving it from the slug. That is
+# deliberate: tools/verify_ci_policy.py greps for `$RUNNER_TEMP/<name>-junit/` to prove every
+# directory verify-parity-evidence reads is actually written by something. A path assembled from a
+# shell variable is invisible to that check, and a gate that cannot see the write is not a gate.
+proof() {
+    slug="$1"
+    derived_data="$2"
+    xctestrun_glob="$3"
+    target="$4"
+    destination="$5"
+    test_method="$6"
+    junit="$7"
+
+    # Reuse the app-host bundle built earlier; the disposable server is live only here.
+    xctestrun="$(find "$derived_data/Build/Products" -name "$xctestrun_glob" -print -quit)"
+    if [ -z "$xctestrun" ]; then
+        echo "run-app-host-library-sync-proof: no $xctestrun_glob under $derived_data/Build/Products" >&2
+        exit 1
+    fi
+
+    # The test runner does not inherit this shell's environment; inject the disposable contract into
+    # the launch manifest itself. The test independently rejects anything but the loopback fixture.
+    /usr/libexec/PlistBuddy -c \
+        "Add :$target:EnvironmentVariables:DULCET_CONFORMANCE_BASE_URL string http://127.0.0.1:4533" "$xctestrun"
+    /usr/libexec/PlistBuddy -c \
+        "Add :$target:EnvironmentVariables:DULCET_CONFORMANCE_DISPOSABLE string true" "$xctestrun"
+
+    result_bundle="$RUNNER_TEMP/dulcet-$slug-library-sync.xcresult"
+
+    xcodebuild test-without-building \
+        -xctestrun "$xctestrun" \
+        -destination "$destination" \
+        -derivedDataPath "$derived_data" \
+        -resultBundlePath "$result_bundle" \
+        -parallel-testing-enabled NO \
+        -only-testing:"$target/DulcetLibrarySyncAppTests/$test_method" 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-$slug-library-sync.log"
+
+    # The execution guard comes BEFORE junit generation: `swift-testing-junit` writes a well-formed
+    # tests="0" file for an empty bundle, so a renamed or silently-matching-nothing test would ship green.
+    python3 tools/verify-xcode-test-execution \
+        "$result_bundle" \
+        "$target.DulcetLibrarySyncAppTests" \
+        "$test_method"
+
+    python3 tools/swift-testing-junit \
+        "$result_bundle" \
+        "$junit" \
+        "$target"
+}
+
+proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" 'DulcetiOS_*.xctestrun' \
+    DulcetKeychainIOSTests 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+    testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator \
+    "$RUNNER_TEMP/dulcet-ios-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
+
+proof ipados "$RUNNER_TEMP/DulcetiPadOSDerivedData" 'DulcetiOS_*.xctestrun' \
+    DulcetKeychainIOSTests "platform=iOS Simulator,id=$ipad_udid" \
+    testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator \
+    "$RUNNER_TEMP/dulcet-ipados-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
+
+proof tvos "$RUNNER_TEMP/DulcetTVDerivedData" 'DulcetTV_*.xctestrun' \
+    DulcetKeychainTVOSTests 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+    testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator \
+    "$RUNNER_TEMP/dulcet-tvos-library-sync-junit/TEST-DulcetKeychainTVOSTests.xml"
