@@ -355,6 +355,26 @@ They are deliberately not reproduced in this repository.**
     satisfiable by an earlier identical event. Where a control checks an outcome, add one that checks
     the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
     handler itself emits.
+42. 🚨 **`apple/project.yml` is the SOURCE; `apple/Dulcet.xcodeproj` is generated from it by the
+    pinned XcodeGen and committed. Nothing regenerates it during a build.** So editing project.yml
+    alone changes what the repository documents and NOT what Xcode runs — and
+    `tools/verify_dulcet_core_build_order.py` reads the **pbxproj**, so it keeps reporting PASS about
+    the old script. Regenerate with `cd apple && xcodegen generate` (version pinned in
+    `docs/TOOLCHAIN.md`), and note that a rebase may textually merge the pbxproj into something
+    XcodeGen would not produce. `tools/verify_xcode_script_phases.py` compares the shell text and the
+    phase count in both directions; it is stdlib-only so it runs on the Linux parity-gate runner,
+    which has no Xcode.
+43. **`UIScreen.main` inside an XCUITest is the TEST RUNNER's screen, not the app's.** The runner
+    declares no launch screen of its own, so it stays in the 320x480 compatibility space however
+    correct the app under test is: measured 2026-09-07 on a correct build, `window.frame` was
+    402x874 while `UIScreen.main.bounds` was 320x480. An assertion comparing the two therefore fails
+    **precisely when the product is right** — the worst possible shape for a check. Assert
+    `app.frame` against `window.frame`, and against the compatibility geometry itself.
+44. **Eight Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
+    targets in parallel**, so two `./gradlew` invocations start together and contend for the journal
+    lock in the Gradle user home. Gradle does not queue on that: it waits 60s and then FAILS the
+    build. Reproduced locally with a 47.1s wait between the same two script phases. Every phase now
+    goes through `tools/run-gradle-exclusive`; do not reintroduce a bare `./gradlew` there.
 
 ## Review and delegation
 
