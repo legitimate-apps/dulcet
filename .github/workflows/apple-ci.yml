@@ -647,6 +647,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
+            "$RUNNER_TEMP/dulcet-mac-app-test-junit/TEST-DulcetMacTests.xml" \
+            DulcetMacTests
           # Two independent app-host proofs sharing one built product. They are separate
           # invocations with separate result bundles so an execution guard can name each one;
           # a single run of both would let one test's absence hide inside the other's pass.
@@ -673,6 +677,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             searchQueryRanksAndActivatesTrackThroughHostedAppUI
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit/TEST-DulcetMacTests.xml" \
+            DulcetMacTests
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test-without-building \
@@ -696,6 +704,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-library-sync-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-mac-library-sync-test.xcresult" \
+            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit/TEST-DulcetMacTests.xml" \
+            DulcetMacTests
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
@@ -1099,6 +1111,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit"
