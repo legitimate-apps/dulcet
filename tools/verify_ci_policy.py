@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 import sys
 
@@ -173,6 +174,96 @@ for missing in sorted(read - written):
         f".github/workflows/apple-ci.yml: verify-parity-evidence reads {missing}, which no step "
         "writes",
     )
+
+# The directory wiring above is necessary and was not sufficient. verify-parity-evidence matches on
+# (class, method), and the macOS emissions passed the TARGET name DulcetMacTests where the evidence
+# rows cite the CLASS name DulcetMacAccountConnectAppTest. Every file was written, every directory
+# was read, and the run still failed with "evidence test did not execute" plus
+# nearby=['DulcetMacTests/librarySync...'] -- the method matched and the class did not.
+#
+# So: every non-conformance class that a FEATURES.yml row cites for apple-ci must be emitted under
+# exactly that name by some swift-testing-junit call. Conformance classes are excluded because their
+# JUnit comes from the Gradle core-conformance result directories, not from this workflow.
+if apple_ci:
+    emitted_classes: set[str] = set()
+    apple_lines = apple_ci.splitlines()
+    for index, line in enumerate(apple_lines):
+        if "tools/swift-testing-junit" not in line:
+            continue
+        # bundle path, output path, then the class name -- each on its own continued line
+        for offset in range(1, 6):
+            if index + offset >= len(apple_lines):
+                break
+            candidate = apple_lines[index + offset].strip()
+            if candidate.endswith("\\"):
+                continue
+            if re.fullmatch(r"[A-Za-z_][\w.]*", candidate):
+                emitted_classes.add(candidate)
+            break
+    try:
+        feature_document = json.loads(Path("FEATURES.yml").read_text())
+    except (OSError, ValueError):
+        feature_document = None
+    if feature_document is not None:
+        for feature in feature_document.get("features", []):
+            for platform, cell in (feature.get("platforms") or {}).items():
+                for row in cell.get("evidence") or []:
+                    if row.get("workflow") != "apple-ci":
+                        continue
+                    cited = row.get("test", "").split("/")[0]
+                    if not cited or "ConformanceTest" in cited:
+                        continue
+                    if cited not in emitted_classes:
+                        errors.append(
+                            f".github/workflows/apple-ci.yml: {feature['id']}/{platform} cites "
+                            f"{cited}, which no swift-testing-junit call emits under that name; "
+                            "verify-parity-evidence matches on the class, not the target",
+                        )
+
+        # Emitting the cited class SOMEWHERE is necessary and not sufficient. Measured: reverting
+        # one of three macOS emissions to the target name left this file passing, because the other
+        # two still emitted the cited name -- while the bundle actually holding the cited test wrote
+        # unusable evidence. So pair each emission with the -only-testing it follows and require the
+        # emitted name to be one the rows use for THAT method.
+        #
+        # Deliberately not "emitted name == Swift class": this repository legitimately cites some
+        # tests by TARGET (DulcetKeychainIOSTests) where the Swift class is different
+        # (DulcetKeychainAttributeTests). What must agree is the emission and the citation.
+        cited_classes_by_method: dict[str, set[str]] = {}
+        for feature in feature_document.get("features", []):
+            for cell in (feature.get("platforms") or {}).values():
+                for row in cell.get("evidence") or []:
+                    if row.get("workflow") != "apple-ci":
+                        continue
+                    parts = row.get("test", "").split("/")
+                    if len(parts) == 2 and "ConformanceTest" not in parts[0]:
+                        cited_classes_by_method.setdefault(parts[1], set()).add(parts[0])
+        pending_method: str | None = None
+        for index, line in enumerate(apple_lines):
+            stripped = line.strip()
+            only = re.search(r"-only-testing:[\w.]+/[A-Za-z_][\w.]*/([A-Za-z_]\w*)", stripped)
+            if only:
+                pending_method = only.group(1)
+                continue
+            if "tools/swift-testing-junit" not in stripped:
+                continue
+            method, pending_method = pending_method, None
+            allowed = cited_classes_by_method.get(method or "")
+            if not allowed:
+                continue
+            for offset in range(1, 6):
+                if index + offset >= len(apple_lines):
+                    break
+                candidate = apple_lines[index + offset].strip()
+                if candidate.endswith("\\"):
+                    continue
+                if candidate not in allowed:
+                    errors.append(
+                        f".github/workflows/apple-ci.yml: the JUnit for {method} is emitted as "
+                        f"{candidate!r}, but FEATURES.yml cites it as "
+                        f"{sorted(allowed)}; verify-parity-evidence matches on that name",
+                    )
+                break
 
 core_ci = Path(".github/workflows/core-ci.yml").read_text()
 for required in (
