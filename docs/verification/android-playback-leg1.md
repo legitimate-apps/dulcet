@@ -73,9 +73,55 @@ substitutions that bound its meaning.
 GITHUB_BASE_REF=main tools/run-local-gates parity-gate
 ```
 
-The adversarial follow-up's executed mutation results are recorded in
-`android-playback-mutations.md`. The mutation run restores each production file before continuing;
-mutants are not shipped.
+## Controller fixture isolation
+
+OBSERVED: the full host suite at `c78cd7c`, invoked with
+`./gradlew --no-daemon :core:testAndroidHostTest --rerun-tasks`, reported
+`195 tests completed, 1 failed` and `BUILD FAILED in 21s`.
+`DownloadPolicyTest.credentialGenerationChangeCancelsAndRequeuesOutstandingTask` failed while
+constructing its database, with `java.sql.SQLException: No suitable driver found for jdbc:sqlite:`.
+
+OBSERVED (source inspection): the controller fixture called the JDBC `createTestDriver()` from
+inside Robolectric. Xerial JDBC's static initializer registers a driver with the process-wide
+`java.sql.DriverManager`. OpenJDK 17's `DriverManager` initializes service providers once and
+filters registered drivers by the caller's class loader. Its `isDriverAllowed` loads the driver's
+class in the caller's loader while iterating a snapshot of the registrations. A driver newly
+registered by that class initialization is unavailable to that connection attempt. The shared
+registration can therefore break the first connection from the other loader; closing a JDBC
+connection does not unregister its driver.
+
+OBSERVED: the controller fixture now uses `DulcetDriverFactory` with a unique database name, exercising the
+production Android SQLite driver without registering a sandbox JDBC driver. Each fixture closes
+the controller and database and asserts that the Media3 listener is detached and the database is
+deleted. The fixture also calls `close()` twice to exercise idempotent service-owner teardown.
+Production shutdown code, test ordering, test concurrency and gates are unchanged.
+
+OBSERVED after the fixture change in `9042aff`: three consecutive executions of
+`./gradlew --no-daemon :core:testAndroidHostTest --rerun-tasks` produced:
+
+| Run | Gradle output | JUnit cases | Failures | Errors | Skipped | Controller cases |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | `BUILD SUCCESSFUL in 20s` | 195 | 0 | 0 | 0 | 4 |
+| 2 | `BUILD SUCCESSFUL in 23s` | 195 | 0 | 0 | 0 | 4 |
+| 3 | `BUILD SUCCESSFUL in 22s` | 195 | 0 | 0 | 0 | 4 |
+
+Counts were read from the newly written `core/build/test-results/testAndroidHostTest/TEST-*.xml`
+after each run, before the next run replaced them. Each run reported `21 actionable tasks:
+21 executed`. This observes repeated execution of the full suite, including controller teardown;
+it does not assert that every possible test interleaving has been explored.
+
+OBSERVED: the subsequent complete validation command was:
+
+```sh
+./gradlew --no-daemon \
+  :android:app:assembleDevDebug :android:tv:assembleDebug \
+  :android:app:testDevDebugUnitTest :android:tv:testDebugUnitTest \
+  :core:testAndroidHostTest :core:jvmTest :core:licensee --rerun-tasks
+```
+
+Output: `BUILD SUCCESSFUL in 55s`, `143 actionable tasks: 143 executed`.
+Fresh JUnit reports contained 9 app cases, 2 TV cases, 195 Android host cases and 181 JVM cases;
+each task had zero failures, errors and skips. Both assembly tasks and `:core:licensee` completed.
 
 ## Not evidenced here
 
