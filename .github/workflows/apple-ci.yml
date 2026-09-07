@@ -556,6 +556,11 @@ jobs:
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
+          # Passed as env, never interpolated into the script below. A `run:` block containing a
+          # ${{ }} expression is a TEMPLATE, and a template is capped far lower than a plain block:
+          # MEASURED 2026-09-07, this 29,212-character script was rejected with an expression in it
+          # and main's 29,893-character version loads without one.
+          IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
           DULCET_CONFORMANCE_DISPOSABLE: "true"
         run: |
@@ -682,7 +687,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
             DulcetMacAccountConnectAppTest
           # Moved verbatim into tools/ci/, and invoked HERE so its position in this sequence is
-          # unchanged. This step is at GitHub's workflow size ceiling; see the script header.
+          # unchanged. See the script header for why it is a file at all.
           tools/ci/run-app-host-library-sync-proof macos
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
@@ -721,9 +726,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-double-return-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             accountConnectDoubleReturnKeepsSingleConnectionActive
-          # Extracted to a file: this step is at a hard GitHub workflow size ceiling (see the
-          # script header). It stays inside this step, whose shell owns the disposable server.
-          tools/ci/run-app-host-library-sync-proof simulators "${{ steps.ipados_layout_destination.outputs.udid }}"
+          # Extracted to a file; see the script header. It stays inside this step, whose shell
+          # owns the disposable server. $IPAD_UDID comes from this step's env, deliberately.
+          tools/ci/run-app-host-library-sync-proof simulators "$IPAD_UDID"
           # A macOS host test does not inherit xcodebuild's shell environment. Build its launch
           # manifest, inject only the disposable loopback contract, then execute that manifest.
           xcodebuild build-for-testing \
