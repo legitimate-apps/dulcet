@@ -768,8 +768,19 @@ final class DulcetiOSUITests: XCTestCase {
         recordWindowGeometry(app, context: "iphone-playback")
         XCTAssertEqual(app.frame, window.frame,
             "The iPhone app must use native coordinates, not a scaled compatibility space")
-        XCTAssertEqual(window.frame, UIScreen.main.bounds,
-            "The iPhone app must fill the screen without compatibility letterboxing")
+        // Assert the app's own frame, never UIScreen.main. `UIScreen.main` here is evaluated in the
+        // XCUITest RUNNER's process, and the runner declares no launch screen of its own, so it
+        // stays in the compatibility space and reports 320x480 however correct the app under test
+        // is. OBSERVED 2026-09-07 on a correctly-fixed build: window 402x874, UIScreen.main.bounds
+        // 320x480 -- a comparison against it fails precisely when the product is right.
+        //
+        // 320x480 is the legacy compatibility geometry the declared launch screen exists to
+        // prevent, and is what this app reported before it had one, so these two are the
+        // assertions that actually change verdict when the fix is reverted.
+        XCTAssertGreaterThan(app.frame.width, 320,
+            "320pt wide is the legacy compatibility space, not native iPhone width")
+        XCTAssertGreaterThan(app.frame.height, 480,
+            "480pt tall is the legacy compatibility space, not native iPhone height")
 
         print("DULCET IPHONE IDENTITY simulator=\(udid) width=\(window.frame.width) idiom=phone")
 
