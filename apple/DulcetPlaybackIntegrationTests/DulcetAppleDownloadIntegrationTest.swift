@@ -369,9 +369,15 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             }
         }
         trace.mark("swift-continuation-resumed")
+        // Only on the failure path, and only ever adding to a run that is already failing: ask the
+        // server two questions the browse itself cannot answer. The browse times out after 30s
+        // reporting nothing but "timed out", which does not say whether the server was blocked or
+        // whether that one connection stalled. A raw POSIX connect is a genuinely different
+        // instrument from URLSession -- two probes sharing the same stack would be one probe twice.
+        let diagnosis = seed == nil ? await probeDisposableServer(baseURL: baseURL) : ""
         let source = try XCTUnwrap(
             seed,
-            "the disposable library must expose one downloadable track; \(failure); \(trace.summary)"
+            "the disposable library must expose one downloadable track; \(failure); \(diagnosis); \(trace.summary)"
         )
         XCTAssertTrue(
             trace.observedHTTPCompletion,
@@ -516,4 +522,75 @@ private final class DownloadBrowseTrace: @unchecked Sendable {
         defer { lock.unlock() }
         return events.joined(separator: "; ")
     }
+}
+
+
+/// Two bounded, independent probes of the disposable server, run only when a browse has already
+/// failed. Each is capped so a probe can never extend a job, and neither touches the budget of the
+/// request under test.
+///
+/// Read the result as three cases:
+///   connect fast + ping fast   -> the server is healthy; that one connection stalled
+///   connect fast + ping slow   -> the server accepts but is not answering (blocked)
+///   connect slow or refused    -> nothing is accepting (gone, or the accept backlog is full)
+private func probeDisposableServer(baseURL: String) async -> String {
+    guard let components = URLComponents(string: baseURL),
+          let host = components.host else {
+        return "PROBE unavailable=malformed-base-url"
+    }
+    let port = UInt16(components.port ?? 80)
+    let connect = probeTCPConnect(host: host, port: port, timeout: 5)
+
+    var ping = "ping=skipped"
+    if let url = URL(string: "\(baseURL)/rest/ping.view?v=1.16.1&c=dulcet-probe&f=json") {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 5
+        let session = URLSession(configuration: configuration)
+        let started = ContinuousClock.now
+        do {
+            let (_, response) = try await session.data(from: url)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            ping = "ping=\(status) after=\(started.duration(to: .now))"
+        } catch {
+            ping = "ping=failed(\((error as NSError).code)) after=\(started.duration(to: .now))"
+        }
+        session.invalidateAndCancel()
+    }
+    return "PROBE \(connect) \(ping)"
+}
+
+/// A non-blocking POSIX connect with an explicit deadline. Deliberately not URLSession: the point is
+/// to ask through a different stack than the one that just timed out.
+private func probeTCPConnect(host: String, port: UInt16, timeout: Int32) -> String {
+    let started = ContinuousClock.now
+    let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { return "connect=socket-failed" }
+    defer { close(descriptor) }
+    _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL, 0) | O_NONBLOCK)
+
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = port.bigEndian
+    guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else { return "connect=unresolvable" }
+
+    let outcome = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+            Darwin.connect(descriptor, rebound, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    if outcome == 0 { return "connect=immediate after=\(started.duration(to: .now))" }
+    guard errno == EINPROGRESS else {
+        return "connect=refused(\(errno)) after=\(started.duration(to: .now))"
+    }
+    var descriptors = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+    let ready = poll(&descriptors, 1, timeout * 1000)
+    if ready == 0 { return "connect=timeout(\(timeout)s)" }
+    if ready < 0 { return "connect=poll-failed(\(errno))" }
+    var pending: Int32 = 0
+    var size = socklen_t(MemoryLayout<Int32>.size)
+    getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &size)
+    if pending != 0 { return "connect=error(\(pending)) after=\(started.duration(to: .now))" }
+    return "connect=ok after=\(started.duration(to: .now))"
 }
