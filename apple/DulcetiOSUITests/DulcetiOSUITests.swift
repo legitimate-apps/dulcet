@@ -945,7 +945,6 @@ final class DulcetiOSUITests: XCTestCase {
         return window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) && element.isHittable
     }
 
-    @MainActor
     /// Waits for an element that may not be realized until the list scrolls.
     ///
     /// `waitForExistence` alone is wrong for a row below the fold on a compact layout: the row is
@@ -970,6 +969,7 @@ final class DulcetiOSUITests: XCTestCase {
         return false
     }
 
+    @MainActor
     private func scrollIntoView(
         _ element: XCUIElement,
         in app: XCUIApplication,
