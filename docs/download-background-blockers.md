@@ -78,3 +78,26 @@ blocker requires separate macOS observations of the initiating event and deliver
 The production SwiftUI `.backgroundTask(.urlSession(...))` registration and
 `sessionSendsLaunchEvents = true` are OBSERVED in the supplied brief; registration
 and configuration alone do not establish an OS-delivered event on any platform.
+
+## Local validation of the split (2026-09-07)
+
+OBSERVED command results:
+
+- `python3 tools/test-downloads-macos-review-regressions`:
+  `Apple downloads adversarial-review regression contracts valid`.
+- `python3 tools/verify_promotion_conditions.py`:
+  `partial-feature promotion conditions are resolvable or explicitly blocked`.
+- `GITHUB_BASE_REF=main tools/run-local-gates parity-gate`, using baseline
+  `origin/main (a2474ab2bff8)`: `21 passed, 0 failed, 1 environment fault(s),
+  0 NOT covered`. `python3 tools/parity_gate.py` passed. The sole environment
+  fault was `python3 tools/test-transcode-probe-timeout-diagnostic`
+  (`parity-gate.yml:54`, exit 1). The runner's final output was
+  `LOCAL GATE RESULT: INCOMPLETE OR FAILED`; this is not a COMPLETE PASS claim.
+- A JSON comparison against the parent revision found changes only to the three
+  `downloads.offline` cells, with all statuses still partial and evidence arrays
+  unchanged. `git diff --check` produced no errors.
+
+These commands validate document and regression contracts. They do not trigger
+process death, app relaunch, or background-session delivery and provide no new
+runtime evidence for either blocker. The supplied RunningBoard probe was not
+repeated. No Apple CI step was added.
