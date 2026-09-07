@@ -108,7 +108,11 @@ class AndroidPlaybackControllerTest {
         resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
         onDelivery: (Fixture, RecordedPlaybackEvent) -> Unit = { _, _ -> },
     ) : AutoCloseable {
-        val store = DulcetDatabaseStore.open(createTestDriver())
+        private val context = RuntimeEnvironment.getApplication()
+        private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
+        // JDBC's process-wide DriverManager retains sandbox-loaded drivers, which are invisible
+        // to ordinary host tests. Use the production Android driver in this Android sandbox.
+        val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
         val probe = PlayerProbe()
         val prepared = mutableListOf<RemotePlaybackWirePlan>()
         val controller: AndroidPlaybackController
@@ -124,7 +128,17 @@ class AndroidPlaybackControllerTest {
                 AndroidPlaybackControllerBoundaries(store, probe.player, { prepared += it }, loadSong, resolve,
                     { onDelivery(this, it) }))
         }
-        override fun close() { controller.close() }
+        override fun close() {
+            try {
+                controller.close()
+                assertNull(probe.listener, "Controller shutdown must detach the Media3 listener")
+                controller.close() // Service teardown may close the owner more than once.
+            } finally {
+                store.close()
+                assertTrue(context.deleteDatabase(databaseName), "The fixture database must be deleted")
+                assertFalse(context.getDatabasePath(databaseName).exists())
+            }
+        }
     }
 
     companion object {
