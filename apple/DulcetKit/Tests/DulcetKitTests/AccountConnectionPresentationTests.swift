@@ -523,6 +523,9 @@ func localSearchStartsImmediatelyAndServerReplacesWithoutMovingRows() async {
     await settleSearchTask(until: { server.requests.count == 3 })
     #expect(server.requests.count == 3)
     #expect(server.requests.last?.query == "atlas")
+    server.complete(at: 2, .failed(DulcetSearchFailure(kind: .unreachable)))
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchResults.map(\.title) == ["Local only", "Local shared"])
     store.searchQuery = " "
     #expect(store.snapshot.searchResults.isEmpty)
     #expect(store.snapshot.state == .searchIdle)

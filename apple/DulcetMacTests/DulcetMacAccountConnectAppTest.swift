@@ -50,6 +50,15 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             library.completedSyncGenerations == [1] && store.snapshot.state == .libraryBrowse
         }
         XCTAssertEqual(library.completedSyncGenerations, [1])
+        switch library.searchCommitted(providerInstanceID: "another-account", query: "t") {
+        case let .loaded(page): XCTAssertTrue(page.results.isEmpty)
+        default: XCTFail("An empty account-scoped cache must produce a successful empty result")
+        }
+        let invalidLibrary = DulcetCoreLibraryBrowser(databaseName: "")
+        guard case .failed = invalidLibrary.searchCommitted(providerInstanceID: "fixture", query: "t") else {
+            XCTFail("A failed local read must cross Objective-C as a closed error")
+            return
+        }
 
         // SwiftUI materializes its accessibility nodes only when accessibility is requested.
         // Restore the application-wide flag so this control does not affect sibling tests.

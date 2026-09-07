@@ -1062,7 +1062,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             return
         }
         if searchQuery.trimmedForSearch.count >= 2,
-           !initialServerPageLoaded,
+           (searchResults.isEmpty || !initialServerPageLoaded),
            searchFailure == nil {
             // currentSnapshot.selectedDestination is still the OLD destination here: this method
             // runs before anything has published the move to .search, so pass the destination we
@@ -1123,7 +1123,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let instanceID = providerInstanceID ?? providerInstanceIDFactory()
         providerInstanceID = instanceID
         switch localSearch.searchCommitted(providerInstanceID: instanceID, query: searchQuery.trimmedForSearch) {
-        case let .loaded(page): appendOrReplace(page.results)
+        case let .loaded(page):
+            searchFailure = nil
+            appendOrReplace(page.results)
         case let .failed(failure): searchFailure = failure
         case .cancelled: break
         }

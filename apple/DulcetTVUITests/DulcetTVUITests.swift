@@ -24,7 +24,11 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(selectSection(app, "library"))
         XCTAssertTrue(app.staticTexts["Albums"].firstMatch.waitForExistence(timeout: 90))
-        XCUIRemote.shared.press(.menu)
+        // Reopen the persisted cache. Library-to-bar focus is a separate navigation control;
+        // this proof reaches Search from the ordinary Connection screen after relaunch.
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(selectSection(app, "search"))
         let field = app.textFields["dulcet.search.field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
