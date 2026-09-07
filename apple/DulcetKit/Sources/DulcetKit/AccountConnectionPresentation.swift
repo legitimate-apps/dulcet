@@ -445,6 +445,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var savedServerName: String?
     private var searchQuery = ""
     private var searchResults: [DulcetSearchResult] = []
+    private var initialServerPageLoaded = false
     private var serverResultCounts: [DulcetSearchResultKind: Int] = [:]
     private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
     private var searchLoadingMoreKind: DulcetSearchResultKind?
@@ -1061,7 +1062,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             return
         }
         if searchQuery.trimmedForSearch.count >= 2,
-           searchResults.isEmpty,
+           !initialServerPageLoaded,
            searchFailure == nil {
             // currentSnapshot.selectedDestination is still the OLD destination here: this method
             // runs before anything has published the move to .search, so pass the destination we
@@ -1088,6 +1089,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func updateSearchQuery(_ query: String) {
         searchQuery = query
         searchResults = []
+        initialServerPageLoaded = false
         serverResultCounts = [:]
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
@@ -1140,6 +1142,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
               case .connected = currentSnapshot.accountConnection,
               searchQuery.trimmedForSearch.count >= 2 else { return }
         searchResults = []
+        initialServerPageLoaded = false
         serverResultCounts = [:]
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
@@ -1232,6 +1235,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     appendOrReplace(page.results)
                     setHasMore(page.hasMore(for: kind), for: kind)
                 } else {
+                    initialServerPageLoaded = true
                     appendOrReplace(page.results)
                     searchHasMoreKinds = Set(DulcetSearchResultKind.allCases.filter(page.hasMore))
                 }
@@ -1425,6 +1429,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryAlbums = []
         searchQuery = ""
         searchResults = []
+        initialServerPageLoaded = false
         serverResultCounts = [:]
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil

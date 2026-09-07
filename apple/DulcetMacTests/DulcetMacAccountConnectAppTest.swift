@@ -11,6 +11,109 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    func testLocalCacheSearchFromFirstCharacterThroughHostedAppUI() async throws {
+        let baseURL = try XCTUnwrap(
+            ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
+            "apple-ci must supply the live conformance fixture URL"
+        )
+        let disposable = ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_DISPOSABLE"]
+        guard baseURL == "http://127.0.0.1:4533", disposable == "true" else {
+            XCTFail("Search fixture refused: baseURL=\(baseURL.debugDescription), disposable=\(String(describing: disposable)); expected disposable loopback http://127.0.0.1:4533")
+            throw SearchHostedAppTestError.invalidFixture
+        }
+
+        let library = DulcetCoreLibraryBrowser(databaseName: "local-search-ui-\(UUID().uuidString).db")
+        let playback = SearchIntentPlaybackController()
+        let source = DulcetAccountDataSource(
+            connector: DulcetCoreAccountConnector(),
+            credentialStore: SearchMemoryCredentialStore(),
+            libraryBrowser: library,
+            serverSearch: RejectLocalServerSearch(),
+            playbackController: playback,
+            providerInstanceIDFactory: { "macos-search-ui-fixture" }
+        )
+        let store = DulcetPresentationStore(source: source)
+        store.accountServerURL = baseURL
+        store.accountUsername = fixtureUsername
+        store.accountPassword = fixturePassword
+        store.accountAllowLocalHTTP = true
+        store.submitAccountConnection()
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "Disposable account connected=\(store.snapshot.accountConnected) state=\(store.snapshot.state)"
+        ) {
+            store.snapshot.accountConnected
+        }
+
+        store.selectDestination(.library)
+        try await waitUntil(timeout: .seconds(90), failureMessage: "Committed library sync required") {
+            library.completedSyncGenerations == [1] && store.snapshot.state == .libraryBrowse
+        }
+        XCTAssertEqual(library.completedSyncGenerations, [1])
+
+        // SwiftUI materializes its accessibility nodes only when accessibility is requested.
+        // Restore the application-wide flag so this control does not affect sibling tests.
+        let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
+        NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
+        defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
+        let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        hostingView.layoutSubtreeIfNeeded()
+
+        let searchDestination = try await accessibilityElement(
+            identifiedBy: "dulcet.sidebar.search",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        _ = try selectAccessibilityTableRow(searchDestination, in: window)
+        try await waitUntil(
+            timeout: .seconds(5),
+            failureMessage: "AX selection dulcet.sidebar.search: destination=\(store.selectedDestination), expected search"
+        ) {
+            store.selectedDestination == .search
+        }
+
+        hostingView.layoutSubtreeIfNeeded()
+        let searchFieldElement = try await accessibilityElement(
+            identifiedBy: "dulcet.search.field",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        // Focus the actual AppKit field resolved from the app's accessibility identifier.
+        // Never set its value or call the presentation store's search API.
+        let searchField = try XCTUnwrap(
+            (searchFieldElement as? NSTextField) ?? (searchFieldElement as? NSCell)?.controlView as? NSTextField,
+            "dulcet.search.field must resolve to NSTextField; observed \(type(of: searchFieldElement))"
+        )
+        XCTAssertTrue(window.makeFirstResponder(searchField),
+            "dulcet.search.field rejected focus; responder=\(String(describing: window.firstResponder))")
+        XCTAssertTrue(searchField.currentEditor() === window.firstResponder,
+            "dulcet.search.field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
+        try sendText("t", to: window)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "One-character local results required") {
+            store.searchQuery == "t" && !store.snapshot.searchResults.isEmpty
+        }
+        XCTAssertEqual(searchField.stringValue, "t")
+        XCTAssertEqual(store.snapshot.state, .searchResults)
+        let row = try await accessibilityElement(
+            identifiedBy: "dulcet.search.result.0", in: hostingView, timeout: .seconds(5)
+        )
+        let firstTitle = try XCTUnwrap(store.snapshot.searchResults.first?.title)
+        XCTAssertTrue(accessibilityLabel(row)?.contains(firstTitle) == true)
+        print("DULCET LOCAL UI macOS query=t rows=\(store.snapshot.searchResults.count) first=\(store.snapshot.searchResults.first?.title ?? "missing") server-requests=0")
+    }
+
     func searchQueryRanksAndActivatesTrackThroughHostedAppUI() async throws {
         let baseURL = try XCTUnwrap(
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
@@ -1386,5 +1489,18 @@ private final class SingleFireMonotonicLibraryRefreshScheduler: DulcetLibraryRef
 
 @MainActor
 private final class InertLibraryRefreshOperation: DulcetLibraryRefreshOperation {
+    func cancel() {}
+}
+
+@MainActor
+private final class RejectLocalServerSearch: DulcetServerSearching {
+    func search(_ request: DulcetSearchPageRequest,
+                completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void) -> any DulcetSearchOperation {
+        XCTFail("One-character local search must never call the server")
+        return RejectLocalSearchOperation()
+    }
+}
+@MainActor
+private final class RejectLocalSearchOperation: DulcetSearchOperation {
     func cancel() {}
 }

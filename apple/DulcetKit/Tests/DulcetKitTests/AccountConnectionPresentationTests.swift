@@ -517,10 +517,16 @@ func localSearchStartsImmediatelyAndServerReplacesWithoutMovingRows() async {
     ])))
     #expect(store.snapshot.searchResults.map(\.id.rawID) == ["opaque:local-only", "opaque:shared", "opaque:server-only"])
     print("LOCAL MERGE shared-id=replaced-in-place rows=3 server-offset=2")
+    store.searchQuery = "atlas"
+    store.selectDestination(.nowPlaying)
+    store.selectDestination(.search)
+    await settleSearchTask(until: { server.requests.count == 3 })
+    #expect(server.requests.count == 3)
+    #expect(server.requests.last?.query == "atlas")
     store.searchQuery = " "
     #expect(store.snapshot.searchResults.isEmpty)
     #expect(store.snapshot.state == .searchIdle)
-    #expect(local.queries == ["a", "at"])
+    #expect(local.queries == ["a", "at", "atlas", "atlas"])
 }
 
 @MainActor

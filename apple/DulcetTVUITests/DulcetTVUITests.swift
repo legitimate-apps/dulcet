@@ -4,6 +4,54 @@ final class DulcetTVUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
     private static let sections = ["library", "search", "nowPlaying", "settings"]
 
+    @MainActor
+    func testSimulatorLocalCacheSearchFromFirstCharacter() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"])
+        let environment = ProcessInfo.processInfo.environment
+        let serverURL = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        XCTAssertEqual(serverURL, "http://127.0.0.1:4533")
+        let username = try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"])
+        let password = try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", username,
+            "-dulcet-debug-account-password", password,
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(selectSection(app, "library"))
+        XCTAssertTrue(app.staticTexts["Albums"].firstMatch.waitForExistence(timeout: 90))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(selectSection(app, "search"))
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        for _ in 0..<4 {
+            if field.hasFocus { break }
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(field.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        field.typeText("t")
+        XCTAssertEqual(field.value as? String, "t")
+        let done = app.buttons["done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        for _ in 0..<6 {
+            if done.hasFocus { break }
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(done.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let row = app.buttons["dulcet.search.result.0"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertFalse(row.label.isEmpty)
+        print("DULCET LOCAL UI tvOS query=t first=\(row.label)")
+    }
+
     /// The account is DEBUG setup, because typing credentials raises a system save-password
     /// dialog no app-side query can reach. Everything else -- reaching Search, entering the
     /// query, ranked rendering, remote activation, playback, and the return to Library --
