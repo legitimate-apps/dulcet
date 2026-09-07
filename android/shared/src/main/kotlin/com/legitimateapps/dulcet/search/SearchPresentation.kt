@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -234,15 +235,25 @@ public class SearchDetailActivity : ComponentActivity() {
             finish()
             return
         }
-        setContent { SearchDetailContent(type, title, rawId) }
+        val provider = intent.getStringExtra(SearchDetailIntent.EXTRA_PROVIDER_INSTANCE_ID).orEmpty()
+        setContent { SearchDetailContent(type, title, rawId) {
+            startActivity(com.legitimateapps.dulcet.playback.PlaybackActivity.intent(this, provider, rawId, title))
+        } }
     }
 }
 
 @Composable
-private fun SearchDetailContent(type: SearchResultType, title: String, rawId: String) {
+private fun SearchDetailContent(type: SearchResultType, title: String, rawId: String, play: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(32.dp)) {
         BasicText(type.name)
         BasicText(title)
         BasicText(rawId)
+        if (type == SearchResultType.Track) {
+            androidx.compose.foundation.layout.Box(
+                androidx.compose.ui.Modifier
+                    .then(androidx.compose.ui.Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = play))
+                    .padding(16.dp),
+            ) { BasicText("Play") }
+        }
     }
 }
