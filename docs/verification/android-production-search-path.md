@@ -1,4 +1,6 @@
-# Android production search path — local execution evidence
+# Android production search path — historical d2a5b32 evidence
+
+This report records the original response-cache implementation. That implementation is superseded by committed-library search; see `android-committed-library-search.md` for the replacement and its execution evidence. The original negative controls are retained.
 
 OBSERVED, 2026-09-07: work performed on `feat/android-production-search-path`, based on `b0c6b7d0ee16`. No push, PR, or merge was performed. GitHub CI execution is **not verified**; the workflow changes below have been exercised locally, not on a GitHub runner.
 

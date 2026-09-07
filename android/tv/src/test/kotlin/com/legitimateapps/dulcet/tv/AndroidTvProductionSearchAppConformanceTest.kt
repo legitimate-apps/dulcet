@@ -29,7 +29,11 @@ class AndroidTvProductionSearchAppConformanceTest {
         val app = RuntimeEnvironment.getApplication()
         compose.onNodeWithTag("search.query").performClick()
         compose.onNodeWithTag("search.query").performKeyInput {
-            pressKey(Key.D); pressKey(Key.U); pressKey(Key.L)
+            pressKey(Key.D)
+        }
+        assertSingleCharacterLocalRows()
+        compose.onNodeWithTag("search.query").performKeyInput {
+            pressKey(Key.U); pressKey(Key.L)
             pressKey(Key.C); pressKey(Key.E); pressKey(Key.T)
         }
         compose.waitUntil(timeoutMillis = 15_000) {
@@ -39,7 +43,7 @@ class AndroidTvProductionSearchAppConformanceTest {
         compose.onNodeWithTag("search.result.0").assertTextContains(environment.overlap.title)
         compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
         compose.onNodeWithTag("search.result.2").assertTextContains(environment.serverOnly.title)
-        compose.onAllNodesWithText("Dulcet stale cache").assertCountEquals(0)
+        compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet Health Probe")
         assertNull(shadowOf(app).nextStartedActivity, "Rendering must not activate a result")
         compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithTag("search.result.0").assertIsFocused()
@@ -65,4 +69,14 @@ class AndroidTvProductionSearchAppConformanceTest {
         for (canary in canaries) assertFalse(redacted.contains(canary), "Query canary leaked")
         println("CONF-41 OBSERVED production app query: cached replacement index=0 local-only index=1 server-only index=2 opaque activation unchanged")
     }
+    private fun assertSingleCharacterLocalRows() {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("Dulcet local only", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet")
+        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
+        compose.onNodeWithTag("search.result.2").assertDoesNotExist()
+        println("CONF-41 OBSERVED first-character query returns committed local library rows")
+    }
+
 }

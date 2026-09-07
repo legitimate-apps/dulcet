@@ -3,7 +3,7 @@ package com.legitimateapps.dulcet.core
 import app.cash.sqldelight.db.SqlDriver
 import com.legitimateapps.dulcet.database.DulcetDatabase
 
-internal const val DULCET_SCHEMA_VERSION: Long = 4
+internal const val DULCET_SCHEMA_VERSION: Long = 5
 internal const val DULCET_CACHE_FORMAT_VERSION: Long = 1
 
 internal data class DulcetSchemaMetadata(
@@ -55,12 +55,19 @@ internal class DulcetDatabaseStore private constructor(
                 cache_format_version = DULCET_CACHE_FORMAT_VERSION,
             )
             val store = DulcetDatabaseStore(database, driver)
-            store.reconcileVersions(
-                schemaVersion = DulcetDatabase.Schema.version,
-                cacheFormatVersion = DULCET_CACHE_FORMAT_VERSION,
-            )
-            check(store.metadata().schemaVersion == DulcetDatabase.Schema.version)
-            check(store.metadata().cacheFormatVersion == DULCET_CACHE_FORMAT_VERSION)
+            database.transaction {
+                database.libraryQueries.initializeSearchIndex()
+                if (database.libraryQueries.selectSearchIndexVersion().executeAsOne() < 1) {
+                    backfillSearchIndex(database)
+                    database.libraryQueries.completeSearchIndexBackfill()
+                }
+                store.reconcileVersions(
+                    schemaVersion = DulcetDatabase.Schema.version,
+                    cacheFormatVersion = DULCET_CACHE_FORMAT_VERSION,
+                )
+                check(store.metadata().schemaVersion == DulcetDatabase.Schema.version)
+                check(store.metadata().cacheFormatVersion == DULCET_CACHE_FORMAT_VERSION)
+            }
             return store
         }
     }

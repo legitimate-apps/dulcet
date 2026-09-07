@@ -1,0 +1,16 @@
+-- Values are backfilled transactionally on store open using shared Unicode normalization.
+ALTER TABLE artist ADD COLUMN normalized_name TEXT;
+CREATE INDEX artist_normalized_name_generation ON artist(server_id, normalized_name, valid_from_generation, valid_to_generation);
+ALTER TABLE album ADD COLUMN normalized_title TEXT;
+CREATE INDEX album_normalized_title_generation ON album(server_id, normalized_title, valid_from_generation, valid_to_generation);
+ALTER TABLE track ADD COLUMN normalized_title TEXT;
+CREATE INDEX track_normalized_title_generation ON track(server_id, normalized_title, valid_from_generation, valid_to_generation);
+ALTER TABLE track ADD COLUMN normalized_album_title TEXT;
+CREATE INDEX track_normalized_album_title_generation ON track(server_id, normalized_album_title, valid_from_generation, valid_to_generation);
+ALTER TABLE credit ADD COLUMN normalized_name TEXT;
+CREATE INDEX credit_normalized_name_generation ON credit(server_id, normalized_name, valid_from_generation, valid_to_generation);
+
+CREATE TABLE search_index_meta (
+  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+  normalization_version INTEGER NOT NULL
+);

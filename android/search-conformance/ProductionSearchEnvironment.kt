@@ -60,11 +60,39 @@ class ProductionSearchEnvironment : ExternalResource() {
         serverOnly = result.page.results.first { it.id != overlap.id }
         localOnly = overlap.copy(id = ProviderItemId(account.providerInstanceId,
             "local:opaque/CONF-41:not-an-integer"), title = "Dulcet local only")
-        runBlocking { AndroidSearchCache(app, account.providerInstanceId).store("Dulcet",
-            listOf(overlap.copy(title = "Dulcet stale cache"), localOnly)) }
-        assertEquals(2, runBlocking { AndroidSearchCache(app, account.providerInstanceId).search("Dulcet") }.size)
+        app.deleteDatabase("dulcet.db")
+        val library = AndroidLibraryDatabase(app)
+        val synced = runBlocking { library.synchronize(LibrarySyncRequest(
+            account.providerInstanceId, account.normalizedBaseUrl, account.username, account.password, true)) }
+        check(synced is LibrarySyncResponse.Completed) { "Disposable library sync must commit (response redacted)" }
+        // Seed a minimal stale committed library, not a query-response cache or dependency double.
+        // IDs and metadata originate in the real sync; all writes here are to this test's SQLite file.
+        val database = android.database.sqlite.SQLiteDatabase.openDatabase(
+            app.getDatabasePath("dulcet.db").path, null, android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)
+        try {
+            database.beginTransaction()
+            database.execSQL("DELETE FROM credit")
+            database.execSQL("DELETE FROM artist")
+            database.execSQL("DELETE FROM album")
+            database.execSQL("DELETE FROM track WHERE raw_id != ?", arrayOf(overlap.id.rawId))
+            database.execSQL("UPDATE track SET title = 'Dulcet', normalized_title = 'dulcet', album_title = NULL, normalized_album_title = ''")
+            database.execSQL("""INSERT INTO track(server_id, raw_id, album_raw_id, title, artist_name,
+                artist_raw_id, album_title, disc_number, track_number, duration_milliseconds,
+                source_container, media_source_id, artwork_key, content_key, valid_from_generation,
+                valid_to_generation, normalized_title, normalized_album_title)
+                SELECT server_id, ?, album_raw_id, 'Dulcet local only', NULL, NULL, NULL,
+                    disc_number, track_number, duration_milliseconds, source_container, media_source_id,
+                    artwork_key, 'local-only', valid_from_generation, valid_to_generation,
+                    'dulcet local only', '' FROM track""", arrayOf(localOnly.id.rawId))
+            database.setTransactionSuccessful()
+            database.endTransaction()
+        } finally { database.close() }
+        assertEquals(listOf(overlap.id.rawId, localOnly.id.rawId),
+            runBlocking { library.search(account.providerInstanceId, "Dulcet") }.map { it.id.rawId })
+
     }
     override fun after() {
         AndroidAccountCredentialStore(RuntimeEnvironment.getApplication()).delete()
+        RuntimeEnvironment.getApplication().deleteDatabase("dulcet.db")
     }
 }

@@ -19,6 +19,7 @@
     "resume_position",
     "schema_meta",
     "scrobble_outbox",
+    "search_index_meta",
     "sync_checkpoint",
     "sync_generation",
     "sync_seen",
