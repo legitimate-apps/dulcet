@@ -779,16 +779,12 @@ final class DulcetiOSUITests: XCTestCase {
         let thresholdAlbum = app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "Threshold Boundary")
         ).firstMatch
-        guard thresholdAlbum.waitForExistence(timeout: 30) else {
-            XCTFail("The disposable server must expose the Threshold Boundary album")
-            return
-        }
-        guard scrollIntoView(
-            thresholdAlbum,
-            in: app,
-            probingBlockingSystemAlerts: false
-        ) else {
-            XCTFail("The threshold canary album must be reachable in the library")
+        guard waitForElementScrollingIfNeeded(thresholdAlbum, in: app, timeout: 30) else {
+            XCTFail(
+                "The Threshold Boundary album was not reachable in the iPhone library within 30s,"
+                + " including scrolling. read-play-count already resolved this fixture on this"
+                + " server, so this is a UI reachability failure, not a missing album."
+            )
             return
         }
         thresholdAlbum.tap()
@@ -796,16 +792,11 @@ final class DulcetiOSUITests: XCTestCase {
         let thresholdTrack = app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "UI Playback Canary")
         ).firstMatch
-        guard thresholdTrack.waitForExistence(timeout: 10) else {
-            XCTFail("The disposable server must expose the dedicated eligible UI playback canary")
-            return
-        }
-        guard scrollIntoView(
-            thresholdTrack,
-            in: app,
-            probingBlockingSystemAlerts: false
-        ) else {
-            XCTFail("The scrobble canary track must be reachable")
+        guard waitForElementScrollingIfNeeded(thresholdTrack, in: app, timeout: 30) else {
+            XCTFail(
+                "The UI Playback Canary track was not reachable in the album within 30s,"
+                + " including scrolling"
+            )
             return
         }
         thresholdTrack.tap()
@@ -955,6 +946,30 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
+    /// Waits for an element that may not be realized until the list scrolls.
+    ///
+    /// `waitForExistence` alone is wrong for a row below the fold on a compact layout: the row is
+    /// not in the accessibility tree until something scrolls it into range, so the wait expires
+    /// while the content is present and merely off-screen. Scrolling while waiting distinguishes
+    /// "absent" from "not yet realized"; only the former should fail, and it must not be reported
+    /// as a server-side absence.
+    @MainActor
+    private func waitForElementScrollingIfNeeded(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            // scrollIntoView returns true only once the element is hittable inside the window, so
+            // this cannot report success for a row that exists but sits off-screen -- which is what
+            // a bare waitForExistence would do, leaving the following tap to miss.
+            if scrollIntoView(element, in: app, probingBlockingSystemAlerts: false) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        return false
+    }
+
     private func scrollIntoView(
         _ element: XCUIElement,
         in app: XCUIApplication,
