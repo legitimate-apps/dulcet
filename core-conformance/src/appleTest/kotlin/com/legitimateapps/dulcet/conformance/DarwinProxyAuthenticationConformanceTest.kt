@@ -31,6 +31,7 @@ import platform.Foundation.create
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
 import kotlin.time.TimeSource
 
@@ -91,13 +92,17 @@ class DarwinProxyAuthenticationConformanceTest {
             val observation = observationClient.get(
                 "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
             )
-            mark("proxy wire observation headers received")
-            assertEquals(
-                200,
-                observation.status.value,
-                "Darwin sent ambient proxy credentials below the wire boundary: " +
-                    observation.bodyAsText(),
-            )
+            mark("proxy wire observation response received (buffered)")
+            // Only render closed fields, never a raw observation body on an assertion failure.
+            val body = Json.parseToJsonElement(observation.bodyAsText()).jsonObject
+            mark("proxy wire observation body received")
+            assertEquals(200, observation.status.value, "proxy wire observation rejected")
+            val challengeCount = body["challenge_count"]?.jsonPrimitive?.longOrNull
+            assertTrue(challengeCount != null && challengeCount > 0, "handler never observed a challenge")
+            val authorizationValues = body["proxy_authorization_values"]?.jsonArray
+            assertNotNull(authorizationValues, "handler did not report authorization observations")
+            assertTrue(authorizationValues.isEmpty(), "proxy authorization reached the wire")
+            mark("handler challenge asserted count=$challengeCount; Proxy-Authorization absent")
         } finally {
             mark("cleanup started")
             observationClient.close()
@@ -113,7 +118,11 @@ class DarwinProxyAuthenticationConformanceTest {
         val timeline = mutableListOf<String>()
         try {
             runTest {
-                block { phase -> timeline += "${started.elapsedNow()}: $phase" }
+                block { phase ->
+                    val entry = "${started.elapsedNow()}: $phase"
+                    timeline += entry
+                    println("PROXY AUTH TEST $entry")
+                }
             }
         } catch (failure: Throwable) {
             throw AssertionError(
@@ -137,7 +146,7 @@ class DarwinProxyAuthenticationConformanceTest {
                     when {
                         response.status.value == 409 && body["error"]?.jsonPrimitive?.content ==
                             "proxy authentication challenge was not reached" ->
-                            "challenge_count=0; client never reached proxy; Proxy-Authorization absent"
+                            "challenge_count=0; proxy handler did not record a challenge; Proxy-Authorization absent"
                         response.status.value == 409 && body["error"]?.jsonPrimitive?.content ==
                             "proxy authorization reached the wire" ->
                             "Proxy-Authorization reached the wire; challenge_count unavailable"

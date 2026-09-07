@@ -110,24 +110,27 @@ internal class LibraryBrowser private constructor(
     private val transportFactory: (LibraryBrowseRequest) -> LibraryEndpointTransport,
     private val albumPageSize: Int,
     private val albumConcurrency: Int,
+    private val diagnostics: LibraryBrowseDiagnostics?,
 ) {
     constructor(
         saltSource: SaltSource? = null,
         logSink: LogSink? = null,
         hostResolver: HostResolver = systemHostResolver(),
+        diagnostics: LibraryBrowseDiagnostics? = null,
     ) : this(
         transportFactory = { request ->
-            KtorLibraryEndpointTransport(request, saltSource, logSink, hostResolver)
+            KtorLibraryEndpointTransport(request, saltSource, logSink, hostResolver, diagnostics)
         },
         albumPageSize = DEFAULT_ALBUM_PAGE_SIZE,
         albumConcurrency = DEFAULT_ALBUM_CONCURRENCY,
+        diagnostics = diagnostics,
     )
 
     internal constructor(
         transport: LibraryEndpointTransport,
         albumPageSize: Int = DEFAULT_ALBUM_PAGE_SIZE,
         albumConcurrency: Int = DEFAULT_ALBUM_CONCURRENCY,
-    ) : this({ transport }, albumPageSize, albumConcurrency)
+    ) : this({ transport }, albumPageSize, albumConcurrency, null)
 
     init {
         require(albumPageSize > 0)
@@ -135,16 +138,20 @@ internal class LibraryBrowser private constructor(
     }
 
     suspend fun browse(request: LibraryBrowseRequest): LibraryBrowseResult {
+        diagnostics?.mark("transport-creation-started")
         val transport = transportFactory(request)
+        diagnostics?.mark("transport-creation-completed")
         return try {
             val folders = parseMusicFolders(
                 request.providerInstanceId,
                 transport.checkedRequest("getMusicFolders"),
             )
+            diagnostics?.mark("music-folders-parsed")
             val artists = parseArtists(
                 request.providerInstanceId,
                 transport.checkedRequest("getArtists"),
             )
+            diagnostics?.mark("artists-parsed")
             val albumSummaries = mutableListOf<AlbumSummary>()
             val seenAlbumIds = mutableSetOf<String>()
             var offset = 0
@@ -160,6 +167,7 @@ internal class LibraryBrowser private constructor(
                         ),
                     ),
                 )
+                diagnostics?.mark("album-page-parsed")
                 page.forEach { album ->
                     if (seenAlbumIds.add(album.id.rawId)) albumSummaries += album
                 }
@@ -187,6 +195,7 @@ internal class LibraryBrowser private constructor(
                     )
                 }
             }
+            diagnostics?.mark("albums-parsed")
             LibraryBrowseResult.Loaded(LibraryBrowseSnapshot(folders, artists, albums))
         } catch (_: CancellationException) {
             LibraryBrowseResult.Failed(DomainError.Transport.Cancelled)
@@ -197,7 +206,9 @@ internal class LibraryBrowser private constructor(
         } catch (failure: Throwable) {
             LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure))
         } finally {
+            diagnostics?.mark("transport-close-started")
             (transport as? AutoCloseableLibraryTransport)?.close()
+            diagnostics?.mark("transport-close-returned")
         }
     }
 
@@ -216,6 +227,7 @@ internal class KtorLibraryEndpointTransport(
     saltSource: SaltSource?,
     logSink: LogSink?,
     hostResolver: HostResolver,
+    diagnostics: LibraryBrowseDiagnostics? = null,
 ) : LibraryEndpointTransport, AutoCloseableLibraryTransport {
     private val client = AuthenticatedEndpointClient(
         credentials = request.endpointCredentials(),
@@ -223,6 +235,7 @@ internal class KtorLibraryEndpointTransport(
         saltSource = saltSource,
         logSink = logSink,
         hostResolver = hostResolver,
+        diagnostics = diagnostics,
     )
 
     override suspend fun request(

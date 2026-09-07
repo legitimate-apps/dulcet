@@ -323,7 +323,12 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     }
 
     private func loadLiveTrack(baseURL: String) async throws -> DulcetTrack {
-        let client = AppleLibraryBrowseClient()
+        let trace = DownloadBrowseTrace()
+        trace.mark("swift-start")
+        let client = AppleLibraryBrowseClient(diagnosticObserver: { phase in
+            trace.mark(phase)
+        })
+        defer { trace.mark("swift-load-track-exited") }
         let (seed, failure): (LiveDownloadTrackSeed?, String) = await withCheckedContinuation { continuation in
             _ = client.startBrowse(request: AppleLibraryBrowseRequest(
                 providerInstanceId: providerInstanceID,
@@ -332,6 +337,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 password: fixturePassword,
                 allowLocalHttp: true
             )) { outcome in
+                trace.mark("swift-completion-entered")
                 if let error = outcome.error {
                     continuation.resume(returning: (nil, "library browse failed: kind=\(error.kind)"))
                     return
@@ -362,9 +368,14 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 ), ""))
             }
         }
+        trace.mark("swift-continuation-resumed")
         let source = try XCTUnwrap(
             seed,
-            "the disposable library must expose one downloadable track; \(failure)"
+            "the disposable library must expose one downloadable track; \(failure); \(trace.summary)"
+        )
+        XCTAssertTrue(
+            trace.observedHTTPCompletion,
+            "the real browse must emit both header and body phase evidence; \(trace.summary)"
         )
         let container = try XCTUnwrap(
             source.sourceContainer.flatMap(downloadContainer),
@@ -470,5 +481,39 @@ private struct DownloadIntegrationContext {
     func tearDown() {
         controller.disconnect()
         try? FileManager.default.removeItem(at: downloadRoot)
+    }
+}
+
+// Callbacks can originate in the HTTP engine. Keep both live output and failure attachment safe
+// across threads; bounded storage preserves the tail of a large library walk without extra I/O.
+private final class DownloadBrowseTrace: @unchecked Sendable {
+    private let lock = NSLock()
+    private let started = ContinuousClock.now
+    private var events: [String] = []
+    private var sawHeaders = false
+    private var sawBody = false
+
+    func mark(_ phase: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let line = "LIBRARY BROWSE elapsed=\(started.duration(to: .now)) \(phase)"
+        events.append(line)
+        sawHeaders = sawHeaders || phase.hasSuffix("headers-received")
+        sawBody = sawBody || phase.contains("body-completed hop=")
+        if events.count > 128 { events.removeFirst() }
+        // Write immediately: a killed runner may never produce an XCTest failure attachment.
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    var observedHTTPCompletion: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return sawHeaders && sawBody
+    }
+
+    var summary: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return events.joined(separator: "; ")
     }
 }
