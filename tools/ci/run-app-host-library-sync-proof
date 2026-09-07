@@ -13,20 +13,32 @@
 # server's lifetime is that step's shell.
 #
 # Usage:
-#   run-app-host-library-sync-proof <ipad-simulator-udid>
+#   run-app-host-library-sync-proof macos
+#   run-app-host-library-sync-proof simulators <ipad-simulator-udid>
 #
-# Runs all three destinations. The caller passes only the iPad udid because that is the one value
-# the workflow resolves at run time; everything else is fixed and belongs here, not in the YAML.
+# Two modes rather than one entry point, so each invocation keeps its ORIGINAL POSITION in the
+# calling step's sequence. That step interleaves other work between them -- `defaults write
+# NSGlobalDomain AppleKeyboardUIMode`, further macOS proofs, cold server restarts -- and a step's
+# position is part of its contract. Collapsing these into one call would silently reorder them.
 
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-    echo "run-app-host-library-sync-proof: expected the iPad simulator udid, got $# argument(s)" >&2
-    exit 2
-fi
-
-ipad_udid="$1"
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
+mode="${1:-}"
+case "$mode" in
+    macos)
+        [ "$#" -eq 1 ] || { echo "run-app-host-library-sync-proof macos: takes no further arguments" >&2; exit 2; }
+        ;;
+    simulators)
+        [ "$#" -eq 2 ] || { echo "run-app-host-library-sync-proof simulators: needs the iPad udid" >&2; exit 2; }
+        ipad_udid="$2"
+        ;;
+    *)
+        echo "run-app-host-library-sync-proof: mode must be 'macos' or 'simulators', got '${mode}'" >&2
+        exit 2
+        ;;
+esac
 
 # Each call spells its JUnit directory out in full rather than deriving it from the slug. That is
 # deliberate: tools/verify_ci_policy.py greps for `$RUNNER_TEMP/<name>-junit/` to prove every
@@ -78,6 +90,47 @@ proof() {
         "$junit" \
         "$target"
 }
+
+# macOS is the same proof on a different launch mechanism: a host test target built into a scheme
+# rather than a simulator .xctestrun, so it takes -project/-scheme and build settings instead. It is
+# in this script for the same reason as the other three -- the step it runs in is at GitHub's
+# workflow size ceiling -- and it moved here byte-for-byte, keeping its own result bundle, its own
+# execution guard and its own JUnit directory. A macOS host test does not inherit xcodebuild's
+# environment, which is why the contract is passed BOTH as shell environment and as build settings.
+macos_proof() {
+    DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+        DULCET_CONFORMANCE_DISPOSABLE=true \
+        xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetMac \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-mac-library-sync-test.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_ENTITLEMENTS= \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_TEST_CONFORMANCE_DISPOSABLE=true 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-library-sync-test.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-library-sync-test.xcresult" \
+        DulcetMacTests.DulcetMacAccountConnectAppTest \
+        librarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOffline
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-library-sync-test.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
+        DulcetMacAccountConnectAppTest
+}
+
+if [ "$mode" = macos ]; then
+    macos_proof
+    exit 0
+fi
 
 proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" 'DulcetiOS_*.xctestrun' \
     DulcetKeychainIOSTests 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
