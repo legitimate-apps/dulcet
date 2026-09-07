@@ -23,8 +23,17 @@ or type error is not buried under hundreds of spurious ones. If a future toolcha
 for real, the shim collides and this tool fails loudly with an ambiguity error -- delete the
 shimmed declaration then; it never degrades into a pass.
 
+A second pass scans EVERY Swift source in ``apple/`` -- the directories the type-check cannot
+reach included -- for more than one ``@MainActor`` attached to a single declaration. Swift rejects
+that with "multiple global actor attributes", and it happens when a new declaration is inserted
+immediately above an existing one and lands between it and its attribute. A doc comment sits
+between the two attributes in that shape, so a scan for adjacent duplicate lines does not see it
+and must not be used instead; this pass treats doc comments and blank lines as part of the
+attachment. It reads only the bare ``@MainActor`` line form and claims nothing about any other
+attribute.
+
     tools/typecheck-xcuitest-sources              # check
-    tools/typecheck-xcuitest-sources --self-test  # prove the check fires, then check
+    tools/typecheck-xcuitest-sources --self-test  # prove both checks fire, then check
 """
 from __future__ import annotations
 
@@ -182,6 +191,44 @@ def errors(output: str) -> list[str]:
     return [line for line in output.splitlines() if re.search(r"\berror: ", line)]
 
 
+ATTRIBUTE = re.compile(r"^\s*@MainActor\s*$")
+DOC_OR_BLANK = re.compile(r"^\s*(///.*)?$")
+DECLARATION = re.compile(r"\b(func|var|let|class|struct|enum|init|subscript)\b")
+
+
+def duplicate_actor_attributes(text: str) -> list[tuple[int, int, str]]:
+    """Report declarations carrying more than one bare ``@MainActor``.
+
+    Doc comments and blank lines do not break the attachment -- that is the whole point, since
+    the observed failure had a doc comment between the two attributes. Anything else does.
+    """
+    found: list[tuple[int, int, str]] = []
+    attributes = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        if ATTRIBUTE.match(line):
+            attributes += 1
+            continue
+        if DOC_OR_BLANK.match(line):
+            continue
+        if DECLARATION.search(line):
+            if attributes > 1:
+                found.append((number, attributes, line.strip()))
+            attributes = 0
+            continue
+        attributes = 0
+    return found
+
+
+def scan_all_swift() -> list[str]:
+    problems: list[str] = []
+    for source in sorted(APPLE.rglob("*.swift")):
+        for number, count, declaration in duplicate_actor_attributes(source.read_text()):
+            problems.append(
+                f"{source.relative_to(REPO)}:{number}: {count} @MainActor attributes on {declaration}"
+            )
+    return problems
+
+
 def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
     known = platforms()
     covered: list[tuple[str, Platform, list[Path]]] = []
@@ -210,6 +257,40 @@ def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
             continue
         covered.append((directory.name, known[directory.name], sources))
     return covered, uncovered
+
+
+SCAN_SELF_TEST_BAD = """final class Example {
+    @MainActor
+    /// A doc comment sits between the two attributes, which is why an adjacent-line scan
+    /// cannot see this shape and must not be used instead.
+    @MainActor
+    private func displaced() {}
+}
+"""
+SCAN_SELF_TEST_GOOD = """final class Example {
+    @MainActor
+    /// One attribute and a doc comment is the ordinary shape and must not be reported.
+    private func ordinary() {}
+}
+"""
+
+
+def scan_self_test() -> int:
+    """Prove the scan reports the observed shape and does not report the ordinary one."""
+    faults = 0
+    bad = duplicate_actor_attributes(SCAN_SELF_TEST_BAD)
+    if len(bad) != 1:
+        print("  SELF-TEST FAULT scan: the doc-comment-separated duplicate was NOT reported")
+        faults += 1
+    else:
+        print("  SELF-TEST OK    scan: doc-comment-separated duplicate reported")
+    good = duplicate_actor_attributes(SCAN_SELF_TEST_GOOD)
+    if good:
+        print(f"  SELF-TEST FAULT scan: the ordinary single-attribute shape was reported {good}")
+        faults += 1
+    else:
+        print("  SELF-TEST OK    scan: ordinary single-attribute shape not reported")
+    return faults
 
 
 def self_test(covered, language: str) -> int:
@@ -257,7 +338,14 @@ def main() -> int:
     faults = 0
     if "--self-test" in arguments:
         print("\n=== self-test: the check must report a known-bad mutation ===")
-        faults = self_test(covered, language)
+        faults = self_test(covered, language) + scan_self_test()
+
+    print("\n=== duplicate @MainActor scan: every Swift source under apple/ ===")
+    duplicates = scan_all_swift()
+    for problem in duplicates:
+        print(f"  FAIL         {problem}")
+    if not duplicates:
+        print(f"  PASS         {len(list(APPLE.rglob('*.swift')))} source(s), no declaration carries two")
 
     print(f"\n=== type-check: {len(covered)} covered directory(ies) ===")
     failures: list[str] = []
@@ -278,7 +366,10 @@ def main() -> int:
             print(f"  {reason}")
 
     if faults:
-        print(f"\nSELF-TEST FAILED: {faults} directory(ies) could not prove the check fires")
+        print(f"\nSELF-TEST FAILED: {faults} check(s) could not prove they fire")
+        return 1
+    if duplicates:
+        print(f"\nDUPLICATE ATTRIBUTE SCAN FAILED: {len(duplicates)} declaration(s)")
         return 1
     if failures:
         print("\nTYPE-CHECK FAILED: " + ", ".join(failures))
