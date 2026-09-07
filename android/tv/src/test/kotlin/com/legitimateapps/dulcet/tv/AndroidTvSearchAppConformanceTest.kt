@@ -86,7 +86,7 @@ class AndroidTvSearchTestApplication : Application(), SearchHostDependencyOwner 
     override val searchHostDependencies: SearchHostDependencies = object : SearchHostDependencies {
         override fun loadAccount(context: Context): SearchAccount = account
 
-        override fun createPresenter(account: SearchAccount): SearchPresenter = SearchPresenter(
+        override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter = SearchPresenter(
             account = account,
             dataSource = TvRankedMergedFixtureSearchDataSource(),
             serverDebounce = Duration.ZERO,

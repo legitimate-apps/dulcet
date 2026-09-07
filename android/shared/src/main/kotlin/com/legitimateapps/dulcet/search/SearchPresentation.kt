@@ -193,7 +193,7 @@ public class SearchIntentRouter(private val context: Context) {
 
 public interface SearchHostDependencies {
     public fun loadAccount(context: Context): SearchAccount?
-    public fun createPresenter(account: SearchAccount): SearchPresenter
+    public fun createPresenter(account: SearchAccount, context: Context): SearchPresenter
     public fun createRouter(context: Context): SearchIntentRouter
 }
 
@@ -213,7 +213,8 @@ public object ProductionSearchHostDependencies : SearchHostDependencies {
             )
         }
 
-    override fun createPresenter(account: SearchAccount): SearchPresenter = SearchPresenter(account)
+    override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter =
+        SearchPresenter(account, CoreSearchDataSource(AndroidLibrarySearchSource(context, account.providerInstanceId)))
 
     override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
 }

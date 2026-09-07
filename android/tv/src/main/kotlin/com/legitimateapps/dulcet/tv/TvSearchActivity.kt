@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -72,7 +73,7 @@ class TvSearchActivity : ComponentActivity() {
 @Composable
 private fun TvSearchRoute(account: SearchAccount, dependencies: SearchHostDependencies) {
     val context = LocalContext.current
-    val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account) }
+    val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account, context) }
     val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)

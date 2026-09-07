@@ -303,7 +303,7 @@ private fun parseResults(
     )
 }
 
-private fun rankResults(query: String, results: List<SearchResultItem>): List<SearchResultItem> {
+internal fun rankResults(query: String, results: List<SearchResultItem>): List<SearchResultItem> {
     val normalizedQuery = normalizeSearchText(query)
     return results.withIndex().sortedWith(
         compareBy<IndexedValue<SearchResultItem>>(

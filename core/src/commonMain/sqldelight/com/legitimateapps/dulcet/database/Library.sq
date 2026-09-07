@@ -20,6 +20,7 @@ CREATE TABLE artist (
   valid_to_generation INTEGER CHECK (
     valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
   ),
+  normalized_name TEXT,
   PRIMARY KEY (server_id, raw_id, valid_from_generation)
 );
 
@@ -38,6 +39,7 @@ CREATE TABLE album (
   valid_to_generation INTEGER CHECK (
     valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
   ),
+  normalized_title TEXT,
   PRIMARY KEY (server_id, raw_id, valid_from_generation)
 );
 
@@ -60,6 +62,8 @@ CREATE TABLE track (
   valid_to_generation INTEGER CHECK (
     valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
   ),
+  normalized_title TEXT,
+  normalized_album_title TEXT,
   PRIMARY KEY (server_id, raw_id, valid_from_generation)
 );
 
@@ -77,6 +81,7 @@ CREATE TABLE credit (
   valid_to_generation INTEGER CHECK (
     valid_to_generation IS NULL OR valid_to_generation > valid_from_generation
   ),
+  normalized_name TEXT,
   PRIMARY KEY (server_id, seen_key, valid_from_generation)
 );
 
@@ -234,8 +239,8 @@ WHERE server_id = :server_id AND raw_id = :raw_id
   AND content_key != :content_key;
 
 insertArtistIfAbsent:
-INSERT INTO artist(server_id, raw_id, name, media_source_id, content_key, valid_from_generation, valid_to_generation)
-SELECT :server_id, :raw_id, :name, :media_source_id, :content_key, :generation, NULL
+INSERT INTO artist(server_id, raw_id, name, media_source_id, content_key, valid_from_generation, valid_to_generation, normalized_name)
+SELECT :server_id, :raw_id, :name, :media_source_id, :content_key, :generation, NULL, :normalized_name
 WHERE NOT EXISTS (
   SELECT 1 FROM artist
   WHERE server_id = :server_id AND raw_id = :raw_id
@@ -252,10 +257,10 @@ WHERE server_id = :server_id AND raw_id = :raw_id
 insertAlbumIfAbsent:
 INSERT INTO album(
   server_id, raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds,
-  media_source_id, artwork_key, content_key, valid_from_generation, valid_to_generation
+  media_source_id, artwork_key, content_key, valid_from_generation, valid_to_generation, normalized_title
 )
 SELECT :server_id, :raw_id, :title, :artist_name, :artist_raw_id, :year,
-  :duration_milliseconds, :media_source_id, :artwork_key, :content_key, :generation, NULL
+  :duration_milliseconds, :media_source_id, :artwork_key, :content_key, :generation, NULL, :normalized_title
 WHERE NOT EXISTS (
   SELECT 1 FROM album
   WHERE server_id = :server_id AND raw_id = :raw_id
@@ -273,11 +278,11 @@ insertTrackIfAbsent:
 INSERT INTO track(
   server_id, raw_id, album_raw_id, title, artist_name, artist_raw_id, album_title,
   disc_number, track_number, duration_milliseconds, source_container, media_source_id,
-  artwork_key, content_key, valid_from_generation, valid_to_generation
+  artwork_key, content_key, valid_from_generation, valid_to_generation, normalized_title, normalized_album_title
 )
 SELECT :server_id, :raw_id, :album_raw_id, :title, :artist_name, :artist_raw_id,
   :album_title, :disc_number, :track_number, :duration_milliseconds, :source_container,
-  :media_source_id, :artwork_key, :content_key, :generation, NULL
+  :media_source_id, :artwork_key, :content_key, :generation, NULL, :normalized_title, :normalized_album_title
 WHERE NOT EXISTS (
   SELECT 1 FROM track
   WHERE server_id = :server_id AND raw_id = :raw_id
@@ -294,10 +299,10 @@ WHERE server_id = :server_id AND seen_key = :seen_key
 insertCreditIfAbsent:
 INSERT INTO credit(
   server_id, seen_key, owner_kind, owner_raw_id, role, ordinal, name, artist_raw_id,
-  content_key, valid_from_generation, valid_to_generation
+  content_key, valid_from_generation, valid_to_generation, normalized_name
 )
 SELECT :server_id, :seen_key, :owner_kind, :owner_raw_id, :role, :ordinal, :name,
-  :artist_raw_id, :content_key, :generation, NULL
+  :artist_raw_id, :content_key, :generation, NULL, :normalized_name
 WHERE NOT EXISTS (
   SELECT 1 FROM credit
   WHERE server_id = :server_id AND seen_key = :seen_key
@@ -735,3 +740,107 @@ DELETE FROM genre WHERE valid_to_generation IS NOT NULL AND valid_to_generation 
 
 deleteDeletionReconciliationsForGeneration:
 DELETE FROM deletion_reconciliation WHERE server_id = ? AND generation = ?;
+
+CREATE INDEX artist_normalized_name_generation ON artist(server_id, normalized_name, valid_from_generation, valid_to_generation);
+
+selectArtistSearchBackfill:
+SELECT server_id, raw_id, valid_from_generation, name FROM artist
+WHERE normalized_name IS NULL;
+
+updateArtistSearchIndex:
+UPDATE artist SET normalized_name = :normalized_name
+WHERE server_id = :server_id AND raw_id = :raw_id AND valid_from_generation = :generation;
+
+CREATE INDEX album_normalized_title_generation ON album(server_id, normalized_title, valid_from_generation, valid_to_generation);
+
+selectAlbumSearchBackfill:
+SELECT server_id, raw_id, valid_from_generation, title FROM album
+WHERE normalized_title IS NULL;
+
+updateAlbumSearchIndex:
+UPDATE album SET normalized_title = :normalized_title
+WHERE server_id = :server_id AND raw_id = :raw_id AND valid_from_generation = :generation;
+
+CREATE INDEX track_normalized_title_generation ON track(server_id, normalized_title, valid_from_generation, valid_to_generation);
+
+CREATE INDEX track_normalized_album_title_generation ON track(server_id, normalized_album_title, valid_from_generation, valid_to_generation);
+
+selectTrackSearchBackfill:
+SELECT server_id, raw_id, valid_from_generation, title, album_title FROM track
+WHERE normalized_title IS NULL OR normalized_album_title IS NULL;
+
+updateTrackSearchIndex:
+UPDATE track SET normalized_title = :normalized_title, normalized_album_title = :normalized_album_title
+WHERE server_id = :server_id AND raw_id = :raw_id AND valid_from_generation = :generation;
+
+CREATE INDEX credit_normalized_name_generation ON credit(server_id, normalized_name, valid_from_generation, valid_to_generation);
+
+selectCreditSearchBackfill:
+SELECT server_id, seen_key, valid_from_generation, name FROM credit
+WHERE normalized_name IS NULL;
+
+updateCreditSearchIndex:
+UPDATE credit SET normalized_name = :normalized_name
+WHERE server_id = :server_id AND seen_key = :seen_key AND valid_from_generation = :generation;
+
+searchArtistsAtGeneration:
+SELECT raw_id, name, media_source_id FROM artist
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+  AND (instr(normalized_name, :query) > 0)
+ORDER BY name COLLATE NOCASE, raw_id;
+
+searchAlbumsAtGeneration:
+SELECT raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds,
+  media_source_id, artwork_key
+FROM album
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+  AND (instr(normalized_title, :query) > 0 OR EXISTS (
+    SELECT 1 FROM credit WHERE credit.server_id = album.server_id
+      AND credit.owner_kind = 'album' AND credit.owner_raw_id = album.raw_id
+      AND credit.valid_from_generation <= :generation
+      AND (credit.valid_to_generation IS NULL OR :generation < credit.valid_to_generation)
+      AND instr(credit.normalized_name, :query) > 0
+  ))
+ORDER BY title COLLATE NOCASE, raw_id;
+
+searchTracksAtGeneration:
+SELECT raw_id, album_raw_id, title, artist_name, artist_raw_id, album_title,
+  disc_number, track_number, duration_milliseconds, source_container, media_source_id,
+  artwork_key
+FROM track
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+  AND (instr(normalized_title, :query) > 0 OR instr(normalized_album_title, :query) > 0 OR EXISTS (
+    SELECT 1 FROM credit WHERE credit.server_id = track.server_id
+      AND credit.owner_kind = 'track' AND credit.owner_raw_id = track.raw_id
+      AND credit.valid_from_generation <= :generation
+      AND (credit.valid_to_generation IS NULL OR :generation < credit.valid_to_generation)
+      AND instr(credit.normalized_name, :query) > 0
+  ))
+ORDER BY album_title COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE, raw_id;
+
+selectSearchCredits:
+SELECT role, name, artist_raw_id FROM credit
+WHERE server_id = :server_id AND owner_kind = :owner_kind AND owner_raw_id = :raw_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+ORDER BY ordinal;
+
+CREATE TABLE search_index_meta (
+  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+  normalization_version INTEGER NOT NULL
+);
+
+initializeSearchIndex:
+INSERT OR IGNORE INTO search_index_meta VALUES (1, 0);
+
+selectSearchIndexVersion:
+SELECT normalization_version FROM search_index_meta WHERE singleton_id = 1;
+
+completeSearchIndexBackfill:
+UPDATE search_index_meta SET normalization_version = 1 WHERE singleton_id = 1;

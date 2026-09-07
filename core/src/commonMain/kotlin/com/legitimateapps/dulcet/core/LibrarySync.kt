@@ -518,6 +518,7 @@ internal class LibrarySyncRepository(
             queries.closeArtistIfChanged(generation, serverId, value.id.rawId, key)
             queries.insertArtistIfAbsent(
                 serverId, value.id.rawId, value.name, value.mediaSourceId, key, generation,
+                normalizeSearchText(value.name),
             )
             queries.markSeen(serverId, generation, LibrarySyncStage.Artists.wireName, value.id.rawId)
         }
@@ -543,6 +544,7 @@ internal class LibrarySyncRepository(
             queries.insertAlbumIfAbsent(
                 serverId, value.id.rawId, value.title, credit?.name, credit?.id?.rawId,
                 value.year?.toLong(), duration, value.mediaSourceId, value.artworkKey, key, generation,
+                normalizeSearchText(value.title),
             )
             queries.markSeen(serverId, generation, LibrarySyncStage.Albums.wireName, value.id.rawId)
             putCredits(serverId, generation, "album", value.id.rawId, value.credits)
@@ -583,6 +585,7 @@ internal class LibrarySyncRepository(
                     credit?.id?.rawId, value.albumTitle, value.discNumber?.toLong(),
                     value.trackNumber?.toLong(), duration, container, value.mediaSourceId,
                     value.artworkKey, key, generation,
+                    normalizeSearchText(value.title), normalizeSearchText(value.albumTitle.orEmpty()),
                 )
                 queries.markSeen(serverId, generation, LibrarySyncStage.Tracks.wireName, value.id.rawId)
                 putCredits(serverId, generation, "track", value.id.rawId, value.credits)
@@ -602,7 +605,7 @@ internal class LibrarySyncRepository(
             queries.closeCreditIfChanged(generation, serverId, seenKey, key)
             queries.insertCreditIfAbsent(
                 serverId, seenKey, ownerKind, ownerRawId, credit.role.wireName(), index.toLong(),
-                credit.name, credit.id?.rawId, key, generation,
+                credit.name, credit.id?.rawId, key, generation, normalizeSearchText(credit.name),
             )
             queries.markSeen(serverId, generation, "$ownerKind:credit", seenKey)
         }
@@ -943,7 +946,7 @@ private fun AudioContainer.wireName(): String = when (this) {
     AudioContainer.AdtsAac -> "adts_aac"
 }
 
-private fun audioContainerFromWireName(value: String): AudioContainer = when (value) {
+internal fun audioContainerFromWireName(value: String): AudioContainer = when (value) {
     "mp3" -> AudioContainer.Mp3
     "mp4" -> AudioContainer.Mp4
     "wav" -> AudioContainer.Wav
