@@ -30,10 +30,12 @@ class PlaybackActivity : Activity() {
     private lateinit var pause: Button
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            val controller = (binder as PlaybackService.LocalBinder).service.playback
+            val service = (binder as PlaybackService.LocalBinder).service
+            val controller = service.playback
             playback = controller
-            if (controller == null) { status.text = "Connect an account before playing."; return }
+            if (controller == null) { status.text = service.unavailableReason; return }
             play.isEnabled = true; pause.isEnabled = true
+            pause.requestFocus()
             observation = scope.launch { controller.state.collect(::render) }
             if (!submitted) {
                 submitted = true
@@ -107,7 +109,12 @@ class PlaybackActivity : Activity() {
     private fun render(state: AndroidPlaybackState) {
         title.text = state.title
         progress.text = "${state.positionMilliseconds / 1000} / ${state.durationMilliseconds?.div(1000) ?: "—"} seconds"
-        status.text = if (state.error != null) "Playback failed. Check your connection and select the song again." else state.phase
+        status.text = if (state.error != null) "Playback failed. Check your connection and select the song again." else when (state.phase) {
+            "Created", "Preparing", "Buffering" -> "Loading…"
+            "Progressing" -> "Playing"
+            "Ready", "Paused" -> "Paused"
+            else -> "Stopped"
+        }
     }
 
     companion object {

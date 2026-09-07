@@ -4,7 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -245,7 +244,7 @@ internal class AndroidMedia3Engine(
 internal fun sanitizeAndroidPlaybackFailure(error: PlaybackException): DomainError {
     var cause: Throwable? = error
     repeat(12) {
-        if (cause is AndroidPlaybackIOException) return (cause as AndroidPlaybackIOException).error
+        if (cause is AndroidPlaybackIOException) return cause.error
         cause = cause?.cause
     }
     return when (error.errorCode) {

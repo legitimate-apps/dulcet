@@ -41,6 +41,7 @@ internal class AndroidPlaybackDataSourceFactory(
         private var prefixOffset = 0
         private var remaining = C.LENGTH_UNSET.toLong()
         private var exactRemaining: Long? = null
+        private var started = false
 
         override fun open(dataSpec: DataSpec): Long = closed {
             check(response == null)
@@ -57,8 +58,16 @@ internal class AndroidPlaybackDataSourceFactory(
             // bounded; unsupported enormous metadata fails closed before any bytes escape.
             var validated = false
             while (buffer.size() < MAX_PREFIX && !validated) {
-                val count = loaded.input.read(scratch, 0, minOf(scratch.size, MAX_PREFIX - buffer.size()))
-                if (count > 0) buffer.write(scratch, 0, count)
+                // InputStream may return a short read at any byte boundary, including inside RIFF.
+                // Accumulate a prefix before classifying it; a socket read is not a payload boundary.
+                var count = 0
+                val target = minOf(buffer.size() + scratch.size, MAX_PREFIX)
+                while (buffer.size() < target) {
+                    count = loaded.input.read(scratch, 0, minOf(scratch.size, target - buffer.size()))
+                    if (count < 0) break
+                    if (count == 0) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+                    buffer.write(scratch, 0, count)
+                }
                 prefix = buffer.toByteArray()
                 val needsSignature = dataSpec.position == 0L
                 if (!needsSignature && !signatureValidated)
@@ -78,14 +87,16 @@ internal class AndroidPlaybackDataSourceFactory(
             if (!validated) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             val total = validateRange(loaded, dataSpec.position, dataSpec.length)
             if (dataSpec.position == 0L) signatureValidated = true
-            remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) dataSpec.length
+            remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong())
+                minOf(dataSpec.length, total?.minus(dataSpec.position) ?: dataSpec.length)
                 else total?.minus(dataSpec.position) ?: C.LENGTH_UNSET.toLong()
             exactRemaining = if (loaded.headers.contentLength is PlaybackContentLength.Exact)
-                (loaded.headers.contentLength as PlaybackContentLength.Exact).byteCount else null
+                loaded.headers.contentLength.byteCount else null
             if (exactRemaining != null && prefix.size > exactRemaining!!)
                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             prefixOffset = 0
             transferStarted(dataSpec)
+            started = true
             remaining
         }
 
@@ -113,12 +124,12 @@ internal class AndroidPlaybackDataSourceFactory(
 
         override fun getUri(): Uri? = spec?.uri
         override fun close() {
-            val opened = spec != null
             try { response?.close?.invoke() } catch (_: Exception) { /* nothing diagnostic escapes */ }
             response = null
             spec = null
             prefix = byteArrayOf()
-            if (opened) transferEnded()
+            if (started) transferEnded()
+            started = false
         }
 
         private inline fun <T> closed(block: () -> T): T = try { block() }

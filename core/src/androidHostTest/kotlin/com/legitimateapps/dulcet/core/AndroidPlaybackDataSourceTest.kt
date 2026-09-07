@@ -13,6 +13,26 @@ import kotlin.test.*
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class AndroidPlaybackDataSourceTest {
+    @Test fun fragmentedSocketReadsAreAccumulatedBeforeSignatureClassification() {
+        val bytes = wav() + ByteArray(32)
+        var reads = 0
+        val fragmented = object : ByteArrayInputStream(bytes) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                reads++
+                return super.read(buffer, offset, minOf(length, 1))
+            }
+        }
+        val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ -> response(bytes).let {
+            AndroidPlaybackResponse(it.status, it.headers, fragmented, {})
+        } }).createDataSource()
+        assertEquals(bytes.size.toLong(), source.open(spec()))
+        assertTrue(reads > 12, "The fixture must split the WAV signature across reads")
+        val delivered = ByteArray(bytes.size)
+        assertEquals(bytes.size, source.read(delivered, 0, delivered.size))
+        assertContentEquals(bytes, delivered)
+        source.close()
+    }
+
     @Test fun validatesTheActualResponseAndDeliversThoseSameBytesWithoutAPreflight() {
         val bytes = wav() + ByteArray(40_000) { (it % 255).toByte() }
         var requests = 0

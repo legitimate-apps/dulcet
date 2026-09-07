@@ -100,8 +100,11 @@ class AndroidMedia3EngineTest {
         val fake = PlayerProbe()
         val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
         val events = mutableListOf<PlaybackEngineEvent>()
-        engine.setEventListener { events += it }
         val first = playbackPlan()
+        val core = PlaybackCoreStateMachine()
+        val entry = QueueEntryId("queue:distinct-from-session-and-attempt")
+        core.startPlaying(PlaybackSessionStart(entry, first.playbackSessionId, first.attemptId, first.itemId, 40.seconds))
+        engine.setEventListener { events += it; core.recordPlaybackEvent(it) }
         engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), first.attemptId, first))
         val second = playbackPlan(attempt = "attempt:second")
         assertIs<PlaybackCommandOutcome.CommandRejected>(engine.executeOnPlayerThread(
@@ -111,6 +114,9 @@ class AndroidMedia3EngineTest {
         val replacement = events.filterIsInstance<PlaybackEngineEvent.AttemptReplaced>().single()
         assertEquals(first.attemptId, replacement.oldAttemptId)
         assertEquals(second.attemptId, replacement.newAttemptId)
+        assertEquals(entry, core.currentSession!!.queueEntryId)
+        assertEquals(first.playbackSessionId, core.currentSession!!.playbackSessionId)
+        assertEquals(second.attemptId, core.currentSession!!.currentAttempt.attemptId)
         val other = playbackPlan(session = "session:other", attempt = "attempt:other")
         assertIs<PlaybackCommandOutcome.CommandRejected>(engine.executeOnPlayerThread(
             PlaybackCommand.ReplaceCurrent(commandId(), other.attemptId, other)))

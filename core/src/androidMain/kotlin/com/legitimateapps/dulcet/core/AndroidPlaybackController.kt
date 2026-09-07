@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -53,11 +54,16 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
     private val deliveries = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
     private var retryDelivery: Job? = null
     private var resolution: Job? = null
+    private var startJob: Job? = null
+    private var activePlan: RemotePlaybackWirePlan? = null
+    private var wantsPlay = false
+    private var pendingResume: Long? = null
+    private var selectedSong: Triple<String, String, String>? = null
     private var requestGeneration = 0L
     private var closed = false
     private var title = ""
     private var failure: DomainError? = null
-    private var consumed = 0L
+    private var consumed = AtomicLong()
     private val mutableState = MutableStateFlow(AndroidPlaybackState())
     public val state: StateFlow<AndroidPlaybackState> = mutableState
     private val exo = ExoPlayer.Builder(context.applicationContext).build().apply {
@@ -67,12 +73,10 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
         repeatMode = Player.REPEAT_MODE_OFF
     }
     private val engine = AndroidMedia3Engine(exo, prepareSource = { plan ->
+        val attemptConsumed = AtomicLong()
+        consumed = attemptConsumed
         val factory = AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, requests)) { bytes ->
-            scope.launch {
-                if (queue.snapshot().currentSession?.currentAttempt?.attemptId == plan.attemptId) {
-                    consumed += bytes; publish()
-                }
-            }
+            attemptConsumed.addAndGet(bytes)
         }
         val item = MediaItem.Builder().setMediaId(plan.attemptId.value).setUri("dulcet://resource")
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
@@ -108,7 +112,14 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
             if (event is PlaybackEngineEvent.FailedAfterPartial) failure = event.error
             val transition = queue.recordPlaybackEvent(event)
             capture(transition.effects)
+            if (event is PlaybackEngineEvent.EndedNaturally && transition.startDirective == null) activePlan = null
             publish()
+            if (event is PlaybackEngineEvent.Ready) {
+                pendingResume?.let { position ->
+                    pendingResume = null
+                    if (event.seekability == PlaybackSeekability.Seekable) seek(position)
+                }
+            }
             transition.startDirective?.let { start(it) }
         }
         scope.launch {
@@ -118,6 +129,14 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
             }
         }
         scope.launch { drain() }
+        val restored = queue.restoreCurrentPaused()
+        // Restore only this service's account. A prior account's persisted queue is never activated
+        // with newly loaded credentials.
+        restored.startDirective?.takeIf { it.itemId.providerInstanceId == account.providerInstanceId }?.let {
+            selectedSong = Triple(account.providerInstanceId, it.itemId.rawId, "Saved playback")
+            title = "Saved playback"
+            start(it)
+        }
     }
 
     /** Resolves an opaque selected song id using this service's saved account, never intent credentials. */
@@ -127,15 +146,18 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
             failure = DomainError.Auth.Forbidden; publish(); return
         }
         requestGeneration++
+        wantsPlay = true
+        selectedSong = Triple(providerInstanceId, rawId, displayTitle)
         val generation = requestGeneration
         resolution?.cancel()
+        startJob?.cancel()
         resolution = scope.launch {
             try {
                 val song = loadSong(rawId)
                 if (generation != requestGeneration) return@launch
                 command(PlaybackCommand.Stop(id()))
                 title = displayTitle
-                failure = null; consumed = 0
+                failure = null; consumed = AtomicLong()
                 val transition = queue.replaceAndStart(PlaybackQueueRequest(
                     listOf(PlaybackQueueItem(ProviderItemId(providerInstanceId, rawId), song.duration)),
                     QueueSourceContext(QueueSourceKind.Search, null, "Search"), 0, false))
@@ -147,17 +169,27 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
         }
     }
 
-    public fun play() { command(PlaybackCommand.Play(id())) }
-    public fun pause() { command(PlaybackCommand.Pause(id())) }
+    public fun play() {
+        checkMain(); wantsPlay = true
+        if (activePlan == null) {
+            if (resolution?.isActive != true && startJob?.isActive != true)
+                selectedSong?.let { playSong(it.first, it.second, it.third) }
+        } else command(PlaybackCommand.Play(id()))
+    }
+    public fun pause() {
+        checkMain(); wantsPlay = false
+        if (activePlan != null) command(PlaybackCommand.Pause(id()))
+    }
     public fun seek(positionMilliseconds: Long) { command(PlaybackCommand.Seek(id(), positionMilliseconds.milliseconds)) }
     public fun stop() {
-        checkMain(); requestGeneration++; resolution?.cancel()
+        checkMain(); requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
         command(PlaybackCommand.Stop(id()))
     }
     public fun next() { checkMain(); transition(queue.next()) }
     public fun previous() { checkMain(); transition(queue.previous()) }
 
     private fun transition(transition: PlaybackQueueTransition) {
+        requestGeneration++; resolution?.cancel(); startJob?.cancel()
         command(PlaybackCommand.Stop(id()))
         capture(transition.effects)
         transition.startDirective?.let { start(it) }
@@ -188,17 +220,22 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
 
     private fun start(directive: PlaybackQueueStartDirective, knownSong: Song? = null) {
         val session = directive.playbackSessionId
-        scope.launch {
+        val generation = requestGeneration
+        startJob?.cancel()
+        startJob = scope.launch {
             try {
                 val song = knownSong ?: loadSong(directive.itemId.rawId)
                 val result = wire.resolve(PlaybackResolveRequest(session, directive.attemptId, directive.itemId,
                     song.container, false, ANDROID_PROFILE, LegacyPlaybackPreference(null, null)))
-                if (queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
+                if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 when (result) {
                     is PlaybackResolutionResult.Failed -> { failure = result.error; publish() }
                     is PlaybackResolutionResult.Resolved -> {
+                        command(PlaybackCommand.Stop(id()))
+                        activePlan = result.plan
+                        pendingResume = directive.resumePosition?.inWholeMilliseconds
                         command(PlaybackCommand.Prepare(id(), result.plan.attemptId, result.plan))
-                        if (directive.shouldAutoPlay) command(PlaybackCommand.Play(id()))
+                        if (wantsPlay) command(PlaybackCommand.Play(id()))
                     }
                 }
             } catch (_: CancellationException) { throw CancellationException() }
@@ -222,11 +259,12 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
     private suspend fun drain() {
         val result = worker.onForeground()
         retryDelivery?.cancel()
-        retryDelivery = result.nextRetryAfter?.let { delay -> scope.launch { delay(delay); drain() } }
+        retryDelivery = result.nextRetryAfter?.let { wait -> scope.launch { delay(wait); retryDelivery = null; drain() } }
     }
 
     private fun command(command: PlaybackCommand) {
         checkMain()
+        if (command is PlaybackCommand.Stop) { activePlan = null; pendingResume = null }
         val outcome = engine.executeOnPlayerThread(command)
         if (outcome is PlaybackCommandOutcome.CommandRejected) {
             failure = (outcome.reason as? PlaybackCommandRejectionReason.Failed)?.error
@@ -242,7 +280,7 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
             exo.currentPosition.coerceAtLeast(0),
             exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 },
             session?.queueEntryId?.value, session?.playbackSessionId?.value,
-            session?.currentAttempt?.attemptId?.value, failure, consumed)
+            session?.currentAttempt?.attemptId?.value, failure, consumed.get())
     }
 
     override fun close() {
@@ -250,7 +288,7 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
         checkMain()
         command(PlaybackCommand.Release(id()))
         closed = true
-        resolution?.cancel(); retryDelivery?.cancel(); deliveries.close(); scope.cancel()
+        resolution?.cancel(); startJob?.cancel(); retryDelivery?.cancel(); deliveries.close(); scope.cancel()
         sender.close(); requests.close(); wire.close(); store.close()
     }
 
