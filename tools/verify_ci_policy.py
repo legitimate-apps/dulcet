@@ -468,6 +468,24 @@ for missing in sorted(read - written):
         "writes",
     )
 
+# Wiring a directory in is still not sufficient: it must be written EARLIER IN THE JOB than the
+# verifier reads it. Steps run in file order, so a write appearing after the verify-parity-evidence
+# invocation cannot have happened when it runs. The iPhone and tvOS playback proofs were added as
+# steps after the Darwin conformance step, whose tail invoked the verifier -- so apple-ci failed
+# with "evidence test did not execute" naming tests that were sitting later in the same job,
+# waiting their turn. Every directory was written and every directory was read; only the order was
+# wrong, and neither existing check can see order.
+invocation = apple_ci.find("tools/verify-parity-evidence")
+if invocation != -1:
+    for directory in sorted(read):
+        write = apple_ci.find(f"$RUNNER_TEMP/{directory}/")
+        if write != -1 and write > invocation:
+            errors.append(
+                f".github/workflows/apple-ci.yml: {directory} is written by a step that runs AFTER "
+                "verify-parity-evidence, so evidence citing tests in it is reported as not "
+                "executed; move the verification after every step that writes evidence",
+            )
+
 # The directory wiring above is necessary and was not sufficient. verify-parity-evidence matches on
 # (class, method), and the macOS emissions passed the TARGET name DulcetMacTests where the evidence
 # rows cite the CLASS name DulcetMacAccountConnectAppTest. Every file was written, every directory

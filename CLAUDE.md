@@ -400,6 +400,16 @@ They are deliberately not reproduced in this repository.**
     one. The compiler names only the duplicate, never the theft, and the resulting isolation error
     appears somewhere else entirely. ➡️ **After inserting between declarations, check the
     attributes of the declaration BELOW the insertion, not just the one you wrote.**
+44. **Evidence verification must be the LAST step in the job, and nothing checks that but the new
+    ordering gate.** `verify-parity-evidence` resolves each FEATURES.yml citation against JUnit
+    written by THIS run, so a step producing cited evidence must already have run. It sat at the
+    tail of the Darwin conformance step; the iPhone and tvOS playback proofs were added as later
+    steps. apple-ci then failed at 88.6 minutes with "evidence test did not execute" naming tests
+    that were sitting later in the same job, waiting their turn. Every directory was written,
+    every directory was read, and both existing wiring checks passed — they cannot see order. ➡️
+    **A step's position is part of its contract.** `tools/verify_ci_policy.py` now fails when a
+    JUnit directory is written after the verifier reads it; it was proven red-first against the
+    exact workflow that failed.
 
 ## Review and delegation
 

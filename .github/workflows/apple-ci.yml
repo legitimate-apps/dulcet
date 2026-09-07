@@ -1218,33 +1218,6 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
-          python3 tools/verify-parity-evidence \
-            core-conformance/build/test-results/macosArm64Test \
-            core-conformance/build/test-results/iosSimulatorArm64Test \
-            core-conformance/build/test-results/tvosSimulatorArm64Test \
-            "$RUNNER_TEMP/dulcet-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
-            "$RUNNER_TEMP/dulcet-ios-search-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ios-playback-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-playback-junit" \
-            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
-            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
-            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-mac-download-junit" \
-            "$RUNNER_TEMP/dulcet-ios-download-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-download-junit"
       # Keep these independent loopback observations after all platform and Darwin conformance
       # tests: a first-run hosted audio or simulator failure must not skip their evidence.
       # Neither observation depends on the conformance servers, which have stopped here.
@@ -1496,3 +1469,40 @@ jobs:
       # but they are killed early and so have little on disk for the globs to match.
       #
       # NOTE these globs are duplicated in the inventory step below. Keep the two lists in step.
+
+      # Evidence verification must be the LAST thing in this job. It resolves every FEATURES.yml
+      # citation against JUnit written by THIS run, so any step producing cited evidence has to
+      # have already run. It previously sat at the end of the Darwin conformance step, which is
+      # before the iPhone and tvOS playback proofs -- so those two citations were reported as
+      # "did not execute" while the tests they name were sitting later in the same job, waiting.
+      - name: Verify every FEATURES.yml citation executed in this job
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          python3 tools/verify-parity-evidence \
+            core-conformance/build/test-results/macosArm64Test \
+            core-conformance/build/test-results/iosSimulatorArm64Test \
+            core-conformance/build/test-results/tvosSimulatorArm64Test \
+            "$RUNNER_TEMP/dulcet-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit" \
+            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-mac-download-junit" \
+            "$RUNNER_TEMP/dulcet-ios-download-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-download-junit"
