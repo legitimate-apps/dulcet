@@ -1234,6 +1234,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit" \
             "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
