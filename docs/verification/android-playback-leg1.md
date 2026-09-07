@@ -1,84 +1,89 @@
-# Android playback adapter: leg 1
+# Android playback leg 1: bounded host evidence
 
-The production implementation is in `core/androidMain`. `AndroidMedia3Engine` implements the
-existing internal `PlaybackEngine` contract; `AndroidPlaybackController` composes it with the existing
-queue controller, SQLDelight queue/resume stores, scrobble accumulator and durable outbox.
-`android/shared` supplies a `MediaSessionService`, a playback activity and the production entry used
-by the mobile and TV search detail screens. No feature cell is promoted by this change.
+No feature status is promoted by this evidence. These tests execute in the Android host-test
+runtime, not on a device. Each observation below names the production path exercised and the
+substitutions that bound its meaning.
 
-## Implementation boundaries
+## Tests and their actual observations
 
-- ExoPlayer owns audio focus with media/music audio attributes and `handleAudioFocus=true`, including
-  platform ducking policy. Becoming-noisy events pause playback. The activity does not own the engine;
-  service teardown releases it. Media-session commands use the same command path as app controls.
-- The adapter's 500 ms handler sampler reads `SystemClock.elapsedRealtime`. It runs only while
-  playback is unsuppressed and reports progression only after media position advances. Wall time is
-  used for the first progression timestamp and outbox retention, never for accrual or retry delay.
-- The inline data source reads the response it will deliver, applies the existing core envelope,
-  content-type and audio-signature validator, and serves those same bytes to Media3. Media3 receives
-  an opaque `dulcet://resource` URI. The loader owns signed requests, redirects, range checks and
-  exact-length truncation checks. It accumulates fragmented reads before classifying a signature.
-  Signature buffering is bounded to 16 MiB; a larger ID3 block is rejected before delivery.
-- Platform I/O exceptions lose their message and cause before reaching Media3. Engine exceptions
-  become typed domain failures before reaching presentation or the core. Credential canaries test
-  those boundaries. No query-bearing URL is deliberately given to ExoPlayer.
-- Queue entry, session and attempt identities remain distinct. Superseded async resolutions cannot
-  start after a newer selection or stop. A restored queue is prepared paused for its owning account.
-- Submitted plays are synchronously persisted before network delivery is scheduled. The existing
-  outbox worker supplies bounded backoff and wall-clock retention; failed now-playing is ephemeral.
-  Delivery remains at-least-once, not network-idempotent.
+- `AndroidHttpPlaybackResourceTest.sameOriginRedirectPreservesTheSignedQueryOnTheReceivingSocket`
+  constructs the production `AuthenticatedEndpointClient`, `AndroidHttpPlaybackResource` and data
+  source. A real loopback HTTP socket returns a same-origin redirect containing the original signed
+  query. The destination socket receives that exact query, and the consumer receives the audio bytes.
+  This does not claim that a redirect omitting the original query recreates it.
+- `AndroidHttpPlaybackResourceTest.crossOriginRedirectStripsAllCredentialCanariesOnTheReceivingSocket`
+  uses two real loopback origins. The second receives the request, with metadata intact and credential
+  canaries absent. The fixture also supplies a legacy password, an uppercase username key and a
+  percent-encoded token key in the redirect. An exact inventory classifies every key emitted by the
+  production authorizer; any new unclassified key fails the test. Credential identities are also
+  exhaustively mapped from `AuthenticationParameter` in the Android redirect policy.
+- `AndroidHttpPlaybackResourceTest.httpsDowngradeIsRejectedAfterTheTlsServerActuallyReturnsItsRedirect`
+  uses a generated fixture certificate with a strict trust store and normal hostname verification.
+  The HTTPS socket must receive the signed request, return a downgrade redirect, and leave the HTTP
+  destination with zero requests. An earlier TLS failure cannot satisfy the test.
+- `AndroidHttpPlaybackResourceTest.realErrorAndTruncatedResponsesFailWithoutSurfacingTheirSignedUrl`
+  encounters real HTTP-200 error-envelope, HTTP-403 and truncated-body responses through the same
+  production HTTP loader. Consumption fails with the closed exception type and no URL, credential
+  canary or nested cause in the surfaced exception.
+- `AndroidMedia3EngineTest.seamCommandsChangeTheRealMedia3Player` calls `PlaybackEngine` with a real
+  ExoPlayer and observes volume 0.25 and speed 1.5. It rejects invalid play/volume and post-release
+  play. It does not prepare or decode a real media stream.
+- `AndroidMedia3EngineTest.periodicSamplerDrivesCoreThresholdAndExcludesPauseBufferingAndSeek`
+  uses a Player probe and the real adapter handler and core state machine. It encounters pause and
+  buffering, then calls `PlaybackCommand.Seek`. The probe records the `seekTo` call and fires the
+  Media3 discontinuity callback. The test asserts `SeekCompleted` attempt, old position and new
+  position, including a subsequent `SEEK_ADJUSTMENT`. After position advances again, the core
+  discards the forward discontinuity and ultimately emits one submitted-play effect. The probe
+  supplies positions; neither a decoder nor a server submission is observed.
+- `AndroidMedia3EngineTest.replacementKeepsSessionAndRejectsMismatchedAttemptAndOtherSession`
+  passes replacement events into the real reducer and asserts preserved queue/session identity
+  with a changed attempt, plus rejection of mismatched attempts and another session.
+- `AndroidMedia3EngineTest.platformErrorAndNestedCredentialCanariesNeverReachTheCoreEvent`
+  injects a credential-bearing PlaybackException into the listener and asserts a typed, content-free
+  failure event. It does not inventory every diagnostic the Android OS might emit.
+- `AndroidPlaybackDataSourceTest` supplies in-memory responses to test identical byte delivery,
+  fragmented signatures, malformed audio/envelopes, exact-length truncation, incorrect ranges,
+  nonzero-offset loading without a signature witness, and estimated-length EOF. These tests alone
+  provide no HTTP, redirect or TLS evidence; the separate HTTP-loader tests above provide that.
+- `AndroidPlaybackControllerTest.lateMetadataAfterNewSelectionCannotReplaceTheNewQueue` returns a
+  cancelled metadata operation after a new selection has prepared. It asserts that the old operation
+  really returned and cannot replace the new queue or prepare the old item.
+- `AndroidPlaybackControllerTest.latePlanAfterStopCannotPrepareOrPlay` returns a cancelled plan
+  resolution after stop. It asserts that the resolution really returned and neither prepared nor
+  requested playback. These two bounded races do not prove every possible scheduling interleaving.
+- `AndroidPlaybackControllerTest.submittedPlayIsInTheRealOutboxBeforeDeliveryHandoff` runs simulated
+  Player progression through the production controller, engine and core accumulator. Its external
+  delivery boundary checks that the submitted play is already in the real SQLDelight outbox at the
+  instant the controller schedules delivery. It observes exactly one handoff, not a network send.
+- `AndroidPlaybackControllerTest.restoredQueuePreparesPausedOnlyForItsOwningAccount` seeds a real
+  persisted queue and constructs the controller for its owner, then for another account. Only the
+  owner loads metadata and prepares, with no play request. Metadata and Player are substituted;
+  the controller, engine and persistence code are real.
+- `AndroidPlaybackEntryTest` and `AndroidTvPlaybackEntryTest` click the production entry in their
+  respective app-module harnesses. They assert the activity destination and exact provider, song
+  and title values, with no additional intent extras. They do not test TV remote keys or decoding.
 
-## Observed local proof
-
-OBSERVED with the mounted Android SDK:
+## Validation commands
 
 ```sh
-./gradlew :android:app:assembleDevDebug :android:tv:assembleDebug \
+./gradlew :core:testAndroidHostTest \
+  :android:app:assembleDevDebug :android:tv:assembleDebug \
   :android:app:testDevDebugUnitTest :android:app:testProdDebugUnitTest \
-  :android:tv:testDebugUnitTest :core:testAndroidHostTest :core:jvmTest :core:licensee
+  :android:tv:testDebugUnitTest :core:jvmTest :core:licensee
+GITHUB_BASE_REF=main tools/run-local-gates parity-gate
 ```
 
-OBSERVED final output: `BUILD SUCCESSFUL in 14s`. JUnit reports 187 Android core tests,
-181 JVM core tests, 9 mobile DEV tests, 9 mobile PROD tests and 2 TV tests, with zero failures
-and zero skips. Unchanged checks may be up-to-date in the final invocation; the preceding full
-invocation also passed, including the dependency licence audit.
+The adversarial follow-up's executed mutation results are recorded in
+`android-playback-mutations.md`. The mutation run restores each production file before continuing;
+mutants are not shipped.
 
-OBSERVED `GITHUB_BASE_REF=main tools/run-local-gates parity-gate`: 21 passed, 0 failed,
-1 environment fault, 0 uncovered. The environment fault was in
-`test-transcode-probe-timeout-diagnostic`; this is not represented as a passing overall gate.
+## Not evidenced here
 
-The test reports contain these concrete observations:
+Real decoder-driven media progression, platform audio focus/ducking and becoming-noisy behavior,
+service/background lifecycle, TV focus/media-key interaction, OS diagnostics, and delivery to an
+independently measured server play count remain unobserved. Earlier broad statements about those
+behaviors have been removed; host success does not establish them.
 
-- `AndroidMedia3EngineTest.seamCommandsChangeTheRealMedia3Player`: calls the `PlaybackEngine` seam
-  against a real ExoPlayer instance and observes volume 0.25 and rate 1.5; invalid play and volume
-  commands are rejected. No decoder runs in this test.
-- `AndroidMedia3EngineTest.periodicSamplerDrivesCoreThresholdAndExcludesPauseBufferingAndSeek`:
-  the production periodic handler receives simulated Player positions, forwards events to the real
-  core state machine and produces exactly one submitted-play effect. The test first proves that
-  playing state without position advancement does not start progression, and encounters pause,
-  buffering and a discarded forward discontinuity before crossing the threshold.
-- `AndroidMedia3EngineTest.replacementKeepsSessionAndRejectsMismatchedAttemptAndOtherSession`:
-  replacement reaches the core, preserves queue entry and session identities, and changes only the
-  attempt. Mismatched attempts and another session are rejected.
-- `AndroidPlaybackDataSourceTest.validatesTheActualResponseAndDeliversThoseSameBytesWithoutAPreflight`:
-  one injected response, 40,012 bytes delivered, byte-for-byte equality, no second request.
-  Additional controls encounter fragmented reads, HTTP-200 error envelopes, invalid audio,
-  truncation, wrong ranges, seek-without-signature and estimated-length EOF.
-- `AndroidPlaybackEntryTest` and `AndroidTvPlaybackEntryTest`: click the shared production entry
-  in each app module and observe the playback-activity intent with exactly provider id, song id and
-  title. They do not launch a decoder or prove TV remote behavior.
-
-## Explicit limits
-
-ASSUMED until leg 2: the real Android decoder advancing position, real audio-focus transitions,
-background-service behavior on a device, real TV focus/media-key interaction, and delivery from the
-app to exactly one independently measured server play. The host tests do not promote these claims.
-No instrumented tests, emulator workflow or server play-count proof are included in leg 1.
-
-The current user entry plays one selected search track through the legacy direct-stream path.
-Extension transcoding selection, server-offset seeks, automatic source refresh/re-resolution and
-multi-item queue presentation are not exposed by this entry. The adapter returns an explicit
-`Unsupported` outcome for `PreloadNext`; gapless/preloading and crossfade are outside this slice.
-These are implementation limits, not claims that the equivalent behavior is proven by host tests.
-Media3 Compose state holders were evaluated; the screen uses core state so transport state cannot
-be mistaken for the progression evidence or core policy. Acoustic output is not observed here.
+No emulator workflow or instrumented server-play proof is included. Automatic source refresh,
+extension-transcoding selection, server-offset seeks, preloading/gapless playback, crossfade and
+multi-item queue presentation are not claimed by these tests. Acoustic output is not observed.

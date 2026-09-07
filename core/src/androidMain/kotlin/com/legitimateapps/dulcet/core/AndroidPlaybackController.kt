@@ -37,9 +37,14 @@ public data class AndroidPlaybackState(
 )
 
 /** Service-owned composition root. Core policy, queue identities and outbox are reused unchanged. */
-public class AndroidPlaybackController(context: Context, private val account: PlaybackEndpointAccount) : AutoCloseable {
+public class AndroidPlaybackController internal constructor(
+    context: Context,
+    private val account: PlaybackEndpointAccount,
+    private val boundaries: AndroidPlaybackControllerBoundaries?,
+) : AutoCloseable {
+    public constructor(context: Context, account: PlaybackEndpointAccount) : this(context, account, null)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val store = DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
+    private val store = boundaries?.store ?: DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
     private val resumes = PersistentResumePositionStore(store.database)
     private val queue = PlaybackQueueController(PersistentQueueStore(store.database), resumes,
         PlaybackIdentitySource { "$it:${UUID.randomUUID()}" })
@@ -66,7 +71,7 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
     private var consumed = AtomicLong()
     private val mutableState = MutableStateFlow(AndroidPlaybackState())
     public val state: StateFlow<AndroidPlaybackState> = mutableState
-    private val exo = ExoPlayer.Builder(context.applicationContext).build().apply {
+    private val exo: Player = boundaries?.player ?: ExoPlayer.Builder(context.applicationContext).build().apply {
         setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
         setHandleAudioBecomingNoisy(true)
@@ -80,7 +85,8 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
         }
         val item = MediaItem.Builder().setMediaId(plan.attemptId.value).setUri("dulcet://resource")
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
-        exo.setMediaSource(ProgressiveMediaSource.Factory(factory).createMediaSource(item))
+        if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
+        else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(factory).createMediaSource(item))
     })
 
     /** Every system command takes the same path as an in-app command. Queue edits are private. */
@@ -198,7 +204,7 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
 
     private data class Song(val container: AudioContainer, val duration: kotlin.time.Duration?)
     private suspend fun loadSong(rawId: String): Song {
-        val response = requests.request("getSong", mapOf("id" to rawId))
+        val response = boundaries?.loadSong?.invoke(rawId) ?: requests.request("getSong", mapOf("id" to rawId))
         val envelope = parseLibraryEnvelope(response.body.decodeToString())
         if (response.statusCode !in 200..299 || envelope?.status != "ok")
             throw AndroidPlaybackIOException(DomainError.Protocol.MalformedEnvelope)
@@ -225,8 +231,9 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
         startJob = scope.launch {
             try {
                 val song = knownSong ?: loadSong(directive.itemId.rawId)
-                val result = wire.resolve(PlaybackResolveRequest(session, directive.attemptId, directive.itemId,
-                    song.container, false, ANDROID_PROFILE, LegacyPlaybackPreference(null, null)))
+                val request = PlaybackResolveRequest(session, directive.attemptId, directive.itemId,
+                    song.container, false, ANDROID_PROFILE, LegacyPlaybackPreference(null, null))
+                val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 when (result) {
                     is PlaybackResolutionResult.Failed -> { failure = result.error; publish() }
@@ -248,7 +255,8 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
         for (effect in effects) when (effect) {
             is PlaybackCoreEffect.RecordPlaybackEvent -> {
                 if (effect.event is RecordedPlaybackEvent.SubmittedPlay) outbox.persistSynchronously(effect.event)
-                check(deliveries.trySend(effect.event).isSuccess)
+                if (boundaries?.enqueueDelivery != null) boundaries.enqueueDelivery.invoke(effect.event)
+                else check(deliveries.trySend(effect.event).isSuccess)
             }
             is PlaybackCoreEffect.PersistResumePosition -> resumes.save(effect.itemId, effect.position)
             is PlaybackCoreEffect.ClearResumePosition -> resumes.clear(effect.itemId)
@@ -299,3 +307,13 @@ public class AndroidPlaybackController(context: Context, private val account: Pl
 private val ANDROID_PROFILE = PlaybackDeviceProfile("Dulcet", "Android", 1_411_200, 320_000,
     listOf(DirectPlayAudioProfile(AudioContainer.entries, listOf("mp3", "aac", "flac", "opus", "vorbis", "pcm"), maxAudioChannels = 2)),
     listOf(TranscodingAudioProfile(AudioContainer.Mp3, "mp3", maxAudioChannels = 2)))
+
+/** External boundaries only. Tests retain the real controller, engine, reducer and SQLDelight stores. */
+internal class AndroidPlaybackControllerBoundaries(
+    val store: DulcetDatabaseStore,
+    val player: Player,
+    val prepareSource: (RemotePlaybackWirePlan) -> Unit,
+    val loadSong: suspend (String) -> AuthenticatedEndpointResponse,
+    val resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
+    val enqueueDelivery: (RecordedPlaybackEvent) -> Unit,
+)

@@ -215,7 +215,7 @@ internal class AndroidHttpPlaybackResource(
                                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
                             val parsed = Uri.parse(proposed)
                             val rebuilt = parsed.buildUpon().clearQuery()
-                            parsed.queryParameterNames.filterNot { it.lowercase() in setOf("u", "t", "s", "p") }
+                            parsed.queryParameterNames.filterNot { it.lowercase() in ANDROID_PLAYBACK_CREDENTIAL_QUERY_NAMES }
                                 .forEach { name -> parsed.getQueryParameters(name).forEach { rebuilt.appendQueryParameter(name, it) } }
                             proposed = rebuilt.build().toString()
                         }
@@ -247,3 +247,14 @@ internal class AndroidHttpPlaybackResource(
     } catch (error: AndroidPlaybackIOException) { throw error }
     catch (_: Exception) { throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }
 }
+
+// Exhaustive over the client's credential vocabulary: adding an authentication kind forces a
+// redirect-policy decision at compile time. Wire tests separately inventory every emitted key.
+internal val ANDROID_PLAYBACK_CREDENTIAL_QUERY_NAMES = AuthenticationParameter.entries.map {
+    when (it) {
+        AuthenticationParameter.Username -> "u"
+        AuthenticationParameter.SaltedToken -> "t"
+        AuthenticationParameter.Salt -> "s"
+        AuthenticationParameter.LegacyPassword -> "p"
+    }
+}.toSet()

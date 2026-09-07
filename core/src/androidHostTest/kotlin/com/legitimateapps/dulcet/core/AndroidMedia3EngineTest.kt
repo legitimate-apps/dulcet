@@ -77,7 +77,22 @@ class AndroidMedia3EngineTest {
         fake.state = Player.STATE_READY; fake.events()
         progress(2)
         val beforeSeek = core.currentSession!!.accumulator.accruedMediaTime
-        fake.position += 120_000
+        val seekFrom = fake.position
+        val seekTo = seekFrom + 120_000
+        assertIs<PlaybackCommandOutcome.CommandCompleted>(engine.executeOnPlayerThread(
+            PlaybackCommand.Seek(commandId(), seekTo.milliseconds)))
+        assertEquals(listOf(seekTo), fake.seekCommands)
+        val seekEvent = events.filterIsInstance<PlaybackEngineEvent.SeekCompleted>().single()
+        assertEquals(plan.attemptId, seekEvent.attemptId)
+        assertEquals(seekFrom.milliseconds, seekEvent.from)
+        assertEquals(seekTo.milliseconds, seekEvent.to)
+        // A stationary post-seek sample must not manufacture the first progression observation.
+        fake.adjustSeek(seekTo + 250)
+        val adjustment = events.filterIsInstance<PlaybackEngineEvent.SeekCompleted>().last()
+        assertEquals(2, events.filterIsInstance<PlaybackEngineEvent.SeekCompleted>().size)
+        assertEquals(seekTo.milliseconds, adjustment.from)
+        assertEquals((seekTo + 250).milliseconds, adjustment.to)
+        fake.position += 500
         advance(500)
         assertEquals(beforeSeek, core.currentSession!!.accumulator.accruedMediaTime)
         assertTrue(core.diagnostics.discontinuityCount > 0)
@@ -153,7 +168,8 @@ internal fun playbackPlan(session: String = "session:opaque", attempt: String = 
         endpoint = "stream", parameters = mapOf("id" to request.itemId.rawId), resolutionRequest = request)
 }
 
-private class PlayerProbe {
+internal class PlayerProbe {
+    val seekCommands = mutableListOf<Long>()
     var listener: Player.Listener? = null
     var state = Player.STATE_IDLE
     var position = 0L
@@ -173,10 +189,23 @@ private class PlayerProbe {
             "getPlaybackParameters" -> PlaybackParameters.DEFAULT
             "play", "pause" -> { requested = method.name == "play"
                 listener?.onPlayWhenReadyChanged(requested, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST); null }
+            "seekTo" -> {
+                val target = args!![0] as Long
+                seekCommands += target
+                discontinuity(target, Player.DISCONTINUITY_REASON_SEEK)
+                null
+            }
             "prepare", "stop", "clearMediaItems", "release" -> null
             "toString" -> "PlayerProbe"
             else -> throw AssertionError("Unmodeled Player call ${method.name}")
         }
     } as Player
+    fun adjustSeek(target: Long) = discontinuity(target, Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT)
+    private fun discontinuity(target: Long, reason: Int) {
+        fun info(value: Long) = Player.PositionInfo(null, 0, null, null, 0, value, value, C.INDEX_UNSET, C.INDEX_UNSET)
+        val from = position
+        position = target
+        listener!!.onPositionDiscontinuity(info(from), info(target), reason)
+    }
     fun events() { listener!!.onEvents(player, Player.Events(FlagSet.Builder().add(Player.EVENT_PLAYBACK_STATE_CHANGED).build())) }
 }

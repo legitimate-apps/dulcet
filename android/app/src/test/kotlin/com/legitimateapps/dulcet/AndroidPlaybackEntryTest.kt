@@ -23,6 +23,7 @@ class AndroidPlaybackEntryTest {
         assertEquals(PlaybackActivity::class.java.name, intent.component?.className)
         assertEquals("provider::opaque", intent.getStringExtra(PlaybackActivity.PROVIDER))
         assertEquals("song::opaque", intent.getStringExtra(PlaybackActivity.SONG))
+        assertEquals("Playback track", intent.getStringExtra(PlaybackActivity.TITLE))
         assertEquals(setOf(PlaybackActivity.PROVIDER, PlaybackActivity.SONG, PlaybackActivity.TITLE), intent.extras!!.keySet())
         println("PLAYBACK ENTRY OBSERVED module=app production-entry-click=true target=PlaybackActivity credentials-in-intent=false decoder-executed=false")
     }

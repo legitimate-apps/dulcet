@@ -100,7 +100,10 @@ internal class AndroidMedia3Engine(
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-            if (reason == Player.DISCONTINUITY_REASON_SEEK) current?.let {
+            // A seek adjustment is the engine completing the same user operation at an actual
+            // decodable position. Report its old/new positions too; never count the snap as time played.
+            if (reason == Player.DISCONTINUITY_REASON_SEEK ||
+                reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) current?.let {
                 emit(PlaybackEngineEvent.SeekCompleted(it.attemptId,
                     oldPosition.positionMs.coerceAtLeast(0).milliseconds,
                     newPosition.positionMs.coerceAtLeast(0).milliseconds))
