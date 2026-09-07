@@ -133,6 +133,12 @@ jobs:
           tools/conformance-env/linux-local --root "$ROOT" run -- \
             ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
             :core-conformance:testAndroidHostTest
+          tools/conformance-env/linux-local --root "$ROOT" reset
+          # Explicit live mode excludes fixture/unit controls and fails if the server is absent.
+          tools/conformance-env/linux-local --root "$ROOT" run -- \
+            ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
+            -Pdulcet.productionSearchConformance \
+            :android:app:testDevDebugUnitTest :android:tv:testDebugUnitTest
 
       # A conformance failure is a measurement disagreeing with the reference server, so the JUnit
       # XML is the evidence -- it carries the assertion message with the observed values. apple-ci
@@ -155,7 +161,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-core-conformance-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: core-conformance/build/test-results/testAndroidHostTest
+          path: |
+            core-conformance/build/test-results/testAndroidHostTest
+            android/app/build/test-results/testDevDebugUnitTest
+            android/tv/build/test-results/testDebugUnitTest
           if-no-files-found: error
           retention-days: 7
 

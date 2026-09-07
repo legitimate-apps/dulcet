@@ -805,6 +805,10 @@ expect_rejection(
 # count that disagreed with the list it claims to summarize -- which is exactly the defect this
 # fixture exists to detect in real reports.
 passing_cases = """\
+  <testcase classname="com.legitimateapps.dulcet.AndroidProductionSearchAppConformanceTest"
+            name="conf41ProductionQueryMergesAndRoutesOpaqueId" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvProductionSearchAppConformanceTest"
+            name="conf41ProductionQueryMergesAndRoutesOpaqueId" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"

@@ -62,6 +62,7 @@ public data class SearchUiState(
 /** A local implementation must return its already-ranked instant result set. */
 public fun interface LocalSearchSource {
     public suspend fun search(query: String): List<SearchResultItem>
+    public suspend fun store(query: String, results: List<SearchResultItem>) {}
 }
 
 public interface SearchDataSource {
@@ -92,7 +93,9 @@ public class CoreSearchDataSource(
                 trackCount = PAGE_SIZE,
                 trackOffset = 0,
             ),
-        )
+        ).also { result ->
+            if (result is SearchPageResult.Loaded) localSource.store(query, result.page.results)
+        }
 
     private companion object {
         const val PAGE_SIZE = 30
@@ -193,7 +196,7 @@ public class SearchIntentRouter(private val context: Context) {
 
 public interface SearchHostDependencies {
     public fun loadAccount(context: Context): SearchAccount?
-    public fun createPresenter(account: SearchAccount): SearchPresenter
+    public fun createPresenter(account: SearchAccount, context: Context): SearchPresenter
     public fun createRouter(context: Context): SearchIntentRouter
 }
 
@@ -213,7 +216,8 @@ public object ProductionSearchHostDependencies : SearchHostDependencies {
             )
         }
 
-    override fun createPresenter(account: SearchAccount): SearchPresenter = SearchPresenter(account)
+    override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter =
+        SearchPresenter(account, CoreSearchDataSource(AndroidSearchCache(context, account.providerInstanceId)))
 
     override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
 }

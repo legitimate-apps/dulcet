@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,7 +35,7 @@ internal fun MobileSearchRoute(
     dependencies: SearchHostDependencies,
 ) {
     val context = LocalContext.current
-    val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account) }
+    val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account, context) }
     val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)
