@@ -64,15 +64,15 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
 }
 
-// Live app proofs are selected explicitly only inside the disposable-server workflow.
+// Live search and library lifecycle proofs run only inside the disposable-server workflow.
 // The broad core-build task excludes them; selecting live mode with no server fails in setup.
 val productionSearchConformance = providers.gradleProperty("dulcet.productionSearchConformance").isPresent
 tasks.withType<Test>().configureEach {
     if (productionSearchConformance) {
-        filter { includeTestsMatching("*ProductionSearchAppConformanceTest") }
+        filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibrarySyncAppConformanceTest") }
         outputs.upToDateWhen { false }
     } else {
-        filter { excludeTestsMatching("*ProductionSearchAppConformanceTest") }
+        filter { excludeTestsMatching("*ProductionSearchAppConformanceTest"); excludeTestsMatching("*ProductionLibrarySyncAppConformanceTest") }
     }
     maxParallelForks = 1
 }

@@ -67,7 +67,7 @@ internal fun AccountConnectScreen(
         runCatching { searchDependencies.loadAccount(context) }.getOrNull()
     }
     if (storedAccount != null) {
-        MobileSearchRoute(storedAccount, searchDependencies)
+        com.legitimateapps.dulcet.library.LibraryEntry(storedAccount) { MobileSearchRoute(storedAccount, searchDependencies) }
         return
     }
     AccountConnectContent(

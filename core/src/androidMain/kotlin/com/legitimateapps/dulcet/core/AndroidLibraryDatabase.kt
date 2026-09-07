@@ -15,6 +15,26 @@ public class AndroidLibraryDatabase(context: Context) {
             finally { store.close() }
         }
 
+    public suspend fun readCommitted(providerInstanceId: String): AndroidCommittedLibrary = withContext(Dispatchers.IO) {
+        val store = DulcetDriverFactory(context).openDulcetDatabase()
+        try {
+            val snapshot = LibrarySyncRepository(store).readCommittedLibrary(providerInstanceId)
+            AndroidCommittedLibrary(snapshot.generation,
+                snapshot.library.artists.map { item ->
+                    SearchResultItem(item.id, SearchResultType.Artist, item.name, emptyList(),
+                        null, null, null, null, null, null, item.mediaSourceId, null)
+                } + snapshot.library.albums.flatMap { album ->
+                    listOf(SearchResultItem(album.id, SearchResultType.Album, album.title, album.credits,
+                        null, album.year, album.duration, null, null, null, album.mediaSourceId, album.artworkKey)) +
+                        album.tracks.map { track ->
+                            SearchResultItem(track.id, SearchResultType.Track, track.title, track.credits,
+                                track.albumTitle, null, track.duration, track.discNumber, track.trackNumber,
+                                track.sourceContainer, track.mediaSourceId, track.artworkKey)
+                        }
+                })
+        } finally { store.close() }
+    }
+
     public suspend fun synchronize(request: LibrarySyncRequest): LibrarySyncResponse = withContext(Dispatchers.IO) {
         val store = DulcetDriverFactory(context).openDulcetDatabase()
         try {
@@ -23,3 +43,6 @@ public class AndroidLibraryDatabase(context: Context) {
         } finally { store.close() }
     }
 }
+
+/** One atomic committed snapshot, usable without credentials or network access. */
+public data class AndroidCommittedLibrary(val generation: Long, val rows: List<SearchResultItem>)
