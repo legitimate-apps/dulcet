@@ -540,32 +540,64 @@
           "reason": "apple-ci executes CONF-31, CONF-32 and CONF-33 in the tvosSimulatorArm64 core-conformance runtime, so the durable core engine is evidenced on tvOS. No production tvOS library surface starts that sync, browses its committed generation, schedules refreshes, or proves real saved metadata offline, so the platform cell is partial rather than shipped."
         },
         "android": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-library-sync-app-integration",
-            "reason": "Promotion requires an Android app workflow and test that start production library sync, browse the committed SQLDelight generation through AndroidSqliteDriver, exercise refresh lifecycle behavior, and prove saved metadata remains browsable offline. The host controls use a file-backed JDBC control database and do not observe those device/app-process links."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-31", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
-            {"conformance": "CONF-32", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
-            {"conformance": "CONF-33", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+            {
+              "conformance": "CONF-31",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
+            },
+            {
+              "conformance": "CONF-32",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
+            },
+            {
+              "conformance": "CONF-33",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
+            },
+            {
+              "observes": "the real app library surface starts production sync, displays committed AndroidSqliteDriver generations 1 then 2 with the second started by a monotonic scheduler; no refresh fires while stopped, and after connection refusal a recreated activity browses identical saved generation-2 metadata with zero sync starts",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidProductionLibrarySyncAppConformanceTest/librarySyncSchedulesSecondGenerationAndReopensOffline"
+            }
           ],
-          "reason": "conformance-env-linux executes CONF-31, CONF-32 and CONF-33 from the Android target against the live disposable server, proving the shared durable sync algorithm's generation-pinned reads, atomic commit, and bounded witness on the Android-compiled core. This host run is valid bounded core evidence, not device evidence: the control database is file-backed JDBC, and no Android app process starts sync or browses AndroidSqliteDriver state. The cell is therefore partial, not shipped."
+          "reason": "The disposable Linux job executes the app library lifecycle proof with production AndroidLibraryDatabase sync and committed reads. It asserts the refresh callback marker, foreground lifecycle behavior, generations 1 and 2, a connection refusal, and saved metadata rendered after activity/store reopen without synchronization. JUnit is consumed by the required core-ci evidence verifier. This is Compose/Robolectric AndroidSqliteDriver evidence; Keystore cryptography is host-shadowed. It does not claim physical-device execution."
         },
         "androidtv": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-library-sync-app-integration",
-            "reason": "Promotion requires an Android TV app workflow and test that start production library sync, browse the committed AndroidSqliteDriver generation, exercise refresh lifecycle behavior, and prove saved metadata remains browsable offline through the TV surface. The shared Android host controls do not observe the app process, device storage, focus, or remote interaction."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-31", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"},
-            {"conformance": "CONF-32", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"},
-            {"conformance": "CONF-33", "workflow": "core-ci", "job": "core-ci", "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"}
+            {
+              "conformance": "CONF-31",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
+            },
+            {
+              "conformance": "CONF-32",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
+            },
+            {
+              "conformance": "CONF-33",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
+            },
+            {
+              "observes": "the real app library surface starts production sync, displays committed AndroidSqliteDriver generations 1 then 2 with the second started by a monotonic scheduler; no refresh fires while stopped, and after connection refusal a recreated activity browses identical saved generation-2 metadata with zero sync starts; TV remote activation and row focus are asserted",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvProductionLibrarySyncAppConformanceTest/librarySyncSchedulesSecondGenerationAndReopensOffline"
+            }
           ],
-          "reason": "Android TV consumes the same Android-compiled core, and conformance-env-linux executes all three declared sync controls on that target against the live disposable server. That is valid evidence for the shared core algorithm only. It does not observe an Android TV app process, AndroidSqliteDriver storage, offline browsing, focus, or remote interaction, so the cell is partial rather than shipped."
+          "reason": "The disposable Linux job executes the app library lifecycle proof with production AndroidLibraryDatabase sync and committed reads. It asserts the refresh callback marker, foreground lifecycle behavior, generations 1 and 2, a connection refusal, and saved metadata rendered after activity/store reopen without synchronization. JUnit is consumed by the required core-ci evidence verifier. This is Compose/Robolectric AndroidSqliteDriver evidence; Keystore cryptography is host-shadowed. It does not claim physical-device execution."
         }
       }
     },

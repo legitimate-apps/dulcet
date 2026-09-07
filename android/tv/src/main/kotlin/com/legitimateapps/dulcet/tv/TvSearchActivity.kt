@@ -63,7 +63,7 @@ class TvSearchActivity : ComponentActivity() {
                         )
                     }
                 } else {
-                    TvSearchRoute(account, searchDependencies)
+                    com.legitimateapps.dulcet.library.LibraryEntry(account) { TvSearchRoute(account, searchDependencies) }
                 }
             }
         }
