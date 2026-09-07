@@ -150,6 +150,26 @@ for workflow in workflows:
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             errors.append(f"{workflow}: {action} is not pinned to an immutable commit")
 
+# Every JUnit directory an Apple step writes must reach verify-parity-evidence, and every
+# directory it reads must be written by a step. PR #65 failed apple-ci with "evidence test did not
+# execute" for a test the same log showed passing: the macOS app-host target was the one Apple
+# target with no swift-testing-junit call, so citing ANY test in it was unprovable by construction.
+# Nothing failed until a FEATURES.yml row cited one, which is a 65-minute round trip away from the
+# edit that caused it.
+apple_ci = Path(".github/workflows/apple-ci.yml").read_text()
+written = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", apple_ci))
+read = set(re.findall(r'"\$RUNNER_TEMP/([\w-]+-junit)"', apple_ci))
+for orphan in sorted(written - read):
+    errors.append(
+        f".github/workflows/apple-ci.yml: JUnit directory {orphan} is written but never passed "
+        "to verify-parity-evidence, so evidence citing tests in it cannot be proven to have run",
+    )
+for missing in sorted(read - written):
+    errors.append(
+        f".github/workflows/apple-ci.yml: verify-parity-evidence reads {missing}, which no step "
+        "writes",
+    )
+
 core_ci = Path(".github/workflows/core-ci.yml").read_text()
 for required in (
     "python3 tools/migration_gate.py",
