@@ -40,14 +40,31 @@ reason = macos.get("reason", "")
 assert "relaunch" in reason.lower()
 assert "evidenc" in reason.lower()
 
-for platform in ("ios", "ipados"):
+for platform in ("macos", "ios", "ipados"):
     cell = downloads["platforms"][platform]
     assert cell["status"] == "partial"
     assert {row["conformance"] for row in cell["evidence"]} == {"CONF-51", "CONF-52"}
     assert "relaunch" in cell["reason"].lower()
     promotion = cell["promotion_condition"]
     assert promotion["status"] == "blocked"
-    assert promotion["blocked_on"] == "killed-process-relaunch-harness"
+    assert promotion["blocked_on"] == "killed-process-background-session-handoff"
     assert "process" in promotion["reason"].lower()
+    assert "os-initiated-background-session-delivery" in promotion["reason"]
+    assert "backgroundSessionHandoffWaitsUntilDelegateFinishesEvents plays the OS" in cell["reason"]
+    assert "not process termination or a durable downloaded row" in cell["reason"]
+    if platform == "macos":
+        assert "ASSUMED" in promotion["reason"]
+        assert "separate macOS evidence" in promotion["reason"]
+    else:
+        for measurement in ("SpringBoard", "domain:10 code:0xFBFBFBFB", "no jetsam verb"):
+            assert measurement in promotion["reason"]
+
+registry = (ROOT / "docs/download-background-blockers.md").read_text()
+for blocker in (
+    "killed-process-background-session-handoff",
+    "os-initiated-background-session-delivery",
+):
+    assert f"## {blocker}" in registry
+assert "killed-process-" + "relaunch-harness" not in (ROOT / "FEATURES.yml").read_text()
 
 print("Apple downloads adversarial-review regression contracts valid")
