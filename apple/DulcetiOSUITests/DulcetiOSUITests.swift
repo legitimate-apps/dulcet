@@ -799,13 +799,40 @@ final class DulcetiOSUITests: XCTestCase {
             )
             return
         }
-        thresholdTrack.tap()
+        // OBSERVED on iPhone 17 Pro: this app runs in a letterboxed compatibility window.
+        // XCTest reports the track in app coordinates (320x480), but the displayed window is
+        // 402x603 at y=135.5. Element.tap() synthesized the unconverted point and left the album
+        // open without a stream request. Map the visible row midpoint through the actual window;
+        // this also becomes the identity mapping when the app occupies an unscaled window.
+        let appFrame = app.frame
+        let visibleTrack = thresholdTrack.frame.intersection(appFrame)
+        guard appFrame.width > 0, appFrame.height > 0,
+              !visibleTrack.isNull, !visibleTrack.isEmpty else {
+            XCTFail("The canary must have a visible tap point in the app's coordinate space")
+            return
+        }
+        let tap = window.coordinate(withNormalizedOffset: CGVector(
+            dx: (visibleTrack.midX - appFrame.minX) / appFrame.width,
+            dy: (visibleTrack.midY - appFrame.minY) / appFrame.height
+        ))
+        print("DULCET IPHONE TAP app=\(appFrame) window=\(window.frame)"
+            + " track=\(thresholdTrack.frame) screenPoint=\(tap.screenPoint)")
+        let tappedAt = ProcessInfo.processInfo.systemUptime
+        tap.tap()
 
         let progress = app.sliders["Now Playing"].firstMatch
         guard progress.waitForExistence(timeout: 30) else {
+            // Only known playback controls are inspected: never dump account fields or URLs.
+            print("DULCET IPHONE START FAILURE nowPlaying=\(app.navigationBars["Now Playing"].exists)"
+                + " canaryTitle=\(app.staticTexts["dulcet.now-playing.title"].exists)"
+                + " nonseekableProgress=\(app.progressIndicators["Now Playing"].exists)")
             XCTFail("Real playback must begin and expose progressing media time in Now Playing")
             return
         }
+        print("DULCET IPHONE PLAYBACK BEGAN secondsSinceTap=\(ProcessInfo.processInfo.systemUptime - tappedAt)"
+            + " mediaTime=\(progress.value as? String ?? "unavailable")")
+        XCTAssertEqual(app.staticTexts["dulcet.now-playing.title"].label, "UI Playback Canary",
+            "The track tap must start the dedicated canary")
         guard let finalSample = waitUntilPastScrobbleThreshold(progress) else { return }
         print("DULCET IPHONE PROGRESS elapsed=\(finalSample.elapsed) duration=\(finalSample.duration)")
         let threshold = min(finalSample.duration * 0.5, 4 * 60)
