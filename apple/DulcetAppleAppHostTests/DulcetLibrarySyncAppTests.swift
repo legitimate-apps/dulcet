@@ -3,6 +3,7 @@ import UIKit
 import DulcetCore
 import XCTest
 @testable import DulcetKit
+@testable import Dulcet_DEV
 
 @MainActor
 final class DulcetLibrarySyncAppTests: XCTestCase {

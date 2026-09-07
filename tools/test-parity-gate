@@ -180,10 +180,8 @@ PINNED_FIXTURE_PROMOTION_CONDITION = {
 
 
 # The second fixture cell, for the controls that need a `planned` starting point. Same reasoning:
-# `library.sync/ipados` is bare `planned` in the live document today, and one control asserts the
-# gate rejects `planned -> blocked` by name. The day that cell gains a real status -- which is
-# already on the follow-up list -- the control breaks for a reason that has nothing to do with the
-# rule it guards.
+# Pin library.sync/ipados to planned even after its live promotion, so the control that
+# rejects planned -> blocked remains independent of the product status.
 PINNED_PLANNED_CELL = ("library.sync", "ipados")
 
 
@@ -993,6 +991,27 @@ execution_rejections = {
             "",
         ),
         "evidence test did not execute",
+    ),
+    "iPhone library-sync observation skipped while other destinations pass": (
+        passing_report.replace(
+            'name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator" time="0.1" />',
+            'name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator" time="0.1"><skipped /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
+    "iPad library-sync observation skipped while other destinations pass": (
+        passing_report.replace(
+            'name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator" time="0.1" />',
+            'name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator" time="0.1"><skipped /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
+    "Apple TV library-sync observation skipped while other destinations pass": (
+        passing_report.replace(
+            'name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator" time="0.1" />',
+            'name="testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator" time="0.1"><skipped /></testcase>',
+        ),
+        "evidence test did not pass",
     ),
     "all platform reports omit one library-sync conformance test": (
         passing_report.replace(
