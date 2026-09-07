@@ -80,7 +80,7 @@ struct DulcetiOSProductionComposition {
 #endif
 
 @MainActor
-final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing {
+final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing, DulcetLocalSearching {
     private let client: AppleLibrarySyncClient
 
     private(set) var startedSyncCount = 0
@@ -92,6 +92,22 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             databaseName: databaseName,
             maximumInFlightPerServer: 4
         )
+    }
+
+    func searchCommitted(providerInstanceID: String, query: String) -> DulcetSearchPageOutcome {
+        let outcome = client.searchCommitted(providerInstanceId: providerInstanceID, query: query)
+        if let page = outcome.page {
+            return .loaded(DulcetSearchPage(
+                results: page.results.map(DulcetCoreServerSearch.copyResult),
+                artistResultCount: 0, albumResultCount: 0, trackResultCount: 0,
+                artistHasMore: false, albumHasMore: false, trackHasMore: false
+            ))
+        }
+        guard let error = outcome.error,
+              let kind = DulcetSearchFailureKind(rawValue: error.kind) else {
+            preconditionFailure("The core must export a closed local search outcome")
+        }
+        return .failed(DulcetSearchFailure(kind: kind))
     }
 
     func browse(
@@ -341,7 +357,7 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
         return DulcetCoreSearchOperation(operation: operation)
     }
 
-    private static func copyResult(_ result: AppleSearchResultItemDto) -> DulcetSearchResult {
+    static func copyResult(_ result: AppleSearchResultItemDto) -> DulcetSearchResult {
         let kind: DulcetSearchResultKind = switch result.type {
         case "Track": .track
         case "Album": .album

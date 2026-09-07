@@ -151,7 +151,7 @@ private fun SearchPageResult.toAppleOutcome(): AppleSearchOutcome = when (this) 
     is SearchPageResult.Failed -> AppleSearchOutcome(null, AppleSearchErrorDto(error.appleSearchKind()))
 }
 
-private fun SearchPage.toAppleDto(): AppleSearchPageDto = AppleSearchPageDto(
+internal fun SearchPage.toAppleDto(): AppleSearchPageDto = AppleSearchPageDto(
     results = results.map { result ->
         AppleSearchResultItemDto(
             providerInstanceId = result.id.providerInstanceId,

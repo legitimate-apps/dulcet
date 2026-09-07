@@ -475,6 +475,73 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
 }
 
 @Test @MainActor
+func localSearchStartsImmediatelyAndServerReplacesWithoutMovingRows() async {
+    let connector = ControlledAccountConnector()
+    let server = ControlledServerSearch()
+    let local = ControlledLocalLibrarySearch()
+    let source = DulcetAccountDataSource(
+        connector: connector, libraryBrowser: local, serverSearch: server,
+        searchDebounce: .zero, providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://127.0.0.1:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Fixture", normalizedServerURL: "http://127.0.0.1:4533"
+    )))
+    store.selectDestination(.search)
+    store.searchQuery = "a"
+    #expect(local.queries == ["a"])
+    #expect(local.accounts == ["provider-instance-fixture"])
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchResults.map(\.id.rawID) == ["opaque:local-only", "opaque:shared"])
+    await settleSearchTask()
+    #expect(server.requests.isEmpty)
+    print("LOCAL SEARCH query=a rows=opaque:local-only,opaque:shared server-requests=0")
+
+    store.searchQuery = "at"
+    #expect(store.snapshot.searchResults.count == 2)
+    #expect(server.requests.isEmpty)
+    await settleSearchTask(until: { server.requests.count == 1 })
+    server.complete(at: 0, .loaded(searchPage(results: [
+        searchResult(id: "opaque:shared", title: "Server refreshed"),
+        searchResult(id: "opaque:server-only", title: "Server new"),
+    ], trackHasMore: true)))
+    #expect(store.snapshot.searchResults.map(\.title) == ["Local only", "Server refreshed", "Server new"])
+    store.loadMoreSearchResults(.track)
+    #expect(server.requests.last?.trackOffset == 2)
+    server.complete(at: 1, .loaded(searchPage(results: [
+        searchResult(id: "opaque:shared", title: "Page refreshed")
+    ])))
+    #expect(store.snapshot.searchResults.map(\.id.rawID) == ["opaque:local-only", "opaque:shared", "opaque:server-only"])
+    print("LOCAL MERGE shared-id=replaced-in-place rows=3 server-offset=2")
+    store.searchQuery = " "
+    #expect(store.snapshot.searchResults.isEmpty)
+    #expect(store.snapshot.state == .searchIdle)
+    #expect(local.queries == ["a", "at"])
+}
+
+@MainActor
+private final class ControlledLocalLibrarySearch: DulcetLibraryBrowsing, DulcetLocalSearching {
+    var queries: [String] = []
+    var accounts: [String] = []
+    func searchCommitted(providerInstanceID: String, query: String) -> DulcetSearchPageOutcome {
+        queries.append(query)
+        accounts.append(providerInstanceID)
+        return .loaded(searchPage(results: [
+            searchResult(id: "opaque:local-only", title: "Local only"),
+            searchResult(id: "opaque:shared", title: "Local shared"),
+        ]))
+    }
+    func browse(_ request: DulcetLibraryBrowseRequest,
+                completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void) -> any DulcetLibraryBrowseOperation {
+        ControlledLibraryOperation(onCancel: {})
+    }
+}
+
+@Test @MainActor
 func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent() async throws {
     let connector = ControlledAccountConnector()
     let libraryBrowser = ControlledLibraryBrowser()
