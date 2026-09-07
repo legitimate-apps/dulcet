@@ -12,7 +12,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 class HostResolutionTest {
@@ -70,21 +69,6 @@ class HostResolutionTest {
     }
 
     // Deliberately non-cooperative: no suspension or cancellation checks, on JVM AND Native.
-    // The workers are deliberately uninterruptible: a timed-out call keeps its permit until the
-    // blocking lookup really returns. Teardown therefore has to wait for that release -- and
-    // waiting a fixed 550ms for a 500ms busy-spin left 50ms of scheduling slack, which a loaded
-    // runner does not always have. When it slipped, the NEXT test in this class got the saturation
-    // answer (an empty list) and failed as if the resolver were broken. Wait for the observable
-    // condition instead of guessing a duration.
-    private suspend fun awaitWorkerPermitsReleased() {
-        val start = TimeSource.Monotonic.markNow()
-        while (start.elapsedNow() < 20.seconds) {
-            if (boundedHostResolution { local }.isNotEmpty()) return
-            delay(25)
-        }
-        error("host resolution workers never released their permits")
-    }
-
     private fun blockingLookup(): List<String> {
         val start = TimeSource.Monotonic.markNow()
         while (start.elapsedNow() < 500.milliseconds) { /* simulate a blocked OS resolver */ }
@@ -103,7 +87,7 @@ class HostResolutionTest {
             assertTrue(start.elapsedNow() < 400.milliseconds, "must not wait for the 500ms blocking lookup")
         } finally {
             pulse.join()
-            awaitWorkerPermitsReleased()
+            delay(1_500) // 3x margin over the 500ms busy-spin; 550ms left only 50ms of slack
         }
     }
 
@@ -115,7 +99,7 @@ class HostResolutionTest {
             assertTrue(policy.leavesLocalNetwork(source, target))
             assertTrue(start.elapsedNow() < 400.milliseconds)
         } finally {
-            awaitWorkerPermitsReleased()
+            delay(1_500) // 3x margin over the 500ms busy-spin; 550ms left only 50ms of slack
         }
     }
 
@@ -132,7 +116,7 @@ class HostResolutionTest {
         assertEquals(emptyList(), boundedHostResolution { ran = true; local })
         assertEquals(false, ran)
         jobs.forEach { it.join() }
-        awaitWorkerPermitsReleased()
+        delay(1_500) // 3x margin over the 500ms busy-spin; 550ms left only 50ms of slack
         assertEquals(local, boundedHostResolution { local })
     }
 
