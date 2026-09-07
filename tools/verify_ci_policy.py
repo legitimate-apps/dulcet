@@ -156,7 +156,11 @@ for workflow in workflows:
 # target with no swift-testing-junit call, so citing ANY test in it was unprovable by construction.
 # Nothing failed until a FEATURES.yml row cited one, which is a 65-minute round trip away from the
 # edit that caused it.
-apple_ci = Path(".github/workflows/apple-ci.yml").read_text()
+# Guarded on membership in the discovered set rather than on the path existing: this script is
+# also run by tools/test-verify-ci-policy against synthetic single-workflow fixtures, where
+# apple-ci.yml is legitimately absent. In the repository it is always in `workflows`.
+apple_ci_path = Path(".github/workflows/apple-ci.yml")
+apple_ci = apple_ci_path.read_text() if apple_ci_path in workflows else ""
 written = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", apple_ci))
 read = set(re.findall(r'"\$RUNNER_TEMP/([\w-]+-junit)"', apple_ci))
 for orphan in sorted(written - read):
