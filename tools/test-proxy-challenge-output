@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Execute the handler with broken/backpressured stdout and recording response stubs."""
+import ast
+import contextlib
+from email.message import Message
+from pathlib import Path
+import threading
+import time
+import unittest
+from types import SimpleNamespace
+
+SOURCE = Path(__file__).parent / 'conformance-env/redirect-server'
+
+
+def challenge(handler):
+    tree = ast.parse(SOURCE.read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+               and n.name == 'ForwardProxyAuthenticationHandler')
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_challenge')
+    scope = {'time': time, 'STATE': SimpleNamespace(record_proxy_auth_challenge=handler.record)}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), 'exec'), scope)
+    scope['_challenge'](handler)
+
+
+class RecordingHandler:
+    def __init__(self):
+        self.headers = Message()
+        self.headers['Proxy-Authorization'] = 'invented-proxy-authorization-canary'
+        self.statuses = []
+        self.recorded = []
+        self.committed = False
+        self.close_connection = False
+
+    def record(self, values):
+        self.recorded.append(values)
+
+    def send_response(self, status, reason):
+        self.statuses.append(status)
+
+    def send_header(self, *args):
+        pass
+
+    def end_headers(self):
+        self.committed = True
+
+
+class ChallengeOutputTest(unittest.TestCase):
+    def test_broken_stdout_cannot_prevent_407(self):
+        class Broken:
+            def write(self, value):
+                raise BrokenPipeError('injected broken stdout')
+
+            def flush(self):
+                raise BrokenPipeError('injected broken stdout')
+
+        handler = RecordingHandler()
+        with contextlib.redirect_stdout(Broken()):
+            challenge(handler)
+        self.assertEqual([407], handler.statuses)
+        self.assertTrue(handler.committed)
+        self.assertTrue(handler.close_connection)
+        self.assertEqual([['invented-proxy-authorization-canary']], handler.recorded)
+
+    def test_backpressured_stdout_cannot_delay_response_or_handler(self):
+        release = threading.Event()
+        done = threading.Event()
+        failures = []
+
+        class Blocked:
+            def write(self, value):
+                release.wait()
+
+            def flush(self):
+                release.wait()
+
+        handler = RecordingHandler()
+
+        def run():
+            try:
+                challenge(handler)
+            except BaseException as failure:
+                failures.append(failure)
+            finally:
+                done.set()
+
+        with contextlib.redirect_stdout(Blocked()):
+            worker = threading.Thread(target=run)
+            worker.start()
+            try:
+                self.assertTrue(done.wait(1), 'handler waited for stdout')
+                self.assertEqual([407], handler.statuses)
+                self.assertTrue(handler.committed)
+                self.assertFalse(failures)
+            finally:
+                release.set()
+                worker.join(2)
+
+
+if __name__ == '__main__':
+    unittest.main()
