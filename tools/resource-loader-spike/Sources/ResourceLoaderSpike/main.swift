@@ -240,9 +240,9 @@ private enum SpikeError: LocalizedError {
     }
 }
 
-/// Every distinguishable way the localhost control server can fail to become
-/// ready. One message per condition, each carrying the child's liveness and the
-/// elapsed times, so a CI log alone identifies which one occurred.
+/// The three failure conditions classified by the readiness loop. Each message
+/// carries the observed child liveness and elapsed time; it identifies the
+/// condition detected by the loop, not the underlying cause.
 private enum ServerReadinessFailure: LocalizedError {
     case childExitedBeforePortHandshake(
         child: String,
@@ -296,13 +296,71 @@ private enum ServerReadinessFailure: LocalizedError {
 /// Readiness timing, kept in one value so a check can drive the same production
 /// code path with a short budget instead of duplicating the logic.
 private struct ServerReadinessBudget {
-    let deadline: TimeInterval
+    /// Soft startup threshold. The loop reads and accepts a published port
+    /// before checking expiry, so a read after this threshold can still succeed.
+    let handshakeDeadline: TimeInterval
+    /// Soft retry threshold, measured at phase-two entry after accepting the
+    /// handshake. Checked after failed probes, before sleeping; a retry can
+    /// start after expiry and a successful probe is accepted without an expiry check.
+    let probeDeadline: TimeInterval
     let probeTimeout: TimeInterval
     let pollInterval: TimeInterval
 
-    /// Unchanged from the value this tool has always used.
+    /// The old shared 10s budget covered startup, the port handshake and HTTP
+    /// probing. Accepting a port always led to at least one full probe, even near
+    /// expiry, but slow startup left less time for retries. Separate budgets give
+    /// HTTP probing a fresh retry window independent of startup duration.
+    ///
+    /// REPORTED OBSERVATIONS from the earlier apple-ci log harvest: 70 successful
+    /// invocations in 35 pairs, with first-invocation handshake maximum 9.503s
+    /// and second-invocation maximum 1.027s. Every reported pair was slow then
+    /// fast. One first invocation timed out at 10.175s with the child still
+    /// running. These are historical sample summaries, not a revalidated harvest
+    /// or evidence of distinct populations, a causal ordinal effect, or a required
+    /// startup budget. The disposition of the other logs among the 85 reportedly
+    /// retrieved is not accounted for here, so no population failure rate is inferred.
+    ///
+    /// These observations are incomplete and selected: retaining only successes
+    /// biases the observed maximum low as a description of startup's tail. Neither
+    /// the old 10s threshold nor the 10.175s timeout gives a sharp bound on when
+    /// the child published its port or could have become ready. The old loop
+    /// checked expiry only at iteration entry: it could accept a port and record
+    /// READY above 10s, or time out without re-reading a port published during
+    /// its final sleep. The failed child's eventual readiness is unknown; a
+    /// permanently stalled child is equally consistent with that observation.
+    ///
+    /// ASSUMED policy: retain 30s as a provisional startup allowance, not a measured
+    /// requirement or a fix for the observed timeout. The cause remains unresolved.
+    /// The asymmetry favors generosity: extra waiting on a failed startup costs
+    /// time, while stopping a startup that would succeed can waste a macOS CI leg.
+    /// This accepts the risk that a real startup defect taking 10-30s now passes;
+    /// a later READY result in that band must be investigated, not declared healthy.
+    /// The nominal combined allowance is now 35s rather than 10s, an increase of
+    /// 25s; these soft thresholds, scheduling delays and cleanup prevent treating
+    /// that difference as a hard bound on additional elapsed time.
+    ///
+    /// To settle the cause and revisit 30s, collect complete per-invocation outcomes
+    /// with timestamped child-startup milestones, port publication, parent reads
+    /// and HTTP probes, plus process diagnostics for stalled children. Observe
+    /// whether slow children eventually become ready under a separately bounded
+    /// diagnostic run. Keep invocation ordinals separate and account for missing
+    /// runs. Completion times can inform the budget; traces and a reproduction
+    /// are needed to distinguish scheduling or cold-start costs from a startup
+    /// defect. Compile/link time precedes this executable's readiness interval;
+    /// any indirect cold-start effect is an unverified hypothesis.
+    ///
+    /// A wider allowance may yield more successful observations above 10s; it
+    /// does not predict how many or guarantee any. An empty band over a few dozen
+    /// runs would not resolve the cause. Even ASSUMING independent trials with
+    /// a fixed event probability of 1/36, zero events has probability about 36.3%
+    /// in 36 trials and 18.4% in 60. That assumed rate is not established here.
+    ///
+    /// Four previously reported probe durations (total_elapsed - handshake_elapsed)
+    /// were 0.020s, 0.044s, 0.023s and 0.007s. The 5s probe allowance is about
+    /// 114 times the largest of those samples, a policy margin rather than a
+    /// measured requirement; four samples do not establish ordinal independence.
     static let production = ServerReadinessBudget(
-        deadline: 10, probeTimeout: 1, pollInterval: 0.1
+        handshakeDeadline: 30, probeDeadline: 5, probeTimeout: 1, pollInterval: 0.1
     )
 }
 
@@ -615,14 +673,16 @@ private enum ResourceLoaderSpike {
 
     /// Drives the production readiness wait into each of its three failure
     /// conditions and asserts that the reported message names that condition and
-    /// no other. A readiness failure in CI is otherwise indistinguishable from
-    /// the other two, which is the whole point of these checks.
+    /// no other. Misclassifying a failure must fail this check, even if the
+    /// readiness wait still throws an error.
     private static func verifyReadinessReportingContract() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("dulcet-readiness-reporting-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let budget = ServerReadinessBudget(deadline: 1.0, probeTimeout: 0.25, pollInterval: 0.05)
+        let budget = ServerReadinessBudget(
+            handshakeDeadline: 1.0, probeDeadline: 1.0, probeTimeout: 0.25, pollInterval: 0.05
+        )
 
         // Condition 1: the child died before publishing a port.
         let exitedChild = shellChild("exit 7")
@@ -905,7 +965,7 @@ private enum ResourceLoaderSpike {
         budget: ServerReadinessBudget
     ) throws -> URL {
         let start = Date()
-        let deadline = start.addingTimeInterval(budget.deadline)
+        let handshakeDeadline = start.addingTimeInterval(budget.handshakeDeadline)
         let session = URLSession(configuration: probeConfiguration(timeout: budget.probeTimeout))
         defer { session.invalidateAndCancel() }
 
@@ -916,39 +976,67 @@ private enum ResourceLoaderSpike {
         var probes = 0
         var lastProbe = "no-probe-attempted"
 
-        while Date() < deadline {
-            if publishedPort == nil {
-                switch readPortHandshake(portFile) {
-                case .absent:
-                    portFileBytes = 0
-                    lastParse = "port-file-absent"
-                case let .incomplete(bytes, reason):
-                    portFileBytes = bytes
-                    lastParse = reason
-                case let .published(port, bytes):
-                    publishedPort = port
-                    portFileBytes = bytes
-                    lastParse = "published"
-                    handshakeElapsed = Date().timeIntervalSince(start)
-                }
+        // Phase 1: wait for port publication using a separate soft threshold.
+        // Read and accept the port before checking child liveness or expiry;
+        // startup duration does not consume the later HTTP retry window.
+        while publishedPort == nil {
+            switch readPortHandshake(portFile) {
+            case .absent:
+                portFileBytes = 0
+                lastParse = "port-file-absent"
+            case let .incomplete(bytes, reason):
+                portFileBytes = bytes
+                lastParse = reason
+            case let .published(port, bytes):
+                publishedPort = port
+                portFileBytes = bytes
+                lastParse = "published"
+                handshakeElapsed = Date().timeIntervalSince(start)
             }
-
-            guard let port = publishedPort else {
-                let child = childState(process)
-                if !child.running {
-                    throw ServerReadinessFailure.childExitedBeforePortHandshake(
-                        child: child.summary,
-                        elapsed: Date().timeIntervalSince(start),
-                        budget: budget.deadline,
-                        portFileBytes: portFileBytes,
-                        parse: lastParse
-                    )
-                }
-                Thread.sleep(forTimeInterval: budget.pollInterval)
-                continue
+            if publishedPort != nil { break }
+            let child = childState(process)
+            if !child.running {
+                throw ServerReadinessFailure.childExitedBeforePortHandshake(
+                    child: child.summary,
+                    elapsed: Date().timeIntervalSince(start),
+                    budget: budget.handshakeDeadline,
+                    portFileBytes: portFileBytes,
+                    parse: lastParse
+                )
             }
+            if Date() >= handshakeDeadline {
+                throw ServerReadinessFailure.portHandshakeTimedOut(
+                    child: child.summary,
+                    elapsed: Date().timeIntervalSince(start),
+                    budget: budget.handshakeDeadline,
+                    portFileBytes: portFileBytes,
+                    parse: lastParse
+                )
+            }
+            Thread.sleep(forTimeInterval: budget.pollInterval)
+        }
 
-            let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
+        guard let port = publishedPort else {
+            // Unreachable: phase 1 exits only by publishing a port or throwing.
+            throw ServerReadinessFailure.portHandshakeTimedOut(
+                child: childState(process).summary,
+                elapsed: Date().timeIntervalSince(start),
+                budget: budget.handshakeDeadline,
+                portFileBytes: portFileBytes,
+                parse: lastParse
+            )
+        }
+
+        // Phase 2: start a fresh HTTP retry window after accepting the port.
+        // Both this loop and the old shared-deadline loop always attempt a probe.
+        // Expiry is checked only after a failure, before the polling sleep, so a
+        // retry may start after expiry and success may be accepted after expiry.
+        // With production settings, a final sleep plus failed probe can overshoot
+        // by about 0.1 + 1 + 0.25 = 1.35s, before scheduling delays. Date uses wall
+        // time, so clock changes also prevent a strict elapsed-time bound.
+        let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
+        let probeDeadline = Date().addingTimeInterval(budget.probeDeadline)
+        while true {
             probes += 1
             let outcome = probe(session: session, url: controlURL, timeout: budget.probeTimeout)
             lastProbe = outcome.detail
@@ -956,15 +1044,17 @@ private enum ResourceLoaderSpike {
                 let total = Date().timeIntervalSince(start)
                 print(
                     "READINESS control_server=READY port=\(port) probes=\(probes) "
-                        + "handshake_elapsed=\(format(handshakeElapsed))s "
-                        + "total_elapsed=\(format(total))s "
-                        + "budget=\(format(budget.deadline))s port_file_bytes=\(portFileBytes)"
+                    + "handshake_elapsed=\(format(handshakeElapsed))s "
+                    + "total_elapsed=\(format(total))s "
+                    + "handshake_budget=\(format(budget.handshakeDeadline))s "
+                    + "probe_budget=\(format(budget.probeDeadline))s "
+                    + "port_file_bytes=\(portFileBytes)"
                 )
                 return controlURL
             }
-
             let child = childState(process)
-            if !child.running {
+            let exhausted = Date() >= probeDeadline
+            if !child.running || exhausted {
                 throw ServerReadinessFailure.httpProbeNeverSucceeded(
                     port: port,
                     probes: probes,
@@ -972,32 +1062,11 @@ private enum ResourceLoaderSpike {
                     child: child.summary,
                     handshakeElapsed: handshakeElapsed,
                     elapsed: Date().timeIntervalSince(start),
-                    budget: budget.deadline
+                    budget: budget.probeDeadline
                 )
             }
             Thread.sleep(forTimeInterval: budget.pollInterval)
         }
-
-        let child = childState(process)
-        let elapsed = Date().timeIntervalSince(start)
-        guard let port = publishedPort else {
-            throw ServerReadinessFailure.portHandshakeTimedOut(
-                child: child.summary,
-                elapsed: elapsed,
-                budget: budget.deadline,
-                portFileBytes: portFileBytes,
-                parse: lastParse
-            )
-        }
-        throw ServerReadinessFailure.httpProbeNeverSucceeded(
-            port: port,
-            probes: probes,
-            lastProbe: lastProbe,
-            child: child.summary,
-            handshakeElapsed: handshakeElapsed,
-            elapsed: elapsed,
-            budget: budget.deadline
-        )
     }
 
     /// Rejects anything that is not a complete, newline-terminated port value, so
@@ -1043,9 +1112,10 @@ private enum ResourceLoaderSpike {
         return configuration
     }
 
-    /// One bounded probe. A probe that outlives its own request timeout is
-    /// cancelled rather than abandoned, and the session is invalidated when the
-    /// readiness wait returns, so no probe survives it.
+    /// One probe with an independent request timeout and a bounded semaphore wait
+    /// for completion delivery. If that wait expires, cancellation is requested;
+    /// readiness-wait cleanup invalidates and cancels the session. Neither call
+    /// waits for all completion callbacks to finish.
     private static func probe(
         session: URLSession,
         url: URL,
@@ -1082,10 +1152,11 @@ private enum ResourceLoaderSpike {
             semaphore.signal()
         }
         task.resume()
-        // The request already bounds itself at `timeout`; the extra grace only
-        // covers completion-handler delivery, so a probe that hits its own
-        // timeout reports the URL error rather than "abandoned". The readiness
-        // deadline still governs whether another probe starts.
+        // Allow 0.25s beyond the configured request timeout for completion-handler
+        // delivery. A delivered timeout can report its URL error; if this wait
+        // expires first, report cancellation instead. The caller checks its soft
+        // retry threshold after a failed result, before sleeping, not before
+        // starting the next probe or accepting a successful result.
         if semaphore.wait(timeout: .now() + timeout + 0.25) == .timedOut {
             task.cancel()
             return ProbeOutcome(succeeded: false, detail: "probe-cancelled-after-timeout")
