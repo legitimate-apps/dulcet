@@ -352,9 +352,28 @@ if Path("core-conformance").is_dir():
 #
 # ➡️ "Is it wired?" is the FIRST question about a control, before "what does it assert?" -- the
 # second is moot without the first.
-workflow_text = "".join(workflow.read_text() for workflow in workflows)
+# Joined with a newline, never "": concatenating the files edge-to-edge lets a match straddle the
+# boundary between one workflow's last line and the next one's first.
+# Comment lines are dropped first, because a name mentioned in a `#` line invokes nothing. This
+# strips shell comments inside a `run: |` block as well as YAML comments, and both are correct: a
+# real invocation never begins with `#`.
+workflow_text = "\n".join(
+    "\n".join(
+        line for line in workflow.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+    for workflow in workflows
+)
 for control in sorted(Path("tools").glob("test-*")):
-    if control.is_file() and control.name not in workflow_text:
+    if not control.is_file():
+        continue
+    # 🚨 A bare `name in text` substring test has two silent holes, and this gate shipped with both.
+    # MEASURED 2026-09-08 against the real workflows: a genuine orphan `tools/test-cache-search`
+    # reads as WIRED, because its name is a strict prefix of the wired `test-cache-search-readiness`.
+    # Requiring the `tools/` prefix rejects an incidental mention; the negative lookahead rejects the
+    # prefix collision. Deliberately NOT also requiring `run:` on the same line -- an invocation on a
+    # later line of a `run: |` block is legitimate and that would reject it.
+    invocation = re.compile(rf"tools/{re.escape(control.name)}(?![\w.\-])")
+    if not invocation.search(workflow_text):
         errors.append(
             f"{control}: no workflow invokes this control, so it never runs; wire it into a "
             "workflow or delete it, but do not leave it looking like a gate",

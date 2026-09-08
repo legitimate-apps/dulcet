@@ -437,30 +437,46 @@ def run_orphan_control_case() -> None:
     Both directions matter. Rejecting the unwired one is the gate; accepting the wired one is what
     stops the gate from being satisfiable only by having no controls at all.
     """
-    for wired in (False, True):
+    # Four variants, because a bare substring test passes two of them wrongly. MEASURED against the
+    # real workflows before this was fixed: a genuine orphan whose name is a strict PREFIX of a wired
+    # control read as wired, and a name appearing only in a `#` comment read as wired.
+    for wired in ("no", "yes", "prefix-of-a-wired-control", "named-only-in-a-comment"):
         with tempfile.TemporaryDirectory(prefix="dulcet-orphan-policy-") as temporary_directory:
             root = Path(temporary_directory)
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             core = workflow_for(next(case for case in CASES if case.accepted))
-            if wired:
+            if wired == "yes":
                 core += "      - run: python3 tools/test-example-control\n"
+            elif wired == "prefix-of-a-wired-control":
+                # Only the LONGER control is invoked. The shorter one is a real orphan.
+                core += "      - run: python3 tools/test-example-control-extended\n"
+            elif wired == "named-only-in-a-comment":
+                core += "      # superseded by tools/test-example-control\n"
             (workflows / "core-ci.yml").write_text(core)
             tools = root / "tools"
             tools.mkdir()
             (tools / "test-example-control").write_text("#!/usr/bin/env python3\n")
+            if wired == "prefix-of-a-wired-control":
+                (tools / "test-example-control-extended").write_text("#!/usr/bin/env python3\n")
             result = subprocess.run(
                 [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True,
                 check=False,
             )
-        expected = 0 if wired else 1
-        label = "a wired control is accepted" if wired else "an unwired control is rejected"
+        expected = 0 if wired == "yes" else 1
+        label = {
+            "no": "an unwired control is rejected",
+            "yes": "a wired control is accepted",
+            "prefix-of-a-wired-control":
+                "an orphan whose name prefixes a wired control is still rejected",
+            "named-only-in-a-comment": "a control named only in a comment is not wired",
+        }[wired]
         if result.returncode != expected:
             raise AssertionError(
                 f"{label}: expected exit {expected}, got {result.returncode}\n"
                 f"stderr:\n{result.stderr}",
             )
-        if not wired and "no workflow invokes this control" not in result.stderr:
+        if expected and "no workflow invokes this control" not in result.stderr:
             raise AssertionError(
                 f"{label}: rejection did not name the reason\nstderr:\n{result.stderr}",
             )
