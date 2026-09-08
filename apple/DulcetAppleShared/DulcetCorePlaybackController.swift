@@ -99,12 +99,24 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     }
 
     func restorePersistedQueue(with tracks: [DulcetTrack]) {
-        guard account != nil, !tracks.isEmpty else { return }
+        guard let account else { return }
         catalog.merge(
             Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) }),
             uniquingKeysWith: { _, latest in latest }
         )
-        start(queueClient.restoreCurrentPaused().startDirective)
+        let transition = queueClient.restoreCurrentPausedWithCatalog(
+            providerInstanceId: account.providerInstanceId,
+            availableRawIds: tracks.filter {
+                $0.id.providerInstanceID == account.providerInstanceId && $0.sourceContainer != nil
+            }.map { $0.id.rawID }
+        )
+        guard transition.errorKind == nil else {
+            publishFailure()
+            return
+        }
+        // A bypass has no playback work and must not republish a live session's snapshot.
+        guard let directive = transition.startDirective else { return }
+        start(directive)
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {

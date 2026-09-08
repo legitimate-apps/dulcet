@@ -212,6 +212,75 @@ class PlaybackQueueControllerTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun restorationClearsUnresolvedSelectionWithoutDeletingEntries() {
+        for (available in listOf(setOf("a", "c"), emptySet())) {
+            val fixture = fixture()
+            val seeded = fixture.controller.replaceAndStart(request(listOf("a", "missing", "c"), 1))
+            assertEquals("missing", seeded.startDirective?.itemId?.rawId)
+            val database = DulcetDatabaseStore.open(fixture.driver).database
+            repeat(2) {
+                val reopened = PlaybackQueueController(
+                    PersistentQueueStore(database), PersistentResumePositionStore(database),
+                    PlaybackIdentitySource { error("Repair must not create a session or attempt") },
+                )
+                val repaired = reopened.restoreCurrentPausedWithCatalog(SERVER, available)
+                assertEquals(listOf("a", "missing", "c"), repaired.snapshot.rawIds())
+                assertEquals(
+                    seeded.snapshot.entries,
+                    repaired.snapshot.entries,
+                )
+                assertNull(repaired.snapshot.currentIndex)
+                assertNull(repaired.snapshot.currentSession)
+                assertNull(repaired.startDirective)
+                assertEquals(emptyList(), repaired.effects)
+            }
+            fixture.driver.close()
+        }
+    }
+
+    @Test
+    fun partialCatalogPreservesEntireShuffledQueueAndValidPausedSelection() {
+        val fixture = fixture(shuffleSeed = 71)
+        val seeded = fixture.controller.replaceAndStart(request(listOf("a", "b", "c", "d"), shuffle = true))
+        val selected = assertNotNull(seeded.startDirective).itemId.rawId
+        val missing = seeded.snapshot.rawIds().last()
+        val available = seeded.snapshot.rawIds().filter { it != missing }.toSet()
+        val database = DulcetDatabaseStore.open(fixture.driver).database
+        var identity = 0
+        val reopened = PlaybackQueueController(
+            PersistentQueueStore(database), PersistentResumePositionStore(database),
+            PlaybackIdentitySource { "$it:restored:${identity++}" },
+        )
+        val restored = reopened.restoreCurrentPausedWithCatalog(SERVER, available)
+        assertEquals(seeded.snapshot.entries, restored.snapshot.entries)
+        assertEquals(QueueShuffleState.Enabled, restored.snapshot.shuffleState)
+        assertEquals(selected, restored.startDirective?.itemId?.rawId)
+        assertEquals(false, restored.startDirective?.shouldAutoPlay)
+        assertEquals(listOf("a", "b", "c", "d"),
+            reopened.setShuffle(false).snapshot.rawIds())
+        fixture.driver.close()
+    }
+
+    @Test
+    fun catalogRestorationDoesNotRepairALiveSessionOrAnotherAccountsQueue() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "b")))
+        val live = fixture.controller.restoreCurrentPausedWithCatalog(SERVER, emptySet())
+        assertEquals(started.snapshot, live.snapshot)
+        assertNull(live.startDirective)
+        val database = DulcetDatabaseStore.open(fixture.driver).database
+        val reopened = PlaybackQueueController(
+            PersistentQueueStore(database), PersistentResumePositionStore(database),
+            PlaybackIdentitySource { error("Another account must not restore this queue") },
+        )
+        val other = reopened.restoreCurrentPausedWithCatalog(ServerId("other"), emptySet())
+        assertEquals(started.snapshot.entries, other.snapshot.entries)
+        assertEquals(started.snapshot.currentIndex, other.snapshot.currentIndex)
+        assertNull(other.startDirective)
+        fixture.driver.close()
+    }
+
     private fun fixture(shuffleSeed: Int = 1): Fixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database

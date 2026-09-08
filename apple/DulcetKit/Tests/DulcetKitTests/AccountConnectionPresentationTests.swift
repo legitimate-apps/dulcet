@@ -283,6 +283,78 @@ func downloadSurfaceIntentAndDurableStateReachTheDownloadControllerBoundary() th
 }
 
 @Test @MainActor
+func neverPlayedControllerRemainsUnavailableAfterConnectionAndLibraryLoad() {
+    let connector = ControlledAccountConnector()
+    let browser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: browser,
+        playbackController: playback,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    ))
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    let album = fixtureLibraryAlbum()
+    browser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+
+    #expect(playback.configuredProviderInstanceID == "provider-instance-fixture")
+    #expect(playback.restoredCatalogs.count == 1)
+    #expect(playback.restoredCatalogs.first == album.tracks)
+    #expect(playback.queueIntents.isEmpty)
+    #expect(playback.controlIntents.isEmpty)
+    #expect(playback.currentPresentation == .unavailable)
+    store.selectDestination(.nowPlaying)
+    #expect(store.snapshot.selectedDestination == .nowPlaying)
+    #expect(store.snapshot.state == .nowPlayingUnavailable)
+    #expect(store.snapshot.nowPlaying == nil)
+}
+
+@Test(arguments: [DulcetPlaybackSurfaceStatus.ready, .failed]) @MainActor
+func missingPreviouslyPresentedItemRemainsAPlaybackFailure(status: DulcetPlaybackSurfaceStatus) {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    let album = fixtureLibraryAlbum()
+    let item = DulcetNowPlaying(
+        sessionID: DulcetPlaybackSessionID("session-before-item-loss"),
+        current: album.tracks[0],
+        queue: album.tracks,
+        elapsed: .seconds(1),
+        isPlaying: true,
+        outputName: "Fixture output",
+        volume: 1,
+        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1),
+        phase: .progressing,
+        seekability: .seekable,
+        progressBegan: true
+    )
+    store.selectDestination(.nowPlaying)
+    playback.publish(DulcetPlaybackPresentation(status: .ready, nowPlaying: item))
+    #expect(store.snapshot.state == .nowPlaying)
+    #expect(store.snapshot.nowPlaying?.sessionID == item.sessionID)
+    #expect(store.snapshot.nowPlaying?.progressBegan == true)
+
+    playback.publish(DulcetPlaybackPresentation(status: status, nowPlaying: nil))
+    #expect(playback.currentPresentation.status == status)
+    #expect(playback.currentPresentation.nowPlaying == nil)
+    #expect(store.snapshot.state == .nowPlayingFailed)
+    #expect(store.snapshot.nowPlaying == nil)
+    store.selectDestination(.library)
+    store.selectDestination(.nowPlaying)
+    #expect(store.snapshot.state == .nowPlayingFailed)
+}
+
+@Test @MainActor
 func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
     let playback = ControlledPlaybackController()
     let source = DulcetAccountDataSource(

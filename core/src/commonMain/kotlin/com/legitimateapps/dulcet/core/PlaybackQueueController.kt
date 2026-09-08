@@ -127,6 +127,24 @@ internal class PlaybackQueueController(
     fun previousForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
         if (acceptsCommand(playbackSessionId)) moveBy(-1) else emptyTransition()
 
+    fun restoreCurrentPausedWithCatalog(
+        serverId: ServerId,
+        availableRawIds: Set<String>,
+    ): PlaybackQueueTransition {
+        // Library refreshes must not repair or replace a session someone already started.
+        if (playback.currentSession != null || queues.activeServerId() != serverId) {
+            return emptyTransition()
+        }
+        // This catalog describes what can resolve now, not which items still exist.
+        // Empty, partial, or metadata-incomplete catalogs must never delete queue entries.
+        val state = queues.load(serverId)
+        val selected = state.currentIndex?.let(state.entries::get)
+        if (selected != null && selected.providerItemId.rawId !in availableRawIds) {
+            queues.setCurrentIndex(serverId, null)
+        }
+        return restoreCurrentPaused()
+    }
+
     fun restoreCurrentPaused(): PlaybackQueueTransition {
         if (playback.currentSession != null) return emptyTransition()
         val serverId = queues.activeServerId() ?: return emptyTransition()
