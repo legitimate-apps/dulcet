@@ -490,49 +490,46 @@ private struct DownloadIntegrationContext {
     }
 }
 
-// Callbacks can originate in the HTTP engine. Keep both live output and failure attachment safe
-// across threads; bounded storage preserves the tail of a large library walk without extra I/O.
+// Callbacks can originate in the HTTP engine. Capture time and enqueue only: formatting and
+// bounded storage run on a separate serial queue. No live I/O can backpressure the request or
+// the summary reader. A killed runner may lose this in-memory tail; timestamps still represent
+// capture time, not the later processing time. This is lightweight, not zero-overhead tracing.
 private final class DownloadBrowseTrace: @unchecked Sendable {
-    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.browse-trace")
     private let started = ContinuousClock.now
+    // Accessed only on queue.
     private var events: [String] = []
     private var sawHeaders = false
     private var sawBody = false
 
     func mark(_ phase: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        let line = "LIBRARY BROWSE elapsed=\(started.duration(to: .now)) \(phase)"
-        events.append(line)
-        sawHeaders = sawHeaders || phase.hasSuffix("headers-received")
-        sawBody = sawBody || phase.contains("body-completed hop=")
-        if events.count > 128 { events.removeFirst() }
-        // Write immediately: a killed runner may never produce an XCTest failure attachment.
-        FileHandle.standardError.write(Data((line + "\n").utf8))
+        let captured = ContinuousClock.now
+        queue.async { [self] in
+            let line = "LIBRARY BROWSE elapsed=\(started.duration(to: captured)) \(phase)"
+            events.append(line)
+            sawHeaders = sawHeaders || phase.hasSuffix("headers-received")
+            sawBody = sawBody || phase.contains("body-completed hop=")
+            if events.count > 128 { events.removeFirst() }
+        }
     }
 
     var observedHTTPCompletion: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return sawHeaders && sawBody
+        queue.sync { sawHeaders && sawBody }
     }
 
     var summary: String {
-        lock.lock()
-        defer { lock.unlock() }
-        return events.joined(separator: "; ")
+        queue.sync { events.joined(separator: "; ") }
     }
 }
 
 
 /// Two bounded, independent probes of the disposable server, run only when a browse has already
-/// failed. Each is capped so a probe can never extend a job, and neither touches the budget of the
-/// request under test.
+/// failed. The probes run sequentially and can add roughly ten seconds after failure;
+/// they do not change the timeout of the request under test.
 ///
-/// Read the result as three cases:
-///   connect fast + ping fast   -> the server is healthy; that one connection stalled
-///   connect fast + ping slow   -> the server accepts but is not answering (blocked)
-///   connect slow or refused    -> nothing is accepting (gone, or the accept backlog is full)
+/// These are later observations, not proof of server health during the original request.
+/// Fast connect/ping supports current reachability; a slow ping or failed connect narrows
+/// follow-up investigation without identifying the cause of the original stall.
 private func probeDisposableServer(baseURL: String) async -> String {
     guard let components = URLComponents(string: baseURL),
           let host = components.host else {

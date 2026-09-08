@@ -15,7 +15,12 @@ internal class LibraryBrowseDiagnostics(private val observer: (String) -> Unit) 
     private val sequence = AtomicInt(0)
 
     fun mark(phase: String) {
-        observer("elapsed=${started.elapsedNow()} phase=$phase")
+        try {
+            observer("elapsed=${started.elapsedNow()} phase=$phase")
+        } catch (_: Throwable) {
+            // Diagnostic callbacks cannot cancel requests, skip cleanup/completion, or throw across
+            // the Objective-C boundary. Never log or retain an observer's untrusted exception.
+        }
     }
 
     fun request(endpoint: String): (String) -> Unit {

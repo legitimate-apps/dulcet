@@ -93,7 +93,8 @@ public class AppleLibraryBrowseClient internal constructor(
 
     /**
      * Opt-in redacted phase stream for conformance, including callbacks on HTTP engine threads.
-     * Observer must be thread-safe, return promptly and not throw. Completion remains on Main.
+     * Observer must be thread-safe and return promptly. Observer exceptions are discarded.
+     * Completion remains on Main.
      */
     public constructor(diagnosticObserver: (String) -> Unit) : this(
         LibraryBrowseDiagnostics(diagnosticObserver),
