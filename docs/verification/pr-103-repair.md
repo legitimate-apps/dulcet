@@ -39,3 +39,17 @@ Scope: this fixes the ASC uploader. The pre-existing signing wrapper still mater
 certificate/key extraction and provisioning files. A repository-wide “secrets never in files”
 claim remains false for that wrapper; replacing its security/OpenSSL plumbing is deferred,
 not established by these uploader controls. No real credentials were used.
+
+## Finding 7 — explicit upload authorization
+
+OBSERVED: workflow-wiring control failed on the old loose-equality condition. The replacement
+requires explicit `upload=true` and `dry_run=false`, read as JSON by a stdlib helper. Its output
+is compared with the nonnumeric string `true`; a missing output cannot match. The 144-pair
+truth table plus absent-input test passes, accepting boolean and string spellings only.
+A mutation restoring the unsafe fallback made the truth-table test fail at `(null, null)`:
+expected confirmed=false, observed confirmed=true. SHA-256 changed from
+`fbb3e6d89b8ed9abc4d2e855d9db4cc71ee4631beb753c85acfe8ffd206254d4` to
+`05548eab33d60b9ce8ad32c4c813cba010ca6dd780cb1a81e954fd2892c47170` and was restored.
+GitHub's documented numeric coercion supports the review's finding:
+https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#operators
+No workflow dispatch was exercised.

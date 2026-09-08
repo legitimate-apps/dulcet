@@ -8,7 +8,9 @@ that open policy decision is resolved; the workflow must not add a `push` or tag
 The first build uploaded for an App Store Connect app record permanently binds that record to the
 build's bundle identifier. Every run therefore defaults to a dry run that archives, exports, and
 validates without uploading. A maintainer must select the channel explicitly and turn dry-run mode
-off after reviewing the resolved bundle identifier.
+off and set `upload=true` after reviewing the resolved bundle identifier. Both choices must be
+explicit; absent, empty, null and numeric values authorize no upload. The decision helper reads
+the dispatch event JSON without GitHub loose-equality coercion.
 
 DEV (`com.legitimateapps.dulcet.dev`) is a TestFlight-only record for the life of the project. The
 release workflow uploads builds but contains no App Store Review submission operation. PROD

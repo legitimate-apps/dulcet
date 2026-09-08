@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import os
 import sys
+import json
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -32,6 +33,29 @@ def raw_ecdsa_to_der(signature: bytes) -> bytes:
 
 
 class AppStoreConnectUploadTests(unittest.TestCase):
+    def test_upload_requires_explicit_confirmation(self) -> None:
+        workflow = TOOL.parent.parent / ".github/workflows/release.yml"
+        text = workflow.read_text()
+        step = text.split("- name: Upload to App Store Connect", 1)[1]
+        self.assertIn("if: ${{ steps.upload_decision.outputs.confirmed == 'true' }}", step)
+        self.assertIn('python3 tools/release-upload-decision >> "$GITHUB_OUTPUT"', text)
+        self.assertIn("id: upload_decision", text)
+        values = [None, "", 0, "0", 1, "1", False, "false", True, "true", [], {}]
+        with tempfile.TemporaryDirectory() as raw:
+            event = Path(raw) / "event.json"
+            for dry in values:
+                for affirmative in values:
+                    event.write_text(json.dumps({"inputs": {"dry_run": dry, "upload": affirmative}}))
+                    result = subprocess.run([sys.executable, str(TOOL.with_name("release-upload-decision"))],
+                        env={**os.environ, "GITHUB_EVENT_PATH": str(event)}, capture_output=True, text=True)
+                    expected = (dry is False or dry == "false") and (affirmative is True or affirmative == "true")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), f"confirmed={str(expected).lower()}", (dry, affirmative))
+            event.write_text('{}')
+            result = subprocess.run([sys.executable, str(TOOL.with_name("release-upload-decision"))],
+                env={**os.environ, "GITHUB_EVENT_PATH": str(event)}, capture_output=True, text=True)
+            self.assertEqual(result.stdout.strip(), "confirmed=false")
+
     def test_main_keeps_key_in_memory(self) -> None:
         key = b"-----BEGIN PRIVATE KEY-----\nCANARY_ASC_MEMORY_ONLY\n-----END PRIVATE KEY-----"
         with tempfile.TemporaryDirectory() as raw:
