@@ -176,14 +176,36 @@ apple_ci = apple_ci_path.read_text() if apple_ci_path in workflows else ""
 # scripts SAY, not proof that any line executed. A commented-out invocation is excluded, but a
 # branch that never runs at runtime is still counted. Proving execution stays
 # verify-parity-evidence's job.
-invoked = sorted({
-    Path(match)
-    for line in apple_ci.splitlines()
-    # A `#` comment cannot invoke anything. Counting one made a retired script named only in a
-    # comment fail the run with "invokes ..., which does not exist".
-    if not line.lstrip().startswith("#")
-    for match in re.findall(r"tools/ci/[\w.-]+", line)
-})
+def ci_script_invocations(text: str) -> set[Path]:
+    """Every `tools/ci/` path named by a non-comment line of `text`.
+
+    A `#` comment cannot invoke anything. Counting one made a retired script named only in a
+    comment fail the run with "invokes ..., which does not exist".
+    """
+    return {
+        Path(match)
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        for match in re.findall(r"tools/ci/[\w.-]+", line)
+    }
+
+
+# Discovery is TRANSITIVE: a script the workflow invokes may itself invoke another, and a
+# one-level scan would leave the inner script's JUnit writes in neither `written` nor `read`.
+# That was survivable while this was the only consumer of the set; it is not once a second rule
+# (the step-ordering check) is built on top of it, because the second rule inherits the blind spot
+# rather than introducing it, and nothing would point at the cause.
+# The `seen` guard makes a cycle terminate rather than spin.
+invoked_set: set[Path] = set()
+frontier = ci_script_invocations(apple_ci)
+while frontier:
+    script = frontier.pop()
+    if script in invoked_set:
+        continue
+    invoked_set.add(script)
+    if script.is_file():
+        frontier |= ci_script_invocations(script.read_text()) - invoked_set
+invoked = sorted(invoked_set)
 for script in invoked:
     if not script.is_file():
         errors.append(

@@ -486,6 +486,54 @@ def run_source_seam_case() -> None:
     print(f"PASS: {label}")
 
 
+# Script discovery must be TRANSITIVE. A one-level scan leaves an inner script's JUnit write in
+# neither `written` nor `read`, so the bijection reports the directory as read-but-never-written and
+# a correct workflow is rejected. It also silently shrinks the set that the step-ordering rule is
+# built on, which is the more dangerous half: that rule would inherit the blind spot rather than
+# introduce it, and nothing would point at the cause.
+OUTER_SCRIPT = """#!/bin/bash
+set -euo pipefail
+tools/ci/inner-evidence
+"""
+
+INNER_SCRIPT = """#!/bin/bash
+set -euo pipefail
+python3 tools/swift-testing-junit "$RUNNER_TEMP/x.xcresult" \\
+  "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" \\
+  Example
+"""
+
+
+def run_transitive_invocation_case() -> None:
+    """The workflow invokes a script that invokes the script doing the actual write."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-transitive-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(
+            APPLE_WORKFLOW % {"invocation": "tools/ci/produce-evidence"},
+        )
+        (workflows / "core-ci.yml").write_text(
+            workflow_for(next(case for case in CASES if case.accepted)),
+        )
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "produce-evidence").write_text(OUTER_SCRIPT)
+        (scripts / "inner-evidence").write_text(INNER_SCRIPT)
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
+        )
+    label = "a write inside a transitively invoked script satisfies the bijection"
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{label}: expected exit 0, got {result.returncode} -- the inner script's write was "
+            "not discovered, so the directory reads as written by nothing\n"
+            f"stderr:\n{result.stderr}",
+        )
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
+
+
 def run_orphan_control_case() -> None:
     """A control in tools/ that no workflow names must be rejected, and a wired one accepted.
 
@@ -560,6 +608,8 @@ run_paired_emission_case(
 )
 
 run_source_seam_case()
+
+run_transitive_invocation_case()
 
 run_orphan_control_case()
 
