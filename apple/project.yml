@@ -224,7 +224,7 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - DulcetKeychainAppTests
+      - DulcetAppleAppHostTests
     dependencies:
       - target: DulcetiOS
       - package: DulcetKit
@@ -306,7 +306,7 @@ targets:
     type: bundle.unit-test
     platform: tvOS
     sources:
-      - DulcetKeychainAppTests
+      - DulcetAppleAppHostTests
     dependencies:
       - target: DulcetTV
       - package: DulcetKit

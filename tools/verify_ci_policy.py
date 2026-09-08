@@ -162,7 +162,23 @@ for workflow in workflows:
 # apple-ci.yml is legitimately absent. In the repository it is always in `workflows`.
 apple_ci_path = Path(".github/workflows/apple-ci.yml")
 apple_ci = apple_ci_path.read_text() if apple_ci_path in workflows else ""
-written = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", apple_ci))
+# The write may live in a script the step invokes rather than inline in the YAML. That is not a
+# style choice: the "Assert Darwin conformance preconditions" step is at a hard GitHub workflow
+# size ceiling -- MEASURED 2026-09-07, 29,893 characters of inline `run:` loads and 34,557 makes
+# the whole file invalid, so NO job is created and apple-ci never appears as a check at all.
+# Extraction is GitHub's own remedy for that, so this check follows the invocation instead of
+# being blinded by it. Following it is also strictly stronger than scanning the YAML alone: a
+# script that quietly stops writing a directory now fails here too.
+invoked = sorted({Path(match) for match in re.findall(r"tools/ci/[\w.-]+", apple_ci)})
+for script in invoked:
+    if not script.is_file():
+        errors.append(
+            f".github/workflows/apple-ci.yml: invokes {script}, which does not exist",
+        )
+searched = apple_ci + "".join(
+    script.read_text() for script in invoked if script.is_file()
+)
+written = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", searched))
 read = set(re.findall(r'"\$RUNNER_TEMP/([\w-]+-junit)"', apple_ci))
 for orphan in sorted(written - read):
     errors.append(

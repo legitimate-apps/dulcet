@@ -137,7 +137,116 @@ def run_case(case: Case) -> None:
     print(f"PASS: {case.name} -> {outcome}")
 
 
+# ---------------------------------------------------------------------------------------------
+# The JUnit bijection is apple-ci-specific, so the core-ci fixtures above cannot reach it: the
+# verifier guards that block on apple-ci.yml being present, and it is legitimately absent from a
+# synthetic single-workflow fixture. These cases supply an apple-ci-shaped fixture instead.
+#
+# They exist because the write may now live in a `tools/ci/` script rather than inline in the YAML.
+# That is forced, not stylistic: the Darwin composite step is at a hard GitHub workflow size ceiling
+# (29,893 characters of inline `run:` loads; 34,557 makes the whole file invalid and no job runs at
+# all), and extraction is GitHub's own remedy. A check that stopped at the YAML would be blinded by
+# exactly the change the ceiling forces.
+#
+# These assert on the PRESENCE or ABSENCE of the bijection messages rather than on the process exit
+# code, because a minimal fixture legitimately trips other, unrelated policy rules. Asserting the
+# specific sentence is what makes the case about the bijection and not about fixture completeness.
+
+APPLE_WORKFLOW = """name: apple-ci
+on:
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  apple-ci:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Produce evidence
+        run: |
+          %(invocation)s
+      - name: Verify evidence
+        run: |
+          python3 tools/verify-parity-evidence \\
+            "$RUNNER_TEMP/dulcet-example-junit"
+"""
+
+APPLE_SCRIPT = """#!/bin/bash
+set -euo pipefail
+python3 tools/swift-testing-junit "$RUNNER_TEMP/x.xcresult" \\
+  "%(junit)s/TEST-Example.xml" Example
+"""
+
+BIJECTION_MISSING = "verify-parity-evidence reads dulcet-example-junit, which no step writes"
+SCRIPT_MISSING = "invokes tools/ci/produce-evidence, which does not exist"
+
+
+def run_apple_case(name: str, invocation: str, script: str | None, present: str, absent: str) -> None:
+    """`present` must appear in stderr and `absent` must not; either may be empty."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-apple-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(APPLE_WORKFLOW % {"invocation": invocation})
+        # The verifier reads core-ci.yml unconditionally, so an apple-only fixture would crash it
+        # before reaching the check under test. Reuse the accepted core-ci fixture verbatim.
+        (workflows / "core-ci.yml").write_text(
+            workflow_for(next(case for case in CASES if case.accepted)),
+        )
+        if script is not None:
+            scripts = root / "tools" / "ci"
+            scripts.mkdir(parents=True)
+            (scripts / "produce-evidence").write_text(script)
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
+        )
+    if present and present not in result.stderr:
+        raise AssertionError(f"{name}: expected {present!r} in stderr\nstderr:\n{result.stderr}")
+    if absent and absent in result.stderr:
+        raise AssertionError(f"{name}: did not expect {absent!r} in stderr\nstderr:\n{result.stderr}")
+    print(f"PASS: {name}")
+
+
+APPLE_CASES = (
+    (
+        "a script that writes the directory satisfies the bijection",
+        "tools/ci/produce-evidence",
+        APPLE_SCRIPT % {"junit": "$RUNNER_TEMP/dulcet-example-junit"},
+        "",
+        BIJECTION_MISSING,
+    ),
+    (
+        "a script that stops writing the directory is rejected",
+        "tools/ci/produce-evidence",
+        APPLE_SCRIPT % {"junit": "$RUNNER_TEMP/somewhere-else"},
+        BIJECTION_MISSING,
+        "",
+    ),
+    (
+        "invoking a script that does not exist is rejected",
+        "tools/ci/produce-evidence",
+        None,
+        SCRIPT_MISSING,
+        "",
+    ),
+    (
+        "an inline write still satisfies the bijection, unchanged",
+        'python3 tools/swift-testing-junit a "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" Example',
+        None,
+        "",
+        BIJECTION_MISSING,
+    ),
+)
+
+
 for test_case in CASES:
     run_case(test_case)
 
-print(f"CI policy control passed: {len(CASES)}/{len(CASES)} cases")
+for apple_case in APPLE_CASES:
+    run_apple_case(*apple_case)
+
+print(
+    f"CI policy control passed: {len(CASES)}/{len(CASES)} core cases, "
+    f"{len(APPLE_CASES)}/{len(APPLE_CASES)} apple cases"
+)
