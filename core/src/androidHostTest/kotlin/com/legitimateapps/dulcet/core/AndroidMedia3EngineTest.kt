@@ -94,7 +94,7 @@ class AndroidMedia3EngineTest {
         assertEquals((seekTo + 250).milliseconds, adjustment.to)
         fake.position += 500
         advance(500)
-        assertEquals(beforeSeek, core.currentSession!!.accumulator.accruedMediaTime)
+        assertEquals(beforeSeek + 500.milliseconds, core.currentSession!!.accumulator.accruedMediaTime)
         assertTrue(core.diagnostics.discontinuityCount > 0)
         progress(45)
         val records = effects.filterIsInstance<PlaybackCoreEffect.RecordPlaybackEvent>().map { it.event }
@@ -109,6 +109,27 @@ class AndroidMedia3EngineTest {
         advance(5000)
         assertEquals(eventCount, events.size)
         println("ANDROID SAMPLER OBSERVED trigger=periodic-handler simulated-position=true core-submissions=1 pause=encountered buffering=encountered seek-discarded=true server-submission=unmeasured")
+    }
+
+    @Test fun smallForwardSeekExcludesTheJumpButCreditsSubsequentProgress() {
+        val probe = PlayerProbe()
+        val plan = playbackPlan()
+        val core = PlaybackCoreStateMachine()
+        core.startPlaying(PlaybackSessionStart(QueueEntryId("queue:small-seek"), plan.playbackSessionId,
+            plan.attemptId, plan.itemId, 100.seconds))
+        val engine = AndroidMedia3Engine(probe.player, prepareSource = {})
+        engine.setEventListener { core.recordPlaybackEvent(it) }
+        try {
+            engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+            engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+            probe.state = Player.STATE_READY; probe.events()
+            repeat(20) { probe.position += 500; advance(500) }
+            assertEquals(10000L, probe.position)
+            val before = core.currentSession!!.accumulator.accruedMediaTime
+            engine.executeOnPlayerThread(PlaybackCommand.Seek(commandId(), 13.seconds))
+            probe.position += 500; advance(500)
+            assertEquals(before + 500.milliseconds, core.currentSession!!.accumulator.accruedMediaTime)
+        } finally { engine.executeOnPlayerThread(PlaybackCommand.Release(commandId())) }
     }
 
     @Test fun replacementKeepsSessionAndRejectsMismatchedAttemptAndOtherSession() {

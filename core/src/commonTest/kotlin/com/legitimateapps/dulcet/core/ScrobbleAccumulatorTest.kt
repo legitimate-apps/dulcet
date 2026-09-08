@@ -182,18 +182,30 @@ class ScrobbleAccumulatorTest {
     }
 
     @Test
+    fun explicitSmallForwardSeekCreditsOnlyProgressAfterTheDestination() {
+        var reduction = started(100.seconds)
+        for (second in 1..10) reduction = reduce(reduction.state, position(second, second))
+        val before = reduction.state.accruedMediaTime
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.SeekCompleted(10.seconds, 13.seconds))
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.PositionChanged(
+            13.seconds + 500.milliseconds, PlaybackMonotonicTime(11.seconds)))
+        assertEquals(before + 500.milliseconds, reduction.state.accruedMediaTime)
+    }
+
+    @Test
     fun seekToNinetyNinePercentCannotCheatCompletion() {
         var reduction = reduce(started(100.seconds).state, position(2, 1))
         reduction = reduce(
             reduction.state,
             ScrobbleAccumulatorEvent.SeekCompleted(2.seconds, 99.seconds),
         )
+        assertIs<ScrobbleAccumulatorEffect.DiscontinuityDiscarded>(reduction.effects.single())
         val seekJump = reduce(reduction.state, position(100, 2))
         reduction = reduce(seekJump.state, ScrobbleAccumulatorEvent.EndedNaturally(100.seconds))
 
-        assertEquals(2.seconds, reduction.state.accruedMediaTime)
+        assertEquals(3.seconds, reduction.state.accruedMediaTime)
         assertFalse(reduction.state.submitted)
-        assertIs<ScrobbleAccumulatorEffect.DiscontinuityDiscarded>(seekJump.effects.single())
+        assertTrue(seekJump.effects.isEmpty())
     }
 
     @Test

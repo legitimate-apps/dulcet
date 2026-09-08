@@ -1924,8 +1924,12 @@ function `(state, event) -> (state, effects)`:
   **4 seconds** at rate 1, given `cadenceMax = 2 s` (§12.3). It is derived from `cadenceMax`, not from
   `cadenceTarget`, because an adapter is permitted to emit as slowly as `cadenceMax` and a legitimate
   2-second delta must not be discarded. A larger delta is a **discontinuity, not listening**: it is
-  discarded and counted, whether or not a `SeekCompleted` arrived. One rule covers app suspension, a
-  missed callback, a decoder timestamp jump, and a seek whose event was late or absent.
+  discarded and counted when no explicit seek observation has reset the anchor. This fallback covers
+  app suspension, a missed callback, a decoder timestamp jump, and a seek whose event was absent.
+- **Explicit seek:** `SeekCompleted` resets `lastPosition` to the destination and clears
+  `lastMonotonic`. Every forward seek is discarded and counted, including jumps below four seconds;
+  the next sample accrues only media progression after the destination. `SeekFailed` preserves the
+  anchor. A seek event carries no monotonic timestamp, so it cannot credit a now-playing interval.
 - **Backward delta** accrues nothing and resets `lastPosition`. Replaying a segment accrues normally —
   the accumulator measures time listened, not coverage of the track.
 - **Not progressing:** during `Buffering`, `Paused` or after `InterruptionBegan` nothing accrues, and
@@ -3415,6 +3419,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 96 (2026-09-08)** — explicit seek observations exclude small forward jumps from scrobbling.
+
+The §15.2 heuristic previously preserved the pre-seek anchor even after `SeekCompleted`, crediting
+3.5 seconds for a 10 → 13 → 13.5 second sequence. **OBSERVED** in
+`ScrobbleAccumulatorTest.explicitSmallForwardSeekCreditsOnlyProgressAfterTheDestination`: the
+pre-fix reducer credits 3.5 seconds instead of 0.5. Explicit destinations now reset the media anchor;
+the existing four-second fallback remains for unobserved discontinuities. Submission thresholds,
+identities, at-least-once delivery and clock persistence are unchanged.
 
 **Revision 95 (2026-09-08)** — §14.1 corrects revision 94's unsafe deletion policy. Catalog absence
 proves only that a selection cannot resolve now, not that its queue entry no longer exists. Recovery

@@ -152,9 +152,17 @@ internal object ScrobbleAccumulator {
             ),
         )
 
-        // Seek events carry no monotonic sample. Preserve the old anchor so the next PositionChanged
-        // goes through the same delta/discontinuity rule whether or not either seek event arrived.
-        is ScrobbleAccumulatorEvent.SeekCompleted -> reduction(state)
+        // An explicit destination excludes even small forward jumps. The next sample can accrue
+        // progression from that destination; the seek itself carries no monotonic observation.
+        is ScrobbleAccumulatorEvent.SeekCompleted -> {
+            requireValidPosition(event.to)
+            ScrobbleAccumulatorReduction(
+                state.copy(lastPosition = event.to, lastMonotonic = null),
+                if (event.to > event.from) listOf(
+                    ScrobbleAccumulatorEffect.DiscontinuityDiscarded(event.to - event.from),
+                ) else emptyList(),
+            )
+        }
         is ScrobbleAccumulatorEvent.SeekFailed -> reduction(state)
         is ScrobbleAccumulatorEvent.RateChanged -> reduction(
             state.copy(rate = event.rate, lastPosition = null, lastMonotonic = null),
