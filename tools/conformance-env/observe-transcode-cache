@@ -156,6 +156,19 @@ def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
     parsed = urllib.parse.urlparse(base_url)
     host, port = parsed.hostname or "127.0.0.1", parsed.port or 4533
 
+    def safe(error: object) -> str:
+        """Never let a credentialed query string reach a diagnostic.
+
+        `subsonic_url` puts `u`, `t` (token) and `s` (salt) in the query string, and this function
+        prints whatever the probes raise. CANARY-TESTED 2026-09-08: no urllib exception type
+        reachable here currently embeds the URL -- but that is an accident of their `__str__`, not a
+        guarantee anyone maintains, and one malformed-URL path elsewhere in this repo was measured
+        carrying a token-bearing path out through an uncaught traceback. Redact by construction, so
+        the property holds no matter what a future exception decides to include.
+        """
+        text = f"{type(error).__name__}: {error}" if error is not None else "None"
+        return re.sub(r"\?[^\s'\"]*", "?<redacted>", text)
+
     def timed(call):
         start = time.monotonic()
         try:
@@ -190,26 +203,26 @@ def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
     if connect_s >= STALLED or isinstance(connect_error, (TimeoutError, socket.timeout)):
         return (
             f"loopback diagnosis=nothing-accepting connect_seconds={connect_s:.3f} "
-            f"connect_error={connect_error}"
+            f"connect_error={safe(connect_error)}"
         )
     if connect_error is not None:
         return (
             f"loopback diagnosis=connection-refused connect_seconds={connect_s:.3f} "
-            f"connect_error={connect_error} detail=refused immediately, so the port is not listening"
+            f"connect_error={safe(connect_error)} detail=refused immediately, so the port is not listening"
         )
     ping_s, ping_error = timed(bare_ping)
     if ping_s >= STALLED:
         return (
             f"loopback diagnosis=http-blocked connect_seconds={connect_s:.3f} "
-            f"ping_seconds={ping_s:.3f} ping_error={ping_error}"
+            f"ping_seconds={ping_s:.3f} ping_error={safe(ping_error)}"
         )
     rest_s, rest_error = timed(subsonic_ping)
     if rest_s >= STALLED:
         return (
             f"loopback diagnosis=database-path-blocked connect_seconds={connect_s:.3f} "
-            f"ping_seconds={ping_s:.3f} rest_ping_seconds={rest_s:.3f} rest_error={rest_error}"
+            f"ping_seconds={ping_s:.3f} rest_ping_seconds={rest_s:.3f} rest_error={safe(rest_error)}"
         )
-    anomalies = [f"{name}={error!r}" for name, error in
+    anomalies = [f"{name}={safe(error)}" for name, error in
                  (("ping", ping_error), ("rest_ping", rest_error)) if error is not None]
     detail = (
         "every layer answered promptly, so the stalled request is not explained by server "
