@@ -12,3 +12,13 @@ after replacing exactly one Gradle invocation with `echo WRONG`:
 With multiset comparison the same mutation returns FAIL, expected 8 copies / found 7.
 `python3 tools/test-xcode-script-phases` passes. Parser and non-body limits are now explicit
 in the tool and the working agreement; this is not a full XcodeGen regeneration gate.
+
+## Finding 6 — killed lock holder
+
+OBSERVED: the strengthened test failed on the old implementation: the first Gradle workload
+was still alive after SIGKILL and wait of the Python holder. The fixture executes its timed
+work in one PID, matching gradlew's final exec of Java. Python now execs gradlew and preserves
+an inheritable flock descriptor; holder and invocation share a PID. The same test now verifies
+that PID no longer exists and the replacement finishes. The unchanged unwrapped overlap control
+still detects overlap. `python3 tools/test-run-gradle-exclusive` passes.
+Descendants retaining the descriptor retain the lock; this is not a Gradle daemon shutdown tool.

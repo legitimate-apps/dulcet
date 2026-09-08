@@ -18,13 +18,18 @@ import time
 
 TOOL = pathlib.Path(__file__).resolve().parent / "run-gradle-exclusive"
 
-FAKE_GRADLEW = """#!/bin/sh
-# Records its own interval so the caller can test for overlap.
-printf 'start %s %s\\n' "$$" "$(python3 -c 'import time;print(time.monotonic())')" >> "$INTERVALS"
-sleep "${HOLD_SECONDS:-1}"
-printf 'end %s %s\\n' "$$" "$(python3 -c 'import time;print(time.monotonic())')" >> "$INTERVALS"
-exit "${FAKE_EXIT:-0}"
+FAKE_GRADLEW = """#!/usr/bin/env python3
+# Like gradlew's final exec of Java, the workload stays in this PID.
+import os
+import time
+with open(os.environ["INTERVALS"], "a") as log:
+    log.write(f"start {os.getpid()} {time.monotonic()}\\n")
+time.sleep(float(os.environ.get("HOLD_SECONDS", "1")))
+with open(os.environ["INTERVALS"], "a") as log:
+    log.write(f"end {os.getpid()} {time.monotonic()}\\n")
+raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
 """
+
 
 failures: list[str] = []
 
@@ -121,8 +126,19 @@ def case_killed_holder_releases() -> None:
         while time.monotonic() < deadline and not intervals.read_text():
             time.sleep(0.05)
         check(bool(intervals.read_text()), "the holder started before it was killed")
+        child_pid = int(intervals.read_text().split()[1])
         os.kill(holder.pid, signal.SIGKILL)
         holder.wait()
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            stopped = True
+        else:
+            stopped = False
+        check(stopped, "the first Gradle workload actually stopped when its holder was killed")
+        if not stopped:
+            # Clean up the deliberately exposed orphan after recording the failure.
+            os.kill(child_pid, signal.SIGKILL)
         environment["HOLD_SECONDS"] = "0"
         started = time.monotonic()
         second = subprocess.run(

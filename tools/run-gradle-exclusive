@@ -13,8 +13,10 @@ Two of those phases therefore start together, and Gradle does not queue: it wait
 
 The lock lives beside the Gradle user home because that is the resource being contended, so two
 builds using different `GRADLE_USER_HOME` values correctly do not block each other. It is held by
-this process, so the kernel releases it if the build is cancelled -- a lock file left on disk is not
-a stale lock and never wedges a later build.
+the Gradle invocation itself: Python execs gradlew with an inheritable lock descriptor. Killing
+the holder therefore kills that invocation, rather than orphaning an unlocked child. Descendants
+that inherit the descriptor keep exclusion until they close it or exit. A file left on disk alone
+is not a stale lock. This does not terminate an independently running Gradle daemon.
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ from __future__ import annotations
 import fcntl
 import os
 import pathlib
-import subprocess
 import sys
 import time
 
@@ -76,8 +77,9 @@ def main(argv: list[str]) -> int:
         )
         # stdin is closed so a Gradle prompt can never block a headless build phase.
         with open(os.devnull, "rb") as devnull:
-            completed = subprocess.run([str(wrapper), *argv], stdin=devnull)
-    return completed.returncode
+            os.dup2(devnull.fileno(), 0)
+            os.set_inheritable(handle.fileno(), True)
+            os.execv(str(wrapper), [str(wrapper), *argv])
 
 
 if __name__ == "__main__":
