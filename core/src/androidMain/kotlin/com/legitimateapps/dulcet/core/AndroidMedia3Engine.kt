@@ -171,6 +171,9 @@ internal class AndroidMedia3Engine(
                     lastPosition = 0; duration = null; startWall = null
                     status = PlaybackObservationStatus.Preparing
                     emit(PlaybackEngineEvent.Preparing(plan.attemptId))
+                    // A fresh preparation starts paused; the controller applies current intent.
+                    // Replacement keeps the current session and its transport intent.
+                    if (command is PlaybackCommand.Prepare) player.pause()
                     prepareSource(plan)
                     player.prepare()
                     return PlaybackCommandOutcome.CommandAccepted(command.commandId)
@@ -184,7 +187,7 @@ internal class AndroidMedia3Engine(
                 is PlaybackCommand.Stop -> {
                     current?.takeUnless { terminal }?.let { emit(PlaybackEngineEvent.Skipped(it.attemptId, position, PlaybackSkipReason.User)) }
                     current = null
-                    player.stop(); player.clearMediaItems()
+                    player.pause(); player.stop(); player.clearMediaItems()
                     status = PlaybackObservationStatus.Stopped
                     armSampler()
                 }

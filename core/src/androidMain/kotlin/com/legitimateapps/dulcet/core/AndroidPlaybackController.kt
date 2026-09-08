@@ -242,7 +242,7 @@ public class AndroidPlaybackController internal constructor(
                         activePlan = result.plan
                         pendingResume = directive.resumePosition?.inWholeMilliseconds
                         command(PlaybackCommand.Prepare(id(), result.plan.attemptId, result.plan))
-                        if (wantsPlay) command(PlaybackCommand.Play(id()))
+                        command(if (wantsPlay) PlaybackCommand.Play(id()) else PlaybackCommand.Pause(id()))
                     }
                 }
             } catch (_: CancellationException) { throw CancellationException() }

@@ -61,6 +61,25 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun pauseWhileMetadataLoadsAfterStopOverridesThePreviousPlayIntent() {
+        var pending: Continuation<AuthenticatedEndpointResponse>? = null
+        Fixture(loadSong = { id ->
+            if (id == "second") suspendCoroutine { pending = it } else song(id)
+        }).use { f ->
+            f.controller.playSong(OWNER, "first", "First")
+            assertTrue(f.probe.requested)
+            f.controller.stop()
+            f.controller.playSong(OWNER, "second", "Second")
+            val delayed = assertNotNull(pending)
+            f.controller.pause()
+            delayed.resume(song("second"))
+            assertEquals(listOf("first", "second"), f.prepared.map { it.itemId.rawId })
+            assertFalse(f.probe.requested, "Preparing the second selection must honor Pause")
+            f.controller.play()
+            assertTrue(f.probe.requested)
+        }
+    }
+
     @Test fun submittedPlayIsInTheRealOutboxBeforeDeliveryHandoff() {
         var handoffs = 0
         Fixture(onDelivery = { f, event ->
