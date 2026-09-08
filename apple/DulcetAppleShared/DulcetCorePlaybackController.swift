@@ -114,7 +114,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             publishFailure()
             return
         }
-        start(transition.startDirective)
+        // A bypass has no playback work and must not republish a live session's snapshot.
+        guard let directive = transition.startDirective else { return }
+        start(directive)
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
