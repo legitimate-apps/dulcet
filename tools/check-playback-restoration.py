@@ -34,9 +34,9 @@ with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".bu
     try:
         subprocess.run([str(temp / "check"), prefix], check=True)
     finally:
-        # NativeSqliteDriver's macOS database directory. Only these two newly named
+        # NativeSqliteDriver's macOS database directory. Only these three newly named
         # synthetic databases belong to this run; never open the app's dulcet.db.
         database_dir = Path.home() / "Library/Application Support/databases"
-        for count in (0, 2):
+        for count in (0, 2, 3):
             for suffix in ("", "-wal", "-shm", "-journal"):
                 (database_dir / f"{prefix}-{count}.db{suffix}").unlink(missing_ok=True)

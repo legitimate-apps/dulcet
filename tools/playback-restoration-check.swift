@@ -10,7 +10,9 @@ import Foundation
         func check(_ condition: Bool, _ message: String) {
             if !condition { failures += 1; print("FAIL: \(message)") }
         }
-        for available in [["a", "c"], []] as [[String]] {
+        for (available, hasSourceContainer) in [
+            (["a", "c"], true), ([], true), (["a", "missing", "c"], false),
+        ] as [([String], Bool)] {
             let name = "\(CommandLine.arguments[1])-\(available.count).db"
             let seed = ApplePlaybackQueueClient(databaseName: name)
             let started = seed.replaceAndStart(request: ApplePlaybackQueueRequestDto(
@@ -23,8 +25,7 @@ import Foundation
             ))
             check(started.errorKind == nil, "seed succeeded")
             check(started.startDirective?.rawId == "missing", "missing item was selected")
-            let retainedIDs = started.snapshot?.entries.filter { available.contains($0.rawId) }
-                .map(\.queueEntryId)
+            let retainedIDs = started.snapshot?.entries.map(\.queueEntryId)
             seed.close()
             // A new controller, then a second launch, must both recover to idle.
             for launch in 1...2 {
@@ -39,13 +40,18 @@ import Foundation
                 let tracks = available.map { id in
                     DulcetTrack(id: DulcetProviderItemID(providerInstanceID: "fixture", rawID: id),
                         title: id, credits: [], albumTitle: "Fixture", discNumber: 1,
-                        trackNumber: 1, duration: .seconds(30), sourceContainer: .mp3, mediaSourceID: nil,
+                        trackNumber: 1, duration: .seconds(30), sourceContainer: hasSourceContainer ? .mp3 : nil, mediaSourceID: nil,
                         artwork: DulcetArtwork(seed: id, palette: .indigoCoral))
                 }
-                check(!tracks.contains { $0.id.rawID == "missing" }, "catalog lacks selection")
+                check(!tracks.contains { $0.id.rawID == "missing" && $0.sourceContainer != nil },
+                      "catalog cannot resolve selection")
+                if !hasSourceContainer {
+                    check(!tracks.isEmpty && tracks.allSatisfy { $0.sourceContainer == nil },
+                          "nonempty catalog has no source-container metadata")
+                }
                 controller.restorePersistedQueue(with: tracks)
                 store.selectDestination(.nowPlaying)
-                let label = "available=\(available) launch=\(launch)"
+                let label = "available=\(available) containers=\(hasSourceContainer) launch=\(launch)"
                 print("\(label) controller=\(controller.currentPresentation.status) surface=\(store.snapshot.state)")
                 check(controller.currentPresentation.status == .unavailable, "\(label) controller idle")
                 check(store.snapshot.state == .nowPlayingUnavailable, "\(label) published idle")
@@ -53,7 +59,7 @@ import Foundation
                 let reader = ApplePlaybackQueueClient(databaseName: name)
                 let saved = reader.snapshot()
                 check(saved.errorKind == nil, "\(label) read durable queue")
-                check(saved.snapshot?.entries.map(\.rawId) == available, "\(label) preserved resolvable entries")
+                check(saved.snapshot?.entries.map(\.rawId) == ["a", "missing", "c"], "\(label) preserved ALL persisted entries")
                 check(saved.snapshot?.entries.map(\.queueEntryId) == retainedIDs, "\(label) preserved queue identities")
                 check(saved.snapshot?.currentIndex == -1, "\(label) cleared selection")
                 check(reader.restoreCurrentPaused().startDirective == nil, "\(label) no stale restore directive")

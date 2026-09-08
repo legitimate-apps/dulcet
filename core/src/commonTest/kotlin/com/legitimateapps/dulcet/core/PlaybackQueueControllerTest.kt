@@ -213,7 +213,7 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
-    fun restorationRepairsMissingSelectionDurablyWithoutStartingAnotherItem() {
+    fun restorationClearsUnresolvedSelectionWithoutDeletingEntries() {
         for (available in listOf(setOf("a", "c"), emptySet())) {
             val fixture = fixture()
             val seeded = fixture.controller.replaceAndStart(request(listOf("a", "missing", "c"), 1))
@@ -225,9 +225,9 @@ class PlaybackQueueControllerTest {
                     PlaybackIdentitySource { error("Repair must not create a session or attempt") },
                 )
                 val repaired = reopened.restoreCurrentPausedWithCatalog(SERVER, available)
-                assertEquals(available.toList(), repaired.snapshot.rawIds())
+                assertEquals(listOf("a", "missing", "c"), repaired.snapshot.rawIds())
                 assertEquals(
-                    seeded.snapshot.entries.filter { it.itemId.rawId in available },
+                    seeded.snapshot.entries,
                     repaired.snapshot.entries,
                 )
                 assertNull(repaired.snapshot.currentIndex)
@@ -240,7 +240,7 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
-    fun restorationPreservesShuffledSurvivorsAndValidPausedSelection() {
+    fun partialCatalogPreservesEntireShuffledQueueAndValidPausedSelection() {
         val fixture = fixture(shuffleSeed = 71)
         val seeded = fixture.controller.replaceAndStart(request(listOf("a", "b", "c", "d"), shuffle = true))
         val selected = assertNotNull(seeded.startDirective).itemId.rawId
@@ -253,11 +253,11 @@ class PlaybackQueueControllerTest {
             PlaybackIdentitySource { "$it:restored:${identity++}" },
         )
         val restored = reopened.restoreCurrentPausedWithCatalog(SERVER, available)
-        assertEquals(seeded.snapshot.entries.filter { it.itemId.rawId in available }, restored.snapshot.entries)
+        assertEquals(seeded.snapshot.entries, restored.snapshot.entries)
         assertEquals(QueueShuffleState.Enabled, restored.snapshot.shuffleState)
         assertEquals(selected, restored.startDirective?.itemId?.rawId)
         assertEquals(false, restored.startDirective?.shouldAutoPlay)
-        assertEquals(listOf("a", "b", "c", "d").filter { it in available },
+        assertEquals(listOf("a", "b", "c", "d"),
             reopened.setShuffle(false).snapshot.rawIds())
         fixture.driver.close()
     }
