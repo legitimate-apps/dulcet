@@ -1791,15 +1791,18 @@ death, single source of truth for every surface. Per-account, single active acco
 `sourceContext` records where the entry came from (album X, playlist Y, search Z) so the UI can say
 "playing from" and so "play next" behaves sensibly.
 
-**Restoration repair:** before creating a playback session from a persisted queue, reconcile it
-against the successfully loaded playback catalog for the active account. Remove entries that cannot
-be resolved locally, preserving surviving `QueueEntryId`s and their original/shuffled order. If the
-persisted selection was removed, clear the selection and present "Nothing is playing"; do not select
-or start a replacement. Persist removals and selection clearing in one transaction. An entirely
-unresolvable queue becomes empty and idle, including on subsequent launches. A surviving selection
-continues the normal paused restoration path. This repair never applies to an existing playback
-session or another account's queue. Failures of an explicitly started item retain the playback
-failure presentation. No session or attempt identity is created for a discarded selection (§12.1).
+**Restoration recovery:** before creating a playback session from a persisted queue, check whether
+its selection can resolve in the supplied playback catalog for the active account. If it cannot,
+persist a cleared selection and present "Nothing is playing"; do not select or start a replacement.
+Preserve **all** queue entries, their `QueueEntryId`s, original/shuffled order, repeat mode and shuffle
+state. The supplied catalog has no completeness contract: it may be empty, partially populated, or
+lack playback metadata. Absence from it is not evidence that an entry was deleted from the library.
+Even an entirely unresolvable queue is retained, with no selection, including on subsequent launches.
+A resolvable selection continues the normal paused restoration path. Recovery never applies to an
+existing playback session or another account's queue. Failures of an explicitly started item retain
+the playback failure presentation. No session or attempt identity is created for a cleared selection
+(§12.1). Automatic entry removal is deferred until the input carries a trustworthy, provider-scoped
+completeness guarantee; content alone, including a nonempty catalog, never authorizes deletion.
 
 ### 14.2 Shuffle — persist the order, not a seed
 
@@ -3412,6 +3415,13 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 95 (2026-09-08)** — §14.1 corrects revision 94's unsafe deletion policy. Catalog absence
+proves only that a selection cannot resolve now, not that its queue entry no longer exists. Recovery
+now persists only selection clearing and retains the entire queue. Empty/partial catalog controls
+require original entries and identities to survive two launches; a nonempty catalog with missing
+source-container metadata is covered at the production Swift boundary. Authoritative entry removal
+is deferred pending a completeness contract.
 
 **Revision 94 (2026-09-08)** — §14.1 distinguishes stale persisted-queue restoration from a live
 playback failure. Restoration removes unresolvable entries and clears a removed selection durably,

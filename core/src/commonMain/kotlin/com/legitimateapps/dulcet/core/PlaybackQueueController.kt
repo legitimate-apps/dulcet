@@ -135,10 +135,13 @@ internal class PlaybackQueueController(
         if (playback.currentSession != null || queues.activeServerId() != serverId) {
             return emptyTransition()
         }
-        val missing = queues.load(serverId).entries
-            .filter { it.providerItemId.rawId !in availableRawIds }
-            .map { it.queueEntryId }.toSet()
-        queues.removeForRestoration(serverId, missing)
+        // This catalog describes what can resolve now, not which items still exist.
+        // Empty, partial, or metadata-incomplete catalogs must never delete queue entries.
+        val state = queues.load(serverId)
+        val selected = state.currentIndex?.let(state.entries::get)
+        if (selected != null && selected.providerItemId.rawId !in availableRawIds) {
+            queues.setCurrentIndex(serverId, null)
+        }
         return restoreCurrentPaused()
     }
 

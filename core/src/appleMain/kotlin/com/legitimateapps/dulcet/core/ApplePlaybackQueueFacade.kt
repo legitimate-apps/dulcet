@@ -221,6 +221,7 @@ public class ApplePlaybackQueueClient private constructor(
             controllerOrThrow().previousForSession(PlaybackSessionId(playbackSessionId))
         }
 
+    /** Available IDs indicate present resolvability, not authoritative library membership. */
     public fun restoreCurrentPausedWithCatalog(
         providerInstanceId: String,
         availableRawIds: List<String>,
