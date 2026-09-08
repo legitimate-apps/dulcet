@@ -35,6 +35,13 @@ targets:
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "$(DULCET_RELEASE_PROFILE_NAME)"
+          MARKETING_VERSION: "0.1.0"
+          CURRENT_PROJECT_VERSION: "1"
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -43,7 +50,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetMacRelease:
     type: application
     platform: macOS
@@ -67,7 +76,8 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
-        PROVISIONING_PROFILE_SPECIFIER: "Dulcet Mac App Store"
+        DULCET_RELEASE_PROFILE_NAME: "Dulcet Mac App Store"
+        PROVISIONING_PROFILE_SPECIFIER: "$(DULCET_RELEASE_PROFILE_NAME)"
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "2"
     info:
@@ -100,7 +110,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetMacTests:
     type: bundle.unit-test
     platform: macOS
@@ -140,7 +152,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetiOS:
     type: application
     platform: iOS
@@ -164,7 +178,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKitIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -197,7 +213,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetiOSDownloadIntegrationTests:
     type: bundle.unit-test
     platform: iOS
@@ -219,7 +237,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -277,7 +297,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKitTVOSTests:
     type: bundle.unit-test
     platform: tvOS
@@ -301,7 +323,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets own this phase and Xcode builds them in parallel, so two
+          # Gradle invocations would race for the journal lock and one would fail the build.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainTVOSTests:
     type: bundle.unit-test
     platform: tvOS

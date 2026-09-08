@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Authorize upload only on explicit upload=true AND dry_run=false dispatch inputs.
+
+Read event JSON so null, numeric zero and an empty string cannot become false through
+GitHub expression coercion. Missing/malformed event data never yields confirmation.
+"""
+import json
+import os
+from pathlib import Path
+
+
+def confirmed(inputs: dict) -> bool:
+    dry = inputs.get("dry_run")
+    affirmative = inputs.get("upload")
+    return (dry is False or dry == "false") and (affirmative is True or affirmative == "true")
+
+
+def main() -> None:
+    try:
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        inputs = event.get("inputs", {}) if isinstance(event, dict) else {}
+        allowed = isinstance(inputs, dict) and confirmed(inputs)
+    except (KeyError, OSError, ValueError):
+        allowed = False
+    print(f"confirmed={str(allowed).lower()}")
+
+
+if __name__ == "__main__":
+    main()

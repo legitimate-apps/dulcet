@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import base64
+import os
+import sys
+import plistlib
+import textwrap
+import json
+import hashlib
+import importlib.util
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest import mock
+
+
+TOOL = Path(__file__).with_name("app_store_connect_upload.py")
+SPEC = importlib.util.spec_from_file_location("app_store_connect_upload", TOOL)
+assert SPEC is not None and SPEC.loader is not None
+upload = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(upload)
+
+
+def raw_ecdsa_to_der(signature: bytes) -> bytes:
+    def integer(value: bytes) -> bytes:
+        value = value.lstrip(b"\x00") or b"\x00"
+        if value[0] & 0x80:
+            value = b"\x00" + value
+        return b"\x02" + bytes([len(value)]) + value
+
+    sequence = integer(signature[:32]) + integer(signature[32:])
+    return b"\x30" + bytes([len(sequence)]) + sequence
+
+
+class AppStoreConnectUploadTests(unittest.TestCase):
+    def test_dev_export_is_internal_only(self) -> None:
+        workflow = (TOOL.parent.parent / ".github/workflows/release.yml").read_text()
+        self.assertIn("python3 tools/write-release-export-options", workflow)
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "ExportOptions.plist"
+            for bundle in ("com.legitimateapps.dulcet.dev", "com.legitimateapps.dulcet"):
+                result = subprocess.run([sys.executable, str(TOOL.with_name("write-release-export-options"))],
+                    env={**os.environ, "EXPECTED_BUNDLE_ID": bundle, "EXPORT_OPTIONS": str(output),
+                         "RELEASE_PROFILE_NAME": "Example Profile", "DULCET_SIGNING_IDENTITY_SHA1": "example"},
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                options = plistlib.loads(output.read_bytes())
+                self.assertIs(options["testFlightInternalTestingOnly"], bundle.endswith(".dev"))
+                self.assertEqual(options["destination"], "export")
+                self.assertEqual(options["method"], "app-store-connect")
+                self.assertEqual(options["provisioningProfiles"], {bundle: "Example Profile"})
+
+    def test_dev_client_refuses_review_and_submission_before_transport(self) -> None:
+        client = upload.AppStoreConnectClient("key", "issuer", b"unused", "com.legitimateapps.dulcet.dev")
+        paths = ["/v1/appStoreVersions", "/v1/reviewSubmissions", "/v1/reviewSubmissionItems",
+                 "/v1/appStoreVersionSubmissions", "/v1/betaAppReviewSubmissions",
+                 "/v1/apps/app-id/relationships/reviewSubmissions",
+                 "/v1/%72eviewSubmissions", "/v1/REVIEWSubmissions", "/v1/futureSubmission"]
+        with mock.patch.object(client, "token") as token, mock.patch.object(upload.urllib.request, "urlopen") as send:
+            send.return_value.__enter__.return_value.read.return_value = b"{}"
+            token.return_value = "canary-placeholder"
+            for path in paths:
+                for method in ("GET", "POST", "PATCH", "DELETE"):
+                    with self.subTest(path=path, method=method), self.assertRaises(upload.UploadFailure):
+                        client.request(method, path, {})
+            token.assert_not_called()
+            send.assert_not_called()
+
+    def test_installer_prerequisite_fails_before_archive(self) -> None:
+        workflow = (TOOL.parent.parent / ".github/workflows/release.yml").read_text()
+        marker = "- name: Require Mac installer signing support"
+        self.assertIn(marker, workflow)
+        self.assertLess(workflow.index(marker), workflow.index("- name: Read toolchain pins"))
+        step = workflow.split(marker, 1)[1].split("\n      - ", 1)[0]
+        program = textwrap.dedent(step.split("run: |\n", 1)[1])
+        result = subprocess.run(["/bin/bash", "-c", program], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("Mac Installer Distribution", result.stderr)
+        self.assertIn("import", result.stderr)
+
+    def test_upload_requires_explicit_confirmation(self) -> None:
+        workflow = TOOL.parent.parent / ".github/workflows/release.yml"
+        text = workflow.read_text()
+        step = text.split("- name: Upload to App Store Connect", 1)[1]
+        self.assertIn("if: ${{ steps.upload_decision.outputs.confirmed == 'true' }}", step)
+        self.assertIn('python3 tools/release-upload-decision >> "$GITHUB_OUTPUT"', text)
+        self.assertIn("id: upload_decision", text)
+        values = [None, "", 0, "0", 1, "1", False, "false", True, "true", [], {}]
+        with tempfile.TemporaryDirectory() as raw:
+            event = Path(raw) / "event.json"
+            for dry in values:
+                for affirmative in values:
+                    event.write_text(json.dumps({"inputs": {"dry_run": dry, "upload": affirmative}}))
+                    result = subprocess.run([sys.executable, str(TOOL.with_name("release-upload-decision"))],
+                        env={**os.environ, "GITHUB_EVENT_PATH": str(event)}, capture_output=True, text=True)
+                    expected = (dry is False or dry == "false") and (affirmative is True or affirmative == "true")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), f"confirmed={str(expected).lower()}", (dry, affirmative))
+            event.write_text('{}')
+            result = subprocess.run([sys.executable, str(TOOL.with_name("release-upload-decision"))],
+                env={**os.environ, "GITHUB_EVENT_PATH": str(event)}, capture_output=True, text=True)
+            self.assertEqual(result.stdout.strip(), "confirmed=false")
+
+    def test_main_keeps_key_in_memory(self) -> None:
+        key = b"-----BEGIN PRIVATE KEY-----\nCANARY_ASC_MEMORY_ONLY\n-----END PRIVATE KEY-----"
+        with tempfile.TemporaryDirectory() as raw:
+            package = Path(raw) / "Dulcet.pkg"
+            package.write_bytes(b"package")
+            args = [str(TOOL), "--package", str(package), "--bundle-id",
+                    "com.legitimateapps.dulcet.dev", "--version", "0.1", "--build-number", "1"]
+            with mock.patch.dict(os.environ, dict(zip(upload.REQUIRED_ENVIRONMENT,
+                    ["EXAMPLEKEY", "example-issuer", base64.b64encode(key).decode()]))), \
+                    mock.patch.object(sys, "argv", args), \
+                    mock.patch.object(Path, "write_bytes") as writes, \
+                    mock.patch.object(upload, "upload_build") as build:
+                self.assertEqual(upload.main(), 0)
+                writes.assert_not_called()
+                self.assertEqual(build.call_args.args[0].private_key, key)
+
+    def test_malformed_signed_url_cli_has_no_canary_in_either_stream(self) -> None:
+        # Execute the actual __main__ exception boundary; replace only the entry workload,
+        # leaving urllib's InvalidURL and upload_operations real. No network request can be sent.
+        program = r"""
+import runpy, sys, tempfile
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+original = source
+source = source.replace('raise SystemExit(main())', 'raise SystemExit(probe())')
+import hashlib
+assert hashlib.sha256(original.encode()).digest() != hashlib.sha256(source.encode()).digest()
+namespace = {'__name__': '__main__'}
+def probe():
+    with tempfile.TemporaryDirectory() as raw:
+        package = Path(raw) / 'test.pkg'
+        package.write_bytes(b'x')
+        operation = {'method': 'PUT', 'url': 'https://upload.example.invalid/path?token=CANARY_SIGNED secret',
+                     'offset': 0, 'length': 1, 'requestHeaders': []}
+        operations = namespace['validate_operations']([operation], 1)
+        namespace['upload_operations'](package, operations)
+namespace['probe'] = probe
+exec(compile(source, sys.argv[1], 'exec'), namespace)
+"""
+        result = subprocess.run([sys.executable, "-c", program, str(TOOL)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("CANARY_SIGNED", result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("dulcet-app-store-upload:", result.stderr)
+
+    def test_generated_jwt_has_a_valid_es256_signature(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="dulcet-upload-test-") as directory:
+            root = Path(directory)
+            private_key = root / "private.pem"
+            public_key = root / "public.pem"
+            subprocess.run(
+                ["/usr/bin/openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", private_key],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["/usr/bin/openssl", "ec", "-in", private_key, "-pubout", "-out", public_key],
+                check=True,
+                capture_output=True,
+            )
+            token = upload.AppStoreConnectClient("EXAMPLEKEY", "example-issuer", private_key.read_bytes(), "com.legitimateapps.dulcet.dev").token()
+            header, payload, encoded_signature = token.split(".")
+            padding = "=" * (-len(encoded_signature) % 4)
+            import base64
+
+            raw_signature = base64.urlsafe_b64decode(encoded_signature + padding)
+            self.assertEqual(len(raw_signature), 64)
+            der_path = root / "signature.der"
+            der_path.write_bytes(raw_ecdsa_to_der(raw_signature))
+            verified = subprocess.run(
+                ["/usr/bin/openssl", "dgst", "-sha256", "-verify", public_key, "-signature", der_path],
+                input=f"{header}.{payload}".encode(),
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(verified.returncode, 0, verified.stderr.decode(errors="replace"))
+
+    def test_upload_flow_uses_only_build_upload_endpoints(self) -> None:
+        class FakeClient(upload.AppStoreConnectClient):
+            bundle_id = "com.legitimateapps.dulcet.dev"
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, object]] = []
+
+            def request(self, method: str, path: str, payload: object = None) -> dict:
+                self.guard_request(method, path)
+                self.calls.append((method, path, payload))
+                if method == "GET" and path.startswith("/v1/apps?"):
+                    return {
+                        "data": [
+                            {
+                                "type": "apps",
+                                "id": "app-id",
+                                "attributes": {"bundleId": "com.legitimateapps.dulcet.dev"},
+                            }
+                        ]
+                    }
+                if method == "POST" and path == "/v1/buildUploads":
+                    return {"data": {"type": "buildUploads", "id": "upload-id"}}
+                if method == "POST" and path == "/v1/buildUploadFiles":
+                    return {
+                        "data": {
+                            "type": "buildUploadFiles",
+                            "id": "file-id",
+                            "attributes": {
+                                "uploadOperations": [
+                                    {
+                                        "method": "PUT",
+                                        "url": "https://upload.example.invalid/signed?token=secret",
+                                        "offset": 0,
+                                        "length": 7,
+                                        "requestHeaders": [],
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                if method == "PATCH" and path == "/v1/buildUploadFiles/file-id":
+                    return {}
+                if method == "GET" and path.startswith("/v1/buildUploads/upload-id?"):
+                    return {
+                        "data": {
+                            "attributes": {"state": {"state": "COMPLETE"}}
+                        }
+                    }
+                raise AssertionError((method, path))
+
+        with tempfile.TemporaryDirectory(prefix="dulcet-upload-test-") as directory:
+            package = Path(directory) / "Dulcet.pkg"
+            package.write_bytes(b"package")
+            client = FakeClient()
+            with mock.patch.object(upload, "upload_operations") as upload_parts:
+                upload.upload_build(
+                    client,
+                    package,
+                    "com.legitimateapps.dulcet.dev",
+                    "0.1.0",
+                    "42",
+                )
+            upload_parts.assert_called_once()
+
+        paths = [path for _, path, _ in client.calls]
+        self.assertTrue(all("review" not in path.lower() for path in paths))
+        self.assertEqual(
+            [path.split("?", 1)[0] for path in paths],
+            [
+                "/v1/apps",
+                "/v1/buildUploads",
+                "/v1/buildUploadFiles",
+                "/v1/buildUploadFiles/file-id",
+                "/v1/buildUploads/upload-id",
+            ],
+        )
+        patch_payload = client.calls[3][2]
+        checksum = patch_payload["data"]["attributes"]["sourceFileChecksums"]["file"]
+        self.assertEqual(checksum["algorithm"], "SHA_256")
+        self.assertEqual(checksum["hash"], hashlib.sha256(b"package").hexdigest())
+
+    def test_operation_coverage_rejects_a_gap(self) -> None:
+        with self.assertRaisesRegex(upload.UploadFailure, "gap or overlap"):
+            upload.validate_operations(
+                [
+                    {
+                        "method": "PUT",
+                        "url": "https://upload.example.invalid/part",
+                        "offset": 1,
+                        "length": 4,
+                        "requestHeaders": [],
+                    }
+                ],
+                5,
+            )
+
+    def test_diagnostics_redact_urls_and_bearer_values(self) -> None:
+        diagnostic = upload.redact(
+            "failed https://upload.example.invalid/file?Signature=credential "
+            "Authorization: Bearer header.payload.signature"
+        )
+        self.assertNotIn("Signature=", diagnostic)
+        self.assertNotIn("header.payload.signature", diagnostic)
+        self.assertIn("[REDACTED_URL]", diagnostic)
+
+
+if __name__ == "__main__":
+    unittest.main()

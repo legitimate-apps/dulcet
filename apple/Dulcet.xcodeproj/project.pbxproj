@@ -742,7 +742,6 @@
 					};
 					8BCA96527B244E2CCEE2901B = {
 						DevelopmentTeam = 3LTL47SJ8C;
-						ProvisioningStyle = Automatic;
 					};
 					BAC15431FAE29AC4A7F630CC = {
 						DevelopmentTeam = 3LTL47SJ8C;
@@ -866,7 +865,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		0B1768A6011E8E877E925CF7 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -885,7 +884,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		0D0CE879221B6146E9F3B588 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -904,7 +903,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		228A4780425D9C613826E604 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -923,7 +922,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		806940B958CE99915F933C06 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -942,7 +941,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		A8844F5E969FF889D604B5EE /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -961,7 +960,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		B506F6613DDBD66109ABDB46 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -980,7 +979,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		D9C0C6599E935022D35A32CC /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -999,7 +998,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets own this phase and Xcode builds them in parallel, so two\n# Gradle invocations would race for the journal lock and one would fail the build.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1188,16 +1187,21 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DulcetMac/DulcetMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = "Dulcet DEV";
+				PROVISIONING_PROFILE_SPECIFIER = "$(DULCET_RELEASE_PROFILE_NAME)";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1406,6 +1410,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 2;
+				DULCET_RELEASE_PROFILE_NAME = "Dulcet Mac App Store";
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1417,7 +1422,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = Dulcet;
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet Mac App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "$(DULCET_RELEASE_PROFILE_NAME)";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1477,6 +1482,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 2;
+				DULCET_RELEASE_PROFILE_NAME = "Dulcet Mac App Store";
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1488,7 +1494,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = Dulcet;
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet Mac App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "$(DULCET_RELEASE_PROFILE_NAME)";
 				SDKROOT = macosx;
 			};
 			name = Debug;
