@@ -296,13 +296,50 @@ private enum ServerReadinessFailure: LocalizedError {
 /// Readiness timing, kept in one value so a check can drive the same production
 /// code path with a short budget instead of duplicating the logic.
 private struct ServerReadinessBudget {
-    let deadline: TimeInterval
+    /// Time allowed for the child to start and publish its port.
+    let handshakeDeadline: TimeInterval
+    /// Time allowed for the published port to answer HTTP, measured from the
+    /// moment the handshake completes rather than from the start.
+    let probeDeadline: TimeInterval
     let probeTimeout: TimeInterval
     let pollInterval: TimeInterval
 
-    /// Unchanged from the value this tool has always used.
+    /// One 10s budget used to cover child startup, the port handshake AND HTTP
+    /// probing together, which had two costs. A slow child start consumed the
+    /// probe's time, so a handshake finishing at 9.9s left 0.1s to answer HTTP
+    /// and the run failed reporting the wrong condition -- defeating this
+    /// tool's own contract of one message per condition. And neither phase
+    /// could be sized, because the number described their sum.
+    ///
+    /// MEASURED from `READINESS control_server=READY` lines already present in
+    /// every green apple-ci run: probing costs 0.020s and 0.023s in the samples
+    /// on hand, while the handshake costs 0.334s to 6.635s in the same runs.
+    /// The two phases differ by more than two orders of magnitude, so a shared
+    /// budget was never going to fit both.
+    ///
+    /// `probeDeadline` is therefore small and still ~200x its observed cost.
+    ///
+    /// `handshakeDeadline` is UNCHANGED at 10s pending a distribution harvest.
+    /// It is the value under suspicion, and widening it on four samples is the
+    /// mistake this comment exists to prevent. Two things are already known
+    /// about it and should shape whatever replaces it:
+    ///
+    /// - The cost is ORDINAL, not random. Every observation fits "invocation 1
+    ///   is cold, invocation 2 is warm": 5.650s then 0.512s in one run, 6.635s
+    ///   then 0.334s in another, and the one timeout was a FIRST invocation
+    ///   firing immediately after a 34.71s compile-and-link inside the same
+    ///   `swift run`. So the 13x gap is a cold/warm ratio, not variance, and
+    ///   the first invocation is the entire risk. Sizing from a pooled
+    ///   distribution would let the warm case set a budget the cold case needs.
+    /// - `elapsed` at failure says WHEN THE BUDGET EXPIRED, not how close the
+    ///   child came. The port file is replaced atomically, so `port_file_bytes=0`
+    ///   is what a reader sees at any moment before completion. A 10.175s
+    ///   timeout against a 10.000s budget therefore does NOT mean "it nearly
+    ///   made it"; that overshoot ratio discriminates nothing here, unlike the
+    ///   loopback stall where a 30.344s failure against a 30s budget does
+    ///   indicate blocking. Do not reason from the percentage.
     static let production = ServerReadinessBudget(
-        deadline: 10, probeTimeout: 1, pollInterval: 0.1
+        handshakeDeadline: 10, probeDeadline: 5, probeTimeout: 1, pollInterval: 0.1
     )
 }
 
@@ -622,7 +659,9 @@ private enum ResourceLoaderSpike {
             .appendingPathComponent("dulcet-readiness-reporting-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let budget = ServerReadinessBudget(deadline: 1.0, probeTimeout: 0.25, pollInterval: 0.05)
+        let budget = ServerReadinessBudget(
+            handshakeDeadline: 1.0, probeDeadline: 1.0, probeTimeout: 0.25, pollInterval: 0.05
+        )
 
         // Condition 1: the child died before publishing a port.
         let exitedChild = shellChild("exit 7")
@@ -905,7 +944,7 @@ private enum ResourceLoaderSpike {
         budget: ServerReadinessBudget
     ) throws -> URL {
         let start = Date()
-        let deadline = start.addingTimeInterval(budget.deadline)
+        let handshakeDeadline = start.addingTimeInterval(budget.handshakeDeadline)
         let session = URLSession(configuration: probeConfiguration(timeout: budget.probeTimeout))
         defer { session.invalidateAndCancel() }
 
@@ -916,39 +955,64 @@ private enum ResourceLoaderSpike {
         var probes = 0
         var lastProbe = "no-probe-attempted"
 
-        while Date() < deadline {
-            if publishedPort == nil {
-                switch readPortHandshake(portFile) {
-                case .absent:
-                    portFileBytes = 0
-                    lastParse = "port-file-absent"
-                case let .incomplete(bytes, reason):
-                    portFileBytes = bytes
-                    lastParse = reason
-                case let .published(port, bytes):
-                    publishedPort = port
-                    portFileBytes = bytes
-                    lastParse = "published"
-                    handshakeElapsed = Date().timeIntervalSince(start)
-                }
+        // Phase 1: the child starts and publishes its port. Bounded by its OWN
+        // deadline, so a slow start can no longer silently consume the probe's
+        // budget and surface as the wrong condition.
+        while publishedPort == nil {
+            switch readPortHandshake(portFile) {
+            case .absent:
+                portFileBytes = 0
+                lastParse = "port-file-absent"
+            case let .incomplete(bytes, reason):
+                portFileBytes = bytes
+                lastParse = reason
+            case let .published(port, bytes):
+                publishedPort = port
+                portFileBytes = bytes
+                lastParse = "published"
+                handshakeElapsed = Date().timeIntervalSince(start)
             }
-
-            guard let port = publishedPort else {
-                let child = childState(process)
-                if !child.running {
-                    throw ServerReadinessFailure.childExitedBeforePortHandshake(
-                        child: child.summary,
-                        elapsed: Date().timeIntervalSince(start),
-                        budget: budget.deadline,
-                        portFileBytes: portFileBytes,
-                        parse: lastParse
-                    )
-                }
-                Thread.sleep(forTimeInterval: budget.pollInterval)
-                continue
+            if publishedPort != nil { break }
+            let child = childState(process)
+            if !child.running {
+                throw ServerReadinessFailure.childExitedBeforePortHandshake(
+                    child: child.summary,
+                    elapsed: Date().timeIntervalSince(start),
+                    budget: budget.handshakeDeadline,
+                    portFileBytes: portFileBytes,
+                    parse: lastParse
+                )
             }
+            if Date() >= handshakeDeadline {
+                throw ServerReadinessFailure.portHandshakeTimedOut(
+                    child: child.summary,
+                    elapsed: Date().timeIntervalSince(start),
+                    budget: budget.handshakeDeadline,
+                    portFileBytes: portFileBytes,
+                    parse: lastParse
+                )
+            }
+            Thread.sleep(forTimeInterval: budget.pollInterval)
+        }
 
-            let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
+        guard let port = publishedPort else {
+            // Unreachable: phase 1 exits only by publishing a port or throwing.
+            throw ServerReadinessFailure.portHandshakeTimedOut(
+                child: childState(process).summary,
+                elapsed: Date().timeIntervalSince(start),
+                budget: budget.handshakeDeadline,
+                portFileBytes: portFileBytes,
+                parse: lastParse
+            )
+        }
+
+        // Phase 2: the published port answers HTTP. Measured from the handshake
+        // rather than from the start, and it always makes at least one probe --
+        // the previous single-deadline loop could publish a port at the very end
+        // of the budget and then report an HTTP failure having never probed.
+        let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
+        let probeDeadline = Date().addingTimeInterval(budget.probeDeadline)
+        while true {
             probes += 1
             let outcome = probe(session: session, url: controlURL, timeout: budget.probeTimeout)
             lastProbe = outcome.detail
@@ -956,15 +1020,17 @@ private enum ResourceLoaderSpike {
                 let total = Date().timeIntervalSince(start)
                 print(
                     "READINESS control_server=READY port=\(port) probes=\(probes) "
-                        + "handshake_elapsed=\(format(handshakeElapsed))s "
-                        + "total_elapsed=\(format(total))s "
-                        + "budget=\(format(budget.deadline))s port_file_bytes=\(portFileBytes)"
+                    + "handshake_elapsed=\(format(handshakeElapsed))s "
+                    + "total_elapsed=\(format(total))s "
+                    + "handshake_budget=\(format(budget.handshakeDeadline))s "
+                    + "probe_budget=\(format(budget.probeDeadline))s "
+                    + "port_file_bytes=\(portFileBytes)"
                 )
                 return controlURL
             }
-
             let child = childState(process)
-            if !child.running {
+            let exhausted = Date() >= probeDeadline
+            if !child.running || exhausted {
                 throw ServerReadinessFailure.httpProbeNeverSucceeded(
                     port: port,
                     probes: probes,
@@ -972,32 +1038,11 @@ private enum ResourceLoaderSpike {
                     child: child.summary,
                     handshakeElapsed: handshakeElapsed,
                     elapsed: Date().timeIntervalSince(start),
-                    budget: budget.deadline
+                    budget: budget.probeDeadline
                 )
             }
             Thread.sleep(forTimeInterval: budget.pollInterval)
         }
-
-        let child = childState(process)
-        let elapsed = Date().timeIntervalSince(start)
-        guard let port = publishedPort else {
-            throw ServerReadinessFailure.portHandshakeTimedOut(
-                child: child.summary,
-                elapsed: elapsed,
-                budget: budget.deadline,
-                portFileBytes: portFileBytes,
-                parse: lastParse
-            )
-        }
-        throw ServerReadinessFailure.httpProbeNeverSucceeded(
-            port: port,
-            probes: probes,
-            lastProbe: lastProbe,
-            child: child.summary,
-            handshakeElapsed: handshakeElapsed,
-            elapsed: elapsed,
-            budget: budget.deadline
-        )
     }
 
     /// Rejects anything that is not a complete, newline-terminated port value, so
