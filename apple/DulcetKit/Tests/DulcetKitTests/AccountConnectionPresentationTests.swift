@@ -533,12 +533,51 @@ func localSearchStartsImmediatelyAndServerReplacesWithoutMovingRows() async {
 }
 
 @MainActor
+private func connectedSearchStore(local: ControlledLocalLibrarySearch, server: ControlledServerSearch) -> DulcetPresentationStore {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector, libraryBrowser: local, serverSearch: server,
+        searchDebounce: .zero, providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://127.0.0.1:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Fixture", normalizedServerURL: "http://127.0.0.1:4533"
+    )))
+    store.selectDestination(.search)
+    return store
+}
+
+@Test @MainActor
+func retryOneCharacterLocalFailure() async {
+    let local = ControlledLocalLibrarySearch()
+    let server = ControlledServerSearch()
+    let store = connectedSearchStore(local: local, server: server)
+    local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+    store.searchQuery = "t"
+    #expect(store.snapshot.state == .searchError)
+    local.outcome = .loaded(searchPage(results: [searchResult(id: "t", title: "Track")]))
+    store.retrySearch()
+    #expect(local.queries == ["t", "t"])
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchFailure == nil)
+    #expect(store.snapshot.searchResults.map(\.title) == ["Track"])
+    await settleSearchTask()
+    #expect(server.requests.isEmpty)
+}
+
+@MainActor
 private final class ControlledLocalLibrarySearch: DulcetLibraryBrowsing, DulcetLocalSearching {
     var queries: [String] = []
     var accounts: [String] = []
+    var outcome: DulcetSearchPageOutcome?
     func searchCommitted(providerInstanceID: String, query: String) -> DulcetSearchPageOutcome {
         queries.append(query)
         accounts.append(providerInstanceID)
+        if let outcome { return outcome }
         return .loaded(searchPage(results: [
             searchResult(id: "opaque:local-only", title: "Local only"),
             searchResult(id: "opaque:shared", title: "Local shared"),

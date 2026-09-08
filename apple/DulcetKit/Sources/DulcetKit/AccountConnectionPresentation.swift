@@ -571,7 +571,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .loadMoreSearchResults(kind):
             loadMoreSearchResults(kind)
         case .retrySearch:
-            startInitialSearch(debounce: false, destination: currentSnapshot.selectedDestination)
+            guard currentSnapshot.selectedDestination == .search else { return }
+            if searchQuery.trimmedForSearch.count < 2 {
+                openSearch()
+            } else {
+                startInitialSearch(debounce: false, destination: currentSnapshot.selectedDestination)
+            }
         case let .activateSearchResult(id):
             activateSearchResult(id)
         case let .selectAlbum(id):
