@@ -53,3 +53,13 @@ expected confirmed=false, observed confirmed=true. SHA-256 changed from
 GitHub's documented numeric coercion supports the review's finding:
 https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#operators
 No workflow dispatch was exercised.
+
+## Finding 3 — missing installer identity
+
+Fixed by the explicitly permitted fail-early option; installer import itself is deferred.
+OBSERVED: the new prerequisite test failed before the blocker existed. It now extracts and executes
+the actual workflow shell step, observes exit 78 and a message naming Mac Installer Distribution
+certificate/private-key import, and asserts this step precedes toolchain setup. All dispatches,
+including dry runs, intentionally stop here until a tested import replaces the blocker.
+No secret name is introduced without a consumer. Actual clean-runner package export failure remains
+unobserved, as the review correctly stated; selection alone cannot establish identity availability.

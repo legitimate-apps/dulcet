@@ -1,5 +1,12 @@
 # Release workflow boundaries
 
+**Dispatch is currently blocked before setup or secret use.** The temporary-keychain wrapper
+imports only Apple Distribution; it has no Mac Installer Distribution certificate/private-key
+import. The workflow exits 78 with that prerequisite named, including for dry runs. Removing the
+blocker requires a tested installer identity import and clean-keychain package-export evidence;
+selecting `installerSigningCertificate` alone does not supply the identity.
+
+
 `.github/workflows/release.yml` is deliberately manual-only. Design specification §22 describes
 automatic DEV uploads from `main` and tag-selected PROD uploads, while the repository working
 agreement requires `workflow_dispatch` as the only release trigger. The manual trigger wins until

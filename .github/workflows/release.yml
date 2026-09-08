@@ -45,6 +45,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The signing wrapper imports only Apple Distribution. Selecting an installer
+      # certificate at export does not install its private key on a clean runner.
+      # Replace this blocker with a tested installer import before enabling dispatches.
+      - name: Require Mac installer signing support
+        run: |
+          echo "RELEASE PREREQUISITE MISSING: Mac Installer Distribution certificate/private-key import is not implemented. Archive/export (including dry run) is disabled until the temporary-keychain wrapper supports it." >&2
+          exit 78
+
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
