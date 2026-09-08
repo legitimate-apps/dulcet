@@ -90,3 +90,32 @@ Then behavior mutations independently proved both assertions fail:
 Both files were restored; all ten uploader/workflow cases pass. No uploaded build's Apple-side
 restriction was observed. This protects this export/client path; it cannot control unrelated
 clients or account-holder actions. The prohibition remains binding for future submission code.
+
+## Finding 4 — PROD configuration boundary
+
+DEFERRED, not fixed. OBSERVED by source inspection: both Mac targets include `DulcetMac`,
+`DulcetAppleShared` and DulcetKit; the Mac entry point calls `makeMacComposition()` without a
+preconfigured URL. No target/resource boundary excludes future shared configuration. The release
+document now proposes separate composition roots, explicit transitive resource manifests,
+DEV-only generated input, isolated PROD staging and canary/membership/artifact controls. The design
+spec no longer describes the desired DEV-only configuration file as an implemented fact.
+This requires a dependency/resource audit and both channel builds; no partial guard was added.
+Red/green is not claimed for a deferred mechanism or for this documentation correction.
+
+## Final verification
+
+OBSERVED after all seven finding commits: all requested commands exited 0:
+
+- `python3 tools/verify_ci_policy.py` — 7 workflows valid.
+- `python3 tools/parity_gate.py` — 6 feature rows valid.
+- `python3 tools/test-verify-ci-policy` — 6 core and 4 Apple cases passed.
+- `python3 tools/test-xcode-script-phases` — committed pair passed; single corrupted duplicate rejected.
+- `python3 tools/test-run-gradle-exclusive` — serialization, live-overlap negative control,
+  killed-workload exit, failure propagation and invocation checks passed.
+- `python3 tools/test-app-store-connect-upload` — 10 cases passed, including the 144 input pairs.
+
+`git diff --check` passed. No review finding was disproved. The installer finding is still a
+prediction about clean-runner export, not an observed export failure. Existing automated coverage
+remains narrower than a live release: no real signing credentials, archive/export, dispatch, upload,
+Apple processing or tester availability was exercised. The pre-existing signing-material file
+boundary and PROD resource isolation remain explicit deferred work. Release dispatch is blocked.

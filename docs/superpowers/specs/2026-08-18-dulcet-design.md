@@ -2956,8 +2956,11 @@ address in a published binary is **both a disclosure and a defect**: it leaks a 
 to everyone who downloads the app, and it is wrong for every user who is not the person who hardcoded
 it. **Anything of that shape belongs to the DEV target only, and never to a build that leaves the
 maintainer's own devices.** The build configuration must make this structurally impossible rather than
-relying on someone remembering — the field is read from a DEV-only configuration file that the PROD
-target does not compile.
+relying on someone remembering. The required design is a DEV-only configuration input that the PROD
+target cannot compile or package. **IMPLEMENTATION GAP:** current Mac targets include the same source
+directories; no such structural boundary is enforced yet. The current composition has no
+preconfigured-server input. See `docs/RELEASES.md` for the deferred dependency/resource boundary
+and its required mutation and artifact evidence.
 
 Optimization level, assertions, and every correctness-relevant flag are **identical** across channels.
 A DEV build that behaves differently from PROD because of a build setting is not dogfooding, it is
