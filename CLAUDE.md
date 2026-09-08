@@ -356,6 +356,14 @@ They are deliberately not reproduced in this repository.**
     the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
     handler itself emits.
 
+42. **Robolectric's TLS provider differs by host architecture.** It disables Conscrypt on macOS
+    Apple Silicon and enables it on Linux. **OBSERVED 2026-09-08:** the Android playback downgrade
+    fixture passed on ARM JDK 17/21 but failed on x64 Temurin 21 before recording a request:
+    Conscrypt reflected into `java.net.InetAddress.holder()` and hit `InaccessibleObjectException`.
+    The host-socket fixture uses method-scoped `@ConscryptMode(OFF)` to retain ordinary certificate
+    and hostname checks without opening JDK modules. Keep the exact source-request-count assertion:
+    a TLS failure also throws the expected playback exception and would otherwise counterfeit a pass.
+
 ## Review and delegation
 
 **Architecture decisions and verification stay with the maintainer; implementation of a
