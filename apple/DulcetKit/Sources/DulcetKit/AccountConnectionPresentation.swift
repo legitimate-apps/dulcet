@@ -755,6 +755,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchHasMoreKinds: searchHasMoreKinds,
             searchLoadingMoreKind: searchLoadingMoreKind,
             searchFailure: searchFailure,
+            searchIncludesLocalCache: libraryBrowser is any DulcetLocalSearching,
+            searchFailureIsLocal: serverSearchFailure == nil && localSearchFailure != nil,
             accountRemoval: accountRemovalStatus
         )
         snapshotHandler?(currentSnapshot)
@@ -777,6 +779,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
         searchLoadingMoreKind: DulcetSearchResultKind? = nil,
         searchFailure: DulcetSearchFailure? = nil,
+        searchIncludesLocalCache: Bool = false,
+        searchFailureIsLocal: Bool = false,
         accountRemoval: DulcetAccountRemovalStatus = .idle
     ) -> DulcetSnapshot {
         let connectivity: DulcetConnectivity = switch status {
@@ -810,6 +814,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchHasMoreKinds: searchHasMoreKinds,
             searchLoadingMoreKind: searchLoadingMoreKind,
             searchFailure: searchFailure,
+            searchIncludesLocalCache: searchIncludesLocalCache,
+            searchFailureIsLocal: searchFailureIsLocal,
             captureDate: Date(timeIntervalSince1970: 0),
             accountForm: form,
             accountConnection: status,

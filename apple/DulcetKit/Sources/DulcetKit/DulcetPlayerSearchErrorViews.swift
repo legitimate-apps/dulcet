@@ -317,7 +317,7 @@ struct DulcetSearchView: View {
 #endif
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
-                Text(DulcetStrings.searchSummary)
+                Text(DulcetStrings.dynamicText(snapshot.searchSummaryKey, fallback: DulcetStrings.searchSummary))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
@@ -353,15 +353,15 @@ struct DulcetSearchView: View {
         case .searchEmpty:
             searchMessage(
                 symbol: "magnifyingglass",
-                title: DulcetStrings.searchEmptyTitle,
-                body: DulcetStrings.searchEmptyBody
+                title: DulcetStrings.dynamicText(snapshot.searchEmptyTitleKey, fallback: DulcetStrings.searchEmptyTitle),
+                body: DulcetStrings.dynamicText(snapshot.searchEmptyBodyKey, fallback: DulcetStrings.searchEmptyBody)
             )
         case .searchError:
             VStack(spacing: DulcetSpacing.md) {
                 searchMessage(
                     symbol: "exclamationmark.magnifyingglass",
-                    title: DulcetStrings.searchErrorTitle,
-                    body: DulcetStrings.searchErrorBody
+                    title: DulcetStrings.dynamicText(snapshot.searchErrorTitleKey, fallback: DulcetStrings.searchErrorTitle),
+                    body: DulcetStrings.dynamicText(snapshot.searchErrorBodyKey, fallback: DulcetStrings.searchErrorBody)
                 )
                 Button(DulcetStrings.searchRetry, action: onRetry)
                     .buttonStyle(.borderedProminent)
@@ -369,8 +369,8 @@ struct DulcetSearchView: View {
         default:
             searchMessage(
                 symbol: "magnifyingglass",
-                title: DulcetStrings.searchIdleTitle,
-                body: DulcetStrings.searchIdleBody
+                title: DulcetStrings.dynamicText(snapshot.searchIdleTitleKey, fallback: DulcetStrings.searchIdleTitle),
+                body: DulcetStrings.dynamicText(snapshot.searchIdleBodyKey, fallback: DulcetStrings.searchIdleBody)
             )
         }
     }

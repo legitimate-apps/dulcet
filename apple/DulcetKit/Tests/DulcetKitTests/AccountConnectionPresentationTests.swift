@@ -417,6 +417,9 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     )))
     store.selectDestination(.search)
 
+    #expect(store.snapshot.searchSummaryKey == "search.summary")
+    #expect(store.snapshot.searchIdleTitleKey == "search.idle.title")
+    #expect(store.snapshot.searchIdleBodyKey == "search.idle.body")
     store.searchQuery = "a"
     await settleSearchTask()
     #expect(search.requests.isEmpty)
@@ -1809,4 +1812,67 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
 @MainActor
 private final class ControlledDeleteDecision {
     var shouldFail = true
+}
+
+@Test
+func localSearchCopyKeysDescribeCache() {
+    let expected = [
+        "search.local.summary": "Search saved library items from the first character. Server search begins after two characters.",
+        "search.local.idle.title": "Search your library",
+        "search.local.idle.body": "Enter a name to search saved artists, albums, and tracks. Enter at least two characters to also search the server.",
+        "search.local.empty.title": "No saved library matches",
+        "search.local.empty.body": "Try a different name, or enter at least two characters to search the server.",
+        "search.local.error.title": "Saved library could not be searched",
+        "search.local.error.body": "Try again to read the saved library. You can also enter at least two characters to search the server."
+    ]
+    for (key, value) in expected {
+        #expect(DulcetStrings.dynamicText(key, fallback: key) == value)
+    }
+    #expect(DulcetStrings.dynamicText("search.empty.title", fallback: "") == "No server matches")
+    #expect(DulcetStrings.dynamicText("search.error.body", fallback: "") == "Check the server and network, then try again.")
+}
+
+@Test @MainActor
+func searchCopySelectsExactKeysForLocalAndServerStates() async {
+    let local = ControlledLocalLibrarySearch()
+    let server = ControlledServerSearch()
+    let store = connectedSearchStore(local: local, server: server)
+    #expect(store.snapshot.searchSummaryKey == "search.local.summary")
+    #expect(store.snapshot.searchIdleTitleKey == "search.local.idle.title")
+    #expect(store.snapshot.searchIdleBodyKey == "search.local.idle.body")
+    local.outcome = .loaded(searchPage(results: []))
+    store.searchQuery = "t"
+    #expect(store.snapshot.state == .searchEmpty)
+    #expect(store.snapshot.searchEmptyTitleKey == "search.local.empty.title")
+    #expect(store.snapshot.searchEmptyBodyKey == "search.local.empty.body")
+    local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+    store.retrySearch()
+    #expect(store.snapshot.state == .searchError)
+    #expect(store.snapshot.searchErrorTitleKey == "search.local.error.title")
+    #expect(store.snapshot.searchErrorBodyKey == "search.local.error.body")
+    local.outcome = nil
+    store.retrySearch()
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchSummaryKey == "search.local.summary")
+    #expect(server.requests.isEmpty)
+
+    local.outcome = .loaded(searchPage(results: []))
+    store.searchQuery = "tt"
+    await settleSearchTask(until: { server.requests.count == 1 })
+    server.complete(at: 0, .loaded(searchPage(results: [])))
+    #expect(store.snapshot.state == .searchEmpty)
+    #expect(store.snapshot.searchEmptyTitleKey == "search.empty.title")
+    #expect(store.snapshot.searchEmptyBodyKey == "search.empty.body")
+    local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+    store.retrySearch()
+    await settleSearchTask(until: { server.requests.count == 2 })
+    server.complete(at: 1, .failed(DulcetSearchFailure(kind: .timeout)))
+    #expect(store.snapshot.state == .searchError)
+    #expect(store.snapshot.searchErrorTitleKey == "search.error.title")
+    #expect(store.snapshot.searchErrorBodyKey == "search.error.body")
+    store.selectDestination(.nowPlaying)
+    store.selectDestination(.search)
+    await settleSearchTask()
+    #expect(server.requests.count == 2) // A real server failure still waits for explicit Retry.
+    #expect(store.snapshot.searchErrorBodyKey == "search.error.body")
 }

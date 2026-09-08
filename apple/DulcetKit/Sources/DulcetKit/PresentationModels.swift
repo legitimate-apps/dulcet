@@ -725,6 +725,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let searchHasMoreKinds: Set<DulcetSearchResultKind>
     public let searchLoadingMoreKind: DulcetSearchResultKind?
     public let searchFailure: DulcetSearchFailure?
+    public let searchIncludesLocalCache: Bool
+    public let searchFailureIsLocal: Bool
     public let captureDate: Date
     public let accountForm: DulcetAccountConnectRequest
     public let accountConnection: DulcetAccountConnectionStatus
@@ -749,6 +751,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
         searchLoadingMoreKind: DulcetSearchResultKind? = nil,
         searchFailure: DulcetSearchFailure? = nil,
+        searchIncludesLocalCache: Bool = false,
+        searchFailureIsLocal: Bool = false,
         captureDate: Date,
         accountForm: DulcetAccountConnectRequest = .empty,
         accountConnection: DulcetAccountConnectionStatus = .idle,
@@ -772,6 +776,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.searchHasMoreKinds = searchHasMoreKinds
         self.searchLoadingMoreKind = searchLoadingMoreKind
         self.searchFailure = searchFailure
+        self.searchIncludesLocalCache = searchIncludesLocalCache
+        self.searchFailureIsLocal = searchFailureIsLocal
         self.captureDate = captureDate
         self.accountForm = accountForm
         self.accountConnection = accountConnection
@@ -797,4 +803,18 @@ public struct DulcetSnapshot: Sendable, Hashable,
             displayStyle: .struct
         )
     }
+}
+
+// Keep the view's localized keys testable alongside the state that selects them.
+extension DulcetSnapshot {
+    var searchSummaryKey: String { searchIncludesLocalCache ? "search.local.summary" : "search.summary" }
+    var searchIdleTitleKey: String { searchIncludesLocalCache ? "search.local.idle.title" : "search.idle.title" }
+    var searchIdleBodyKey: String { searchIncludesLocalCache ? "search.local.idle.body" : "search.idle.body" }
+    private var searchIsLocalOnly: Bool {
+        searchIncludesLocalCache && searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2
+    }
+    var searchEmptyTitleKey: String { searchIsLocalOnly ? "search.local.empty.title" : "search.empty.title" }
+    var searchEmptyBodyKey: String { searchIsLocalOnly ? "search.local.empty.body" : "search.empty.body" }
+    var searchErrorTitleKey: String { searchFailureIsLocal ? "search.local.error.title" : "search.error.title" }
+    var searchErrorBodyKey: String { searchFailureIsLocal ? "search.local.error.body" : "search.error.body" }
 }
