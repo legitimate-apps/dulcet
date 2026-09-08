@@ -342,6 +342,24 @@ if Path("core-conformance").is_dir():
             errors.append(f".github/workflows/apple-ci.yml: required diagnostic control {control} "
                           "must exist and run unconditionally in the macOS apple-ci PR job")
 
+# A control that no workflow names never runs. There is no glob runner here -- every control is
+# wired by an explicit `run: python3 tools/test-<name>` line -- so an unwired control is INERT while
+# looking exactly like a gate: executable, carrying its own positive and negative controls, printing
+# PASS when a person runs it by hand. MEASURED 2026-09-08: three of thirty-nine controls were
+# orphaned this way, and one of the three was also asserting the wrong thing. Repairing that one's
+# assertion alone would have read as a complete fix and changed nothing, because two independent
+# reasons kept the defect alive and each was sufficient on its own.
+#
+# ➡️ "Is it wired?" is the FIRST question about a control, before "what does it assert?" -- the
+# second is moot without the first.
+workflow_text = "".join(workflow.read_text() for workflow in workflows)
+for control in sorted(Path("tools").glob("test-*")):
+    if control.is_file() and control.name not in workflow_text:
+        errors.append(
+            f"{control}: no workflow invokes this control, so it never runs; wire it into a "
+            "workflow or delete it, but do not leave it looking like a gate",
+        )
+
 core_ci = Path(".github/workflows/core-ci.yml").read_text()
 for required in (
     "python3 tools/migration_gate.py",

@@ -431,6 +431,43 @@ def run_paired_emission_case(emitted: str, expected_returncode: int, label: str)
     print(f"PASS: {label}")
 
 
+def run_orphan_control_case() -> None:
+    """A control in tools/ that no workflow names must be rejected, and a wired one accepted.
+
+    Both directions matter. Rejecting the unwired one is the gate; accepting the wired one is what
+    stops the gate from being satisfiable only by having no controls at all.
+    """
+    for wired in (False, True):
+        with tempfile.TemporaryDirectory(prefix="dulcet-orphan-policy-") as temporary_directory:
+            root = Path(temporary_directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            core = workflow_for(next(case for case in CASES if case.accepted))
+            if wired:
+                core += "      - run: python3 tools/test-example-control\n"
+            (workflows / "core-ci.yml").write_text(core)
+            tools = root / "tools"
+            tools.mkdir()
+            (tools / "test-example-control").write_text("#!/usr/bin/env python3\n")
+            result = subprocess.run(
+                [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True,
+                check=False,
+            )
+        expected = 0 if wired else 1
+        label = "a wired control is accepted" if wired else "an unwired control is rejected"
+        if result.returncode != expected:
+            raise AssertionError(
+                f"{label}: expected exit {expected}, got {result.returncode}\n"
+                f"stderr:\n{result.stderr}",
+            )
+        if not wired and "no workflow invokes this control" not in result.stderr:
+            raise AssertionError(
+                f"{label}: rejection did not name the reason\nstderr:\n{result.stderr}",
+            )
+        EXTRA_PASSES.append(label)
+        print(f"PASS: {label}")
+
+
 for test_case in CASES:
     run_case(test_case)
 
@@ -450,6 +487,8 @@ run_paired_emission_case(
     "ExampleTarget", 1,
     "a wrong emission is rejected even though the cited class is emitted elsewhere",
 )
+
+run_orphan_control_case()
 
 # Counted explicitly rather than from len(APPLE_CASES) alone: the class-emission and
 # orphan-control checks are not in that tuple, and a summary that silently omits them would
