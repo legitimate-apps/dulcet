@@ -2,12 +2,13 @@
 """Prove the project.yml -> pbxproj script-phase gate rejects real drift.
 
 The positive control is the committed pair itself: if the escaping rule were wrong, the repository's
-own project would fail, so a PASS there is what validates the encoder rather than merely exercising
-it. The failure cases then show the gate can actually fire.
+own project would fail. That covers the current bodies only; synthetic cases exercise additional
+escaping and the corrupted-duplicate control verifies multiplicity.
 """
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -54,7 +55,7 @@ def case_committed_pair() -> None:
     result = run(REPOSITORY / "apple/project.yml",
                  REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj")
     check(result.returncode == 0,
-          "the real pair passes, which is what validates the escaping rule "
+          "the real pair passes for the current script bodies "
           f"(exit {result.returncode}: {result.stdout.strip()[:120]})")
 
 
@@ -115,7 +116,22 @@ def case_quotes_and_backslashes() -> None:
               f"exit 0 (observed {result.returncode}: {result.stdout.strip()[:140]})")
 
 
+def case_corrupt_one_duplicate() -> None:
+    print("=== NEGATIVE: one of eight committed bodies is corrupted ===")
+    original = (REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj").read_text()
+    mutated = original.replace("tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode", "echo WRONG", 1)
+    before = hashlib.sha256(original.encode()).hexdigest()
+    after = hashlib.sha256(mutated.encode()).hexdigest()
+    check(before != after, f"mutation changed bytes sha256={before} -> {after}")
+    with tempfile.TemporaryDirectory() as raw:
+        project = pathlib.Path(raw) / "project.pbxproj"
+        project.write_text(mutated)
+        result = run(REPOSITORY / "apple/project.yml", project)
+        check(result.returncode == 1, f"corrupt duplicate rejected: {result.stdout.strip()}")
+
+
 def main() -> int:
+    case_corrupt_one_duplicate()
     case_committed_pair()
     case_synthetic_agreement()
     case_edited_specification()

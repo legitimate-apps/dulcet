@@ -7,15 +7,22 @@ repository documents and NOT what Xcode runs.
 
 That gap is not theoretical: `tools/verify_dulcet_core_build_order.py` reads the **pbxproj**, so a
 project.yml-only edit leaves it reporting PASS about the old script while the new one has never run.
-This gate closes that specific hole -- it compares the shell text of every build-phase script, and
-the phase COUNT in both directions, so neither a silent edit nor a stale leftover phase survives.
+This stdlib-only Linux gate compares multisets of encoded script bodies: each declaration
+must have exactly one generated occurrence, including duplicate bodies. It reads shellScript
+assignments, never arbitrary substring occurrences.
 
-It is deliberately textual and stdlib-only: it must run on the Linux parity-gate runner, which has
-no Xcode and no XcodeGen, so regenerating and diffing is not available to it.
+LIMITS: this is not a full YAML/OpenStep parser or a replacement for regenerating with XcodeGen.
+Only literal `script: |` blocks with the repository's two-space body indent are understood;
+other script forms and external `path:` scripts are NOT checked. Target attachment, phase ordering,
+names, shellPath, dependency-analysis flags, input/output files and file lists are NOT checked.
+The assignment matcher assumes normal generated pbxproj text (not assignments inside comments).
+Changes to these properties require regeneration and review of the generated diff.
+
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 import re
 import sys
@@ -69,13 +76,17 @@ def main(argv: list[str]) -> int:
     generated = PBXPROJ_SCRIPT.findall(project)
 
     errors: list[str] = []
-    for name, body in declared:
-        encoded = encode(body)
-        if encoded not in project:
+    expected = Counter(encode(body) for _, body in declared)
+    actual = Counter(generated)
+    for body, count in expected.items():
+        if actual[body] != count:
+            names = sorted({name for name, text in declared if encode(text) == body})
             errors.append(
-                f"phase {name!r} in {specification_path.name} has no matching shellScript in "
-                f"{project_path.name} -- regenerate the Xcode project with the pinned XcodeGen"
+                f"phase {names!r}: expected {count} copies, found {actual[body]}; "
+                "regenerate the Xcode project with the pinned XcodeGen"
             )
+    if actual - expected:
+        errors.append("project carries unexpected or excess shellScript bodies; regenerate the Xcode project")
 
     if len(generated) != len(declared):
         errors.append(

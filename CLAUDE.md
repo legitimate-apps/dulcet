@@ -361,9 +361,10 @@ They are deliberately not reproduced in this repository.**
     `tools/verify_dulcet_core_build_order.py` reads the **pbxproj**, so it keeps reporting PASS about
     the old script. Regenerate with `cd apple && xcodegen generate` (version pinned in
     `docs/TOOLCHAIN.md`), and note that a rebase may textually merge the pbxproj into something
-    XcodeGen would not produce. `tools/verify_xcode_script_phases.py` compares the shell text and the
-    phase count in both directions; it is stdlib-only so it runs on the Linux parity-gate runner,
-    which has no Xcode.
+    XcodeGen would not produce. `tools/verify_xcode_script_phases.py` compares multisets of literal script bodies, including duplicate counts.
+    It does not verify target attachment, ordering, shellPath, dependency flags or input/output files;
+    its parser limits are documented in the tool. Regenerate and review for those properties.
+    It is stdlib-only and runs on the Linux parity-gate runner, which has no Xcode.
 43. **`UIScreen.main` inside an XCUITest is the TEST RUNNER's screen, not the app's.** The runner
     declares no launch screen of its own, so it stays in the 320x480 compatibility space however
     correct the app under test is: measured 2026-09-07 on a correct build, `window.frame` was
