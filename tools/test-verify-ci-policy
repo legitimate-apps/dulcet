@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import json
 import sys
 import tempfile
 
@@ -71,6 +72,13 @@ CASES = (
     ),
 )
 
+
+# Appended by each extra check as it PASSES, and the summary counts this list rather than a literal.
+# A hardcoded count is a claim about the suite that the suite does not verify: while writing these
+# cases the summary was updated to say "2/2 per-method pairing cases" at a moment when those two
+# calls had not been wired in at all, and it printed that line happily. A count derived from what
+# actually executed cannot make that claim.
+EXTRA_PASSES: list[str] = []
 
 def workflow_for(case: Case) -> str:
     lines = ["name: synthetic-core-ci"]
@@ -148,9 +156,17 @@ def run_case(case: Case) -> None:
 # all), and extraction is GitHub's own remedy. A check that stopped at the YAML would be blinded by
 # exactly the change the ceiling forces.
 #
-# These assert on the PRESENCE or ABSENCE of the bijection messages rather than on the process exit
-# code, because a minimal fixture legitimately trips other, unrelated policy rules. Asserting the
-# specific sentence is what makes the case about the bijection and not about fixture completeness.
+# Each case asserts BOTH the specific diagnostic AND the process exit status. The sentence is what
+# makes the case about the bijection rather than about fixture completeness; the exit status is what
+# makes it a rejection rather than a complaint.
+#
+# 🚨 An earlier version asserted only the sentence, on the stated grounds that "a minimal fixture
+# legitimately trips other, unrelated policy rules". MEASURED 2026-09-08: it does not -- the fixture
+# exits 0 with empty stderr. So the reason was false, and the cost was real: mutating the verifier to
+# print its errors and then return success left this entire suite green, 6/6 core and 4/4 apple,
+# while CI would have accepted a missing script and an unwritten JUnit directory. A control that
+# cannot distinguish "reported and rejected" from "reported and accepted" is not checking the thing
+# its name claims.
 
 APPLE_WORKFLOW = """name: apple-ci
 on:
@@ -180,10 +196,22 @@ python3 tools/swift-testing-junit "$RUNNER_TEMP/x.xcresult" \\
 
 BIJECTION_MISSING = "verify-parity-evidence reads dulcet-example-junit, which no step writes"
 SCRIPT_MISSING = "invokes tools/ci/produce-evidence, which does not exist"
+BIJECTION_ORPHANED = "JUnit directory dulcet-unread-junit is written but never passed"
 
 
-def run_apple_case(name: str, invocation: str, script: str | None, present: str, absent: str) -> None:
-    """`present` must appear in stderr and `absent` must not; either may be empty."""
+def run_apple_case(
+    name: str,
+    invocation: str,
+    script: str | None,
+    present: str,
+    absent: str,
+    expected_returncode: int,
+) -> None:
+    """`present` must appear in stderr, `absent` must not, and the exit status must match.
+
+    Either message may be empty. `expected_returncode` is 0 for a fixture the verifier must accept
+    and 1 for one it must reject.
+    """
     with tempfile.TemporaryDirectory(prefix="dulcet-apple-policy-") as temporary_directory:
         root = Path(temporary_directory)
         workflows = root / ".github" / "workflows"
@@ -205,6 +233,16 @@ def run_apple_case(name: str, invocation: str, script: str | None, present: str,
         raise AssertionError(f"{name}: expected {present!r} in stderr\nstderr:\n{result.stderr}")
     if absent and absent in result.stderr:
         raise AssertionError(f"{name}: did not expect {absent!r} in stderr\nstderr:\n{result.stderr}")
+    if result.returncode != expected_returncode:
+        verdict = (
+            "the verifier reported the problem but still exited zero, so CI would have accepted it"
+            if expected_returncode and result.returncode == 0
+            else "the verifier rejected a fixture it must accept"
+        )
+        raise AssertionError(
+            f"{name}: expected exit {expected_returncode}, got {result.returncode} -- {verdict}\n"
+            f"stderr:\n{result.stderr}",
+        )
     print(f"PASS: {name}")
 
 
@@ -215,6 +253,7 @@ APPLE_CASES = (
         APPLE_SCRIPT % {"junit": "$RUNNER_TEMP/dulcet-example-junit"},
         "",
         BIJECTION_MISSING,
+        0,
     ),
     (
         "a script that stops writing the directory is rejected",
@@ -222,6 +261,7 @@ APPLE_CASES = (
         APPLE_SCRIPT % {"junit": "$RUNNER_TEMP/somewhere-else"},
         BIJECTION_MISSING,
         "",
+        1,
     ),
     (
         "invoking a script that does not exist is rejected",
@@ -229,6 +269,7 @@ APPLE_CASES = (
         None,
         SCRIPT_MISSING,
         "",
+        1,
     ),
     (
         "an inline write still satisfies the bijection, unchanged",
@@ -236,8 +277,158 @@ APPLE_CASES = (
         None,
         "",
         BIJECTION_MISSING,
+        0,
+    ),
+    (
+        # The other direction of the bijection had no case at all: removing the written-minus-read
+        # check left the whole suite green. A directory that is written and never verified is how a
+        # FEATURES.yml row comes to cite a test whose execution nothing proves.
+        "a directory written but never passed to verify-parity-evidence is rejected",
+        "tools/ci/produce-evidence",
+        APPLE_SCRIPT % {"junit": "$RUNNER_TEMP/dulcet-unread-junit"},
+        BIJECTION_ORPHANED,
+        "",
+        1,
+    ),
+    (
+        # A `#` line cannot invoke anything. Treating one as an invocation failed a correct workflow
+        # with "invokes ..., which does not exist" -- a gate that blocks runs which would otherwise
+        # pass is a false blocker, not safety.
+        "a tools/ci path named only in a comment is not an invocation",
+        'python3 tools/swift-testing-junit a "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" Example\n'
+        "          # superseded by tools/ci/retired-proof",
+        None,
+        "",
+        "tools/ci/retired-proof",
+        0,
     ),
 )
+
+
+# The class checks need a FEATURES.yml to have anything to compare against, so the bijection
+# fixtures above cannot reach them -- and that is exactly how the defect below survived review.
+#
+# 🚨 MEASURED 2026-09-08: moving an emission out of the YAML into a `tools/ci/` script removed it
+# from the class scans' input, because they read the YAML while the directory scan read the scripts
+# too. A mutation emitting the TARGET name where FEATURES.yml cites the CLASS name was rejected
+# before the extraction and ACCEPTED after it. Nothing failed. This case exists so that re-blinding
+# either scan to the YAML alone cannot pass again.
+CLASS_EMISSION_SCRIPT = """#!/bin/bash
+set -euo pipefail
+xcodebuild test-without-building \\
+  -only-testing:ExampleTarget/Example/exampleMethod
+python3 tools/swift-testing-junit "$RUNNER_TEMP/x.xcresult" \\
+  "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" \\
+  %(emitted)s
+"""
+
+CLASS_EMISSION_FEATURES = json.dumps({
+    "features": [{
+        "id": "example.row",
+        "platforms": {
+            "macos": {"evidence": [{"workflow": "apple-ci", "test": "Example/exampleMethod"}]},
+        },
+    }],
+})
+
+
+def run_class_emission_case(emitted: str, expected_returncode: int, label: str) -> None:
+    """The emission lives in an invoked script, never inline, so only a script-reading scan sees it."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-class-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(
+            APPLE_WORKFLOW % {"invocation": "tools/ci/produce-evidence"},
+        )
+        (workflows / "core-ci.yml").write_text(
+            workflow_for(next(case for case in CASES if case.accepted)),
+        )
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "produce-evidence").write_text(CLASS_EMISSION_SCRIPT % {"emitted": emitted})
+        (root / "FEATURES.yml").write_text(CLASS_EMISSION_FEATURES)
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
+        )
+    if result.returncode != expected_returncode:
+        raise AssertionError(
+            f"{label}: expected exit {expected_returncode}, got {result.returncode} -- a scan that "
+            "reads only the workflow YAML cannot see an emission that lives in the script it "
+            f"invokes\nstderr:\n{result.stderr}",
+        )
+    if expected_returncode and "verify-parity-evidence matches on" not in result.stderr:
+        raise AssertionError(
+            f"{label}: rejected, but not for the class-name reason\nstderr:\n{result.stderr}",
+        )
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
+
+
+# Emitting the cited class SOMEWHERE is necessary and not sufficient, and the case above cannot tell
+# the difference: when only one emission exists, blinding the per-method pairing scan still leaves
+# the "is it emitted at all" scan to reject. So this fixture emits the cited name correctly for one
+# method and the TARGET name for another, which is the shape that actually reached CI -- two of three
+# macOS emissions were right, the third was not, and the file passed while the bundle holding the
+# cited test wrote unusable evidence.
+PAIRED_EMISSION_SCRIPT = """#!/bin/bash
+set -euo pipefail
+xcodebuild test-without-building \\
+  -only-testing:ExampleTarget/Example/otherMethod
+python3 tools/swift-testing-junit "$RUNNER_TEMP/a.xcresult" \\
+  "$RUNNER_TEMP/dulcet-example-junit/TEST-Other.xml" \\
+  Example
+xcodebuild test-without-building \\
+  -only-testing:ExampleTarget/Example/exampleMethod
+python3 tools/swift-testing-junit "$RUNNER_TEMP/b.xcresult" \\
+  "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" \\
+  %(emitted)s
+"""
+
+PAIRED_EMISSION_FEATURES = json.dumps({
+    "features": [{
+        "id": "example.row",
+        "platforms": {
+            "macos": {"evidence": [
+                {"workflow": "apple-ci", "test": "Example/exampleMethod"},
+                {"workflow": "apple-ci", "test": "Example/otherMethod"},
+            ]},
+        },
+    }],
+})
+
+
+def run_paired_emission_case(emitted: str, expected_returncode: int, label: str) -> None:
+    """The cited class is emitted for another method, so only the per-method pairing can object."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-paired-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(
+            APPLE_WORKFLOW % {"invocation": "tools/ci/produce-evidence"},
+        )
+        (workflows / "core-ci.yml").write_text(
+            workflow_for(next(case for case in CASES if case.accepted)),
+        )
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "produce-evidence").write_text(PAIRED_EMISSION_SCRIPT % {"emitted": emitted})
+        (root / "FEATURES.yml").write_text(PAIRED_EMISSION_FEATURES)
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
+        )
+    if result.returncode != expected_returncode:
+        raise AssertionError(
+            f"{label}: expected exit {expected_returncode}, got {result.returncode} -- the cited "
+            "class is emitted for the OTHER method, so only the per-method pairing can reject "
+            f"this\nstderr:\n{result.stderr}",
+        )
+    if expected_returncode and "the JUnit for exampleMethod is emitted as" not in result.stderr:
+        raise AssertionError(
+            f"{label}: rejected, but not by the per-method pairing\nstderr:\n{result.stderr}",
+        )
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
 
 
 for test_case in CASES:
@@ -246,9 +437,27 @@ for test_case in CASES:
 for apple_case in APPLE_CASES:
     run_apple_case(*apple_case)
 
+run_class_emission_case(
+    "Example", 0, "a script emitting the cited class name is accepted",
+)
+run_class_emission_case(
+    "ExampleTarget", 1, "a script emitting the target name where the class is cited is rejected",
+)
+run_paired_emission_case(
+    "Example", 0, "a correct per-method emission is accepted",
+)
+run_paired_emission_case(
+    "ExampleTarget", 1,
+    "a wrong emission is rejected even though the cited class is emitted elsewhere",
+)
+
+# Counted explicitly rather than from len(APPLE_CASES) alone: the class-emission and
+# orphan-control checks are not in that tuple, and a summary that silently omits them would
+# under-report the suite in exactly the direction that flatters it.
 print(
     f"CI policy control passed: {len(CASES)}/{len(CASES)} core cases, "
-    f"{len(APPLE_CASES)}/{len(APPLE_CASES)} apple cases"
+    f"{len(APPLE_CASES)}/{len(APPLE_CASES)} apple cases, "
+    f"{len(EXTRA_PASSES)} extra checks: {', '.join(EXTRA_PASSES)}"
 )
 
 # Exercise the standalone diagnostic contract separately from JUnit-directory coverage.

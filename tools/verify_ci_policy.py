@@ -162,24 +162,44 @@ for workflow in workflows:
 # apple-ci.yml is legitimately absent. In the repository it is always in `workflows`.
 apple_ci_path = Path(".github/workflows/apple-ci.yml")
 apple_ci = apple_ci_path.read_text() if apple_ci_path in workflows else ""
-# The write may live in a script the step invokes rather than inline in the YAML. That is not a
-# style choice: the "Assert Darwin conformance preconditions" step is at a hard GitHub workflow
-# size ceiling -- MEASURED 2026-09-07, 29,893 characters of inline `run:` loads and 34,557 makes
-# the whole file invalid, so NO job is created and apple-ci never appears as a check at all.
-# Extraction is GitHub's own remedy for that, so this check follows the invocation instead of
-# being blinded by it. Following it is also strictly stronger than scanning the YAML alone: a
-# script that quietly stops writing a directory now fails here too.
-invoked = sorted({Path(match) for match in re.findall(r"tools/ci/[\w.-]+", apple_ci)})
+# The write may live in a script the step invokes rather than inline in the YAML, and that
+# extraction is not a style choice. A `run:` block containing a `${{ }}` expression is a TEMPLATE,
+# and a template is capped far below a plain block -- MEASURED 2026-09-07: 29,212 characters WITH
+# an expression is rejected, while 29,893 WITHOUT one loads. A rejected file creates no job at all,
+# so apple-ci never appears as a check rather than failing visibly.
+# (An earlier version of this comment blamed a plain size ceiling. That was wrong and was retracted
+# once the counter-example was measured. It is corrected here rather than left to send the next
+# reader looking for a limit that does not exist.)
+#
+# Extraction is GitHub's own remedy, so every check below reads the invoked scripts as well as the
+# YAML. Be precise about what that buys: this is a TEXTUAL inventory of what the workflow and its
+# scripts SAY, not proof that any line executed. A commented-out invocation is excluded, but a
+# branch that never runs at runtime is still counted. Proving execution stays
+# verify-parity-evidence's job.
+invoked = sorted({
+    Path(match)
+    for line in apple_ci.splitlines()
+    # A `#` comment cannot invoke anything. Counting one made a retired script named only in a
+    # comment fail the run with "invokes ..., which does not exist".
+    if not line.lstrip().startswith("#")
+    for match in re.findall(r"tools/ci/[\w.-]+", line)
+})
 for script in invoked:
     if not script.is_file():
         errors.append(
             f".github/workflows/apple-ci.yml: invokes {script}, which does not exist",
         )
-searched = apple_ci + "".join(
-    script.read_text() for script in invoked if script.is_file()
-)
+# Each source is kept SEPARATE rather than concatenated. The method-to-emission pairing further down
+# is order-sensitive within a file, so joining the sources would let a trailing -only-testing in one
+# file pair with the first emission in the next and report a mismatch that exists only at the seam.
+sources: list[tuple[str, str]] = [(str(apple_ci_path), apple_ci)]
+sources += [(str(script), script.read_text()) for script in invoked if script.is_file()]
+searched = "".join(text for _, text in sources)
 written = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", searched))
-read = set(re.findall(r'"\$RUNNER_TEMP/([\w-]+-junit)"', apple_ci))
+# Reads are searched in the SAME scope as writes. Scanning only the YAML here reported a directory
+# that a script both wrote and passed on as "written but never passed" -- an asymmetry that turns a
+# correct extraction into a false failure.
+read = set(re.findall(r'"\$RUNNER_TEMP/([\w-]+-junit)"', searched))
 for orphan in sorted(written - read):
     errors.append(
         f".github/workflows/apple-ci.yml: JUnit directory {orphan} is written but never passed "
@@ -200,22 +220,29 @@ for missing in sorted(read - written):
 # So: every non-conformance class that a FEATURES.yml row cites for apple-ci must be emitted under
 # exactly that name by some swift-testing-junit call. Conformance classes are excluded because their
 # JUnit comes from the Gradle core-conformance result directories, not from this workflow.
+#
+# 🚨 Both scans below read `sources`, not the YAML alone. They previously read only the YAML, so
+# moving an emission into tools/ci/ silently removed it from their input -- MEASURED 2026-09-08:
+# emitting the macOS library-sync JUnit under the target name instead of the cited class was
+# rejected before the extraction and ACCEPTED after it. Extraction must never be able to retire a
+# check by relocating the thing it checks.
 if apple_ci:
     emitted_classes: set[str] = set()
-    apple_lines = apple_ci.splitlines()
-    for index, line in enumerate(apple_lines):
-        if "tools/swift-testing-junit" not in line:
-            continue
-        # bundle path, output path, then the class name -- each on its own continued line
-        for offset in range(1, 6):
-            if index + offset >= len(apple_lines):
-                break
-            candidate = apple_lines[index + offset].strip()
-            if candidate.endswith("\\"):
+    for _, source in sources:
+        source_lines = source.splitlines()
+        for index, line in enumerate(source_lines):
+            if "tools/swift-testing-junit" not in line:
                 continue
-            if re.fullmatch(r"[A-Za-z_][\w.]*", candidate):
-                emitted_classes.add(candidate)
-            break
+            # bundle path, output path, then the class name -- each on its own continued line
+            for offset in range(1, 6):
+                if index + offset >= len(source_lines):
+                    break
+                candidate = source_lines[index + offset].strip()
+                if candidate.endswith("\\"):
+                    continue
+                if re.fullmatch(r"[A-Za-z_][\w.]*", candidate):
+                    emitted_classes.add(candidate)
+                break
     try:
         feature_document = json.loads(Path("FEATURES.yml").read_text())
     except (OSError, ValueError):
@@ -254,32 +281,36 @@ if apple_ci:
                     parts = row.get("test", "").split("/")
                     if len(parts) == 2 and "ConformanceTest" not in parts[0]:
                         cited_classes_by_method.setdefault(parts[1], set()).add(parts[0])
-        pending_method: str | None = None
-        for index, line in enumerate(apple_lines):
-            stripped = line.strip()
-            only = re.search(r"-only-testing:[\w.]+/[A-Za-z_][\w.]*/([A-Za-z_]\w*)", stripped)
-            if only:
-                pending_method = only.group(1)
-                continue
-            if "tools/swift-testing-junit" not in stripped:
-                continue
-            method, pending_method = pending_method, None
-            allowed = cited_classes_by_method.get(method or "")
-            if not allowed:
-                continue
-            for offset in range(1, 6):
-                if index + offset >= len(apple_lines):
-                    break
-                candidate = apple_lines[index + offset].strip()
-                if candidate.endswith("\\"):
+        for label, source in sources:
+            source_lines = source.splitlines()
+            # Reset per source: a method left pending at the end of one file must not pair with an
+            # emission at the top of the next.
+            pending_method: str | None = None
+            for index, line in enumerate(source_lines):
+                stripped = line.strip()
+                only = re.search(r"-only-testing:[\w.]+/[A-Za-z_][\w.]*/([A-Za-z_]\w*)", stripped)
+                if only:
+                    pending_method = only.group(1)
                     continue
-                if candidate not in allowed:
-                    errors.append(
-                        f".github/workflows/apple-ci.yml: the JUnit for {method} is emitted as "
-                        f"{candidate!r}, but FEATURES.yml cites it as "
-                        f"{sorted(allowed)}; verify-parity-evidence matches on that name",
-                    )
-                break
+                if "tools/swift-testing-junit" not in stripped:
+                    continue
+                method, pending_method = pending_method, None
+                allowed = cited_classes_by_method.get(method or "")
+                if not allowed:
+                    continue
+                for offset in range(1, 6):
+                    if index + offset >= len(source_lines):
+                        break
+                    candidate = source_lines[index + offset].strip()
+                    if candidate.endswith("\\"):
+                        continue
+                    if candidate not in allowed:
+                        errors.append(
+                            f"{label}: the JUnit for {method} is emitted as "
+                            f"{candidate!r}, but FEATURES.yml cites it as "
+                            f"{sorted(allowed)}; verify-parity-evidence matches on that name",
+                        )
+                    break
 
 # JUnit-directory coverage does not establish that standalone diagnostic controls execute.
 # Keep these in unconditional steps of the required Apple job: macOS must run the real stack
