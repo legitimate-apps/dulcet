@@ -331,27 +331,48 @@ private struct ServerReadinessBudget {
     ///
     /// `probeDeadline` is therefore small and still ~200x its observed cost.
     ///
-    /// `handshakeDeadline` is UNCHANGED at 10s pending a distribution harvest.
-    /// It is the value under suspicion, and widening it on four samples is the
-    /// mistake this comment exists to prevent. Two things are already known
-    /// about it and should shape whatever replaces it:
+    /// `handshakeDeadline` is 30s, MEASURED. Harvested every
+    /// `READINESS control_server=READY` line from all 85 retrievable apple-ci
+    /// job logs since the instrumentation landed: n=70, 35 jobs x 2
+    /// invocations, all at the old 10.000s budget.
     ///
-    /// - The cost is ORDINAL, not random. Every observation fits "invocation 1
-    ///   is cold, invocation 2 is warm": 5.650s then 0.512s in one run, 6.635s
-    ///   then 0.334s in another, and the one timeout was a FIRST invocation
-    ///   firing immediately after a 34.71s compile-and-link inside the same
-    ///   `swift run`. So the 13x gap is a cold/warm ratio, not variance, and
-    ///   the first invocation is the entire risk. Sizing from a pooled
-    ///   distribution would let the warm case set a budget the cold case needs.
-    /// - `elapsed` at failure says WHEN THE BUDGET EXPIRED, not how close the
-    ///   child came. The port file is replaced atomically, so `port_file_bytes=0`
-    ///   is what a reader sees at any moment before completion. A 10.175s
-    ///   timeout against a 10.000s budget therefore does NOT mean "it nearly
-    ///   made it"; that overshoot ratio discriminates nothing here, unlike the
-    ///   loopback stall where a 30.344s failure against a 30s budget does
-    ///   indicate blocking. Do not reason from the percentage.
+    /// The two invocations are different populations and never overlap --
+    /// 35 of 35 jobs are slow-then-fast with a 1.544s empty gap between them:
+    ///
+    ///     invocation          n    median     p95      max
+    ///     A (first step)     35     5.296s   8.322s   9.503s
+    ///     B (second step)    35     0.354s   0.897s   1.027s
+    ///
+    /// So the old 10s was sized by a population that does not need it. The
+    /// worst SUCCESSFUL first invocation finished 0.497s inside the budget,
+    /// and the one observed failure is a first invocation at 10.175s -- a
+    /// censored observation, since the child was still running when we gave up.
+    /// Observed first-invocation failure rate in that window: 1 of 36.
+    ///
+    /// 30s is ~3.2x the worst observed success and ~3.6x p95. The asymmetry
+    /// justifies the generosity: waiting longer costs at most ~20 extra seconds
+    /// on a job that already runs 28-66s at this step and 90+ minutes overall,
+    /// while failing early costs a whole macOS leg on a capped pool and reports
+    /// a defect that is not there. The tool still fails closed.
+    ///
+    /// Do NOT re-derive this from a pooled distribution. Averaging A and B
+    /// produces a number describing neither, and B never exceeds 1.027s.
+    ///
+    /// Two further cautions for whoever revisits it:
+    ///
+    /// - The cost is ORDINAL, not random. The split tracks the workflow STEP,
+    ///   not run outcome, attempt or time of day, and the first invocation
+    ///   carries a compile-and-link inside the same `swift run` (34.71s in the
+    ///   failing run). The mechanism is correlated exceptionlessly but NOT
+    ///   measured; treat it as the best available explanation, not a finding.
+    /// - `elapsed` at failure says when the budget expired, not how close the
+    ///   child came. The port file is replaced atomically, so
+    ///   `port_file_bytes=0` is what a reader sees at any moment before
+    ///   completion. 10.175s against 10.000s does NOT mean "nearly made it";
+    ///   that overshoot ratio discriminates nothing here, unlike the loopback
+    ///   stall where 30.344s against 30s does indicate blocking.
     static let production = ServerReadinessBudget(
-        handshakeDeadline: 10, probeDeadline: 5, probeTimeout: 1, pollInterval: 0.1
+        handshakeDeadline: 30, probeDeadline: 5, probeTimeout: 1, pollInterval: 0.1
     )
 }
 
