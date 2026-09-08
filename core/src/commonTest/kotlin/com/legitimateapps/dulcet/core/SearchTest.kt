@@ -87,6 +87,41 @@ class SearchTest {
     }
 
     @Test
+    fun aFullPageContainingADuplicateStillReportsMorePages() = runTest {
+        // `hasMore` asks whether the server FILLED the page we requested. De-duplication answers a
+        // different question -- what is worth displaying -- and deriving one from the other made a
+        // full page containing a repeat look short, and a short page means "last page".
+        //
+        // Spec 16.3: offset paging is not a snapshot, so a row that shifts position between
+        // requests can legitimately arrive twice. That is not an error and must not silently
+        // truncate the results; the person just stops being offered pages that exist.
+        val duplicatedArtist = """{"id":"artist:opaque/7","name":"Atlas Artist"}"""
+        val result = ServerSearch(
+            SearchEndpointTransport {
+                success(
+                    """{"subsonic-response":{"status":"ok","searchResult3":{
+                        "artist":[$duplicatedArtist,$duplicatedArtist],
+                        "album":[],
+                        "song":[]
+                    }}}""".trimIndent(),
+                )
+            },
+        ).search(request(artistCount = 2, albumCount = 0, trackCount = 0))
+
+        val page = assertIs<SearchPageResult.Loaded>(result).page
+        assertEquals(
+            1,
+            page.artistResultCount,
+            "the duplicate must still be collapsed for display",
+        )
+        assertTrue(
+            page.artistHasMore,
+            "the server returned the 2 rows it was asked for, so a further page must be offered " +
+                "even though the two collapse to one displayable result",
+        )
+    }
+
+    @Test
     fun ranksExactPrefixWordStartSubstringThenTypeWithCompatibilityNormalization() = runTest {
         val body = """{"subsonic-response":{"status":"ok","searchResult3":{
             "artist":[

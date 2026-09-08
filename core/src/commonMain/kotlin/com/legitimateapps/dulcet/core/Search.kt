@@ -129,11 +129,11 @@ public class ServerSearch private constructor(
                     albumResultCount = parsed.albums.size,
                     trackResultCount = parsed.tracks.size,
                     artistHasMore = request.artistCount > 0 &&
-                        parsed.artists.size == request.artistCount,
+                        parsed.rawArtistCount == request.artistCount,
                     albumHasMore = request.albumCount > 0 &&
-                        parsed.albums.size == request.albumCount,
+                        parsed.rawAlbumCount == request.albumCount,
                     trackHasMore = request.trackCount > 0 &&
-                        parsed.tracks.size == request.trackCount,
+                        parsed.rawTrackCount == request.trackCount,
                 ),
             )
         } catch (_: CancellationException) {
@@ -226,6 +226,14 @@ private data class ParsedSearchResults(
     val artists: List<SearchResultItem>,
     val albums: List<SearchResultItem>,
     val tracks: List<SearchResultItem>,
+    // Sizes BEFORE de-duplication. `hasMore` asks whether the server filled the page we requested,
+    // which is a question about what the server sent -- not about what survives de-duplication.
+    // Spec 16.3: offset paging is not a snapshot, so a row that shifts position between requests
+    // can legitimately arrive twice. Answering from the de-duplicated size then reports a short
+    // page, and a short page means "last page", so every later page is silently dropped.
+    val rawArtistCount: Int,
+    val rawAlbumCount: Int,
+    val rawTrackCount: Int,
 ) {
     val all: List<SearchResultItem> get() = artists + albums + tracks
 }
@@ -300,6 +308,9 @@ private fun parseResults(
         artists = artists.distinctBy { it.id.rawId },
         albums = albums.distinctBy { it.id.rawId },
         tracks = tracks.distinctBy { it.id.rawId },
+        rawArtistCount = artists.size,
+        rawAlbumCount = albums.size,
+        rawTrackCount = tracks.size,
     )
 }
 
