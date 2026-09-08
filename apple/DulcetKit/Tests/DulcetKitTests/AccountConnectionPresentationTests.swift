@@ -595,6 +595,25 @@ func navigationRecoversLocalFailureAndCancelledServerSearch() async {
     }
 }
 
+@Test @MainActor
+func localRefreshReplacesRemovedRowsAndRanking() {
+    let local = ControlledLocalLibrarySearch()
+    let server = ControlledServerSearch()
+    let store = connectedSearchStore(local: local, server: server)
+    let a = searchResult(id: "a", title: "Track A")
+    let b = searchResult(id: "b", title: "Track B")
+    local.outcome = .loaded(searchPage(results: [a, b]))
+    store.searchQuery = "t"
+    for results in [[b, a], [b], [], [a]] {
+        store.selectDestination(.nowPlaying)
+        local.outcome = .loaded(searchPage(results: results))
+        store.selectDestination(.search)
+        #expect(store.snapshot.searchResults == results)
+        #expect(store.snapshot.state == (results.isEmpty ? .searchEmpty : .searchResults))
+    }
+    #expect(server.requests.isEmpty)
+}
+
 @MainActor
 private final class ControlledLocalLibrarySearch: DulcetLibraryBrowsing, DulcetLocalSearching {
     var queries: [String] = []

@@ -1133,7 +1133,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         switch localSearch.searchCommitted(providerInstanceID: instanceID, query: searchQuery.trimmedForSearch) {
         case let .loaded(page):
             localSearchFailure = nil
-            appendOrReplace(page.results)
+            // This is a complete ranked local snapshot. Callers either have a local-only
+            // query or have cleared results before starting the initial server request.
+            searchResults = page.results
         case let .failed(failure): localSearchFailure = failure
         case .cancelled: break
         }
