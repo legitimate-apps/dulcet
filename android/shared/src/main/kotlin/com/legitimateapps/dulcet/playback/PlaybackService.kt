@@ -39,7 +39,7 @@ class PlaybackService : MediaSessionService() {
                         MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                             .setAvailablePlayerCommands(session.player.availableCommands).build()
                     else MediaSession.ConnectionResult.reject())
-            }).build()
+            }).build().also { addSession(it) }
     }
 
     override fun onBind(intent: Intent?): IBinder? =
@@ -48,7 +48,7 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onDestroy() {
-        session?.release()
+        session?.let { removeSession(it); it.release() }
         playback?.close()
         session = null
         playback = null
