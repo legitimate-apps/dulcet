@@ -240,9 +240,9 @@ private enum SpikeError: LocalizedError {
     }
 }
 
-/// Every distinguishable way the localhost control server can fail to become
-/// ready. One message per condition, each carrying the child's liveness and the
-/// elapsed times, so a CI log alone identifies which one occurred.
+/// The three failure conditions classified by the readiness loop. Each message
+/// carries the observed child liveness and elapsed time; it identifies the
+/// condition detected by the loop, not the underlying cause.
 private enum ServerReadinessFailure: LocalizedError {
     case childExitedBeforePortHandshake(
         child: String,
@@ -296,98 +296,69 @@ private enum ServerReadinessFailure: LocalizedError {
 /// Readiness timing, kept in one value so a check can drive the same production
 /// code path with a short budget instead of duplicating the logic.
 private struct ServerReadinessBudget {
-    /// Time allowed for the child to start and publish its port.
+    /// Soft startup threshold. The loop reads and accepts a published port
+    /// before checking expiry, so a read after this threshold can still succeed.
     let handshakeDeadline: TimeInterval
-    /// Time allowed for the published port to answer HTTP, measured from the
-    /// moment the handshake completes rather than from the start.
+    /// Soft retry threshold, measured at phase-two entry after accepting the
+    /// handshake. Checked after failed probes, before sleeping; a retry can
+    /// start after expiry and a successful probe is accepted without an expiry check.
     let probeDeadline: TimeInterval
     let probeTimeout: TimeInterval
     let pollInterval: TimeInterval
 
-    /// One 10s budget used to cover child startup, the port handshake AND HTTP
-    /// probing together, which had two costs. A slow child start consumed the
-    /// probe's time, so a handshake finishing at 9.9s left 0.1s to answer HTTP
-    /// and the run failed reporting the wrong condition -- defeating this
-    /// tool's own contract of one message per condition. And neither phase
-    /// could be sized, because the number described their sum.
+    /// The old shared 10s budget covered startup, the port handshake and HTTP
+    /// probing. Accepting a port always led to at least one full probe, even near
+    /// expiry, but slow startup left less time for retries. Separate budgets give
+    /// HTTP probing a fresh retry window independent of startup duration.
     ///
-    /// MEASURED from `READINESS control_server=READY` lines already present in
-    /// every green apple-ci run. n=4, two runs, BOTH invocation ordinals in
-    /// each, derived as `total_elapsed - handshake_elapsed`:
+    /// REPORTED OBSERVATIONS from the earlier apple-ci log harvest: 70 successful
+    /// invocations in 35 pairs, with first-invocation handshake maximum 9.503s
+    /// and second-invocation maximum 1.027s. Every reported pair was slow then
+    /// fast. One first invocation timed out at 10.175s with the child still
+    /// running. These are historical sample summaries, not a revalidated harvest
+    /// or evidence of distinct populations, a causal ordinal effect, or a required
+    /// startup budget. The disposition of the other logs among the 85 reportedly
+    /// retrieved is not accounted for here, so no population failure rate is inferred.
     ///
-    ///     handshake   probe    ordinal
-    ///       5.650s    0.020s   1 (cold)
-    ///       0.512s    0.044s   2 (warm)
-    ///       6.635s    0.023s   1 (cold)
-    ///       0.334s    0.007s   2 (warm)
+    /// These observations are incomplete and selected: retaining only successes
+    /// biases the observed maximum low as a description of startup's tail. Neither
+    /// the old 10s threshold nor the 10.175s timeout gives a sharp bound on when
+    /// the child published its port or could have become ready. The old loop
+    /// checked expiry only at iteration entry: it could accept a port and record
+    /// READY above 10s, or time out without re-reading a port published during
+    /// its final sleep. The failed child's eventual readiness is unknown; a
+    /// permanently stalled child is equally consistent with that observation.
     ///
-    /// The two phases differ by more than two orders of magnitude, so a shared
-    /// budget was never going to fit both. Note the probe shows NO ordinal
-    /// structure -- its largest sample is a warm one -- while the handshake is
-    /// entirely ordinal. That is why only one of these two numbers is treated
-    /// as unmeasured below. Stating which population a value was measured from
-    /// is the point: n=2 that happens to be two draws of the same population
-    /// would look identically tight and mean much less.
+    /// ASSUMED policy: retain 30s as a provisional startup allowance, not a measured
+    /// requirement or a fix for the observed timeout. The cause remains unresolved.
+    /// The asymmetry favors generosity: extra waiting on a failed startup costs
+    /// time, while stopping a startup that would succeed can waste a macOS CI leg.
+    /// This accepts the risk that a real startup defect taking 10-30s now passes;
+    /// a later READY result in that band must be investigated, not declared healthy.
+    /// The nominal combined allowance is now 35s rather than 10s, an increase of
+    /// 25s; these soft thresholds, scheduling delays and cleanup prevent treating
+    /// that difference as a hard bound on additional elapsed time.
     ///
-    /// `probeDeadline` is therefore small and still ~200x its observed cost.
+    /// To settle the cause and revisit 30s, collect complete per-invocation outcomes
+    /// with timestamped child-startup milestones, port publication, parent reads
+    /// and HTTP probes, plus process diagnostics for stalled children. Observe
+    /// whether slow children eventually become ready under a separately bounded
+    /// diagnostic run. Keep invocation ordinals separate and account for missing
+    /// runs. Completion times can inform the budget; traces and a reproduction
+    /// are needed to distinguish scheduling or cold-start costs from a startup
+    /// defect. Compile/link time precedes this executable's readiness interval;
+    /// any indirect cold-start effect is an unverified hypothesis.
     ///
-    /// `handshakeDeadline` is 30s, MEASURED. Harvested every
-    /// `READINESS control_server=READY` line from all 85 retrievable apple-ci
-    /// job logs since the instrumentation landed: n=70, 35 jobs x 2
-    /// invocations, all at the old 10.000s budget.
+    /// A wider allowance may yield more successful observations above 10s; it
+    /// does not predict how many or guarantee any. An empty band over a few dozen
+    /// runs would not resolve the cause. Even ASSUMING independent trials with
+    /// a fixed event probability of 1/36, zero events has probability about 36.3%
+    /// in 36 trials and 18.4% in 60. That assumed rate is not established here.
     ///
-    /// The two invocations are different populations and never overlap --
-    /// 35 of 35 jobs are slow-then-fast with a 1.544s empty gap between them:
-    ///
-    ///     invocation          n    median     p95      max
-    ///     A (first step)     35     5.296s   8.322s   9.503s
-    ///     B (second step)    35     0.354s   0.897s   1.027s
-    ///
-    /// So the old 10s was sized by a population that does not need it. The
-    /// worst SUCCESSFUL first invocation finished 0.497s inside the budget,
-    /// and the one observed failure is a first invocation at 10.175s -- a
-    /// censored observation, since the child was still running when we gave up.
-    /// Observed first-invocation failure rate in that window: 1 of 36.
-    ///
-    /// 🚨 THAT MAXIMUM IS A LOWER BOUND, NOT AN ESTIMATE. Under a 10s budget a
-    /// true cost above 10s cannot be recorded as a measurement -- it becomes a
-    /// timeout instead. The success distribution is therefore RIGHT-CENSORED at
-    /// the old budget, and 9.503s is "the worst among first invocations that
-    /// finished under 10s", which understates the tail by construction. The one
-    /// failure proves the tail extends past 10s; how far was unobservable.
-    ///
-    /// So 30s is ~3.2x the worst success *observable under the previous budget*,
-    /// not 3.2x a real maximum. That argues for more generosity, not less. The
-    /// asymmetry justifies it either way: waiting longer costs at most ~20 extra
-    /// seconds on a job that already runs 28-66s at this step and 90+ minutes
-    /// overall, while failing early costs a whole macOS leg on a capped pool and
-    /// reports a defect that is not there. The tool still fails closed.
-    ///
-    /// ➡️ 30s is also an INSTRUMENT: for the first time, values between 10s and
-    /// 30s become observable. Falsifiable prediction, recorded before the fact --
-    /// roughly 2.8% of first invocations, matching the 1-in-36 failure rate,
-    /// should now record in that band. If it stays empty across the next few
-    /// dozen runs, something other than the budget changed and this model is
-    /// wrong. And when those values do appear they are NOT a regression: they
-    /// were always happening and were previously counted as failures. A 14s
-    /// handshake in a log next week is this comment being right, not a new bug.
-    ///
-    /// Do NOT re-derive this from a pooled distribution. Averaging A and B
-    /// produces a number describing neither, and B never exceeds 1.027s.
-    ///
-    /// Two further cautions for whoever revisits it:
-    ///
-    /// - The cost is ORDINAL, not random. The split tracks the workflow STEP,
-    ///   not run outcome, attempt or time of day, and the first invocation
-    ///   carries a compile-and-link inside the same `swift run` (34.71s in the
-    ///   failing run). The mechanism is correlated exceptionlessly but NOT
-    ///   measured; treat it as the best available explanation, not a finding.
-    /// - `elapsed` at failure says when the budget expired, not how close the
-    ///   child came. The port file is replaced atomically, so
-    ///   `port_file_bytes=0` is what a reader sees at any moment before
-    ///   completion. 10.175s against 10.000s does NOT mean "nearly made it";
-    ///   that overshoot ratio discriminates nothing here, unlike the loopback
-    ///   stall where 30.344s against 30s does indicate blocking.
+    /// Four previously reported probe durations (total_elapsed - handshake_elapsed)
+    /// were 0.020s, 0.044s, 0.023s and 0.007s. The 5s probe allowance is about
+    /// 114 times the largest of those samples, a policy margin rather than a
+    /// measured requirement; four samples do not establish ordinal independence.
     static let production = ServerReadinessBudget(
         handshakeDeadline: 30, probeDeadline: 5, probeTimeout: 1, pollInterval: 0.1
     )
@@ -702,8 +673,8 @@ private enum ResourceLoaderSpike {
 
     /// Drives the production readiness wait into each of its three failure
     /// conditions and asserts that the reported message names that condition and
-    /// no other. A readiness failure in CI is otherwise indistinguishable from
-    /// the other two, which is the whole point of these checks.
+    /// no other. Misclassifying a failure must fail this check, even if the
+    /// readiness wait still throws an error.
     private static func verifyReadinessReportingContract() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("dulcet-readiness-reporting-\(UUID().uuidString)")
@@ -1005,9 +976,9 @@ private enum ResourceLoaderSpike {
         var probes = 0
         var lastProbe = "no-probe-attempted"
 
-        // Phase 1: the child starts and publishes its port. Bounded by its OWN
-        // deadline, so a slow start can no longer silently consume the probe's
-        // budget and surface as the wrong condition.
+        // Phase 1: wait for port publication using a separate soft threshold.
+        // Read and accept the port before checking child liveness or expiry;
+        // startup duration does not consume the later HTTP retry window.
         while publishedPort == nil {
             switch readPortHandshake(portFile) {
             case .absent:
@@ -1056,10 +1027,13 @@ private enum ResourceLoaderSpike {
             )
         }
 
-        // Phase 2: the published port answers HTTP. Measured from the handshake
-        // rather than from the start, and it always makes at least one probe --
-        // the previous single-deadline loop could publish a port at the very end
-        // of the budget and then report an HTTP failure having never probed.
+        // Phase 2: start a fresh HTTP retry window after accepting the port.
+        // Both this loop and the old shared-deadline loop always attempt a probe.
+        // Expiry is checked only after a failure, before the polling sleep, so a
+        // retry may start after expiry and success may be accepted after expiry.
+        // With production settings, a final sleep plus failed probe can overshoot
+        // by about 0.1 + 1 + 0.25 = 1.35s, before scheduling delays. Date uses wall
+        // time, so clock changes also prevent a strict elapsed-time bound.
         let controlURL = URL(string: "http://127.0.0.1:\(port)/control.m3u8")!
         let probeDeadline = Date().addingTimeInterval(budget.probeDeadline)
         while true {
@@ -1138,9 +1112,10 @@ private enum ResourceLoaderSpike {
         return configuration
     }
 
-    /// One bounded probe. A probe that outlives its own request timeout is
-    /// cancelled rather than abandoned, and the session is invalidated when the
-    /// readiness wait returns, so no probe survives it.
+    /// One probe with an independent request timeout and a bounded semaphore wait
+    /// for completion delivery. If that wait expires, cancellation is requested;
+    /// readiness-wait cleanup invalidates and cancels the session. Neither call
+    /// waits for all completion callbacks to finish.
     private static func probe(
         session: URLSession,
         url: URL,
@@ -1177,10 +1152,11 @@ private enum ResourceLoaderSpike {
             semaphore.signal()
         }
         task.resume()
-        // The request already bounds itself at `timeout`; the extra grace only
-        // covers completion-handler delivery, so a probe that hits its own
-        // timeout reports the URL error rather than "abandoned". The readiness
-        // deadline still governs whether another probe starts.
+        // Allow 0.25s beyond the configured request timeout for completion-handler
+        // delivery. A delivered timeout can report its URL error; if this wait
+        // expires first, report cancellation instead. The caller checks its soft
+        // retry threshold after a failed result, before sleeping, not before
+        // starting the next probe or accepting a successful result.
         if semaphore.wait(timeout: .now() + timeout + 0.25) == .timedOut {
             task.cancel()
             return ProbeOutcome(succeeded: false, detail: "probe-cancelled-after-timeout")
