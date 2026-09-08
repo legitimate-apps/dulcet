@@ -94,7 +94,13 @@ class DarwinProxyAuthenticationConformanceTest {
             )
             mark("proxy wire observation response received (buffered)")
             // Only render closed fields, never a raw observation body on an assertion failure.
-            val body = Json.parseToJsonElement(observation.bodyAsText()).jsonObject
+            val observationText = observation.bodyAsText()
+            val body = try {
+                Json.parseToJsonElement(observationText).jsonObject
+            } catch (_: Throwable) {
+                mark("invalid observation JSON bytes=${observationText.encodeToByteArray().size}")
+                throw AssertionError("proxy wire observation was not a JSON object")
+            }
             mark("proxy wire observation body received")
             assertEquals(200, observation.status.value, "proxy wire observation rejected")
             val challengeCount = body["challenge_count"]?.jsonPrimitive?.longOrNull
@@ -111,9 +117,44 @@ class DarwinProxyAuthenticationConformanceTest {
         }
     }
 
+    @Test
+    fun diagnosticFailuresNeverRenderUntrustedText() {
+        val canaries = listOf("invented-user-Q97", "invented-token-R97", "invented-salt-S97", "invented-password-T97")
+        val url = "https://invalid.example/rest/ping?u=${canaries[0]}&t=${canaries[1]}&s=${canaries[2]}&p=${canaries[3]}"
+        val failures = listOf<() -> Unit>(
+            { Json.parseToJsonElement("{\"echo\":\"$url\",broken}") },
+            { Json.parseToJsonElement("[\"$url\"]").jsonObject },
+            { throw IllegalStateException(url, IllegalArgumentException(url)).also {
+                it.addSuppressed(IllegalStateException(url))
+            } },
+        )
+        for (fail in failures) {
+            val renderedFailure = kotlin.test.assertFailsWith<AssertionError> {
+                traceProxyTest(observeFailure = { "observation unavailable" }) { fail() }
+            }
+            val surfaces = buildList {
+                add(renderedFailure.stackTraceToString())
+                var current: Throwable? = renderedFailure
+                while (current != null) {
+                    add(current.message.orEmpty())
+                    add(current.toString())
+                    current = current.cause
+                }
+            }
+            for (canary in canaries) {
+                assertTrue(surfaces.none { canary in it }, "credential canary escaped diagnostic boundary")
+            }
+            kotlin.test.assertNull(renderedFailure.cause)
+            assertTrue(renderedFailure.suppressedExceptions.isEmpty())
+        }
+    }
+
     // Keep the wall-clock timeline outside runTest: its timeout cancels the connector, which can
     // return Cancelled and fail a later assertion. That assertion alone loses where time was spent.
-    private fun traceProxyTest(block: suspend ((String) -> Unit) -> Unit) {
+    private fun traceProxyTest(
+        observeFailure: () -> String = ::failureObservation,
+        block: suspend ((String) -> Unit) -> Unit,
+    ) {
         val started = TimeSource.Monotonic.markNow()
         val timeline = mutableListOf<String>()
         try {
@@ -124,18 +165,19 @@ class DarwinProxyAuthenticationConformanceTest {
                     println("PROXY AUTH TEST $entry")
                 }
             }
-        } catch (failure: Throwable) {
+        } catch (_: Throwable) {
+            // The original throwable may retain response text in its message, cause or suppressed
+            // exceptions. Discard it completely; only closed phase evidence crosses this boundary.
             throw AssertionError(
                 "Proxy authentication timeline (${started.elapsedNow()} total): " +
-                    timeline.joinToString("; ") + "; proxy wire observation: " + failureObservation(),
-                failure,
+                    timeline.joinToString("; ") + "; proxy wire observation: " + observeFailure(),
             )
         }
     }
 
     // A fresh scope uses a real dispatcher, independent of runTest's cancelled scope and virtual
     // clock. Bound the entire request (including the body); never echo response/exception text,
-    // which could contain credentials. Failure to diagnose must preserve the original cause.
+    // which could contain credentials. The original throwable must never leave this boundary.
     private fun failureObservation(): String = try {
         runBlocking(Dispatchers.Default) {
             withTimeout(3_000) {
