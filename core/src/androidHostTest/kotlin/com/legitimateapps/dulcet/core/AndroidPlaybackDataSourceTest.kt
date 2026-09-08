@@ -134,6 +134,14 @@ class AndroidPlaybackDataSourceTest {
         }
     }
 
+    @Test fun internallyConsistentShort206CannotAdvertiseAnUnservedSuffix() {
+        val bytes = wav() + ByteArray(9988)
+        val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ ->
+            response(bytes, status = 206, range = "bytes 0-9999/100000")
+        }).createDataSource()
+        assertFailsWith<AndroidPlaybackIOException> { source.open(spec()) }
+    }
+
     @Test fun estimatedLengthEndsAtObservedEofRatherThanTheServerEstimate() {
         val bytes = wav() + ByteArray(9000)
         val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ -> response(bytes).let {

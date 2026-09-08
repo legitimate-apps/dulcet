@@ -176,7 +176,8 @@ private fun validateRange(response: AndroidPlaybackResponse, position: Long, len
         val (start, end, total) = match.destructured.toList().map { it.toLongOrNull()
             ?: throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary) }
         if (start != position || end < start || total <= end ||
-            (length >= 0 && end - start + 1 > length) ||
+            // This loader does not concatenate partial responses. Refuse an unserved suffix.
+            end - start + 1 != (if (length >= 0) minOf(length, total - start) else total - start) ||
             (response.headers.contentLength as? PlaybackContentLength.Exact)?.byteCount != end - start + 1)
             throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
         return total
