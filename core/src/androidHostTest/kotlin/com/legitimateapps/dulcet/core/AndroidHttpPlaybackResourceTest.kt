@@ -56,6 +56,49 @@ class AndroidHttpPlaybackResourceTest {
         }
     }
 
+    @ConscryptMode(ConscryptMode.Mode.OFF)
+    @Test fun httpsSameOriginRedirectPreservesExactlyOneSignedQuery() = withTls { tls ->
+        WireServer(tls) { request ->
+            if (request.path == "/rest/stream.view") WireReply.redirect("/audio?${request.rawQuery}")
+            else WireReply.audio()
+        }.use { server ->
+            consume(server.url)
+            assertEquals(listOf("/rest/stream.view", "/audio"), server.requests.map { it.path })
+            assertSignedInventory(server.requests.first().query)
+            assertEquals(server.requests.first().rawQuery, server.requests.last().rawQuery)
+            assertSignedInventory(server.requests.last().query)
+        }
+    }
+
+    @ConscryptMode(ConscryptMode.Mode.OFF)
+    @Test fun httpsCrossOriginRedirectStripsCredentialsAndPreservesMetadataExactlyOnce() = withTls { tls ->
+        WireServer(tls) { WireReply.audio() }.use { target ->
+            WireServer(tls) { request -> WireReply.redirect(
+                "${target.url}/audio?${request.rawQuery}&p=$PASSWORD&U=UPPER_USER_CANARY&%74=ENCODED_TOKEN_CANARY&keep=opaque-canary")
+            }.use { source ->
+                consume(source.url)
+                assertEquals(1, source.requests.size)
+                assertSignedInventory(source.requests.single().query)
+                assertEquals(1, target.requests.size)
+                val received = target.requests.single()
+                val expected = source.requests.single().query.filterKeys { it !in setOf("u", "t", "s") } +
+                    ("keep" to listOf("opaque-canary"))
+                assertEquals(expected, received.query)
+                for (canary in canaries + listOf("UPPER_USER_CANARY", "ENCODED_TOKEN_CANARY"))
+                    assertFalse(received.rawQuery.contains(canary))
+            }
+        }
+    }
+
+    private fun withTls(block: (SSLContext) -> Unit) {
+        FixtureTls().use { tls ->
+            val prior = HttpsURLConnection.getDefaultSSLSocketFactory()
+            HttpsURLConnection.setDefaultSSLSocketFactory(tls.context.socketFactory)
+            try { block(tls.context) }
+            finally { HttpsURLConnection.setDefaultSSLSocketFactory(prior) }
+        }
+    }
+
     // This fixture uses host-JVM sockets. Conscrypt reflects into java.net.InetAddress on JDK 21,
     // failing before HTTP when java.net is not opened. Use Robolectric's host-JVM provider mode,
     // as on Apple Silicon, while retaining certificate trust and hostname verification.

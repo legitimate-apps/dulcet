@@ -222,7 +222,8 @@ internal class AndroidHttpPlaybackResource(
                     }
                     val target = runBlocking { LocalHttpConnectionPolicy(systemHostResolver())
                         .targetFor(proposed, account.allowLocalHttp) }
-                    url = target.url + Uri.parse(proposed).encodedQuery?.let { "?$it" }.orEmpty()
+                    url = Uri.parse(target.url).buildUpon()
+                        .encodedQuery(Uri.parse(proposed).encodedQuery).build().toString()
                     hostHeader = target.hostHeader
                     redirects++
                     connection.disconnect()
