@@ -2,7 +2,8 @@
 """Upload one signed app package through App Store Connect's build-upload API.
 
 Authentication is intentionally environment-only. The key identifier, issuer identifier, and
-private key are never accepted as command-line arguments, and signed upload URLs are never logged.
+private key are never accepted as command-line arguments. Decoded ASC key bytes stay in memory
+and an anonymous signing pipe; no key file is created. Transport diagnostics withhold signed URLs.
 """
 
 from __future__ import annotations
@@ -11,12 +12,12 @@ import argparse
 import base64
 import binascii
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 import time
 from typing import Any
 import urllib.error
@@ -42,7 +43,7 @@ class UploadFailure(RuntimeError):
 
 
 def fail(message: str) -> None:
-    raise UploadFailure(message)
+    raise UploadFailure(message) from None
 
 
 def base64url(value: bytes) -> str:
@@ -95,10 +96,10 @@ def der_ecdsa_to_raw(signature: bytes, component_size: int = 32) -> bytes:
 
 
 class AppStoreConnectClient:
-    def __init__(self, key_id: str, issuer_id: str, private_key_path: Path) -> None:
+    def __init__(self, key_id: str, issuer_id: str, private_key: bytes) -> None:
         self.key_id = key_id
         self.issuer_id = issuer_id
-        self.private_key_path = private_key_path
+        self.private_key = private_key
 
     def token(self) -> str:
         now = int(time.time())
@@ -122,19 +123,30 @@ class AppStoreConnectClient:
             ).encode()
         )
         signing_input = f"{header}.{payload}".encode("ascii")
-        result = subprocess.run(
-            [
-                "/usr/bin/openssl",
-                "dgst",
-                "-sha256",
-                "-sign",
-                str(self.private_key_path),
-            ],
-            input=signing_input,
-            capture_output=True,
-            env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
-            check=False,
-        )
+        # OpenSSL accepts a PEM through an inherited anonymous pipe. /dev/fd is a
+        # descriptor reference, not a key file. Bound the pre-launch write to PIPE_BUF
+        # so it cannot block; a P-256 PKCS#8 PEM is comfortably smaller than this.
+        read_fd, write_fd = os.pipe()
+        try:
+            if len(self.private_key) > os.fpathconf(write_fd, "PC_PIPE_BUF"):
+                fail("App Store Connect private key exceeds the signing pipe limit")
+            os.write(write_fd, self.private_key)
+            os.close(write_fd)
+            write_fd = -1
+            result = subprocess.run(
+                ["/usr/bin/openssl", "dgst", "-sha256", "-sign", f"/dev/fd/{read_fd}"],
+                input=signing_input,
+                pass_fds=(read_fd,),
+                capture_output=True,
+                env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                check=False,
+            )
+        except OSError:
+            fail("App Store Connect JWT signing transport failed")
+        finally:
+            os.close(read_fd)
+            if write_fd != -1:
+                os.close(write_fd)
         if result.returncode != 0:
             fail("App Store Connect JWT signing failed")
         return f"{header}.{payload}.{base64url(der_ecdsa_to_raw(result.stdout))}"
@@ -149,21 +161,21 @@ class AppStoreConnectClient:
         }
         if body is not None:
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(
-            f"{API_ROOT}{path}",
-            data=body,
-            headers=headers,
-            method=method,
-        )
         try:
+            request = urllib.request.Request(
+                f"{API_ROOT}{path}",
+                data=body,
+                headers=headers,
+                method=method,
+            )
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                 response_body = response.read()
         except urllib.error.HTTPError as error:
             response_body = error.read()
             detail = self.error_detail(response_body)
             fail(f"App Store Connect request failed: status={error.code} detail={detail}")
-        except (OSError, urllib.error.URLError) as error:
-            fail(f"App Store Connect request failed before a response: {redact(str(error))}")
+        except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError):
+            fail("App Store Connect request failed before a response; details withheld")
         if not response_body:
             return {}
         try:
@@ -269,19 +281,19 @@ def upload_operations(package: Path, operations: list[dict[str, Any]]) -> None:
                 if not isinstance(name, str) or not isinstance(value, str):
                     fail("App Store Connect returned a malformed upload header")
                 headers[name] = value
-            request = urllib.request.Request(
-                operation["url"],
-                data=data,
-                headers=headers,
-                method="PUT",
-            )
             try:
+                request = urllib.request.Request(
+                    operation["url"],
+                    data=data,
+                    headers=headers,
+                    method="PUT",
+                )
                 with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                     response.read()
             except urllib.error.HTTPError as error:
                 error.read()
                 fail(f"package upload part {index} failed: status={error.code}; response withheld")
-            except (OSError, urllib.error.URLError):
+            except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError):
                 fail(f"package upload part {index} failed before a response; URL withheld")
             print(f"ASC BUILD UPLOAD part={index}/{len(operations)} bytes={length} complete")
 
@@ -421,25 +433,18 @@ def main() -> int:
     if b"-----BEGIN PRIVATE KEY-----" not in private_key:
         fail("DULCET_ASC_KEY_P8_BASE64 does not contain a PEM private key")
 
-    old_umask = os.umask(0o077)
-    try:
-        with tempfile.TemporaryDirectory(prefix="dulcet-asc-") as temporary_directory:
-            private_key_path = Path(temporary_directory) / "AuthKey.p8"
-            private_key_path.write_bytes(private_key)
-            client = AppStoreConnectClient(
-                os.environ["DULCET_ASC_KEY_ID"],
-                os.environ["DULCET_ASC_ISSUER_ID"],
-                private_key_path,
-            )
-            upload_build(
-                client,
-                arguments.package,
-                arguments.bundle_id,
-                arguments.version,
-                arguments.build_number,
-            )
-    finally:
-        os.umask(old_umask)
+    client = AppStoreConnectClient(
+        os.environ["DULCET_ASC_KEY_ID"],
+        os.environ["DULCET_ASC_ISSUER_ID"],
+        private_key,
+    )
+    upload_build(
+        client,
+        arguments.package,
+        arguments.bundle_id,
+        arguments.version,
+        arguments.build_number,
+    )
     return 0
 
 

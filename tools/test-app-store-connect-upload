@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import os
+import sys
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -29,6 +32,51 @@ def raw_ecdsa_to_der(signature: bytes) -> bytes:
 
 
 class AppStoreConnectUploadTests(unittest.TestCase):
+    def test_main_keeps_key_in_memory(self) -> None:
+        key = b"-----BEGIN PRIVATE KEY-----\nCANARY_ASC_MEMORY_ONLY\n-----END PRIVATE KEY-----"
+        with tempfile.TemporaryDirectory() as raw:
+            package = Path(raw) / "Dulcet.pkg"
+            package.write_bytes(b"package")
+            args = [str(TOOL), "--package", str(package), "--bundle-id",
+                    "com.legitimateapps.dulcet.dev", "--version", "0.1", "--build-number", "1"]
+            with mock.patch.dict(os.environ, dict(zip(upload.REQUIRED_ENVIRONMENT,
+                    ["EXAMPLEKEY", "example-issuer", base64.b64encode(key).decode()]))), \
+                    mock.patch.object(sys, "argv", args), \
+                    mock.patch.object(Path, "write_bytes") as writes, \
+                    mock.patch.object(upload, "upload_build") as build:
+                self.assertEqual(upload.main(), 0)
+                writes.assert_not_called()
+                self.assertEqual(build.call_args.args[0].private_key, key)
+
+    def test_malformed_signed_url_cli_has_no_canary_in_either_stream(self) -> None:
+        # Execute the actual __main__ exception boundary; replace only the entry workload,
+        # leaving urllib's InvalidURL and upload_operations real. No network request can be sent.
+        program = r"""
+import runpy, sys, tempfile
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+original = source
+source = source.replace('raise SystemExit(main())', 'raise SystemExit(probe())')
+import hashlib
+assert hashlib.sha256(original.encode()).digest() != hashlib.sha256(source.encode()).digest()
+namespace = {'__name__': '__main__'}
+def probe():
+    with tempfile.TemporaryDirectory() as raw:
+        package = Path(raw) / 'test.pkg'
+        package.write_bytes(b'x')
+        operation = {'method': 'PUT', 'url': 'https://upload.example.invalid/path?token=CANARY_SIGNED secret',
+                     'offset': 0, 'length': 1, 'requestHeaders': []}
+        operations = namespace['validate_operations']([operation], 1)
+        namespace['upload_operations'](package, operations)
+namespace['probe'] = probe
+exec(compile(source, sys.argv[1], 'exec'), namespace)
+"""
+        result = subprocess.run([sys.executable, "-c", program, str(TOOL)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("CANARY_SIGNED", result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("dulcet-app-store-upload:", result.stderr)
+
     def test_generated_jwt_has_a_valid_es256_signature(self) -> None:
         with tempfile.TemporaryDirectory(prefix="dulcet-upload-test-") as directory:
             root = Path(directory)
@@ -44,7 +92,7 @@ class AppStoreConnectUploadTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
-            token = upload.AppStoreConnectClient("EXAMPLEKEY", "example-issuer", private_key).token()
+            token = upload.AppStoreConnectClient("EXAMPLEKEY", "example-issuer", private_key.read_bytes()).token()
             header, payload, encoded_signature = token.split(".")
             padding = "=" * (-len(encoded_signature) % 4)
             import base64

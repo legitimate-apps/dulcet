@@ -22,3 +22,20 @@ an inheritable flock descriptor; holder and invocation share a PID. The same tes
 that PID no longer exists and the replacement finishes. The unchanged unwrapped overlap control
 still detects overlap. `python3 tools/test-run-gradle-exclusive` passes.
 Descendants retaining the descriptor retain the lock; this is not a Gradle daemon shutdown tool.
+
+## Finding 2 — ASC key and signed-URL diagnostics
+
+OBSERVED: new main-entry control caught the old `Path.write_bytes` call with an ASC canary;
+the malformed signed-URL control caught its canary in a real urllib InvalidURL traceback through
+the CLI exception boundary. Both failed before the fix and pass afterward. The CLI-boundary
+probe verifies SHA-256 differs when substituting its workload; main itself is exercised by the
+separate key control. OpenSSL now signs using an anonymous pipe (`/dev/fd/N`, inherited descriptor),
+with decoded key bytes in memory and no temporary key file. The existing independent OpenSSL
+signature verification passes with this transport. Request construction and transport errors,
+including HTTPException/InvalidURL and ValueError, become fixed UploadFailure diagnostics.
+`python3 tools/test-app-store-connect-upload` passes (six cases).
+
+Scope: this fixes the ASC uploader. The pre-existing signing wrapper still materializes P12,
+certificate/key extraction and provisioning files. A repository-wide “secrets never in files”
+claim remains false for that wrapper; replacing its security/OpenSSL plumbing is deferred,
+not established by these uploader controls. No real credentials were used.
