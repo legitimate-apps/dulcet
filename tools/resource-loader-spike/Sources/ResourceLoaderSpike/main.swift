@@ -349,11 +349,28 @@ private struct ServerReadinessBudget {
     /// censored observation, since the child was still running when we gave up.
     /// Observed first-invocation failure rate in that window: 1 of 36.
     ///
-    /// 30s is ~3.2x the worst observed success and ~3.6x p95. The asymmetry
-    /// justifies the generosity: waiting longer costs at most ~20 extra seconds
-    /// on a job that already runs 28-66s at this step and 90+ minutes overall,
-    /// while failing early costs a whole macOS leg on a capped pool and reports
-    /// a defect that is not there. The tool still fails closed.
+    /// 🚨 THAT MAXIMUM IS A LOWER BOUND, NOT AN ESTIMATE. Under a 10s budget a
+    /// true cost above 10s cannot be recorded as a measurement -- it becomes a
+    /// timeout instead. The success distribution is therefore RIGHT-CENSORED at
+    /// the old budget, and 9.503s is "the worst among first invocations that
+    /// finished under 10s", which understates the tail by construction. The one
+    /// failure proves the tail extends past 10s; how far was unobservable.
+    ///
+    /// So 30s is ~3.2x the worst success *observable under the previous budget*,
+    /// not 3.2x a real maximum. That argues for more generosity, not less. The
+    /// asymmetry justifies it either way: waiting longer costs at most ~20 extra
+    /// seconds on a job that already runs 28-66s at this step and 90+ minutes
+    /// overall, while failing early costs a whole macOS leg on a capped pool and
+    /// reports a defect that is not there. The tool still fails closed.
+    ///
+    /// ➡️ 30s is also an INSTRUMENT: for the first time, values between 10s and
+    /// 30s become observable. Falsifiable prediction, recorded before the fact --
+    /// roughly 2.8% of first invocations, matching the 1-in-36 failure rate,
+    /// should now record in that band. If it stays empty across the next few
+    /// dozen runs, something other than the budget changed and this model is
+    /// wrong. And when those values do appear they are NOT a regression: they
+    /// were always happening and were previously counted as failures. A 14s
+    /// handshake in a log next week is this comment being right, not a new bug.
     ///
     /// Do NOT re-derive this from a pooled distribution. Averaging A and B
     /// produces a number describing neither, and B never exceeds 1.027s.
