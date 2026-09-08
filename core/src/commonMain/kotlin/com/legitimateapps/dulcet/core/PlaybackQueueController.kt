@@ -127,6 +127,21 @@ internal class PlaybackQueueController(
     fun previousForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
         if (acceptsCommand(playbackSessionId)) moveBy(-1) else emptyTransition()
 
+    fun restoreCurrentPausedWithCatalog(
+        serverId: ServerId,
+        availableRawIds: Set<String>,
+    ): PlaybackQueueTransition {
+        // Library refreshes must not repair or replace a session someone already started.
+        if (playback.currentSession != null || queues.activeServerId() != serverId) {
+            return emptyTransition()
+        }
+        val missing = queues.load(serverId).entries
+            .filter { it.providerItemId.rawId !in availableRawIds }
+            .map { it.queueEntryId }.toSet()
+        queues.removeForRestoration(serverId, missing)
+        return restoreCurrentPaused()
+    }
+
     fun restoreCurrentPaused(): PlaybackQueueTransition {
         if (playback.currentSession != null) return emptyTransition()
         val serverId = queues.activeServerId() ?: return emptyTransition()

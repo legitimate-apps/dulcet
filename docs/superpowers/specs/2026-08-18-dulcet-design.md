@@ -1791,6 +1791,16 @@ death, single source of truth for every surface. Per-account, single active acco
 `sourceContext` records where the entry came from (album X, playlist Y, search Z) so the UI can say
 "playing from" and so "play next" behaves sensibly.
 
+**Restoration repair:** before creating a playback session from a persisted queue, reconcile it
+against the successfully loaded playback catalog for the active account. Remove entries that cannot
+be resolved locally, preserving surviving `QueueEntryId`s and their original/shuffled order. If the
+persisted selection was removed, clear the selection and present "Nothing is playing"; do not select
+or start a replacement. Persist removals and selection clearing in one transaction. An entirely
+unresolvable queue becomes empty and idle, including on subsequent launches. A surviving selection
+continues the normal paused restoration path. This repair never applies to an existing playback
+session or another account's queue. Failures of an explicitly started item retain the playback
+failure presentation. No session or attempt identity is created for a discarded selection (§12.1).
+
 ### 14.2 Shuffle — persist the order, not a seed
 
 **The shuffled order is persisted explicitly** as an integer column on `queue_entry`. Revision 1
@@ -3402,6 +3412,13 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 94 (2026-09-08)** — §14.1 distinguishes stale persisted-queue restoration from a live
+playback failure. Restoration removes unresolvable entries and clears a removed selection durably,
+without creating a failed playback session or starting a different item. Live-session failure
+behavior remains unchanged. Native production-controller regression evidence is recorded by
+`tools/check-playback-restoration.py`; core controls cover durable repair, preserved queue identities
+and shuffled order, and the live-session/account boundaries.
 
 **Revision 93 (2026-09-06)** — `FEATURES.yml` evidence gained a second shape for platform
 observations that carry no conformance id.

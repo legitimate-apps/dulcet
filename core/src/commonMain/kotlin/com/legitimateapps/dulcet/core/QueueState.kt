@@ -239,6 +239,16 @@ internal class PersistentQueueStore(
         return load(serverId)
     }
 
+    /** Repair a stale persisted queue without selecting a replacement for a removed current item. */
+    fun removeForRestoration(serverId: ServerId, missing: Set<QueueEntryId>) {
+        database.transaction {
+            val state = load(serverId)
+            val selected = state.currentIndex?.let(state.entries::get)?.queueEntryId
+            missing.forEach { remove(serverId, it) }
+            if (selected in missing) setCurrentIndex(serverId, null)
+        }
+    }
+
     fun setCurrentIndex(serverId: ServerId, currentIndex: Int?): QueueState {
         val updated = load(serverId).copy(currentIndex = currentIndex)
         database.transaction {

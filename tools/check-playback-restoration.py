@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import uuid
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--framework-dir", type=Path, required=True)
@@ -29,4 +30,13 @@ with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".bu
         *map(str, (build / "DulcetKit.build").glob("*.o")),
         "-o", str(temp / "check"),
     ], check=True)
-    subprocess.run([str(temp / "check")], check=True)
+    prefix = f"dulcet-restoration-check-{uuid.uuid4()}"
+    try:
+        subprocess.run([str(temp / "check"), prefix], check=True)
+    finally:
+        # NativeSqliteDriver's macOS database directory. Only these two newly named
+        # synthetic databases belong to this run; never open the app's dulcet.db.
+        database_dir = Path.home() / "Library/Application Support/databases"
+        for count in (0, 2):
+            for suffix in ("", "-wal", "-shm", "-journal"):
+                (database_dir / f"{prefix}-{count}.db{suffix}").unlink(missing_ok=True)

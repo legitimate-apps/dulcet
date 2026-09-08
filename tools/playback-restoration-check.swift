@@ -11,7 +11,7 @@ import Foundation
             if !condition { failures += 1; print("FAIL: \(message)") }
         }
         for available in [["a", "c"], []] as [[String]] {
-            let name = "dulcet-restoration-check-\(UUID().uuidString).db"
+            let name = "\(CommandLine.arguments[1])-\(available.count).db"
             let seed = ApplePlaybackQueueClient(databaseName: name)
             let started = seed.replaceAndStart(request: ApplePlaybackQueueRequestDto(
                 items: ["a", "missing", "c"].map {
@@ -60,6 +60,31 @@ import Foundation
                 reader.close()
                 controller.disconnect()
             }
+            // An explicit Play action still reports an unresolvable source as a failure.
+            let player = DulcetCorePlaybackController(databaseName: name)
+            let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: RestorationConnector(), playbackController: player
+            ))
+            player.configure(account: DulcetPlaybackAccount(
+                providerInstanceID: "fixture", normalizedServerURL: "http://127.0.0.1:1",
+                username: "fixture", password: "fixture", allowLocalHTTP: true
+            ))
+            let unsupported = DulcetTrack(
+                id: DulcetProviderItemID(providerInstanceID: "fixture", rawID: "explicit-play"),
+                title: "Explicit play", credits: [], albumTitle: "Fixture", discNumber: 1,
+                trackNumber: 1, duration: .seconds(30), sourceContainer: nil, mediaSourceID: nil,
+                artwork: DulcetArtwork(seed: "explicit", palette: .indigoCoral)
+            )
+            check(unsupported.sourceContainer == nil, "explicit source is unresolvable")
+            player.replaceQueueAndPlay(DulcetPlaybackQueueIntent(
+                tracks: [unsupported], sourceKind: .library, sourceID: nil,
+                sourceDisplayName: "Fixture", startIndex: 0, shuffle: false
+            ))
+            store.selectDestination(.nowPlaying)
+            check(player.currentPresentation.status == .failed, "explicit play still fails")
+            check(store.snapshot.state == .nowPlayingFailed, "explicit play publishes failure")
+            print("explicit play controller=\(player.currentPresentation.status) surface=\(store.snapshot.state)")
+            player.disconnect()
         }
         print("Restoration checks: \(failures) failures")
         exit(failures == 0 ? 0 : 1)

@@ -221,6 +221,15 @@ public class ApplePlaybackQueueClient private constructor(
             controllerOrThrow().previousForSession(PlaybackSessionId(playbackSessionId))
         }
 
+    public fun restoreCurrentPausedWithCatalog(
+        providerInstanceId: String,
+        availableRawIds: List<String>,
+    ): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().restoreCurrentPausedWithCatalog(
+            ServerId(providerInstanceId), availableRawIds.toSet(),
+        )
+    }
+
     public fun restoreCurrentPaused(): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().restoreCurrentPaused()
     }

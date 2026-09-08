@@ -129,6 +129,11 @@ jobs:
             "$RUNNER_TEMP/dulcet-swift-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-swift-testing-junit/TEST-DulcetKitTests.xml" \
             DulcetKitTests
+      - name: Verify stale queue restoration through the production playback controller
+        timeout-minutes: 4
+        run: >-
+          python3 tools/check-playback-restoration.py
+          --framework-dir core/build/bin/macosArm64/debugFramework
       - name: Prove macOS capture rejects an inapplicable Dynamic Type label
         run: |
           swift build --package-path apple/DulcetKit --product DulcetCapture
