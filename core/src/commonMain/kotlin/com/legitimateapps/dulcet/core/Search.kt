@@ -68,6 +68,10 @@ public data class SearchPage(
     val artistResultCount: Int,
     val albumResultCount: Int,
     val trackResultCount: Int,
+    /** Raw rows consumed before display deduplication; offsets and fullness use these units. */
+    val artistConsumedRowCount: Int,
+    val albumConsumedRowCount: Int,
+    val trackConsumedRowCount: Int,
     val artistHasMore: Boolean,
     val albumHasMore: Boolean,
     val trackHasMore: Boolean,
@@ -128,6 +132,9 @@ public class ServerSearch private constructor(
                     artistResultCount = parsed.artists.size,
                     albumResultCount = parsed.albums.size,
                     trackResultCount = parsed.tracks.size,
+                    artistConsumedRowCount = parsed.rawArtistCount,
+                    albumConsumedRowCount = parsed.rawAlbumCount,
+                    trackConsumedRowCount = parsed.rawTrackCount,
                     artistHasMore = request.artistCount > 0 &&
                         parsed.rawArtistCount == request.artistCount,
                     albumHasMore = request.albumCount > 0 &&

@@ -320,6 +320,9 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
                     artistResultCount: Int(page.artistResultCount),
                     albumResultCount: Int(page.albumResultCount),
                     trackResultCount: Int(page.trackResultCount),
+                    artistConsumedRowCount: Int(page.artistConsumedRowCount),
+                    albumConsumedRowCount: Int(page.albumConsumedRowCount),
+                    trackConsumedRowCount: Int(page.trackConsumedRowCount),
                     artistHasMore: page.artistHasMore,
                     albumHasMore: page.albumHasMore,
                     trackHasMore: page.trackHasMore
