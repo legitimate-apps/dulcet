@@ -43,6 +43,29 @@ class AndroidMedia3EngineTest {
         }
     }
 
+    @Test fun stopAndFreshPreparationClearRealExoPlayerIntentBeforePreparingTheSource() {
+        val exo = ExoPlayer.Builder(RuntimeEnvironment.getApplication()).build()
+        var preparations = 0
+        val engine = AndroidMedia3Engine(exo, prepareSource = {
+            preparations++
+            assertFalse(exo.playWhenReady, "Fresh source preparation must already be paused")
+        })
+        try {
+            val first = playbackPlan()
+            engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), first.attemptId, first))
+            engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+            assertTrue(exo.playWhenReady)
+            engine.executeOnPlayerThread(PlaybackCommand.Stop(commandId()))
+            assertFalse(exo.playWhenReady)
+            val second = playbackPlan(attempt = "attempt:second")
+            engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), second.attemptId, second))
+            assertEquals(2, preparations)
+            assertFalse(exo.playWhenReady)
+            engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+            assertTrue(exo.playWhenReady)
+        } finally { engine.executeOnPlayerThread(PlaybackCommand.Release(commandId())) }
+    }
+
     @Test fun periodicSamplerDrivesCoreThresholdAndExcludesPauseBufferingAndSeek() {
         val fake = PlayerProbe()
         val core = PlaybackCoreStateMachine()

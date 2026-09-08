@@ -142,6 +142,44 @@ class AndroidPlaybackDataSourceTest {
         assertFailsWith<AndroidPlaybackIOException> { source.open(spec()) }
     }
 
+    @Test fun completeBounded206DeliversItsExactRequestedBytes() {
+        val bytes = wav() + ByteArray(9988)
+        val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ ->
+            response(bytes, status = 206, range = "bytes 0-9999/100000")
+        }).createDataSource()
+        assertEquals(10000L, source.open(spec().buildUpon().setLength(10000).build()))
+        val output = ByteArrayOutputStream()
+        val chunk = ByteArray(4096)
+        while (true) {
+            val n = source.read(chunk, 0, chunk.size)
+            if (n == C.RESULT_END_OF_INPUT) break
+            output.write(chunk, 0, n)
+        }
+        assertContentEquals(bytes, output.toByteArray())
+        source.close()
+    }
+
+    @Test fun unknownRangePrefixAtTheMemoryLimitFailsClosed() {
+        var consumed = 0L
+        var prefixBytesRead = 0L
+        val unknown = object : java.io.InputStream() {
+            override fun read(): Int { prefixBytesRead++; return 32 }
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                bytes.fill(32, offset, offset + length); prefixBytesRead += length; return length
+            }
+        }
+        val factory = AndroidPlaybackDataSourceFactory(playbackPlan(), { position, _ ->
+            if (position == 0L) response(wav())
+            else AndroidPlaybackResponse(206,
+                AuthenticatedEndpointResponseHeaders("audio/wav", PlaybackContentLength.Exact(20000000),
+                    null, "bytes", "bytes 100-20000099/20000100"), unknown, {})
+        }, { consumed += it })
+        factory.createDataSource().also { it.open(spec()); it.close() }
+        assertFailsWith<AndroidPlaybackIOException> { factory.createDataSource().open(spec(100)) }
+        assertEquals(16L * 1024 * 1024, prefixBytesRead)
+        assertEquals(0L, consumed)
+    }
+
     @Test fun estimatedLengthEndsAtObservedEofRatherThanTheServerEstimate() {
         val bytes = wav() + ByteArray(9000)
         val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ -> response(bytes).let {

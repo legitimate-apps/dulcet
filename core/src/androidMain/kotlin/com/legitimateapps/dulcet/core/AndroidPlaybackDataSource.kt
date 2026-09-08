@@ -61,7 +61,8 @@ internal class AndroidPlaybackDataSourceFactory(
                 // InputStream may return a short read at any byte boundary, including inside RIFF.
                 // Accumulate a prefix before classifying it; a socket read is not a payload boundary.
                 var count = 0
-                val target = minOf(buffer.size() + scratch.size, MAX_PREFIX)
+                // Geometric growth bounds copying when an unknown document spans many chunks.
+                val target = minOf(maxOf(scratch.size, buffer.size() * 2), MAX_PREFIX)
                 while (buffer.size() < target) {
                     count = loaded.input.read(scratch, 0, minOf(scratch.size, target - buffer.size()))
                     if (count < 0) break
