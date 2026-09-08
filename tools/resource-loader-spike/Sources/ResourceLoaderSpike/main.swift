@@ -312,10 +312,22 @@ private struct ServerReadinessBudget {
     /// could be sized, because the number described their sum.
     ///
     /// MEASURED from `READINESS control_server=READY` lines already present in
-    /// every green apple-ci run: probing costs 0.020s and 0.023s in the samples
-    /// on hand, while the handshake costs 0.334s to 6.635s in the same runs.
+    /// every green apple-ci run. n=4, two runs, BOTH invocation ordinals in
+    /// each, derived as `total_elapsed - handshake_elapsed`:
+    ///
+    ///     handshake   probe    ordinal
+    ///       5.650s    0.020s   1 (cold)
+    ///       0.512s    0.044s   2 (warm)
+    ///       6.635s    0.023s   1 (cold)
+    ///       0.334s    0.007s   2 (warm)
+    ///
     /// The two phases differ by more than two orders of magnitude, so a shared
-    /// budget was never going to fit both.
+    /// budget was never going to fit both. Note the probe shows NO ordinal
+    /// structure -- its largest sample is a warm one -- while the handshake is
+    /// entirely ordinal. That is why only one of these two numbers is treated
+    /// as unmeasured below. Stating which population a value was measured from
+    /// is the point: n=2 that happens to be two draws of the same population
+    /// would look identically tight and mean much less.
     ///
     /// `probeDeadline` is therefore small and still ~200x its observed cost.
     ///
