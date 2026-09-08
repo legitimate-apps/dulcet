@@ -6,6 +6,7 @@ import androidx.media3.datasource.DataSpec
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.ConscryptMode
 import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -55,6 +56,10 @@ class AndroidHttpPlaybackResourceTest {
         }
     }
 
+    // This fixture uses host-JVM sockets. Conscrypt reflects into java.net.InetAddress on JDK 21,
+    // failing before HTTP when java.net is not opened. Use Robolectric's host-JVM provider mode,
+    // as on Apple Silicon, while retaining certificate trust and hostname verification.
+    @ConscryptMode(ConscryptMode.Mode.OFF)
     @Test fun httpsDowngradeIsRejectedAfterTheTlsServerActuallyReturnsItsRedirect() {
         FixtureTls().use { tls ->
             val prior = HttpsURLConnection.getDefaultSSLSocketFactory()
