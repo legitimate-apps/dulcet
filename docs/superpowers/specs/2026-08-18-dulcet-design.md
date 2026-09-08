@@ -2125,7 +2125,17 @@ and rumours are how this app category accumulates "mysteriously does not work wi
 - **Merging:** identity is the opaque id, so a server result **replaces** the local row of the same id
   (refreshing the cached object) rather than appearing twice. Late results never reorder items above the
   user's current scroll position; they append or replace in place.
-- Each result type pages independently.
+- Each result type pages independently. Offsets advance by raw rows consumed, before display
+  deduplication; `hasMore` is true when a positive requested count equals the raw response count.
+  The core page carries these consumed-row counts through the Apple boundary. The caller preserves
+  cursors on failure and resets them for a new search.
+- **OBSERVED (synthetic core and Apple presentation tests):** with raw rows `[A × 20, B × 20, C]`,
+  each kind reaches C at offsets 0, 20 and 40. These fixtures establish defensive handling, not
+  duplicate arrays from a real server. **ASSUMED:** an actual server may return intra-page duplicates;
+  §16.1's cross-request row shifting does not establish that behavior.
+- Apple continuation makes one request per explicit Load more activation, with no automatic paging
+  on completion. A server returning full pages forever therefore cannot start an automatic request
+  loop. There is no total cap on deliberate activations; a full page alone cannot establish exhaustion.
 
 ### 18.2 Artwork
 
@@ -3402,6 +3412,11 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 94 (2026-09-08)** — §18.1 defines search continuation and offsets in raw consumed
+rows, independently for each kind. Synthetic multi-page tests cover both within-page duplicates and
+cross-page overlap. Neither fixture establishes duplicate arrays from a real server. Apple paging
+remains one request per explicit activation; full repeated pages do not trigger an automatic loop.
 
 **Revision 93 (2026-09-06)** — `FEATURES.yml` evidence gained a second shape for platform
 observations that carry no conformance id.

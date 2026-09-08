@@ -87,6 +87,53 @@ class SearchTest {
     }
 
     @Test
+    fun consumedRowsReachLaterUniqueResultsForAllKinds() = runTest {
+        // Defensive synthetic intra-page duplication, not evidence of real server behavior.
+        // Cross-page overlap alone does not reduce this parser's per-response distinct count.
+        val rows = List(20) { "A" } + List(20) { "B" } + "C"
+        val offsets = mutableListOf<List<Int>>()
+        val search = ServerSearch(SearchEndpointTransport { parameters ->
+            offsets += listOf("artistOffset", "albumOffset", "songOffset").map {
+                parameters.getValue(it).toInt()
+            }
+            fun page(kind: String, titleKey: String): String = rows
+                .drop(parameters.getValue("${kind}Offset").toInt())
+                .take(parameters.getValue("${kind}Count").toInt())
+                .joinToString(",") { """{"id":"$kind-$it","$titleKey":"$it"}""" }
+            success(envelope("""{
+                "artist":[${page("artist", "name")}],
+                "album":[${page("album", "name")}],
+                "song":[${page("song", "title")}]
+            }"""))
+        })
+        var next = request()
+        var visible = emptyList<SearchResultItem>()
+        repeat(3) { index ->
+            val page = assertIs<SearchPageResult.Loaded>(search.search(next)).page
+            visible = mergeSearchResults(visible, page.results)
+            val expectedRows = if (index < 2) 20 else 1
+            assertEquals(listOf(expectedRows, expectedRows, expectedRows), listOf(
+                page.artistConsumedRowCount, page.albumConsumedRowCount, page.trackConsumedRowCount,
+            ))
+            assertEquals(listOf(1, 1, 1), listOf(
+                page.artistResultCount, page.albumResultCount, page.trackResultCount,
+            ))
+            assertEquals(listOf(index < 2, index < 2, index < 2), listOf(
+                page.artistHasMore, page.albumHasMore, page.trackHasMore,
+            ))
+            next = next.copy(
+                artistOffset = next.artistOffset + page.artistConsumedRowCount,
+                albumOffset = next.albumOffset + page.albumConsumedRowCount,
+                trackOffset = next.trackOffset + page.trackConsumedRowCount,
+            )
+        }
+        assertEquals(listOf(listOf(0, 0, 0), listOf(20, 20, 20), listOf(40, 40, 40)), offsets)
+        for (kind in SearchResultType.entries) {
+            assertEquals(listOf("A", "B", "C"), visible.filter { it.type == kind }.map { it.title })
+        }
+    }
+
+    @Test
     fun ranksExactPrefixWordStartSubstringThenTypeWithCompatibilityNormalization() = runTest {
         val body = """{"subsonic-response":{"status":"ok","searchResult3":{
             "artist":[

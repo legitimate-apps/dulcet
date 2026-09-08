@@ -402,6 +402,150 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(store.snapshot.state == .nowPlayingUnavailable)
 }
 
+// Synthetic offset-respecting server rows, not an observed reference-server response.
+@Test(arguments: [false, true]) @MainActor
+func searchConsumedRowsReachLaterUniqueResultsForEveryKind(crossPageOverlap: Bool) async throws {
+    // Internally unique pages with five cross-page overlaps exercise the caller's merge too.
+    let firstPage: [String] = crossPageOverlap ? (0..<20).map { String($0) } : Array(repeating: "A", count: 20)
+    let secondPage: [String] = crossPageOverlap ? (15..<35).map { String($0) } : Array(repeating: "B", count: 20)
+    let rows = firstPage + secondPage + ["C"]
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector, serverSearch: search, searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+    store.searchQuery = "atlas"
+    await settleSearchTask(until: { search.requests.count == 1 })
+
+    func respond(_ index: Int) {
+        let request = search.requests[index]
+        let artists = Array(rows.dropFirst(request.artistOffset).prefix(request.artistCount))
+        let albums = Array(rows.dropFirst(request.albumOffset).prefix(request.albumCount))
+        let tracks = Array(rows.dropFirst(request.trackOffset).prefix(request.trackCount))
+        search.complete(at: index, .loaded(rawSearchPage(artists: artists, albums: albums, tracks: tracks)))
+    }
+    respond(0)
+    for kind in [DulcetSearchResultKind.artist, .album, .track] {
+        var offsets: [Int] = [0]
+        // Bounded driver: with intra-page duplicates, the old caller stalls at 2 before C.
+        for _ in 0..<5 where store.snapshot.searchHasMoreKinds.contains(kind) {
+            let index = search.requests.count
+            store.loadMoreSearchResults(kind)
+            let request = try #require(search.requests.last)
+            offsets.append(kind == .artist ? request.artistOffset : kind == .album ? request.albumOffset : request.trackOffset)
+            respond(index)
+        }
+        #expect(offsets == [0, 20, 40])
+        var seen: Set<String> = []
+        let expectedIDs = rows.filter { seen.insert($0).inserted }.map { "\(kind)-\($0)" }
+        #expect(store.snapshot.searchResults.filter { $0.kind == kind }.map(\.id.rawID) == expectedIDs)
+        #expect(!store.snapshot.searchHasMoreKinds.contains(kind))
+    }
+}
+
+@Test @MainActor
+func searchRepeatedFullPagesAreOneRequestPerActivationAndFailuresPreserveCursors() async throws {
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector, serverSearch: search, searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+    store.searchQuery = "atlas"
+    await settleSearchTask(until: { search.requests.count == 1 })
+    let repeated = Array(repeating: "A", count: 20)
+    search.complete(at: 0, .loaded(rawSearchPage(artists: repeated, albums: repeated, tracks: repeated)))
+    for kind in [DulcetSearchResultKind.artist, .album, .track] {
+        func offset(_ request: DulcetSearchPageRequest) -> Int {
+            kind == .artist ? request.artistOffset : kind == .album ? request.albumOffset : request.trackOffset
+        }
+        for pageIndex in 1...5 {
+            let index = search.requests.count
+            store.loadMoreSearchResults(kind)
+            #expect(search.requests.count == index + 1)
+            #expect(offset(try #require(search.requests.last)) == pageIndex * 20)
+            store.loadMoreSearchResults(kind)
+            #expect(search.requests.count == index + 1, "in-flight activation must not start another request")
+            search.complete(at: index, .loaded(rawSearchPage(
+                artists: kind == .artist ? repeated : [],
+                albums: kind == .album ? repeated : [],
+                tracks: kind == .track ? repeated : []
+            )))
+            await settleSearchTask()
+            #expect(search.requests.count == index + 1, "completion must not automatically page again")
+            #expect(store.snapshot.searchHasMoreKinds.contains(kind))
+        }
+        let failedIndex = search.requests.count
+        store.loadMoreSearchResults(kind)
+        #expect(offset(try #require(search.requests.last)) == 120)
+        search.complete(at: failedIndex, .failed(DulcetSearchFailure(kind: .timeout)))
+        store.loadMoreSearchResults(kind)
+        #expect(offset(try #require(search.requests.last)) == 120)
+        search.complete(at: failedIndex + 1, .loaded(rawSearchPage(artists: [], albums: [], tracks: [])))
+        #expect(!store.snapshot.searchHasMoreKinds.contains(kind))
+    }
+    // New query resets all cursors. A stale completion cannot advance the new generation.
+    let initialIndex = search.requests.count
+    store.searchQuery = "new query"
+    await settleSearchTask(until: { search.requests.count == initialIndex + 1 })
+    let request = try #require(search.requests.last)
+    let resetOffsets: [Int] = [request.artistOffset, request.albumOffset, request.trackOffset]
+    #expect(resetOffsets == [0, 0, 0])
+    search.complete(at: 0, .loaded(rawSearchPage(artists: repeated, albums: repeated, tracks: repeated)))
+    search.complete(at: initialIndex, .loaded(rawSearchPage(artists: ["Z"], albums: repeated, tracks: repeated)))
+    for kind in [DulcetSearchResultKind.album, .track] {
+        let index = search.requests.count
+        store.loadMoreSearchResults(kind)
+        let next = try #require(search.requests.last)
+        #expect((kind == .album ? next.albumOffset : next.trackOffset) == 20)
+        search.complete(at: index, .loaded(rawSearchPage(artists: [], albums: [], tracks: [])))
+    }
+}
+
+@MainActor
+private func rawSearchPage(artists: [String], albums: [String], tracks: [String]) -> DulcetSearchPage {
+    func unique(_ rows: [String], _ kind: DulcetSearchResultKind) -> [DulcetSearchResult] {
+        var seen: Set<String> = []
+        return rows.filter { seen.insert($0).inserted }.map {
+            searchResult(id: "\(kind)-\($0)", title: $0, kind: kind)
+        }
+    }
+    let artistResults = unique(artists, .artist)
+    let albumResults = unique(albums, .album)
+    let trackResults = unique(tracks, .track)
+    return DulcetSearchPage(
+        results: artistResults + albumResults + trackResults,
+        artistResultCount: artistResults.count,
+        albumResultCount: albumResults.count,
+        trackResultCount: trackResults.count,
+        artistConsumedRowCount: artists.count,
+        albumConsumedRowCount: albums.count,
+        trackConsumedRowCount: tracks.count,
+        artistHasMore: artists.count == 20,
+        albumHasMore: albums.count == 20,
+        trackHasMore: tracks.count == 20
+    )
+}
+
 @Test @MainActor
 func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent() async throws {
     let connector = ControlledAccountConnector()
@@ -1510,6 +1654,9 @@ private func searchPage(
         artistResultCount: results.count { $0.kind == .artist },
         albumResultCount: results.count { $0.kind == .album },
         trackResultCount: results.count { $0.kind == .track },
+        artistConsumedRowCount: results.count { $0.kind == .artist },
+        albumConsumedRowCount: results.count { $0.kind == .album },
+        trackConsumedRowCount: results.count { $0.kind == .track },
         artistHasMore: false,
         albumHasMore: false,
         trackHasMore: trackHasMore
