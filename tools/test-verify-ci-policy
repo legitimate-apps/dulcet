@@ -431,6 +431,61 @@ def run_paired_emission_case(emitted: str, expected_returncode: int, label: str)
     print(f"PASS: {label}")
 
 
+# The LAST uncovered mutation, and it guards a false-FAILURE rather than a missed defect: without a
+# per-source reset of `pending_method`, a method left dangling at the end of one source pairs with
+# the first emission in the next and rejects a workflow that is correct. I listed this as "NOT
+# CAUGHT" in a PR body and nearly left it there. An enumeration is a to-do list, not coverage.
+#
+# The fixture is built so ONLY the seam can produce a verdict: the workflow emits the cited class
+# correctly (so the "emitted somewhere" scan is satisfied), then ends with an unpaired
+# `-only-testing:` for that method, and the invoked script OPENS with an emission that has no
+# `-only-testing:` of its own.
+SEAM_WORKFLOW_INVOCATION = (
+    'python3 tools/swift-testing-junit "$RUNNER_TEMP/a.xcresult" \\\n'
+    '            "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" \\\n'
+    "            Example\n"
+    "          tools/ci/produce-evidence\n"
+    "          xcodebuild test-without-building -only-testing:ExampleTarget/Example/exampleMethod"
+)
+
+SEAM_SCRIPT = """#!/bin/bash
+set -euo pipefail
+python3 tools/swift-testing-junit "$RUNNER_TEMP/b.xcresult" \\
+  "$RUNNER_TEMP/dulcet-example-junit/TEST-Other.xml" \\
+  Other
+"""
+
+
+def run_source_seam_case() -> None:
+    """A method dangling at the end of one source must not pair with the next source's emission."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-seam-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(
+            APPLE_WORKFLOW % {"invocation": SEAM_WORKFLOW_INVOCATION},
+        )
+        (workflows / "core-ci.yml").write_text(
+            workflow_for(next(case for case in CASES if case.accepted)),
+        )
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "produce-evidence").write_text(SEAM_SCRIPT)
+        (root / "FEATURES.yml").write_text(CLASS_EMISSION_FEATURES)
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
+        )
+    label = "a method dangling at a source boundary does not pair across it"
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{label}: expected exit 0, got {result.returncode} -- the pending method from the "
+            "workflow's last line paired with the script's first emission, which is a mismatch "
+            f"that exists only at the seam\nstderr:\n{result.stderr}",
+        )
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
+
+
 def run_orphan_control_case() -> None:
     """A control in tools/ that no workflow names must be rejected, and a wired one accepted.
 
@@ -503,6 +558,8 @@ run_paired_emission_case(
     "ExampleTarget", 1,
     "a wrong emission is rejected even though the cited class is emitted elsewhere",
 )
+
+run_source_seam_case()
 
 run_orphan_control_case()
 
