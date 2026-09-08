@@ -72,6 +72,13 @@ internal class AndroidPlaybackDataSourceFactory(
                 val needsSignature = dataSpec.position == 0L
                 if (!needsSignature && !signatureValidated)
                     throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+                // Whitespace and incomplete documents remain unknown across socket chunks. A
+                // prior audio witness cannot turn an unknown response into a validated range.
+                val inspection = prefix.inspectSubsonicBinaryEnvelope()
+                if (inspection == SubsonicBinaryEnvelopeInspection.Unknown) {
+                    if (count < 0) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+                    continue
+                }
                 val validation = validateAndroidPlaybackPrefix(plan, loaded, prefix, needsSignature)
                 when (validation) {
                     is PlaybackStreamValidationResult.Audio -> validated = true

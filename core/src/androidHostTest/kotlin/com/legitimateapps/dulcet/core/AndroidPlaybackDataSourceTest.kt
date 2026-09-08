@@ -115,6 +115,25 @@ class AndroidPlaybackDataSourceTest {
         assertFailsWith<AndroidPlaybackIOException> { factory.createDataSource().open(spec(100)) }
     }
 
+    @Test fun oversizedEnvelopeOnAValid206SeekNeverReachesThePlayer() {
+        for (padding in listOf("", "\uFEFF" + " ".repeat(9000))) {
+            val envelope = (padding + "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"" +
+                "TOKEN_CANARY".repeat(1000) + "\"}}}").toByteArray()
+            var consumed = 0L
+            val factory = AndroidPlaybackDataSourceFactory(playbackPlan(), { position, _ ->
+                if (position == 0L) response(wav() + ByteArray(30000))
+                else response(envelope, status = 206,
+                    range = "bytes $position-${position + envelope.size - 1}/${position + envelope.size}")
+            }, { consumed += it })
+            factory.createDataSource().also { it.open(spec()); it.close() }
+            val source = factory.createDataSource()
+            val failure = assertFailsWith<AndroidPlaybackIOException> { source.open(spec(100)) }
+            assertEquals(0L, consumed)
+            assertNull(failure.cause)
+            assertFalse(failure.stackTraceToString().contains("TOKEN_CANARY"))
+        }
+    }
+
     @Test fun estimatedLengthEndsAtObservedEofRatherThanTheServerEstimate() {
         val bytes = wav() + ByteArray(9000)
         val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ -> response(bytes).let {

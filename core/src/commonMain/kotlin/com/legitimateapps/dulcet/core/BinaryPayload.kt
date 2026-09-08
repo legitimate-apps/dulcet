@@ -8,13 +8,15 @@ import kotlinx.serialization.json.intOrNull
 /** Ordered first-stage inspection shared by every binary-or-Subsonic-envelope endpoint. */
 internal sealed interface SubsonicBinaryEnvelopeInspection {
     data object NotEnvelope : SubsonicBinaryEnvelopeInspection
+    /** The available bytes cannot rule out an incomplete document. Never proof of binary media. */
+    data object Unknown : SubsonicBinaryEnvelopeInspection
     data object Malformed : SubsonicBinaryEnvelopeInspection
     data class Error(val code: Int) : SubsonicBinaryEnvelopeInspection
 }
 
 internal fun ByteArray.inspectSubsonicBinaryEnvelope(): SubsonicBinaryEnvelopeInspection {
     val start = binaryPayloadContentStartIndex()
-    if (start >= size) return SubsonicBinaryEnvelopeInspection.NotEnvelope
+    if (start >= size) return SubsonicBinaryEnvelopeInspection.Unknown
     return when (this[start].toInt().toChar()) {
         '{' -> inspectJsonSubsonicBinaryEnvelope(start)
         '<' -> inspectXmlSubsonicBinaryEnvelope(start)
@@ -36,7 +38,7 @@ private fun ByteArray.inspectJsonSubsonicBinaryEnvelope(
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     SubsonicBinaryEnvelopeInspection.Error(code)
 } catch (_: IllegalArgumentException) {
-    SubsonicBinaryEnvelopeInspection.NotEnvelope
+    SubsonicBinaryEnvelopeInspection.Unknown
 }
 
 private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
