@@ -47,6 +47,12 @@ assert stall_completed == 0, f"a stalled search reported a completion: {stall_co
 # the whole window, and every outcome-only control still passes while it does.
 assert stall_attempts >= 2, f"search budget was spent by a single attempt: attempts={stall_attempts}"
 assert elapsed < 7, f"search escaped its five-second deadline: {elapsed:.3f}s"
+# The failure path must record WHICH layer stopped answering, and the verdict must be earned. This
+# fixture stalls only the search endpoint, so every other layer replies instantly and the honest
+# verdict is "server-answering" -- a diagnosis keying on exception-vs-no-exception instead of on
+# elapsed time reports "database-path-blocked" here off a one-millisecond parse error.
+assert "loopback diagnosis=" in stalled.stderr, stalled.stderr
+assert "loopback diagnosis=server-answering" in stalled.stderr, stalled.stderr
 print(
     f"NEGATIVE CONTROL PASS cache_search_deadline=true elapsed_seconds={elapsed:.3f} "
     f"attempts={stall_attempts} completed={stall_completed}"

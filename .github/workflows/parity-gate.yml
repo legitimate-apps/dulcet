@@ -52,6 +52,8 @@ jobs:
         run: python3 tools/test-report-main-health
       - name: Prove transcode timeouts identify their phase and obey the wall-clock budget
         run: python3 tools/test-transcode-probe-timeout-diagnostic
+      - name: Prove the cache-search probe separates a stalled transport from an absent item
+        run: python3 tools/test-cache-search-readiness
       - name: Prove capture-soak summaries preserve probability and exit classification
         run: python3 tools/test-capture-soak-summary
       - name: Prove the local gate runner reports incomplete workflow coverage
