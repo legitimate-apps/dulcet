@@ -90,6 +90,18 @@ import Foundation
             check(player.currentPresentation.status == .failed, "explicit play still fails")
             check(store.snapshot.state == .nowPlayingFailed, "explicit play publishes failure")
             print("explicit play controller=\(player.currentPresentation.status) surface=\(store.snapshot.state)")
+            let beforeBypass = player.currentPresentation
+            player.restorePersistedQueue(with: [])
+            print("after bypass controller=\(player.currentPresentation.status) surface=\(store.snapshot.state)")
+            check(player.currentPresentation == beforeBypass, "bypassed restoration preserves failed presentation")
+            check(store.snapshot.state == .nowPlayingFailed, "bypassed restoration still publishes failed state")
+            // After checking the real store pipeline, observe the boundary directly to
+            // reject even an identical re-publication on repeated no-op restoration.
+            var bypassPublications = 0
+            player.setPresentationHandler { _ in bypassPublications += 1 }
+            player.restorePersistedQueue(with: [])
+            player.restorePersistedQueue(with: [unsupported])
+            check(bypassPublications == 0, "bypassed restoration publishes nothing")
             player.disconnect()
         }
         print("Restoration checks: \(failures) failures")
