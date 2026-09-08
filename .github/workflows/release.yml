@@ -198,17 +198,8 @@ jobs:
               exit 70
             fi
 
-            /usr/bin/plutil -create xml1 "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :teamID string 3LTL47SJ8C" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :destination string export" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :signingCertificate string $DULCET_SIGNING_IDENTITY_SHA1" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :installerSigningCertificate string Mac Installer Distribution" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_BUNDLE_ID string $RELEASE_PROFILE_NAME" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$EXPORT_OPTIONS"
-            /usr/libexec/PlistBuddy -c "Add :manageAppVersionAndBuildNumber bool false" "$EXPORT_OPTIONS"
+            # Channel-bound options enforce internal-only distribution for each DEV build.
+            python3 tools/write-release-export-options
 
             xcodebuild -exportArchive \
               -archivePath "$ARCHIVE_PATH" \
@@ -259,8 +250,8 @@ jobs:
 
       # This client uses Apple's current App Store Connect build-upload API. It reads all API-key
       # material from the environment, keeps it out of argv, and never logs signed upload URLs.
-      # It creates a TestFlight build only; there is intentionally no App Review submission call,
-      # which keeps the DEV record permanently outside the App Store review path.
+      # DEV exports are internal-only. The client is bound to the bundle ID and refuses
+      # review/submission endpoints before signing or sending any request.
       - name: Upload to App Store Connect
         # Only the decision helper can emit confirmation; a missing output skips upload.
         if: ${{ steps.upload_decision.outputs.confirmed == 'true' }}

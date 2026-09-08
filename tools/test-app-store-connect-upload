@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import os
 import sys
+import plistlib
 import textwrap
 import json
 import hashlib
@@ -34,6 +35,39 @@ def raw_ecdsa_to_der(signature: bytes) -> bytes:
 
 
 class AppStoreConnectUploadTests(unittest.TestCase):
+    def test_dev_export_is_internal_only(self) -> None:
+        workflow = (TOOL.parent.parent / ".github/workflows/release.yml").read_text()
+        self.assertIn("python3 tools/write-release-export-options", workflow)
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "ExportOptions.plist"
+            for bundle in ("com.legitimateapps.dulcet.dev", "com.legitimateapps.dulcet"):
+                result = subprocess.run([sys.executable, str(TOOL.with_name("write-release-export-options"))],
+                    env={**os.environ, "EXPECTED_BUNDLE_ID": bundle, "EXPORT_OPTIONS": str(output),
+                         "RELEASE_PROFILE_NAME": "Example Profile", "DULCET_SIGNING_IDENTITY_SHA1": "example"},
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                options = plistlib.loads(output.read_bytes())
+                self.assertIs(options["testFlightInternalTestingOnly"], bundle.endswith(".dev"))
+                self.assertEqual(options["destination"], "export")
+                self.assertEqual(options["method"], "app-store-connect")
+                self.assertEqual(options["provisioningProfiles"], {bundle: "Example Profile"})
+
+    def test_dev_client_refuses_review_and_submission_before_transport(self) -> None:
+        client = upload.AppStoreConnectClient("key", "issuer", b"unused", "com.legitimateapps.dulcet.dev")
+        paths = ["/v1/appStoreVersions", "/v1/reviewSubmissions", "/v1/reviewSubmissionItems",
+                 "/v1/appStoreVersionSubmissions", "/v1/betaAppReviewSubmissions",
+                 "/v1/apps/app-id/relationships/reviewSubmissions",
+                 "/v1/%72eviewSubmissions", "/v1/REVIEWSubmissions", "/v1/futureSubmission"]
+        with mock.patch.object(client, "token") as token, mock.patch.object(upload.urllib.request, "urlopen") as send:
+            send.return_value.__enter__.return_value.read.return_value = b"{}"
+            token.return_value = "canary-placeholder"
+            for path in paths:
+                for method in ("GET", "POST", "PATCH", "DELETE"):
+                    with self.subTest(path=path, method=method), self.assertRaises(upload.UploadFailure):
+                        client.request(method, path, {})
+            token.assert_not_called()
+            send.assert_not_called()
+
     def test_installer_prerequisite_fails_before_archive(self) -> None:
         workflow = (TOOL.parent.parent / ".github/workflows/release.yml").read_text()
         marker = "- name: Require Mac installer signing support"
@@ -129,7 +163,7 @@ exec(compile(source, sys.argv[1], 'exec'), namespace)
                 check=True,
                 capture_output=True,
             )
-            token = upload.AppStoreConnectClient("EXAMPLEKEY", "example-issuer", private_key.read_bytes()).token()
+            token = upload.AppStoreConnectClient("EXAMPLEKEY", "example-issuer", private_key.read_bytes(), "com.legitimateapps.dulcet.dev").token()
             header, payload, encoded_signature = token.split(".")
             padding = "=" * (-len(encoded_signature) % 4)
             import base64
@@ -147,11 +181,13 @@ exec(compile(source, sys.argv[1], 'exec'), namespace)
             self.assertEqual(verified.returncode, 0, verified.stderr.decode(errors="replace"))
 
     def test_upload_flow_uses_only_build_upload_endpoints(self) -> None:
-        class FakeClient:
+        class FakeClient(upload.AppStoreConnectClient):
+            bundle_id = "com.legitimateapps.dulcet.dev"
             def __init__(self) -> None:
                 self.calls: list[tuple[str, str, object]] = []
 
             def request(self, method: str, path: str, payload: object = None) -> dict:
+                self.guard_request(method, path)
                 self.calls.append((method, path, payload))
                 if method == "GET" and path.startswith("/v1/apps?"):
                     return {

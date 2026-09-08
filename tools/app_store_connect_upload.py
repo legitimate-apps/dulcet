@@ -96,7 +96,10 @@ def der_ecdsa_to_raw(signature: bytes, component_size: int = 32) -> bytes:
 
 
 class AppStoreConnectClient:
-    def __init__(self, key_id: str, issuer_id: str, private_key: bytes) -> None:
+    def __init__(self, key_id: str, issuer_id: str, private_key: bytes, bundle_id: str) -> None:
+        if bundle_id not in ("com.legitimateapps.dulcet", "com.legitimateapps.dulcet.dev"):
+            fail("refusing an App Store Connect client for an unknown release channel")
+        self.bundle_id = bundle_id
         self.key_id = key_id
         self.issuer_id = issuer_id
         self.private_key = private_key
@@ -151,7 +154,23 @@ class AppStoreConnectClient:
             fail("App Store Connect JWT signing failed")
         return f"{header}.{payload}.{base64url(der_ecdsa_to_raw(result.stdout))}"
 
+    def guard_request(self, method: str, path: str) -> None:
+        # This is an upload-only client. A positive route list rejects new submission APIs
+        # as well as today's review endpoints. Never expand DEV to permit App Store release.
+        route = path.split("?", 1)[0]
+        allowed = (
+            (method == "GET" and route == "/v1/apps")
+            or (method == "POST" and route in ("/v1/buildUploads", "/v1/buildUploadFiles"))
+            or (method == "GET" and re.fullmatch(r"/v1/buildUploads/[A-Za-z0-9_-]+", route))
+            or (method == "PATCH" and re.fullmatch(r"/v1/buildUploadFiles/[A-Za-z0-9_-]+", route))
+        )
+        if not allowed:
+            if self.bundle_id.endswith(".dev"):
+                fail("DEV is permanently TestFlight-only; review/submission and non-upload endpoints are forbidden")
+            fail("this App Store Connect client permits only build-upload endpoints")
+
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.guard_request(method, path)
         if not path.startswith("/") or path.startswith("//"):
             fail("refusing an App Store Connect request outside the fixed API origin")
         body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
@@ -305,6 +324,8 @@ def upload_build(
     version: str,
     build_number: str,
 ) -> None:
+    if client.bundle_id != bundle_id:
+        fail("upload bundle identifier does not match the bound App Store Connect client")
     app_id = find_app(client, bundle_id)
     upload = client.request(
         "POST",
@@ -437,6 +458,7 @@ def main() -> int:
         os.environ["DULCET_ASC_KEY_ID"],
         os.environ["DULCET_ASC_ISSUER_ID"],
         private_key,
+        arguments.bundle_id,
     )
     upload_build(
         client,

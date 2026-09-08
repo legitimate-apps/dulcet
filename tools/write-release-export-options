@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Write channel-bound export options; DEV builds are internal TestFlight only."""
+import os
+from pathlib import Path
+import plistlib
+
+
+def main() -> None:
+    bundle = os.environ["EXPECTED_BUNDLE_ID"]
+    if bundle not in ("com.legitimateapps.dulcet", "com.legitimateapps.dulcet.dev"):
+        raise SystemExit("refusing export options for an unknown release channel")
+    options = {
+        "method": "app-store-connect",
+        "teamID": "3LTL47SJ8C",
+        "destination": "export",
+        "signingStyle": "manual",
+        "signingCertificate": os.environ["DULCET_SIGNING_IDENTITY_SHA1"],
+        "installerSigningCertificate": "Mac Installer Distribution",
+        "provisioningProfiles": {bundle: os.environ["RELEASE_PROFILE_NAME"]},
+        "uploadSymbols": True,
+        "manageAppVersionAndBuildNumber": False,
+        # Xcode marks this build ineligible for external TestFlight and App Store distribution.
+        "testFlightInternalTestingOnly": bundle.endswith(".dev"),
+    }
+    Path(os.environ["EXPORT_OPTIONS"]).write_bytes(plistlib.dumps(options))
+
+
+if __name__ == "__main__":
+    main()

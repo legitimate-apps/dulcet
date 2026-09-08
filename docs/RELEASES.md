@@ -20,7 +20,11 @@ explicit; absent, empty, null and numeric values authorize no upload. The decisi
 the dispatch event JSON without GitHub loose-equality coercion.
 
 DEV (`com.legitimateapps.dulcet.dev`) is a TestFlight-only record for the life of the project. The
-release workflow uploads builds but contains no App Store Review submission operation. PROD
+release export options set `testFlightInternalTestingOnly=true` for DEV. The bundle-bound uploader
+permits only its build-upload routes and rejects review/submission paths before token creation or
+HTTP transport. A future PROD submission client must preserve the DEV prohibition; this client
+permits no submissions for either channel. This cannot prevent a separate account holder or
+unrelated tool from acting outside this code. PROD
 (`com.legitimateapps.dulcet`) uses the production target, whose application composition has no
 preconfigured-server input; the workflow accepts no server URL and does not add one as a build
 setting.
