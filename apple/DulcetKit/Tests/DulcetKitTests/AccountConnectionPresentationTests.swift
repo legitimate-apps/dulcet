@@ -569,6 +569,32 @@ func retryOneCharacterLocalFailure() async {
     #expect(server.requests.isEmpty)
 }
 
+@Test @MainActor
+func navigationRecoversLocalFailureAndCancelledServerSearch() async {
+    for requestStarted in [false, true] {
+        let local = ControlledLocalLibrarySearch()
+        let server = ControlledServerSearch()
+        let store = connectedSearchStore(local: local, server: server)
+        local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+        store.searchQuery = "at"
+        if requestStarted { await settleSearchTask(until: { server.requests.count == 1 }) }
+        store.selectDestination(.nowPlaying)
+        if requestStarted { #expect(server.operations.first?.cancelCount == 1) }
+        local.outcome = .loaded(searchPage(results: []))
+        store.selectDestination(.search)
+        let expectedCount = requestStarted ? 2 : 1
+        await settleSearchTask(until: { server.requests.count == expectedCount })
+        #expect(local.queries == ["at", "at"])
+        #expect(server.requests.count == expectedCount)
+        #expect(store.snapshot.state == .searchLoading)
+        if server.requests.count == expectedCount {
+            server.complete(at: expectedCount - 1, .loaded(searchPage(results: [searchResult(id: "fresh", title: "Fresh")])) )
+            #expect(store.snapshot.searchResults.map(\.title) == ["Fresh"])
+            #expect(store.snapshot.searchFailure == nil)
+        }
+    }
+}
+
 @MainActor
 private final class ControlledLocalLibrarySearch: DulcetLibraryBrowsing, DulcetLocalSearching {
     var queries: [String] = []
