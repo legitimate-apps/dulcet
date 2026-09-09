@@ -22,6 +22,8 @@ from unittest.mock import patch
 from contextlib import redirect_stdout, redirect_stderr
 
 RESOLVER = Path(__file__).resolve().parent / "resolve-ipad-destination"
+# Sentinel for a query attempt that never answers, as distinct from one that answers with nothing.
+TIMEOUT = object()
 IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 OLD_IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
 
@@ -66,8 +68,16 @@ def discovery_fixture(transcripts: list[str], query_duration: float = 0) -> dict
     def query(path, project, scheme, timeout):
         nonlocal elapsed
         timeouts.append(timeout)
+        entry = transcripts[min(len(timeouts) - 1, len(transcripts) - 1)]
+        if entry is TIMEOUT:
+            # A timed-out attempt consumes its whole per-attempt budget and returns no answer.
+            elapsed += timeout
+            raise resolver["DestinationQueryTimeout"](
+                f"xcodebuild destination query timed out after {timeout:g}s; "
+                "accepted set UNKNOWN; partial output:\n"
+            )
         elapsed += min(query_duration, timeout)
-        return transcripts[min(len(timeouts) - 1, len(transcripts) - 1)]
+        return entry
 
     def sleep(seconds):
         nonlocal elapsed
@@ -202,7 +212,9 @@ def main() -> None:
 
     for label, error in (
         ("failed_query_diagnostic", ValueError("query exited 70; accepted set UNKNOWN")),
-        ("timed_out_query_diagnostic", ValueError("query timed out; accepted set UNKNOWN")),
+        # A bare ValueError, NOT the resolver's DestinationQueryTimeout: an unclassified query
+        # error stays terminal. The retryable timeout path is covered by the RETRY CONTROLs below.
+        ("unclassified_query_error_diagnostic", ValueError("query failed; accepted set UNKNOWN")),
         ("missing_query_executable", FileNotFoundError("xcrun unavailable")),
     ):
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -273,6 +285,30 @@ def main() -> None:
             or "['IPHONE']" not in mismatch["stderr"]):
         raise SystemExit(f"RETRY CONTROL FAILED concrete_mismatch: {mismatch}")
     print("RETRY CONTROL PASS concrete_mismatch exit_code=1 attempts=1 virtual_elapsed=0.000s deadline=120s sleeps=0 both_inventories=true stdout_empty=true")
+
+    # A query that never answered leaves the accepted set UNKNOWN, which is not the same fact as
+    # answered-and-empty. Before this was distinguished, the first timeout ended discovery with
+    # half the deadline unspent -- observed in CI as "attempts=1 elapsed=60.147s deadline=120s".
+    recovered = discovery_fixture([TIMEOUT, destinations("EEE")])
+    if (recovered["status"] != 0 or recovered["stdout"] != "EEE\n"
+            or recovered["attempts"] != 2 or "query_attempts=2" not in recovered["stderr"]):
+        raise SystemExit(f"RETRY CONTROL FAILED timeout_then_populated: {recovered}")
+    print(f"RETRY CONTROL PASS timeout_then_populated exit_code=0 attempts=2 "
+          f"virtual_elapsed={recovered['elapsed']:.3f}s deadline=120s stdout={recovered['stdout'].strip()!r}")
+
+    # Timing out every attempt must still spend the whole deadline, and must fail NAMING the
+    # timeout rather than a generic "deadline expired with zero destinations" -- the two have
+    # different causes and only one of them means Xcode answered.
+    timeout_forever = discovery_fixture([TIMEOUT])
+    if (timeout_forever["status"] != 1 or timeout_forever["stdout"]
+            or timeout_forever["attempts"] != 2 or timeout_forever["elapsed"] != 120
+            or "timed out after 60s" not in timeout_forever["stderr"]
+            or "accepted set UNKNOWN" not in timeout_forever["stderr"]
+            or "attempts=2 elapsed=120.000s deadline=120s" not in timeout_forever["stderr"]
+            or "simctl offered:" not in timeout_forever["stderr"]):
+        raise SystemExit(f"RETRY CONTROL FAILED timeout_throughout: {timeout_forever}")
+    print("RETRY CONTROL PASS timeout_throughout exit_code=1 attempts=2 virtual_elapsed=120.000s "
+          "deadline=120s names_timeout=true both_inventories=true stdout_empty=true")
 
     slow = discovery_fixture([empty], query_duration=59)
     if slow["status"] != 1 or slow["stdout"] or slow["elapsed"] != 120 or slow["timeouts"] != [60, 56]:
