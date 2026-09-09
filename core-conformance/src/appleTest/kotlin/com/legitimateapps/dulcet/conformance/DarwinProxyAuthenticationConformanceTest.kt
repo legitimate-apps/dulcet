@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -95,12 +96,14 @@ class DarwinProxyAuthenticationConformanceTest {
                 )
 
                 mark("fetching proxy wire observation")
-                val observation = observationClient.get(
-                    "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
-                )
+                val observation = diagnostics.phase("observation-get") {
+                    observationClient.get("http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth")
+                }
                 mark("proxy wire observation response received (buffered)")
                 // Only render closed fields, never a raw observation body on an assertion failure.
-                val observationText = observation.bodyAsText()
+                val observationText = diagnostics.phase("observation-body") {
+                    observation.bodyAsText()
+                }
                 val body = try {
                     Json.parseToJsonElement(observationText).jsonObject
                 } catch (_: Throwable) {
@@ -162,7 +165,7 @@ class DarwinProxyAuthenticationConformanceTest {
     // return Cancelled and fail a later assertion. That assertion alone loses where time was spent.
     private fun traceProxyTest(
         observeFailure: () -> String = ::failureObservation,
-        block: suspend ((String) -> Unit) -> Unit,
+        block: suspend TestScope.((String) -> Unit) -> Unit,
     ) {
         val started = TimeSource.Monotonic.markNow()
         val timeline = mutableListOf<String>()

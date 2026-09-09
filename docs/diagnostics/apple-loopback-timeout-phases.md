@@ -185,3 +185,40 @@ then `albums-parsed`, `transport-close-returned`, `dto-created`, `completion-ret
 encountered an occupied fixture port and then a missing readiness-mode argument; neither executed an
 iPhone test. The final run used a new empty database. No CI run was launched, and no mechanism fix is
 claimed. macOS/iPadOS download execution and member 3 were not tested in this change.
+
+## Failure-control mutation results
+
+**OBSERVED (local mutation runs):** each row changes real source, runs the named control and restores
+source in a `finally` block. These are failures with the deletion/write present, followed by passing
+runs after restoring the implementation. Earlier review found these same mutations escaped the old
+controls; that already established baseline was not rerun here.
+
+| Real-source mutation | Strengthened control output before restoration | After restoration |
+| --- | --- | --- |
+| Delete `trace.summary` from assertion messages | Swift: exit 1, `failure message missing required marker: LIBRARY BROWSE elapsed=` | exit 0, `FAILED BROWSE CONTROL: published timeout, forwarded HTTP terminal and Swift phases` |
+| Delete `trace.mark(phase)` observer forwarding | Swift: exit 1, `failure message missing required marker: facade-start` | same passing Swift control |
+| Delete actual `http-failed` emission | JVM: `failedBrowseRetainsTerminalHttpEvidence[jvm] FAILED`, `1 test completed, 1 failed`, `BUILD FAILED in 31s` | browse diagnostics and browse suites: `BUILD SUCCESSFUL` |
+| Delete actual `Proxy-Authenticate` header | Proxy: exit 1, expected `Basic realm="dulcet-forward-proxy"`, got `None`, both tests fail | exit 0, `Ran 2 tests`, `OK` |
+| Delete challenge increment and authorization storage | Proxy: exit 1, expected `(1, ('invented-proxy-authorization-canary',))`, got `(0, ())`, both tests fail | exit 0, `Ran 2 tests`, `OK` |
+| Insert synchronous stdout write inside real recorder | Proxy: exit 1, broken pipe yields `RemoteDisconnected`; full pipe yields `TimeoutError('timed out')`, `FAILED (failures=1, errors=1)` | exit 0, `Ran 2 tests`, `OK` |
+
+## What these controls still do not protect
+
+These controls do not certify every diagnostic in the product. By inspection, the following can
+still be deleted while **these controls** pass (other tests may reject them):
+
+- The reachability probe implementation: the Swift failure control deliberately substitutes it.
+- Unasserted browse phases such as parser/page, DTO creation, transport-close or completion-returned
+  markers. The failed-browse control stops at the first endpoint and cannot exercise later album
+  fan-out or parsing. Successful-response controls cover a different path.
+- The proxy `/observations/proxy-auth` HTTP route and its JSON response: the stdout control reads
+  the real state getter directly. The Darwin conformance test separately consumes that route.
+- Proxy test timeline publication and its bounded failure-observation fetch: the proxy stdout
+  control exercises the fixture, not the Kotlin test wrapper.
+- XCTest/xcresult publication wiring outside the captured assertion call, and platform-specific iOS
+  behavior. The new executable captures the real assertion's message argument on macOS; it does not
+  verify persistence by an actual XCTest runner or replay the iOS integration test.
+
+No library-handler arrival/send instrumentation exists to delete. A disappearing live Swift writer
+also cannot be detected because no such writer exists. A runner that dies before assertion
+publication remains outside the recoverable evidence boundary.
