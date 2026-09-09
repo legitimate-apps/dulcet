@@ -281,6 +281,36 @@ if apple_ci:
                     )
                 break
 
+# JUnit-directory coverage does not establish that standalone diagnostic controls execute.
+# Keep these in unconditional steps of the required Apple job: macOS must run the real stack
+# control. This is an explicit contract for these suites, not discovery of every tools/test-* file.
+# Synthetic policy fixtures opt in by creating core-conformance, as the real repository does.
+DIAGNOSTIC_CONTROLS = (
+    "tools/test-conformance-access-log",
+    "tools/test-capture-conformance-stall",
+    "tools/test-measure-conformance-phase-gaps",
+)
+if Path("core-conformance").is_dir():
+    job = re.search(r"(?m)^  apple-ci:\s*$", apple_ci)
+    job_text = ""
+    if job:
+        lines = apple_ci[job.end():].splitlines()
+        job_text = "\n".join(lines[:block_end(lines, 0, 2)])
+    job_unconditional = not re.search(r"(?m)^    (?:if|continue-on-error):", job_text)
+    job_mac = any(name == "apple-ci" and re.search(r"macos-", runner)
+                  for name, runner in job_runner_values(apple_ci.splitlines()))
+    steps = re.split(r"(?m)^      - ", job_text)[1:]
+    for control in DIAGNOSTIC_CONTROLS:
+        invoked = any(
+            not re.search(r"(?m)^        (?:if|continue-on-error):", step)
+            and re.search(r"(?m)^        run: python3 " + re.escape(control) + r"\s*$", step)
+            for step in steps
+        )
+        if (not Path(control).is_file() or not invoked or not job_unconditional or not job_mac
+                or "pull_request" not in workflow_triggers(apple_ci.splitlines())):
+            errors.append(f".github/workflows/apple-ci.yml: required diagnostic control {control} "
+                          "must exist and run unconditionally in the macOS apple-ci PR job")
+
 core_ci = Path(".github/workflows/core-ci.yml").read_text()
 for required in (
     "python3 tools/migration_gate.py",

@@ -44,6 +44,12 @@ jobs:
         run: python3 tools/test-account-removal-recovery
       - name: Prove nonexistent promotion targets are rejected
         run: python3 tools/test-promotion-condition-resolvability
+      - name: Prove conformance access logging and structural redaction
+        run: python3 tools/test-conformance-access-log
+      - name: Prove the conformance wrapper collects host stacks
+        run: python3 tools/test-capture-conformance-stall
+      - name: Prove phase-gap calibration rejects invalid evidence
+        run: python3 tools/test-measure-conformance-phase-gaps
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
