@@ -70,6 +70,7 @@ final class DulcetCorePlaybackPresentationTests: XCTestCase {
         XCTAssertNil(recorded.errorKind)
         let failedSession = try XCTUnwrap(recorded.snapshot?.currentSession)
         XCTAssertEqual(failedSession.phase, "Failed")
+        XCTAssertEqual(failedSession.positionMilliseconds, 2_000)
         XCTAssertEqual(failedSession.playbackSessionId, session.playbackSessionId)
         XCTAssertEqual(failedSession.attemptId, session.attemptId)
         XCTAssertEqual(failedSession.queueEntryId, session.queueEntryId)
