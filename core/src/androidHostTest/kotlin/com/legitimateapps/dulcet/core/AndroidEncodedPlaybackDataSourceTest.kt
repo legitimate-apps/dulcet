@@ -110,6 +110,18 @@ class AndroidEncodedPlaybackDataSourceTest(private val encoding: String, private
                 encoded[i + 2] = a; encoded[i + 3] = b
             }
         }
+        // Assert the fixture's actual byte marker, independently of the charset encoder and
+        // permutation helpers; BOMless cases must not silently acquire a BOM from the host codec.
+        val expectedMarker = when (encoding) {
+            "UTF-8" -> listOf(0xef, 0xbb, 0xbf)
+            "UTF-16BE" -> listOf(0xfe, 0xff)
+            "UTF-16LE" -> listOf(0xff, 0xfe)
+            "UTF-32BE" -> listOf(0, 0, 0xfe, 0xff)
+            "UTF-32LE" -> listOf(0xff, 0xfe, 0, 0)
+            "UCS-4-2143" -> listOf(0, 0, 0xff, 0xfe)
+            else -> listOf(0xfe, 0xff, 0, 0)
+        }
+        assertEquals(bom, encoded.take(expectedMarker.size).map { it.toInt() and 0xff } == expectedMarker)
         return encoded
     }
 
