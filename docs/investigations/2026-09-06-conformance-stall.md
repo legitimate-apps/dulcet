@@ -137,3 +137,20 @@ negative result inconclusive. The unchanged host sampler waits 40 seconds withou
 so a promptly propagated 30-second timeout can exit before a sample occurs. It supports the longer
 stall shape, not a guarantee of simultaneous stacks for every timeout. No real CI failure or iOS
 simulator run was observed in this follow-up; no push or pull-request action was performed.
+
+OBSERVED — an additional Darwin integration run selected both `*StallDiagnosticsTest*` and
+`*slowSelfHostedServerCanCompleteAccountNegotiation*` on `:core-conformance:macosArm64Test`, with
+`DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540` and the disposable 4533 variables above.
+It returned `BUILD SUCCESSFUL in 17s`: four tests, zero failures/errors. The separate fixture process
+recorded exactly one arrival/completion pair for each negotiation endpoint:
+
+| Method | Endpoint | Status | Handler duration (ms) |
+| --- | --- | --- | --- |
+| GET | getOpenSubsonicExtensions | 200 | 10503.084625 |
+| POST | ping | 200 | 0.329958 |
+| POST | getUser | 200 | 0.155375 |
+
+All three recorded `handlerReturned=true` and `bodyWriteFailed=false`. Independently, the client
+reported `getOpenSubsonicExtensions.send durationMs=10519`; at 10010 ms its watchdog showed that
+phase pending and request 1 active, not cancelled or completed. This proves the slow-test wrapper
+and the server log observe the same successful local negotiation, not the unexplained CI delay.
