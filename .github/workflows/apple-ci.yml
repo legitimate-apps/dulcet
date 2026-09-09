@@ -346,6 +346,24 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-keychain-attributes.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
+      - name: Verify iPhone uses the full display
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testIPhoneWindowUsesFullDisplay 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-full-display.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testIPhoneWindowUsesFullDisplay
       - name: Boot iPadOS simulator before the layout launch
         timeout-minutes: 6
         id: ipados_layout_destination

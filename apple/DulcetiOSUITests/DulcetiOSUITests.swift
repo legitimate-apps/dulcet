@@ -13,7 +13,7 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         let display = XCUIScreen.main.screenshot().image.size
         let frame = window.frame
-        print("DULCET DISPLAY GEOMETRY window=\(frame) displayPixels=\(display)")
+        print("DULCET DISPLAY GEOMETRY window=\(frame) displayImageSize=\(display)")
         print(app.debugDescription)
         XCTAssertGreaterThan(frame.width, 0)
         XCTAssertLessThan(frame.width, 700, "Run this full-display proof on an iPhone")
@@ -217,13 +217,10 @@ final class DulcetiOSUITests: XCTestCase {
             "The results header must report \(renderedResultCount): " + app.debugDescription
         )
 
-        // OBSERVED on a compact window: the ranked rows live in a scroll view a little over one
-        // row tall, so with four results the canary's row lies below the visible bounds and its
-        // midpoint falls outside the window, where a tap resolves nowhere. An application-level
-        // swipe scrolls nothing here because its midpoint lands in the header above the list, so
-        // the swipe has to be delivered to the list itself. A person scrolls the results to the
-        // row they want and taps it; the test does the same. Every rank's identity was read
-        // before this point, so scrolling cannot affect what was asserted.
+        // Scroll the results container only when the canary is outside the visible window.
+        // The legacy letterboxed iPhone canvas needed this; a full-display iPhone may expose
+        // every row already. Keep the reachability check for smaller windows and keyboards,
+        // and preserve the rank assertions above independently of any scrolling.
         let canaryResult = rankedResults[canaryRank]
         let resultsList = app.scrollViews.firstMatch
         guard resultsList.waitForExistence(timeout: 5) else {
