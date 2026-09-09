@@ -135,11 +135,29 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
     """
     lines = text.splitlines()
     steps: list[dict[str, str]] = []
-    for index, line in enumerate(lines):
-        entry = mapping_entry(line)
-        if not entry or entry[1:] != ("steps", ""):
-            continue
-        indent = entry[0]
+    # Restrict discovery to jobs.<job>.steps, never a lookalike in env or run text.
+    jobs_start = next((i for i, line in enumerate(lines)
+                       if mapping_entry(line) == (0, "jobs", "")), None)
+    if jobs_start is None:
+        return steps
+    jobs_end = block_end(lines, jobs_start + 1, 0)
+    job_starts = [i for i in range(jobs_start + 1, jobs_end)
+                  if (entry := mapping_entry(lines[i])) and entry[0] == 2]
+    step_blocks: list[tuple[int, dict[str, str]]] = []
+    for position, start in enumerate(job_starts):
+        stop = job_starts[position + 1] if position + 1 < len(job_starts) else jobs_end
+        metadata = {}
+        step_index = None
+        for i in range(start + 1, stop):
+            entry = mapping_entry(lines[i])
+            if entry and entry[0] == 4:
+                metadata[entry[1]] = entry[2]
+                if entry[1:] == ("steps", ""):
+                    step_index = i
+        if step_index is not None:
+            step_blocks.append((step_index, metadata))
+    for index, job in step_blocks:
+        indent = 4
         end = block_end(lines, index + 1, indent)
         starts = [i for i in range(index + 1, end)
                   if re.match(rf"^ {{{indent + 2}}}- ", lines[i])]
@@ -170,6 +188,8 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
                         properties["continue-on-error"] = "ambiguous"
                     properties[key] = value
                 i += 1
+            if job.get("continue-on-error", "false") != "false" or "if" in job:
+                properties["continue-on-error"] = "job is not unconditionally blocking"
             steps.append(properties)
     return steps
 
@@ -223,6 +243,100 @@ def blocking_controls(step: dict[str, str]) -> set[str]:
         if re.fullmatch(r"(?:\./)?tools/test-[\w.-]+", command):
             found.add(command.removeprefix("./"))
     return found
+
+
+def evidence_commands(source: str) -> list[list[str]]:
+    """Expand local shell functions with positional/scalar arguments for inventory.
+
+    This is deliberately bounded, not a shell interpreter: workflow environment,
+    command substitutions and computed selectors remain unresolved. Definitions do
+    not supply evidence until a call is present in this source. No bindings cross
+    a source boundary. Runtime branch selection remains verify-parity-evidence's job.
+    """
+    lines = [code_before_comment(line).strip() for line in source.splitlines()]
+    lines = "\n".join(lines).replace("\\\n", " ").splitlines()
+    functions: dict[str, list[str]] = {}
+    top: list[str] = []
+    index = 0
+    while index < len(lines):
+        match = re.fullmatch(r"([A-Za-z_]\w*)\(\)\s*\{", lines[index])
+        if match:
+            body: list[str] = []
+            index += 1
+            while index < len(lines) and lines[index] != "}":
+                body.append(lines[index])
+                index += 1
+            functions[match[1]] = body
+        else:
+            top.append(lines[index])
+        index += 1
+
+    def expand(body: list[str], values: dict[str, str], stack: tuple[str, ...]) -> list[list[str]]:
+        commands: list[list[str]] = []
+        for line in body:
+            try:
+                words = shlex.split(line, comments=True)
+            except ValueError:
+                continue
+            words = [re.sub(r"\$(?:\{(\w+)\}|(\w+))",
+                            lambda m: values.get(m[1] or m[2], m[0]), word)
+                     for word in words]
+            if not words:
+                continue
+            if len(words) == 1 and re.match(r"^[A-Za-z_]\w*=", words[0]):
+                key, value = words[0].split("=", 1)
+                values[key] = value
+                continue
+            if words[0] in functions:
+                name = words[0]
+                if name not in stack:
+                    arguments = {str(i): value for i, value in enumerate(words[1:], 1)}
+                    commands.extend(expand(functions[name], {**values, **arguments}, (*stack, name)))
+                continue
+            commands.append(words)
+        return commands
+
+    return expand(top, {}, ())
+
+
+def method_emission_associations(source: str, cited: dict[str, set[str]]) -> set[tuple[str, str]]:
+    """Account for cited identities via method, whole-target or package test runs."""
+    resolved: set[tuple[str, str]] = set()
+    selected: set[tuple[str, str]] = set()
+    package = None
+    for words in evidence_commands(source):
+        if words[0] == "cd" and len(words) == 2:
+            package = Path(words[1]) / "Package.swift"
+        # Environment assignments may precede the executable.
+        command = next((i for i, word in enumerate(words) if not re.match(r"^\w+=", word)), 0)
+        if words[command] == "xcodebuild":
+            selected = set()
+            selectors = [word.split(":", 1)[1] for word in words if word.startswith("-only-testing:")]
+            for selector in selectors:
+                parts = selector.split("/")
+                if any(not re.fullmatch(r"[A-Za-z_]\w*", part) for part in parts):
+                    continue
+                if len(parts) == 3:
+                    selected.update((name, parts[2]) for name in cited.get(parts[2], set()))
+                elif len(parts) == 1:
+                    selected.update((parts[0], method) for method, names in cited.items()
+                                    if parts[0] in names)
+            # An unfiltered package scheme runs its declared test targets. Read the
+            # actual manifest; merely emitting a target's name is never sufficient.
+            if not selectors and package and package.is_file() and "-scheme" in words:
+                scheme = words[words.index("-scheme") + 1]
+                if scheme == package.parent.name + "-Package":
+                    targets = re.findall(r'\.testTarget\(\s*name:\s*"(\w+)"', package.read_text())
+                    selected.update((target, method) for target in targets
+                                    for method, names in cited.items() if target in names)
+            # Filtering an otherwise whole-suite invocation needs explicit support.
+            if any(word.startswith("-skip-testing:") for word in words):
+                selected = set()
+        if words[:2] == ["python3", "tools/swift-testing-junit"]:
+            if len(words) == 5:
+                resolved.update(pair for pair in selected if pair[0] == words[4])
+            selected = set()
+    return resolved
 
 
 errors: list[str] = []
@@ -403,6 +517,10 @@ if apple_ci:
                     parts = row.get("test", "").split("/")
                     if len(parts) == 2 and "ConformanceTest" not in parts[0]:
                         cited_classes_by_method.setdefault(parts[1], set()).add(parts[0])
+        resolved_associations = set().union(*(
+            method_emission_associations(source, cited_classes_by_method)
+            for _, source in sources
+        ))
         for label, source in sources:
             source_lines = source.splitlines()
             # Reset per source: a method left pending at the end of one file must not pair with an
@@ -433,6 +551,16 @@ if apple_ci:
                             f"{sorted(allowed)}; verify-parity-evidence matches on that name",
                         )
                     break
+
+        for method, classes in sorted(cited_classes_by_method.items()):
+            for cited in sorted(classes):
+                if (cited, method) not in resolved_associations:
+                    errors.append(
+                        f".github/workflows/apple-ci.yml: required method/emission association "
+                        f"{cited}/{method} cannot be resolved in any source; require a recognizable "
+                        "selector followed by its swift-testing-junit emission (no silent skip)",
+                    )
+
 
 # JUnit-directory coverage does not establish that standalone diagnostic controls execute.
 # Keep these in unconditional steps of the required Apple job: macOS must run the real stack

@@ -431,6 +431,38 @@ def run_paired_emission_case(emitted: str, expected_returncode: int, label: str)
     print(f"PASS: {label}")
 
 
+def run_required_association_case(shape: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-required-association-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        workflow = APPLE_WORKFLOW % {"invocation": "tools/ci/produce-evidence"}
+        script = PAIRED_EMISSION_SCRIPT % {"emitted": "ExampleTarget"}
+        if shape == "deleted-emission":
+            script = script[:script.rindex("python3 tools/swift-testing-junit")]
+        elif shape == "exported-selector":
+            selector = "ExampleTarget/Example/exampleMethod"
+            workflow = "env:\n  MAC_LIBRARY_SYNC_SELECTOR: " + selector + "\n" + workflow
+            script = script.replace("-only-testing:" + selector,
+                                    '-only-testing:"$MAC_LIBRARY_SYNC_SELECTOR"')
+        else:
+            raise AssertionError(f"unknown shape: {shape}")
+        (workflows / "apple-ci.yml").write_text(workflow)
+        (workflows / "core-ci.yml").write_text(workflow_for(next(c for c in CASES if c.accepted)))
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "produce-evidence").write_text(script)
+        (root / "FEATURES.yml").write_text(PAIRED_EMISSION_FEATURES)
+        result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root, text=True,
+                                capture_output=True, check=False)
+    label = f"required association: {shape}"
+    if result.returncode != 1 or "Example/exampleMethod cannot be resolved" not in result.stderr:
+        raise AssertionError(f"{label}: expected unresolved-association rejection, got exit "
+                             f"{result.returncode}\n{result.stdout}{result.stderr}")
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
+
+
 # The LAST uncovered mutation, and it guards a false-FAILURE rather than a missed defect: without a
 # per-source reset of `pending_method`, a method left dangling at the end of one source pairs with
 # the first emission in the next and rejects a workflow that is correct. I listed this as "NOT
@@ -441,6 +473,7 @@ def run_paired_emission_case(emitted: str, expected_returncode: int, label: str)
 # `-only-testing:` for that method, and the invoked script OPENS with an emission that has no
 # `-only-testing:` of its own.
 SEAM_WORKFLOW_INVOCATION = (
+    "xcodebuild test -only-testing:ExampleTarget/Example/exampleMethod\n          "
     'python3 tools/swift-testing-junit "$RUNNER_TEMP/a.xcresult" \\\n'
     '            "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" \\\n'
     "            Example\n"
@@ -617,6 +650,9 @@ run_paired_emission_case(
     "ExampleTarget", 1,
     "a wrong emission is rejected even though the cited class is emitted elsewhere",
 )
+
+run_required_association_case("deleted-emission")
+run_required_association_case("exported-selector")
 
 run_source_seam_case()
 
