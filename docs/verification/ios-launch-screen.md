@@ -20,6 +20,8 @@ setting; the tested Debug product contains the synthesized dictionary. Comparing
 the built plists before and after, `UILaunchScreen` is the only changed key.
 Xcode 26.6 emits it as `{"UILaunchScreen": {"UILaunchScreen": {}}}`.
 
+Both `DulcetMac` and `DulcetMacRelease` use `INFOPLIST_FILE = DulcetMac/Info.plist`;
+the explicit YAML `info:` declaration belongs to `DulcetMacRelease`.
 No tvOS or macOS target setting changes. `TARGETED_DEVICE_FAMILY` remains `1,2`.
 No additional iPadOS setting is proposed: it shares this application target.
 iPadOS multitasking, rotation, and physical devices were not measured in this run.
@@ -50,10 +52,10 @@ one named test executed, rejecting a zero-test success.
 
 `testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone` passed against an isolated
 Navidrome 0.63.2 instance with the repository's 314-file synthetic corpus and pinned
-FFmpeg 9.0.1. The test transcript contains no swipe: the ranked canary is reachable
-without the old letterboxed viewport's scrolling workaround. Its conditional
-reachability code still works; no coordinate correction or weakened assertion was
-needed. The comment now describes the conditional behavior instead of presenting
+FFmpeg 9.0.1. That particular passing transcript contains no swipe. The scrolling workaround
+remains in the test, with its conditional reachability check unchanged; only its
+comment changed. This does not establish that the workaround is never exercised
+on other runs or layouts. No coordinate correction or weakened assertion was needed. The comment now describes the conditional behavior instead of presenting
 the legacy short viewport as the normal compact layout.
 
 ## Validation results

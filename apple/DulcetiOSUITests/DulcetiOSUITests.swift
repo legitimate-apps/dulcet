@@ -23,6 +23,30 @@ final class DulcetiOSUITests: XCTestCase {
             frame.height / frame.width, display.height / display.width, accuracy: 0.01,
             "The app window must fill the portrait display without legacy letterboxing"
         )
+
+        // A full-size empty window is not evidence that the account interface rendered.
+        // Scope both semantic queries to this window, then require visible, contained frames.
+        let content: [(String, XCUIElement)] = [
+            ("dulcet.account-connect.title",
+             window.staticTexts["dulcet.account-connect.title"].firstMatch),
+            ("dulcet.account-connect.server-address",
+             window.textFields["dulcet.account-connect.server-address"].firstMatch),
+        ]
+        for (identifier, element) in content {
+            guard element.waitForExistence(timeout: 5) else {
+                XCTFail("Full-display content missing from measured window: \(identifier)")
+                continue
+            }
+            let contentFrame = element.frame
+            print("DULCET DISPLAY CONTENT id=\(identifier) frame=\(contentFrame) window=\(frame) hittable=\(element.isHittable)")
+            XCTAssertGreaterThan(contentFrame.width, 0, "\(identifier) must have visible width")
+            XCTAssertGreaterThan(contentFrame.height, 0, "\(identifier) must have visible height")
+            XCTAssertTrue(element.isHittable, "\(identifier) must be visible and reachable")
+            XCTAssertTrue(
+                frame.contains(contentFrame),
+                "\(identifier) frame \(contentFrame) must lie inside measured window \(frame)"
+            )
+        }
     }
 
     private enum BlockingSystemDialogProbeResult {
