@@ -33,6 +33,15 @@ DISCOVERY_TIMEOUT = 120
 DISCOVERY_RETRY_INTERVAL = 5
 
 
+class DestinationQueryTimeout(ValueError):
+    """The xcodebuild query never answered, so the accepted set is UNKNOWN.
+
+    Distinct from a query that answered with nothing. "Unknown" and "empty" are
+    different facts, and only the second one is a result. Treating a timeout as a
+    terminal failure spent one attempt and abandoned the rest of the deadline.
+    """
+
+
 def load_destinations(path: str | None, project: str, scheme: str,
                       timeout: float = XCODE_QUERY_TIMEOUT) -> str:
     if path:
@@ -45,7 +54,7 @@ def load_destinations(path: str | None, project: str, scheme: str,
     except subprocess.TimeoutExpired as error:
         def decoded(value):
             return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
-        raise ValueError(
+        raise DestinationQueryTimeout(
             f"xcodebuild destination query timed out after {timeout:g}s; "
             "accepted set UNKNOWN; partial output:\n"
             + decoded(error.stdout) + decoded(error.stderr)
@@ -157,14 +166,22 @@ def main() -> None:
     parser.add_argument("--scheme", default="DulcetiOS")
     parser.add_argument("--discovery-timeout", type=float, default=DISCOVERY_TIMEOUT,
                         help="overall Xcode discovery deadline in seconds (default: 120)")
+    parser.add_argument("--query-timeout", type=float, default=XCODE_QUERY_TIMEOUT,
+                        help="per-attempt xcodebuild query timeout in seconds (default: 60). "
+                             "Each attempt receives the smaller of this value and the remaining "
+                             "discovery budget, so a timed-out query leaves the rest of the "
+                             "deadline available to later attempts.")
     parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
     args = parser.parse_args()
     if not math.isfinite(args.discovery_timeout) or args.discovery_timeout <= 0:
         parser.error("--discovery-timeout must be finite and positive")
+    if not math.isfinite(args.query_timeout) or args.query_timeout <= 0:
+        parser.error("--query-timeout must be finite and positive")
 
     document = load_devices(args.devices_json)
     candidates = ipad_candidates(document)
     transcript = "(query did not produce output)"
+    timed_out: DestinationQueryTimeout | None = None
     started = time.monotonic()
     deadline = started + args.discovery_timeout
     attempts = 0
@@ -172,10 +189,22 @@ def main() -> None:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                if timed_out is not None:
+                    raise timed_out
                 raise ValueError("Xcode discovery deadline expired with zero concrete iOS Simulator destinations")
             attempts += 1
-            transcript = load_destinations(args.destinations_file, args.project, args.scheme,
-                                           min(XCODE_QUERY_TIMEOUT, remaining))
+            try:
+                transcript = load_destinations(args.destinations_file, args.project, args.scheme,
+                                               min(args.query_timeout, remaining))
+            except DestinationQueryTimeout as error:
+                # A query that never answered leaves the accepted set UNKNOWN, which is not the
+                # same as answered-and-empty. Both are eligible for another attempt; previously
+                # only the second was, so a single slow query ended discovery with most of the
+                # deadline unspent. No sleep here: the attempt already waited its own timeout,
+                # so it cannot spin.
+                timed_out = error
+                continue
+            timed_out = None
             accepted = accepted_ids(transcript, args.scheme)
             if time.monotonic() >= deadline:
                 raise ValueError("Xcode discovery deadline expired before destinations could be accepted")
