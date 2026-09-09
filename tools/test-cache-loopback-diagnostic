@@ -35,6 +35,8 @@ def branches():
         ("rest", None, 1.01, "database-path-blocked"),
         ("ping", RuntimeError("HTTP failure"), 0, "server-answering"),
         ("rest", RuntimeError("auth failure"), 0, "server-answering"),
+        ("failed-envelope", None, 0, "server-answering"),
+        ("malformed-json", None, 0, "server-answering"),
     ]
     for layer, error, delay, verdict in cases:
         clock = [100.0]
@@ -56,6 +58,10 @@ def branches():
                 pass
             def read(self, *args):
                 invoke(self.name)
+                if self.name == "rest" and layer == "failed-envelope":
+                    return b'{"subsonic-response":{"status":"failed"}}'
+                if self.name == "rest" and layer == "malformed-json":
+                    return b'not json'
                 return b'{"subsonic-response":{"status":"ok"}}'
 
         def connect(*args, **kwargs):
@@ -76,6 +82,9 @@ def branches():
         assert calls == expected, f"{layer}: probes {calls}, expected {expected}"
         if error and layer in ("ping", "rest"):
             assert "answered promptly but not as expected" in result and str(error) in result, result
+        if layer in ("failed-envelope", "malformed-json"):
+            assert "answered promptly but not as expected" in result, result
+            assert ("envelope status=failed" if layer == "failed-envelope" else "JSONDecodeError") in result, result
         print(f"PASS layer={layer} delay={delay} verdict={verdict}")
 
     # Assert exact URL redaction, not global credential replacement: 'ping' must survive as a route
@@ -108,8 +117,10 @@ def deadline(mode):
             if self.path.startswith("/rest/search3") or (mode == "ping-stall" and self.path == "/ping"):
                 time.sleep(15)
                 return
-            drip = (mode == "ping-drip" and self.path == "/ping") or (mode == "rest-drip" and self.path.startswith("/rest/ping"))
+            drip = (mode == "ping-drip" and self.path == "/ping") or (mode in ("rest-drip", "shared-rest-drip") and self.path.startswith("/rest/ping"))
             body = b'{"subsonic-response":{"status":"ok"}}' if self.path.startswith("/rest/") else b"1"
+            if mode == "shared-rest-drip" and self.path == "/ping":
+                time.sleep(0.75)
             self.send_response(200)
             self.send_header("Content-Length", "1000" if drip else str(len(body)))
             self.end_headers()
@@ -151,7 +162,7 @@ def deadline(mode):
                 primary = [(at, line) for at, line in lines if "cache search never completed:" in line]
                 assert primary and primary[0][0] < 5.6, f"{mode}: primary failure delayed: {primary}"
                 diagnostic = [(at, line) for at, line in lines if "loopback diagnosis=" in line]
-                verdict = "database-path-blocked" if mode == "rest-drip" else "http-blocked"
+                verdict = "database-path-blocked" if mode in ("rest-drip", "shared-rest-drip") else "http-blocked"
                 assert diagnostic and f"diagnosis={verdict}" in diagnostic[0][1], lines
                 assert primary[0][0] <= diagnostic[0][0], lines
                 assert process.returncode == 1 and elapsed < 6.8, (process.returncode, elapsed, lines)
@@ -164,10 +175,10 @@ def deadline(mode):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=("branches", "ping-stall", "ping-drip", "rest-drip"))
+    parser.add_argument("--case", choices=("branches", "ping-stall", "ping-drip", "rest-drip", "shared-rest-drip"))
     args = parser.parse_args()
     if args.case in (None, "branches"):
         branches()
-    for mode in ("ping-stall", "ping-drip", "rest-drip"):
+    for mode in ("ping-stall", "ping-drip", "rest-drip", "shared-rest-drip"):
         if args.case in (None, mode):
             deadline(mode)

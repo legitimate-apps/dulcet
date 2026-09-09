@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import json
 import os
 from pathlib import Path
 import re
@@ -34,6 +35,9 @@ STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SE
 # "whatever is left" lets the first one consume the entire window, so the loop polls exactly once
 # and one slow response becomes indistinguishable from a persistently unreachable server.
 SEARCH_ATTEMPT_TIMEOUT_SECONDS = 1.0
+# Optional diagnosis adds at most 1.25s AFTER the unchanged five-second search window.
+# All diagnostic layers share this allowance; the primary failure is emitted first.
+DIAGNOSIS_TIMEOUT_SECONDS = 1.25
 
 
 class StreamDeadlineExceeded(TimeoutError):
@@ -144,7 +148,7 @@ def timeout_diagnostic(error: StreamDeadlineExceeded, budget: float) -> str:
     )
 
 
-def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
+def diagnose_loopback(base_url: str, budget: float = DIAGNOSIS_TIMEOUT_SECONDS) -> str:
     """Separate "nothing is accepting" from "accepting but not answering" from "the DB path is stuck".
 
     Every probe here is deliberately a DIFFERENT layer, because two probes through one stack are one
@@ -153,6 +157,7 @@ def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
     three answer in under ~15 ms, and the stall this diagnoses runs to 30 s, so the separation is
     about three orders of magnitude and no threshold tuning is required.
     """
+    deadline = time.monotonic() + budget
     parsed = urllib.parse.urlparse(base_url)
     host, port = parsed.hostname or "127.0.0.1", parsed.port or 4533
 
@@ -171,11 +176,26 @@ def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
 
     def timed(call):
         start = time.monotonic()
+        remaining = deadline - start
+        if remaining <= 0:
+            return 0.0, TimeoutError("diagnosis wall-clock deadline exhausted")
+        previous_handler = signal.getsignal(signal.SIGALRM)
+
+        def expired(_signum, _frame):
+            raise TimeoutError("diagnosis wall-clock deadline exhausted")
+
+        signal.signal(signal.SIGALRM, expired)
+        signal.siginterrupt(signal.SIGALRM, True)
+        signal.setitimer(signal.ITIMER_REAL, remaining)
         try:
-            call()
-        except Exception as error:  # noqa: BLE001 - every failure mode is a datum here
-            return time.monotonic() - start, error
-        return time.monotonic() - start, None
+            try:
+                call()
+            except Exception as error:  # noqa: BLE001 - every failure mode is a datum here
+                return time.monotonic() - start, error
+            return time.monotonic() - start, None
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
 
     def raw_connect():
         with socket.create_connection((host, port), timeout=budget):
@@ -188,7 +208,10 @@ def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
 
     def subsonic_ping():
         # `/rest` endpoints report failure INSIDE a 200 envelope, so the status code proves nothing.
-        document = read_json(subsonic_url(base_url, "ping", {}), budget)
+        # The enclosing timed() owns the deadline, including body decoding. Do not nest read_json's
+        # timer here: its cleanup would cancel the shared diagnostic timer.
+        with urllib.request.urlopen(subsonic_url(base_url, "ping", {}), timeout=budget) as response:
+            document = json.load(response)
         status = document.get("subsonic-response", {}).get("status")
         if status != "ok":
             raise RuntimeError(f"envelope status={status}")
@@ -211,13 +234,13 @@ def diagnose_loopback(base_url: str, budget: float = 5.0) -> str:
             f"connect_error={safe(connect_error)} detail=refused immediately, so the port is not listening"
         )
     ping_s, ping_error = timed(bare_ping)
-    if ping_s >= STALLED:
+    if ping_s >= STALLED or isinstance(ping_error, TimeoutError):
         return (
             f"loopback diagnosis=http-blocked connect_seconds={connect_s:.3f} "
             f"ping_seconds={ping_s:.3f} ping_error={safe(ping_error)}"
         )
     rest_s, rest_error = timed(subsonic_ping)
-    if rest_s >= STALLED:
+    if rest_s >= STALLED or isinstance(rest_error, TimeoutError):
         return (
             f"loopback diagnosis=database-path-blocked connect_seconds={connect_s:.3f} "
             f"ping_seconds={ping_s:.3f} rest_ping_seconds={rest_s:.3f} rest_error={safe(rest_error)}"
@@ -287,15 +310,15 @@ def main() -> None:
         # the wrong subsystem: it sends the reader to the corpus seeder, which the readiness gate
         # has already proven healthy, while the actual event was a transport failure.
         if completed == 0:
-            # The search never got an answer, so the next question is WHICH layer stopped answering.
-            # Diagnose before exiting: this failure has been observed from three different callers
-            # and the server has always looked healthy moments earlier, so a verdict recorded at the
-            # moment of failure is the only thing that separates the candidate causes.
-            print(diagnose_loopback(base_url), file=sys.stderr)
-            raise SystemExit(
+            # Publish the cause before optional I/O, even if diagnosis itself fails.
+            print(
                 f"cache search never completed: attempts={attempts} "
-                f"last_error={last_transport_error}"
+                f"last_error={last_transport_error}",
+                file=sys.stderr,
+                flush=True,
             )
+            print(diagnose_loopback(base_url), file=sys.stderr, flush=True)
+            raise SystemExit(1)
         raise SystemExit(
             "known transcode cache probe is absent from the disposable corpus "
             f"(attempts={attempts} completed={completed})"
