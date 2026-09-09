@@ -55,6 +55,7 @@ class AccountConnectConformanceTest {
     private fun fixture(
         password: String = conformancePassword(),
         hostResolver: HostResolver = HostResolver { listOf("127.0.0.1") },
+        diagnostics: LogSink? = null,
     ): Fixture {
         val logs = mutableListOf<String>()
         var saltIndex = 0
@@ -65,7 +66,7 @@ class AccountConnectConformanceTest {
         }
         val connector = AccountConnector(
             saltSource = saltSource,
-            logSink = LogSink(logs::add),
+            logSink = diagnostics ?: LogSink(logs::add),
             hostResolver = hostResolver,
         )
         return Fixture(connector, password, logs)
@@ -266,16 +267,18 @@ class AccountConnectConformanceTest {
 
     @Test
     fun slowSelfHostedServerCanCompleteAccountNegotiation() = runTest {
-        // Bind the result so the failure message can name it. `Failed` is a data class carrying
-        // `error: DomainError`, so interpolation renders e.g. `Failed(error=Transport.Timeout)` and
-        // separates a timeout from a 500 from an unreachable host. Without it this assertion prints
-        // only "actual Failed", and every red run costs a re-run to learn nothing about which.
-        val result = fixture().connect("${redirectConformanceRoot()}/slow-account")
-        assertIs<AccountConnectionResult.Connected>(
-            result,
-            "a self-hosted server responding after 10.5 seconds must remain connectable, " +
-                "but got $result",
-        )
+        withStallDiagnostics("slow-account") { diagnostics ->
+            // Bind the result so the failure message can name it. `Failed` is a data class carrying
+            // `error: DomainError`, so interpolation renders e.g. `Failed(error=Transport.Timeout)` and
+            // separates a timeout from a 500 from an unreachable host. Without it this assertion prints
+            // only "actual Failed", and every red run costs a re-run to learn nothing about which.
+            val result = fixture(diagnostics = diagnostics).connect("${redirectConformanceRoot()}/slow-account")
+            assertIs<AccountConnectionResult.Connected>(
+                result,
+                "a self-hosted server responding after 10.5 seconds must remain connectable, " +
+                    "but got $result",
+            )
+        }
     }
 
     @Test

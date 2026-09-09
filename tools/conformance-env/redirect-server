@@ -6,6 +6,10 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
+from pathlib import Path
+import sys
+import tempfile
 import re
 import threading
 import time
@@ -379,7 +383,118 @@ def envelope(
     return {"subsonic-response": payload}
 
 
-class RedirectHandler(BaseHTTPRequestHandler):
+
+# Only fixed route vocabulary may reach diagnostics: some redirect scenarios reflect
+# credentials into path segments. Query strings, authorities, headers and bodies never do.
+ACCESS_PATH_WORDS = frozenset("""
+health observations observe ambient-auth cacheable-account target-count proxy-auth rest
+slow-account same same-target cross-reflected-get-user cross-reflected-target
+ two-hop-get-user two-hop-get-user-intermediate two-hop-target cross cross-observe
+cross-observe-query cross-target cross-target-query loop funkwhale-2-0-9
+mixed-case-string-roles malformed-envelope-open-subsonic
+malformed-envelope-open-subsonic-string malformed-envelope-type malformed-envelope-download-role
+malformed-extensions-object malformed-extensions-string
+getOpenSubsonicExtensions getOpenSubsonicExtensions.view ping ping.view getUser getUser.view
+""".split())
+
+
+def access_path(target: str) -> tuple[str, str]:
+    # Strip BEFORE parsing; never include parse exceptions (which can contain input).
+    try:
+        path = urlsplit(target.split("?", 1)[0].split("#", 1)[0]).path
+    except ValueError:
+        return "[redacted]", "[redacted]"
+    parts = path.split("/")
+    safe = [part if part in ACCESS_PATH_WORDS or not part else "[redacted]" for part in parts]
+    endpoint = parts[-1].removesuffix(".view")
+    if endpoint not in {"getOpenSubsonicExtensions", "ping", "getUser"}:
+        endpoint = "[other]"
+    return "/".join(safe)[:512], endpoint
+
+
+class AccessLog:
+    """One append-only JSONL file per process, capped at 4 MiB including its limit marker."""
+
+    def __init__(self, path: Path, max_bytes: int = 4 * 1024 * 1024):
+        self.lock = threading.Lock()
+        self.max_bytes = max_bytes
+        self.stopped = False
+        self.sequence = 0
+        self.file = None
+        self.size = 0
+        try:
+            self.file = path.open("xb", buffering=0)
+        except OSError:
+            self._unavailable()
+        self.emit(event="log-start", pid=os.getpid(), maxBytes=max_bytes)
+
+    def _unavailable(self) -> None:
+        self.stopped = True
+        print("CONFORMANCE_ACCESS_LOG_UNAVAILABLE", file=sys.stderr, flush=True)
+
+    def emit(self, **fields: object) -> int:
+        with self.lock:
+            self.sequence += 1
+            sequence = self.sequence
+            if self.stopped:
+                return sequence
+            record = dict(monotonicNs=time.monotonic_ns(), sequence=sequence, **fields)
+            data = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+            if self.size + len(data) > self.max_bytes - 256:
+                data = (json.dumps(dict(monotonicNs=time.monotonic_ns(),
+                                        event="log-limit", maxBytes=self.max_bytes)) + "\n").encode()
+                self.stopped = True
+                print("CONFORMANCE_ACCESS_LOG_LIMIT", file=sys.stderr, flush=True)
+            try:
+                self.file.write(data)
+                self.size += len(data)
+            except OSError:
+                self._unavailable()
+            return sequence
+
+
+class AccessLoggingHandler(BaseHTTPRequestHandler):
+    def log_message(self, _format: str, *_args: object) -> None:
+        # BaseHTTPRequestHandler's formatted messages can contain raw credentials.
+        return
+
+    def parse_request(self) -> bool:
+        parsed = super().parse_request()
+        if parsed:
+            self._access_started = time.monotonic_ns()
+            path, endpoint = access_path(self.path)
+            self._access_fields = dict(
+                method=self.command if self.command in {"GET", "POST", "CONNECT", "HEAD", "PUT", "DELETE", "OPTIONS", "PATCH"} else "[other]",
+                path=path, endpoint=endpoint, port=self.server.server_port,
+            )
+            log = getattr(self.server, "access_log", None)
+            if log is not None:
+                self._access_id = log.emit(event="arrival", **self._access_fields)
+        return parsed
+
+    def send_response_only(self, code: int, message: str | None = None) -> None:
+        self._access_status = int(code)
+        super().send_response_only(code, message)
+
+    def handle_one_request(self) -> None:
+        self._access_started = None
+        self._access_status = None
+        self._access_id = None
+        returned = False
+        try:
+            super().handle_one_request()
+            returned = True
+        finally:
+            ended = time.monotonic_ns()
+            log = getattr(self.server, "access_log", None)
+            if self._access_id is not None:
+                log.emit(event="completion", requestId=self._access_id,
+                         status=self._access_status, handlerReturned=returned,
+                         durationMs=(ended - self._access_started) / 1_000_000,
+                         **self._access_fields)
+
+
+class RedirectHandler(AccessLoggingHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:  # noqa: N802
@@ -387,9 +502,6 @@ class RedirectHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         self._handle()
-
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
 
     def _handle(self) -> None:
         parsed = urlsplit(self.path)
@@ -988,7 +1100,7 @@ class RedirectHandler(BaseHTTPRequestHandler):
             return
 
 
-class ForwardProxyAuthenticationHandler(BaseHTTPRequestHandler):
+class ForwardProxyAuthenticationHandler(AccessLoggingHandler):
     """HTTP forward proxy that never forwards and exposes only its 407 wire observation."""
 
     protocol_version = "HTTP/1.1"
@@ -1018,9 +1130,6 @@ class ForwardProxyAuthenticationHandler(BaseHTTPRequestHandler):
             )
             return
         self._challenge()
-
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
 
     def _challenge(self) -> None:
         values = self.headers.get_all("Proxy-Authorization", failobj=[]) or []
@@ -1052,13 +1161,17 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=4540)
     parser.add_argument("--target-port", type=int, default=4541)
     parser.add_argument("--forward-proxy-auth", action="store_true")
+    parser.add_argument("--access-log", type=Path, help="bounded JSONL access log (default: runner temp)")
     args = parser.parse_args()
+    access_log = AccessLog(args.access_log or Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()) /
+                           f"dulcet-conformance-access-{args.port}-{os.getpid()}.log")
 
     if args.forward_proxy_auth:
         proxy = ThreadingHTTPServer(
             ("127.0.0.1", args.port),
             ForwardProxyAuthenticationHandler,
         )
+        proxy.access_log = access_log
         try:
             proxy.serve_forever()
         except KeyboardInterrupt:
@@ -1069,6 +1182,8 @@ def main() -> int:
 
     source = ThreadingHTTPServer(("127.0.0.1", args.port), RedirectHandler)
     target = ThreadingHTTPServer(("127.0.0.1", args.target_port), RedirectHandler)
+    source.access_log = access_log
+    target.access_log = access_log
     source.target_port = args.target_port  # type: ignore[attr-defined]
     target.target_port = args.target_port  # type: ignore[attr-defined]
     target_thread = threading.Thread(target=target.serve_forever, daemon=True)
