@@ -17,6 +17,7 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "unevidenced_conformance": {"CONF-09b": "The production origin and forwarding of every declared account-connect outcome are not established; capabilityUnsupported is only constructed in tests. Injected-outcome presentation coverage is conditional."},
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-macos-keychain-and-live-account-validation",
@@ -77,6 +78,7 @@
               "job": "apple-ci",
               "test": "DulcetKitTests/accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation"
             },
+            {"observes": "malformed account input submitted through the production Swift connector and Kotlin facade leaves connecting and reaches the input-error store snapshot without saving credentials", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore"},
             {
               "observes": "given injected connector outcomes and credential-store behavior, the production presentation store publishes the expected account transitions; this does not prove production origin of those outcomes",
               "workflow": "apple-ci",
@@ -112,6 +114,7 @@
         },
         "ios": {
           "status": "partial",
+          "unevidenced_conformance": {"CONF-09b": "The production origin and forwarding of every declared account-connect outcome are not established; capabilityUnsupported is only constructed in tests. Injected-outcome presentation coverage is conditional."},
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-ios-live-account-validation-workflow",
@@ -213,6 +216,7 @@
         },
         "ipados": {
           "status": "partial",
+          "unevidenced_conformance": {"CONF-09b": "The production origin and forwarding of every declared account-connect outcome are not established; capabilityUnsupported is only constructed in tests. Injected-outcome presentation coverage is conditional."},
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-ipados-live-account-and-interaction-validation",
@@ -314,6 +318,7 @@
         },
         "tvos": {
           "status": "partial",
+          "unevidenced_conformance": {"CONF-09b": "The production origin and forwarding of every declared account-connect outcome are not established; capabilityUnsupported is only constructed in tests. Injected-outcome presentation coverage is conditional."},
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "signed-tvos-live-account-validation-workflow",

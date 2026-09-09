@@ -23,7 +23,7 @@ FEATURE_KEYS = {
     "platform_conformance",
     "platforms",
 }
-CELL_KEYS = {"status", "evidence", "reason", "blocked_by", "promotion_condition"}
+CELL_KEYS = {"status", "evidence", "reason", "blocked_by", "promotion_condition", "unevidenced_conformance"}
 
 
 def fail(message: str) -> None:
@@ -248,6 +248,13 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                 fail(f"{source}: {feature_id}/{platform} n/a requires reason")
             if status == "blocked" and not cell.get("blocked_by"):
                 fail(f"{source}: {feature_id}/{platform} blocked requires blocked_by")
+            gaps = cell.get("unevidenced_conformance", {})
+            declared_ids = set(universal_conformance) | set(platform_conformance.get(platform, []))
+            if (not isinstance(gaps, dict) or set(gaps) - declared_ids
+                    or any(not isinstance(reason, str) or not reason.strip() for reason in gaps.values())):
+                fail(f"{source}: {feature_id}/{platform} unevidenced_conformance requires declared ids and nonblank reasons")
+            if gaps and (schema_version != 2 or status == "shipped"):
+                fail(f"{source}: {feature_id}/{platform} cannot ship with unevidenced conformance")
             evidence = cell.get("evidence")
             if status == "shipped" and evidence is None:
                 fail(f"{source}: {feature_id}/{platform} shipped requires workflow/job/test evidence")
@@ -375,10 +382,11 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                     ]
                     if (
                         len(evidence_conformance) != len(set(evidence_conformance))
-                        or set(evidence_conformance) != set(declared_conformance)
+                        or set(evidence_conformance) & set(gaps)
+                        or set(evidence_conformance) | set(gaps) != set(declared_conformance)
                     ):
                         fail(
-                            f"{source}: {feature_id}/{platform} evidence must cover each "
+                            f"{source}: {feature_id}/{platform} evidence and named gaps must cover each "
                             f"declared conformance id exactly once; declared={declared_conformance}, "
                             f"evidenced={evidence_conformance}"
                         )

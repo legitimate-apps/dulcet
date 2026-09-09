@@ -2559,6 +2559,12 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   CrossOriginRedirectRejected`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
+  **OBSERVED implementation gap:** production currently declares and maps this type but never
+  constructs it; its constructor uses are test-only. In account setup it is dead/reserved
+  vocabulary, not a missing mapping for absent extension discovery (§10.3 requires baseline login
+  to proceed). The circuit-breaker policy in §10.4 has no production commonMain implementation and
+  does not supply a production origin for this account error. See `docs/CONFORMANCE.md` for the
+  source audit; injected outcomes must not count as live-state reachability.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 

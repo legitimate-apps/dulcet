@@ -279,10 +279,10 @@ def coverage_control(root: Path, label: str) -> None:
         cell["evidence"].append(dict(template))
         if cell["status"] == "blocked":
             cell["blocked_by"] = "coverage-control"
-        expected = "evidence must cover each declared conformance id exactly once"
+        expected = "evidence and named gaps must cover each declared conformance id exactly once"
     elif label == "observation-only-promotion":
         cell["status"] = "shipped"
-        expected = "evidence must cover each declared conformance id exactly once"
+        expected = "evidence and named gaps must cover each declared conformance id exactly once"
     if cell["status"] != "partial":
         cell.pop("promotion_condition", None)
     # An added observation satisfies the promotion-delta rule. Coverage must independently
@@ -357,6 +357,24 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-gate-") as directory:
     baseline = invoke(root)
     if baseline.returncode != 0:
         raise AssertionError(f"valid evidence tuple rejected: {baseline.stdout}")
+
+# Named gaps make partial records honest without making an incomplete cell shippable.
+def _gap_cell(document):
+    return feature_cell(document, "account.connect", "macos")
+
+expect_rejection("gap cannot ship", lambda d: _gap_cell(d).update(status="shipped"),
+                 "cannot ship with unevidenced conformance")
+expect_rejection("unknown gap", lambda d: _gap_cell(d).update(
+    unevidenced_conformance={"CONF-999": "missing"}), "requires declared ids and nonblank reasons")
+expect_rejection("blank gap reason", lambda d: _gap_cell(d).update(
+    unevidenced_conformance={"CONF-09b": "  "}), "requires declared ids and nonblank reasons")
+expect_rejection("nonstring gap reason", lambda d: _gap_cell(d).update(
+    unevidenced_conformance={"CONF-09b": 1}), "requires declared ids and nonblank reasons")
+expect_rejection("gap removal does not invent evidence", lambda d: _gap_cell(d).pop(
+    "unevidenced_conformance"), "evidence and named gaps must cover each")
+expect_rejection("gap and evidence cannot overlap", lambda d: _gap_cell(d)[
+    "unevidenced_conformance"].update({"CONF-01": "also claimed"}),
+    "evidence and named gaps must cover each")
 
 def _cite_one_test_for_every_id(document: dict[str, object]) -> None:
     """Point every macOS evidence row at the SAME test.
@@ -750,12 +768,12 @@ expect_rejection(
 expect_rejection(
     "missing conformance evidence entry",
     lambda document: macos_evidence(document).pop(),
-    "evidence must cover each declared conformance id exactly once",
+    "evidence and named gaps must cover each declared conformance id exactly once",
 )
 expect_rejection(
     "missing platform-specific conformance evidence entry",
     lambda document: ios_evidence(document).pop(),
-    "evidence must cover each declared conformance id exactly once",
+    "evidence and named gaps must cover each declared conformance id exactly once",
 )
 
 
@@ -803,6 +821,8 @@ expect_rejection(
 # count that disagreed with the list it claims to summarize -- which is exactly the defect this
 # fixture exists to detect in real reports.
 passing_cases = """\
+  <testcase classname="DulcetMacAccountConnectAppTest"
+            name="accountInputFailureCrossesProductionConnectorIntoStore" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.AndroidProductionLibrarySyncAppConformanceTest"
             name="librarySyncSchedulesSecondGenerationAndReopensOffline" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvProductionLibrarySyncAppConformanceTest"

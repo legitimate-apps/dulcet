@@ -11,6 +11,37 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    // Bounded CONF-09b contribution: real input failure, not all declared states.
+    func accountInputFailureCrossesProductionConnectorIntoStore() async throws {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
+        let credentials = SearchMemoryCredentialStore()
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+            connector: DulcetCoreAccountConnector(), credentialStore: credentials
+        ))
+        XCTAssertEqual(store.snapshot.state, .accountConnectIdle)
+        store.accountServerURL = "https://"
+        store.accountUsername = "listener"
+        store.accountPassword = "fixture-password"
+        store.submitAccountConnection()
+        XCTAssertEqual(store.snapshot.state, .accountConnecting)
+        defer { store.cancelAccountConnection() }
+
+        // AccountConnector rejects the malformed URL, the Kotlin facade dispatches the error,
+        // and DulcetCoreAccountConnector must forward it to the production presentation source.
+        try await waitUntil(
+            timeout: .seconds(5),
+            failureMessage: "Production failure forwarding did not leave connecting: \(store.snapshot.state)"
+        ) { store.snapshot.state != .accountConnecting }
+        XCTAssertEqual(store.snapshot.state, .accountErrorInput)
+        guard case let .failed(failure) = store.snapshot.accountConnection else {
+            XCTFail("The production connector did not deliver its input failure")
+            return
+        }
+        XCTAssertEqual(failure.kind, .invalidServerURL)
+        XCTAssertFalse(store.snapshot.accountConnected)
+        XCTAssertEqual(credentials.credentialGeneration, 0)
+    }
+
     func searchQueryRanksAndActivatesTrackThroughHostedAppUI() async throws {
         let baseURL = try XCTUnwrap(
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],

@@ -703,6 +703,7 @@ jobs:
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
               -parallel-testing-enabled NO \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
@@ -715,6 +716,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
+            DulcetMacTests.DulcetMacAccountConnectAppTest \
+            accountInputFailureCrossesProductionConnectorIntoStore
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-app-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
