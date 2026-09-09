@@ -39,81 +39,90 @@ import kotlin.time.TimeSource
 class DarwinProxyAuthenticationConformanceTest {
     @Test
     fun proxyChallengeFailsClosedWithoutAmbientCredentials() = traceProxyTest { mark ->
-        mark("writing ambient credential")
-        val protectionSpace = NSURLProtectionSpace(
-            proxyHost = PROXY_HOST,
-            port = PROXY_PORT.toLong(),
-            type = NSURLProtectionSpaceHTTPProxy,
-            realm = PROXY_REALM,
-            authenticationMethod = NSURLAuthenticationMethodHTTPBasic,
-        )
-        val credential = NSURLCredential.create(
-            user = "ambient-proxy-user",
-            password = "ambient-proxy-password",
-            persistence = NSURLCredentialPersistence.NSURLCredentialPersistenceForSession,
-        )
-        val storage = NSURLCredentialStorage.sharedCredentialStorage
-        storage.setCredential(credential, protectionSpace)
-        storage.setDefaultCredential(credential, protectionSpace)
-        assertNotNull(
-            storage.defaultCredentialForProtectionSpace(protectionSpace),
-            "shared credential storage did not return the ambient proxy credential just written; " +
-                "the fixture precondition never held, so the rest of this test proves nothing",
-        )
-
-        mark("ambient credential precondition satisfied")
-        val observationClient = HttpClient(Darwin) { expectSuccess = false }
-        try {
-            mark("connector started")
-            val result = DarwinForwardProxyAccountConnector(
+        withStallDiagnostics("proxy-auth") { diagnostics ->
+            diagnostics.write("account.phase begin credential-fixture")
+            mark("writing ambient credential")
+            val protectionSpace = NSURLProtectionSpace(
                 proxyHost = PROXY_HOST,
-                proxyPort = PROXY_PORT,
-                saltSource = SaltSource { "0123456789abcdef0123456789abcdef" },
-            ).connect(
-                AccountConnectionRequest(
-                    serverUrl = "https://proxy-target.example.invalid/account",
-                    username = "dulcet-proxy-auth",
-                    password = "fixture-password",
-                    allowLocalHttp = false,
-                ),
+                port = PROXY_PORT.toLong(),
+                type = NSURLProtectionSpaceHTTPProxy,
+                realm = PROXY_REALM,
+                authenticationMethod = NSURLAuthenticationMethodHTTPBasic,
             )
-            mark("connector returned")
-            val failure = assertIs<AccountConnectionResult.Failed>(
-                result,
-                "connecting through the forward proxy was expected to fail closed, but returned $result",
+            val credential = NSURLCredential.create(
+                user = "ambient-proxy-user",
+                password = "ambient-proxy-password",
+                persistence = NSURLCredentialPersistence.NSURLCredentialPersistenceForSession,
             )
-            assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(
-                failure.error,
-                "expected the proxy challenge to surface as UnsupportedAuthenticationChallenge, " +
-                    "observed ${failure.error}",
+            val storage = NSURLCredentialStorage.sharedCredentialStorage
+            storage.setCredential(credential, protectionSpace)
+            storage.setDefaultCredential(credential, protectionSpace)
+            assertNotNull(
+                storage.defaultCredentialForProtectionSpace(protectionSpace),
+                "shared credential storage did not return the ambient proxy credential just written; " +
+                    "the fixture precondition never held, so the rest of this test proves nothing",
             )
 
-            mark("fetching proxy wire observation")
-            val observation = observationClient.get(
-                "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
-            )
-            mark("proxy wire observation response received (buffered)")
-            // Only render closed fields, never a raw observation body on an assertion failure.
-            val observationText = observation.bodyAsText()
-            val body = try {
-                Json.parseToJsonElement(observationText).jsonObject
-            } catch (_: Throwable) {
-                mark("invalid observation JSON bytes=${observationText.encodeToByteArray().size}")
-                throw AssertionError("proxy wire observation was not a JSON object")
+            diagnostics.write("account.phase end credential-fixture")
+            mark("ambient credential precondition satisfied")
+            val observationClient = diagnostics.phase("observation-client-create") {
+                HttpClient(Darwin) { expectSuccess = false }
             }
-            mark("proxy wire observation body received")
-            assertEquals(200, observation.status.value, "proxy wire observation rejected")
-            val challengeCount = body["challenge_count"]?.jsonPrimitive?.longOrNull
-            assertTrue(challengeCount != null && challengeCount > 0, "handler never observed a challenge")
-            val authorizationValues = body["proxy_authorization_values"]?.jsonArray
-            assertNotNull(authorizationValues, "handler did not report authorization observations")
-            assertTrue(authorizationValues.isEmpty(), "proxy authorization reached the wire")
-            mark("handler challenge asserted count=$challengeCount; Proxy-Authorization absent")
-        } finally {
-            mark("cleanup started")
-            observationClient.close()
-            storage.removeCredential(credential, protectionSpace)
-            mark("cleanup completed")
+            try {
+                mark("connector started")
+                val result = DarwinForwardProxyAccountConnector(
+                    proxyHost = PROXY_HOST,
+                    proxyPort = PROXY_PORT,
+                    logSink = diagnostics,
+                    saltSource = SaltSource { "0123456789abcdef0123456789abcdef" },
+                ).connect(
+                    AccountConnectionRequest(
+                        serverUrl = "https://proxy-target.example.invalid/account",
+                        username = "dulcet-proxy-auth",
+                        password = "fixture-password",
+                        allowLocalHttp = false,
+                    ),
+                )
+                mark("connector returned")
+                val failure = assertIs<AccountConnectionResult.Failed>(
+                    result,
+                    "connecting through the forward proxy was expected to fail closed, but returned $result",
+                )
+                assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(
+                    failure.error,
+                    "expected the proxy challenge to surface as UnsupportedAuthenticationChallenge, " +
+                        "observed ${failure.error}",
+                )
+
+                mark("fetching proxy wire observation")
+                val observation = observationClient.get(
+                    "http://$PROXY_HOST:$PROXY_PORT/observations/proxy-auth",
+                )
+                mark("proxy wire observation response received (buffered)")
+                // Only render closed fields, never a raw observation body on an assertion failure.
+                val observationText = observation.bodyAsText()
+                val body = try {
+                    Json.parseToJsonElement(observationText).jsonObject
+                } catch (_: Throwable) {
+                    mark("invalid observation JSON bytes=${observationText.encodeToByteArray().size}")
+                    throw AssertionError("proxy wire observation was not a JSON object")
+                }
+                mark("proxy wire observation body received")
+                assertEquals(200, observation.status.value, "proxy wire observation rejected")
+                val challengeCount = body["challenge_count"]?.jsonPrimitive?.longOrNull
+                assertTrue(challengeCount != null && challengeCount > 0, "handler never observed a challenge")
+                val authorizationValues = body["proxy_authorization_values"]?.jsonArray
+                assertNotNull(authorizationValues, "handler did not report authorization observations")
+                assertTrue(authorizationValues.isEmpty(), "proxy authorization reached the wire")
+                mark("handler challenge asserted count=$challengeCount; Proxy-Authorization absent")
+            } finally {
+                mark("cleanup started")
+                diagnostics.phase("observation-client-close") { observationClient.close() }
+                diagnostics.phase("credential-cleanup") {
+                    storage.removeCredential(credential, protectionSpace)
+                }
+                mark("cleanup completed")
+            }
         }
     }
 
