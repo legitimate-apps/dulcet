@@ -158,3 +158,44 @@ unoriginated outcomes. This review supplies a concrete counterexample to the rul
 The recommendation remains against it: exempting the legitimate flagged citations alone requires
 19 exact pairs (11 after removing target-classname distinctions), and naming does not establish
 semantic coverage. No naming gate or naming-exemption list is added.
+
+## Verification after the connector-boundary review
+
+The reviewer mutation replaced the production failure-completion call in
+`DulcetAppleProduction.swift` with `return`. `xcodebuild test` compiled that file in the `DulcetMac`
+app target and executed `accountInputFailureCrossesProductionConnectorIntoStore` in its test host.
+The mutation run exited 65; the restored run exited 0. Actual failure output included:
+
+```text
+failed - Production failure forwarding did not leave connecting: accountConnecting
+XCTAssertEqual failed: ("accountConnecting") is not equal to ("accountErrorInput")
+failed - The production connector did not deliver its input failure
+Executed 1 test, with 3 failures (0 unexpected) in 5.113 (5.114) seconds
+** TEST FAILED **
+```
+
+After restoring the production completion and rebuilding the same app target:
+
+```text
+Executed 1 test, with 0 failures (0 unexpected) in 0.054 (0.054) seconds
+** TEST SUCCEEDED **
+```
+
+The individual execution guard reported
+`DulcetMacTests.DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore`
+as `terminal=Passed individual-results=1`. JUnit export contains
+`classname="DulcetMacAccountConnectAppTest" name="accountInputFailureCrossesProductionConnectorIntoStore"`.
+The mutation is not committed; production Swift source is unchanged.
+
+- macOS package: 86 tests passed, including the renamed conditional presentation test.
+- iPhone: 77 tests passed; iPad: 77 tests passed; tvOS: 78 tests passed. Their JUnit exports contain
+  the renamed conditional test under `DulcetKitIOSTests` or `DulcetKitTVOSTests` as appropriate.
+- Core command (`:core:allMetadataJar :core:jvmTest :core:testAndroidHostTest
+  :core:bundleAndroidMainAar :core:licensee`) passed: 44 tasks, 1 executed and 43 up-to-date.
+  Test execution was reused, not rerun: reports contain 184 JVM and 180 Android host tests,
+  zero failures/errors/skips.
+- `python3 tools/parity_gate.py`: valid, 6 feature rows.
+- `python3 tools/test-parity-gate`: mutation and executed-evidence tests pass, including six new
+  gap controls and matching testcase declarations for each new citation's target classname.
+- CI policy: valid across 6 workflows. OS-floor configuration: macOS 14.0, iOS/tvOS 17.0 agree.
+- All 36 statuses match base `de69354`; all six account-connect cells remain `partial`.
