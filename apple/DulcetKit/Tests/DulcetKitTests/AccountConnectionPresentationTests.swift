@@ -46,10 +46,10 @@ func credentialBearingPresentationValuesCannotPrintCredentials() {
     #expect(rendered.allSatisfy { $0.contains("<redacted>") })
 }
 
-// CONF-09b: observe production transitions, never request a fixture snapshot by enum case.
+// Conditional presentation coverage: connector outcomes are injected, not production-derived.
 // The connector controls completion timing/outcomes; credential stores control load/save results.
 @Test @MainActor
-func conf09bEveryDeclaredDistinctRenderStateIsReachable() {
+func accountPresentationTransitionsGivenConnectorOutcomes() {
     let request = DulcetAccountConnectRequest(
         serverURL: "https://music.example.invalid", username: "listener",
         password: "fixture-password", allowLocalHTTP: false
@@ -119,7 +119,7 @@ func conf09bEveryDeclaredDistinctRenderStateIsReachable() {
         .accountErrorInput, .accountErrorTransport, .accountErrorSecurity, .accountErrorProtocol,
         .accountErrorServer, .accountErrorAuthentication, .accountErrorCapability,
         .accountErrorPersistence,
-    ]), "CONF-09b did not reach every declared distinct Apple account-connect render state")
+    ]), "Injected outcomes did not produce the expected presentation transitions")
 }
 
 @MainActor
