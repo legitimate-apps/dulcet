@@ -145,12 +145,97 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun productionPreparationInstallsAnAttemptScopedMediaSourceOnTheRealPlayer() {
+        Fixture(realPlayer = true, resolve = { resolved(it) }).use { f ->
+            assertEquals(0, f.controller.sessionPlayer.mediaItemCount)
+            f.controller.playSong(OWNER, "source-song", "Source song")
+            val player = f.controller.sessionPlayer
+            assertEquals(1, player.mediaItemCount, "The production source must be installed, not just a recorded plan")
+            val item = player.getMediaItemAt(0)
+            assertEquals(f.controller.state.value.attemptId, item.mediaId)
+            assertEquals("Source song", item.mediaMetadata.title.toString())
+            assertEquals("dulcet://resource", item.localConfiguration?.uri.toString())
+            assertTrue(player.playWhenReady)
+        }
+    }
+
+    @Test fun progressionSendsSubmittedScrobbleThroughTheLiveConsumerWorkerAndSender() {
+        ScrobbleReceiver().use { receiver ->
+            Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
+                f.controller.playSong(OWNER, "live-song", "Live song")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                repeat(46) {
+                    f.probe.position += 500
+                    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+                }
+                val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+                while ((receiver.requests.none { it["submission"] == "true" } || outbox.pending(ServerId(OWNER)).isNotEmpty()) &&
+                    System.nanoTime() < deadline) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
+                val submitted = receiver.requests.filter { it["submission"] == "true" }
+                assertEquals(1, submitted.size, "The receiving socket must observe a submitted scrobble")
+                assertEquals("live-song", submitted.single()["id"])
+                assertTrue(assertNotNull(submitted.single()["time"]).toLong() > 0)
+                assertTrue(receiver.requests.any { it["submission"] == "false" && it["id"] == "live-song" },
+                    "The same live consumer must send now-playing")
+                assertTrue(outbox.pending(ServerId(OWNER)).isEmpty(), "A successful server response must acknowledge the outbox row")
+            }
+        }
+    }
+
+    /** Receives real HTTP from the production sender. No controller handoff or sender is replaced. */
+    private class ScrobbleReceiver : AutoCloseable {
+        private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
+        val url = "http://127.0.0.1:${socket.localPort}"
+        val requests = java.util.concurrent.CopyOnWriteArrayList<Map<String, String>>()
+        private val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        init {
+            executor.submit {
+                while (!socket.isClosed) {
+                    try {
+                        socket.accept().use { client ->
+                            client.soTimeout = 5000
+                            val reader = client.getInputStream().bufferedReader()
+                            val line = assertNotNull(reader.readLine()).split(' ')
+                            val uri = java.net.URI(line[1])
+                            assertEquals("GET", line[0])
+                            assertEquals("/rest/scrobble.view", uri.path)
+                            while (!reader.readLine().isNullOrEmpty()) { /* drain request headers */ }
+                            val query = uri.rawQuery.split('&').associate {
+                                val pair = it.split('=', limit = 2)
+                                java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
+                            }
+                            requests += query
+                            val body = """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""".toByteArray()
+                            client.getOutputStream().apply {
+                                write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray())
+                                write(body); flush()
+                            }
+                        }
+                    } catch (error: Throwable) { if (!socket.isClosed) failures += error }
+                }
+            }
+        }
+        override fun close() {
+            socket.close(); executor.shutdown()
+            assertTrue(executor.awaitTermination(6, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(failures.isEmpty(), "Scrobble receiving fixture failed: $failures")
+        }
+    }
+
     private class Fixture(
         savedOwner: String? = null,
         savedSongs: List<String> = listOf("saved-song"),
         loadSong: suspend (String) -> AuthenticatedEndpointResponse = { song(it) },
         resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
-        onDelivery: (Fixture, RecordedPlaybackEvent) -> Unit = { _, _ -> },
+        onDelivery: ((Fixture, RecordedPlaybackEvent) -> Unit)? = { _, _ -> },
+        realPlayer: Boolean = false,
+        baseUrl: String = "http://127.0.0.1:4533",
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -168,9 +253,10 @@ class AndroidPlaybackControllerTest {
                     QueueSourceContext(QueueSourceKind.Search, null, "Search"), 0, false))
             }
             controller = AndroidPlaybackController(RuntimeEnvironment.getApplication(),
-                PlaybackEndpointAccount(OWNER, "http://127.0.0.1:4533", "controller-canary", "controller-password-canary", true),
-                AndroidPlaybackControllerBoundaries(store, probe.player, { prepared += it }, loadSong, resolve,
-                    { onDelivery(this, it) }))
+                PlaybackEndpointAccount(OWNER, baseUrl, "controller-canary", "controller-password-canary", true),
+                AndroidPlaybackControllerBoundaries(store, if (realPlayer) null else probe.player,
+                    if (realPlayer) null else { plan -> prepared += plan }, loadSong, resolve,
+                    onDelivery?.let { callback -> { event -> callback(this, event) } }))
         }
         override fun close() {
             try {

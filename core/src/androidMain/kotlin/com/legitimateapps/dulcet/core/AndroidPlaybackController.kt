@@ -308,9 +308,9 @@ private val ANDROID_PROFILE = PlaybackDeviceProfile("Dulcet", "Android", 1_411_2
 /** External boundaries only. Tests retain the real controller, engine, reducer and SQLDelight stores. */
 internal class AndroidPlaybackControllerBoundaries(
     val store: DulcetDatabaseStore,
-    val player: Player,
-    val prepareSource: (RemotePlaybackWirePlan) -> Unit,
+    val player: Player?,
+    val prepareSource: ((RemotePlaybackWirePlan) -> Unit)?,
     val loadSong: suspend (String) -> AuthenticatedEndpointResponse,
     val resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
-    val enqueueDelivery: (RecordedPlaybackEvent) -> Unit,
+    val enqueueDelivery: ((RecordedPlaybackEvent) -> Unit)?,
 )
