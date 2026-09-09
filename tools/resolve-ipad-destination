@@ -168,8 +168,9 @@ def main() -> None:
                         help="overall Xcode discovery deadline in seconds (default: 120)")
     parser.add_argument("--query-timeout", type=float, default=XCODE_QUERY_TIMEOUT,
                         help="per-attempt xcodebuild query timeout in seconds (default: 60). "
-                             "Bounded independently of --discovery-timeout so one slow attempt "
-                             "cannot consume the whole deadline.")
+                             "Each attempt receives the smaller of this value and the remaining "
+                             "discovery budget, so a timed-out query leaves the rest of the "
+                             "deadline available to later attempts.")
     parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
     args = parser.parse_args()
     if not math.isfinite(args.discovery_timeout) or args.discovery_timeout <= 0:

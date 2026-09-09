@@ -195,9 +195,15 @@ def main() -> None:
     query = resolver["load_destinations"]
     command = ["xcrun", "xcodebuild", "-showdestinations", "-project", "test.xcodeproj",
                "-scheme", "TestScheme", "-configuration", "Debug"]
-    for label, returned, thrown, expected in (
-        ("query_nonzero", subprocess.CompletedProcess(command, 70, "partial", "query failed"), None, "exited 70"),
-        ("query_timeout", None, subprocess.TimeoutExpired(command, 60, b"partial", b"timeout detail"), "timed out after 60s"),
+    timeout_type = resolver["DestinationQueryTimeout"]
+    # The TYPE is the contract, not just the text. The retry loop catches DestinationQueryTimeout
+    # specifically, so a wrapper that raised a bare ValueError would restore the original bug --
+    # one attempt, most of the deadline unspent -- while every message-only assertion still passed.
+    for label, returned, thrown, expected, is_timeout in (
+        ("query_nonzero", subprocess.CompletedProcess(command, 70, "partial", "query failed"), None,
+         "exited 70", False),
+        ("query_timeout", None, subprocess.TimeoutExpired(command, 60, b"partial", b"timeout detail"),
+         "timed out after 60s", True),
     ):
         with patch("subprocess.run", return_value=returned, side_effect=thrown) as process:
             try:
@@ -205,10 +211,16 @@ def main() -> None:
             except ValueError as error:
                 if expected not in str(error) or "partial" not in str(error) or "UNKNOWN" not in str(error):
                     raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: {error}")
+                if isinstance(error, timeout_type) is not is_timeout:
+                    raise SystemExit(
+                        f"NEGATIVE CONTROL FAILED {label}: expected retryable={is_timeout} "
+                        f"but raised {type(error).__name__}"
+                    )
             else:
                 raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: query did not fail")
             process.assert_called_once_with(command, capture_output=True, text=True, timeout=60, check=False)
-        print(f"NEGATIVE CONTROL PASS {label}_rejected=true query_timeout_seconds=60")
+        print(f"NEGATIVE CONTROL PASS {label}_rejected=true query_timeout_seconds=60 "
+              f"retryable={is_timeout}")
 
     for label, error in (
         ("failed_query_diagnostic", ValueError("query exited 70; accepted set UNKNOWN")),
@@ -309,6 +321,38 @@ def main() -> None:
         raise SystemExit(f"RETRY CONTROL FAILED timeout_throughout: {timeout_forever}")
     print("RETRY CONTROL PASS timeout_throughout exit_code=1 attempts=2 virtual_elapsed=120.000s "
           "deadline=120s names_timeout=true both_inventories=true stdout_empty=true")
+
+    # End-to-end through the REAL load_destinations, with only the process boundary mocked.
+    # Every other retry control injects DestinationQueryTimeout directly and so cannot detect a
+    # wrapper that stopped raising it; this one can, because the exception must be produced by
+    # subprocess.TimeoutExpired travelling through the real wrapper into the real retry loop.
+    calls = []
+
+    def timeout_then_listing(*args, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command, kwargs.get("timeout") or 60, b"partial", b"")
+        return subprocess.CompletedProcess(command, 0, destinations("EEE"), "")
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with (patch.dict(resolver["main"].__globals__, {
+              "load_devices": lambda _: {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}},
+          }), patch("subprocess.run", side_effect=timeout_then_listing),
+          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"]),
+          redirect_stdout(stdout), redirect_stderr(stderr)):
+        status = 0
+        try:
+            resolver["main"]()
+        except SystemExit:
+            status = 1
+    if status != 0 or stdout.getvalue().strip() != "EEE" or len(calls) != 2:
+        raise SystemExit(
+            "RETRY CONTROL FAILED real_subprocess_timeout_then_listing: "
+            f"status={status} stdout={stdout.getvalue()!r} subprocess_calls={len(calls)} "
+            f"stderr={stderr.getvalue()!r}"
+        )
+    print("RETRY CONTROL PASS real_subprocess_timeout_then_listing exit_code=0 subprocess_calls=2 "
+          f"query_timeouts={calls} stdout='EEE' wrapper=real")
 
     slow = discovery_fixture([empty], query_duration=59)
     if slow["status"] != 1 or slow["stdout"] or slow["elapsed"] != 120 or slow["timeouts"] != [60, 56]:
