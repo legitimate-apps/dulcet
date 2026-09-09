@@ -1,6 +1,54 @@
 import XCTest
 
 final class DulcetiOSUITests: XCTestCase {
+    /// A missing launch-screen declaration opts into the legacy 320-by-480 canvas.
+    /// Compare the actual window with the display, independently of device resolution.
+    @MainActor
+    func testIPhoneWindowUsesFullDisplay() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments.append("-dulcet-account-connect-layout-fixture")
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let display = XCUIScreen.main.screenshot().image.size
+        let frame = window.frame
+        print("DULCET DISPLAY GEOMETRY window=\(frame) displayImageSize=\(display)")
+        print(app.debugDescription)
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertLessThan(frame.width, 700, "Run this full-display proof on an iPhone")
+        XCTAssertEqual(frame.minX, 0, accuracy: 1)
+        XCTAssertEqual(frame.minY, 0, accuracy: 1)
+        XCTAssertEqual(
+            frame.height / frame.width, display.height / display.width, accuracy: 0.01,
+            "The app window must fill the portrait display without legacy letterboxing"
+        )
+
+        // A full-size empty window is not evidence that the account interface rendered.
+        // Scope both semantic queries to this window, then require visible, contained frames.
+        let content: [(String, XCUIElement)] = [
+            ("dulcet.account-connect.title",
+             window.staticTexts["dulcet.account-connect.title"].firstMatch),
+            ("dulcet.account-connect.server-address",
+             window.textFields["dulcet.account-connect.server-address"].firstMatch),
+        ]
+        for (identifier, element) in content {
+            guard element.waitForExistence(timeout: 5) else {
+                XCTFail("Full-display content missing from measured window: \(identifier)")
+                continue
+            }
+            let contentFrame = element.frame
+            print("DULCET DISPLAY CONTENT id=\(identifier) frame=\(contentFrame) window=\(frame) hittable=\(element.isHittable)")
+            XCTAssertGreaterThan(contentFrame.width, 0, "\(identifier) must have visible width")
+            XCTAssertGreaterThan(contentFrame.height, 0, "\(identifier) must have visible height")
+            XCTAssertTrue(element.isHittable, "\(identifier) must be visible and reachable")
+            XCTAssertTrue(
+                frame.contains(contentFrame),
+                "\(identifier) frame \(contentFrame) must lie inside measured window \(frame)"
+            )
+        }
+    }
+
     private enum BlockingSystemDialogProbeResult {
         case absent
         case handled
@@ -193,13 +241,10 @@ final class DulcetiOSUITests: XCTestCase {
             "The results header must report \(renderedResultCount): " + app.debugDescription
         )
 
-        // OBSERVED on a compact window: the ranked rows live in a scroll view a little over one
-        // row tall, so with four results the canary's row lies below the visible bounds and its
-        // midpoint falls outside the window, where a tap resolves nowhere. An application-level
-        // swipe scrolls nothing here because its midpoint lands in the header above the list, so
-        // the swipe has to be delivered to the list itself. A person scrolls the results to the
-        // row they want and taps it; the test does the same. Every rank's identity was read
-        // before this point, so scrolling cannot affect what was asserted.
+        // Scroll the results container only when the canary is outside the visible window.
+        // The legacy letterboxed iPhone canvas needed this; a full-display iPhone may expose
+        // every row already. Keep the reachability check for smaller windows and keyboards,
+        // and preserve the rank assertions above independently of any scrolling.
         let canaryResult = rankedResults[canaryRank]
         let resultsList = app.scrollViews.firstMatch
         guard resultsList.waitForExistence(timeout: 5) else {

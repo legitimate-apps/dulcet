@@ -156,6 +156,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
