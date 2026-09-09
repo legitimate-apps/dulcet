@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -79,6 +80,8 @@ CASES = (
 # calls had not been wired in at all, and it printed that line happily. A count derived from what
 # actually executed cannot make that claim.
 EXTRA_PASSES: list[str] = []
+CORE_PASSES: list[str] = []
+APPLE_PASSES: list[str] = []
 
 def workflow_for(case: Case) -> str:
     lines = ["name: synthetic-core-ci"]
@@ -142,6 +145,7 @@ def run_case(case: Case) -> None:
                 f"stdout:\n{result.stdout}stderr:\n{result.stderr}",
             )
         outcome = "rejected"
+    CORE_PASSES.append(case.name)
     print(f"PASS: {case.name} -> {outcome}")
 
 
@@ -243,6 +247,7 @@ def run_apple_case(
             f"{name}: expected exit {expected_returncode}, got {result.returncode} -- {verdict}\n"
             f"stderr:\n{result.stderr}",
         )
+    APPLE_PASSES.append(name)
     print(f"PASS: {name}")
 
 
@@ -631,6 +636,31 @@ def run_orphan_control_case(variants=None) -> None:
         print(f"PASS: {label}")
 
 
+def run_completion_mutation_case(groups: tuple[str, ...]) -> None:
+    source = Path(__file__).read_text()
+    for group, loop in (("core", "for test_case in CASES:"),
+                        ("apple", "for apple_case in APPLE_CASES:")):
+        if group in groups:
+            replacement = loop[:loop.index(" in ")] + " in ():"
+            if source.count("\n" + loop) != 1:
+                raise AssertionError(f"completion mutation cannot find {group} execution loop")
+            source = source.replace("\n" + loop, "\n" + replacement)
+    # Keep the real __file__ so verifier and fixture paths resolve exactly as in
+    # the parent. The child flag prevents recursive mutation testing only.
+    harness = "import sys; source=sys.stdin.read(); exec(compile(source, __file__, 'exec'))"
+    harness = "__file__=" + repr(str(Path(__file__).resolve())) + "; " + harness
+    result = subprocess.run([sys.executable, "-c", harness, "--completion-child"],
+                            input=source, text=True, capture_output=True, check=False)
+    label = "completion ledger: empty " + "+".join(groups) + " execution loop"
+    if result.returncode != 1 or "CI policy control incomplete:" not in result.stderr:
+        raise AssertionError(f"{label}: expected incomplete-check rejection, got exit "
+                             f"{result.returncode}\n{result.stdout}{result.stderr}")
+    if "CI policy control passed:" in result.stdout:
+        raise AssertionError(f"{label}: an incomplete suite printed a success summary")
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
+
+
 for test_case in CASES:
     run_case(test_case)
 
@@ -660,12 +690,29 @@ run_transitive_invocation_case()
 
 run_orphan_control_case()
 
-# Counted explicitly rather than from len(APPLE_CASES) alone: the class-emission and
-# orphan-control checks are not in that tuple, and a summary that silently omits them would
-# under-report the suite in exactly the direction that flatters it.
+if "--completion-child" not in sys.argv:
+    run_completion_mutation_case(("core",))
+    run_completion_mutation_case(("apple",))
+    run_completion_mutation_case(("core", "apple"))
+
+# Record completions only after all assertions return. Compare identities as well
+# as counts so skipped and duplicate executions cannot cancel one another out.
+incomplete = []
+for group, completed, required in (
+    ("core", CORE_PASSES, [case.name for case in CASES]),
+    ("apple", APPLE_PASSES, [case[0] for case in APPLE_CASES]),
+):
+    missing = Counter(required) - Counter(completed)
+    unexpected = Counter(completed) - Counter(required)
+    if missing or unexpected or not required:
+        incomplete.append(f"{group} completed {len(completed)}/{len(required)}; "
+                          f"missing={list(missing.elements())}; unexpected={list(unexpected.elements())}")
+if incomplete:
+    raise AssertionError("CI policy control incomplete: " + "; ".join(incomplete))
+
 print(
-    f"CI policy control passed: {len(CASES)}/{len(CASES)} core cases, "
-    f"{len(APPLE_CASES)}/{len(APPLE_CASES)} apple cases, "
+    f"CI policy control passed: {len(CORE_PASSES)}/{len(CASES)} core cases, "
+    f"{len(APPLE_PASSES)}/{len(APPLE_CASES)} apple cases, "
     f"{len(EXTRA_PASSES)} extra checks: {', '.join(EXTRA_PASSES)}"
 )
 
