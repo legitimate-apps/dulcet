@@ -13,6 +13,11 @@ import threading
 import time
 
 
+# Measured healthy maximum: 10.519s source / 9.707s host receipt.
+# ceil(1.5 * 10.519) gives 16s, leaving 5.481s margin and sampling before 30s.
+# Evidence and scope: docs/investigations/2026-09-06-conformance-stall.md, section 6.
+SAMPLE_AFTER_SECONDS = 16
+
 PHASE = re.compile(r"CONFORMANCE_PHASE (\S+) elapsedMs=\d+ (begin|end|event) (\S+)")
 
 
@@ -103,7 +108,7 @@ def main():
                 transcript.flush()
                 progress.observe(line, received_ns / 1_000_000_000)
             now = time.monotonic()
-            for label in progress.overdue(now, 40):
+            for label in progress.overdue(now, SAMPLE_AFTER_SECONDS):
                 if now - sampled_at.get(label, float("-inf")) < 15:
                     continue
                 sampled_at[label] = now

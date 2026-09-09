@@ -15,11 +15,20 @@ class CaptureTest(unittest.TestCase):
         progress = module.Progress()
         progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=0 begin test-body", 0)
         progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=10 event engine-send", 0.01)
-        progress.observe("CONFORMANCE_SNAPSHOT conf06 elapsedMs=40000 pending=[connect]", 40)
-        self.assertEqual([], progress.overdue(40, 40))
-        self.assertEqual(["conf06"], progress.overdue(41, 40))
-        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=42000 end test-body", 42)
-        self.assertEqual([], progress.overdue(100, 40))
+        progress.observe("CONFORMANCE_SNAPSHOT conf06 elapsedMs=16000 pending=[connect]", 16)
+        self.assertEqual([], progress.overdue(16, module.SAMPLE_AFTER_SECONDS))
+        self.assertEqual(["conf06"], progress.overdue(16.01, module.SAMPLE_AFTER_SECONDS))
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=17000 end test-body", 17)
+        self.assertEqual([], progress.overdue(100, module.SAMPLE_AFTER_SECONDS))
+
+    def test_measured_healthy_gap_does_not_sample_but_thirty_second_wait_does(self):
+        progress = module.Progress()
+        progress.observe("CONFORMANCE_PHASE slow-account elapsedMs=0 begin test-body", 0)
+        self.assertEqual([], progress.overdue(10.519, module.SAMPLE_AFTER_SECONDS))
+        self.assertGreaterEqual(module.SAMPLE_AFTER_SECONDS, 1.5 * 10.519)
+        self.assertLess(module.SAMPLE_AFTER_SECONDS, 30)
+        self.assertEqual(["slow-account"], progress.overdue(module.SAMPLE_AFTER_SECONDS,
+                                                           module.SAMPLE_AFTER_SECONDS))
 
     def test_wall_anchored_markers_produce_host_receipt_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
