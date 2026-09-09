@@ -468,6 +468,43 @@ def run_required_association_case(shape: str) -> None:
     print(f"PASS: {label}")
 
 
+def run_accounting_forms_case(shape: str, accepted: bool) -> None:
+    """Existing whole-target and parameterized producers must resolve, not be exempted."""
+    script = PAIRED_EMISSION_SCRIPT % {"emitted": "Example"}
+    if shape.startswith("suite"):
+        script = script.replace("ExampleTarget/Example/otherMethod", "Example")
+        script = script.replace("ExampleTarget/Example/exampleMethod", "Example")
+        if not accepted:
+            script = script.replace("xcodebuild test-without-building \\\n  -only-testing:Example", "true")
+    else:
+        split = script.rindex("xcodebuild test-without-building")
+        body = script[split:].replace("ExampleTarget/Example/exampleMethod", '$target/Example/$method')
+        body = body.replace("  Example\n", '  "$emitted"\n')
+        script = script[:split] + 'proof() {\n target="$1"\n method="$2"\n emitted="$3"\n' + body + "}\n"
+        if shape != "helper-call-deleted":
+            emitted = "ExampleTarget" if shape == "helper-wrong-class" else "Example"
+            script += f"proof ExampleTarget exampleMethod {emitted}\n"
+    with tempfile.TemporaryDirectory(prefix="dulcet-accounting-forms-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(APPLE_WORKFLOW % {"invocation": "tools/ci/produce-evidence"})
+        (workflows / "core-ci.yml").write_text(workflow_for(next(c for c in CASES if c.accepted)))
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "produce-evidence").write_text(script)
+        (root / "FEATURES.yml").write_text(PAIRED_EMISSION_FEATURES)
+        result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root, text=True,
+                                capture_output=True, check=False)
+    label = f"association accounting form: {shape}"
+    if result.returncode != (0 if accepted else 1):
+        raise AssertionError(f"{label}: unexpected exit {result.returncode}\n{result.stderr}")
+    if not accepted and "cannot be resolved" not in result.stderr:
+        raise AssertionError(f"{label}: rejected for the wrong reason\n{result.stderr}")
+    EXTRA_PASSES.append(label)
+    print(f"PASS: {label}")
+
+
 # The LAST uncovered mutation, and it guards a false-FAILURE rather than a missed defect: without a
 # per-source reset of `pending_method`, a method left dangling at the end of one source pairs with
 # the first emission in the next and rejects a workflow that is correct. I listed this as "NOT
@@ -590,6 +627,11 @@ def run_orphan_control_case(variants=None) -> None:
         "if-false": "      - run: |\n          if false; then\n            python3 tools/test-example-control\n          fi\n",
         "literal-block": "      - run: |\n          python3 tools/test-example-control # real command\n",
         "quoted": "      - run: 'python3 tools/test-example-control'\n",
+        "if-false-inline": "      - run: if false; then python3 tools/test-example-control; fi\n",
+        "heredoc": "      - run: |\n          cat <<'EOF'\n          python3 tools/test-example-control\n          EOF\n",
+        "continue-before-run": "      - continue-on-error: true\n        run: python3 tools/test-example-control\n",
+        "errexit-disabled": "      - run: |\n          set +e\n          python3 tools/test-example-control\n          true\n",
+        "workflow-shell-default": "      - run: python3 tools/test-example-control\n",
     }
     for wired in variants or ("no", "yes", "prefix-of-a-wired-control", "named-only-in-a-comment", *shapes):
         with tempfile.TemporaryDirectory(prefix="dulcet-orphan-policy-") as temporary_directory:
@@ -605,6 +647,8 @@ def run_orphan_control_case(variants=None) -> None:
             elif wired == "named-only-in-a-comment":
                 core += "      # superseded by tools/test-example-control\n"
             core += shapes.get(wired, "")
+            if wired == "workflow-shell-default":
+                core = "defaults:\n  run:\n    shell: bash {0}\n" + core
             (workflows / "core-ci.yml").write_text(core)
             tools = root / "tools"
             tools.mkdir()
@@ -683,6 +727,12 @@ run_paired_emission_case(
 
 run_required_association_case("deleted-emission")
 run_required_association_case("exported-selector")
+
+run_accounting_forms_case("suite", True)
+run_accounting_forms_case("suite-producer-deleted", False)
+run_accounting_forms_case("helper", True)
+run_accounting_forms_case("helper-call-deleted", False)
+run_accounting_forms_case("helper-wrong-class", False)
 
 run_source_seam_case()
 

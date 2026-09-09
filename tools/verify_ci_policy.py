@@ -135,6 +135,21 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
     """
     lines = text.splitlines()
     steps: list[dict[str, str]] = []
+
+    def default_shell(start: int, stop: int, indent: int) -> str | None:
+        for i in range(start, stop):
+            if mapping_entry(lines[i]) == (indent, "defaults", ""):
+                end = min(block_end(lines, i + 1, indent), stop)
+                for j in range(i + 1, end):
+                    if mapping_entry(lines[j]) == (indent + 2, "run", ""):
+                        run_end = min(block_end(lines, j + 1, indent + 2), end)
+                        for raw in lines[j + 1:run_end]:
+                            entry = mapping_entry(raw)
+                            if entry and entry[:2] == (indent + 4, "shell"):
+                                return entry[2].strip("\"'")
+        return None
+
+    inherited_shell = default_shell(0, len(lines), 0) or "bash"
     # Restrict discovery to jobs.<job>.steps, never a lookalike in env or run text.
     jobs_start = next((i for i, line in enumerate(lines)
                        if mapping_entry(line) == (0, "jobs", "")), None)
@@ -146,7 +161,7 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
     step_blocks: list[tuple[int, dict[str, str]]] = []
     for position, start in enumerate(job_starts):
         stop = job_starts[position + 1] if position + 1 < len(job_starts) else jobs_end
-        metadata = {}
+        metadata = {"inherited-shell": default_shell(start + 1, stop, 4) or inherited_shell}
         step_index = None
         for i in range(start + 1, stop):
             entry = mapping_entry(lines[i])
@@ -188,6 +203,7 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
                         properties["continue-on-error"] = "ambiguous"
                     properties[key] = value
                 i += 1
+            properties.setdefault("shell", job["inherited-shell"])
             if job.get("continue-on-error", "false") != "false" or "if" in job:
                 properties["continue-on-error"] = "job is not unconditionally blocking"
             steps.append(properties)
@@ -221,6 +237,11 @@ def blocking_controls(step: dict[str, str]) -> set[str]:
             if not re.search(r";\s*(fi|done|esac)\s*$", code):
                 depth += 1
             continue
+        # A here-document contains data that can look exactly like commands.
+        # Do not certify commands later in a block whose heredoc grammar we do
+        # not interpret. Here-strings (<<<) are ordinary single-command input.
+        if re.search(r"(?<!<)<<(?!<)", code):
+            break
         if depth:
             continue
         if re.match(r"^set\s+\+\w*e", code):
