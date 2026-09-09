@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Summarize source-monotonic gaps within healthy instrumented Gradle test bodies.
+
+Percentiles use nearest rank. Each test-body begin resets its label; snapshots,
+late callbacks after body exit, and gaps between tests/runs are excluded.
+"""
+import argparse
+from collections import defaultdict
+import json
+import math
+from pathlib import Path
+import re
+
+PHASE = re.compile(r"CONFORMANCE_PHASE (\S+) elapsedMs=(\d+) (begin|end|event) (\S+)")
+
+
+def measure(text):
+    if 'BUILD SUCCESSFUL' not in text or 'BUILD FAILED' in text:
+        raise ValueError('input must be a successful Gradle run')
+    active = {}
+    gaps = defaultdict(list)
+    bodies = defaultdict(int)
+    for line in text.splitlines():
+        match = PHASE.search(line)
+        if not match:
+            continue
+        label, elapsed, event, phase = match.groups()
+        elapsed = int(elapsed)
+        if event == 'begin' and phase == 'test-body':
+            if label in active:
+                raise ValueError('overlapping bodies with the same label')
+            active[label] = elapsed
+            bodies[label] += 1
+        elif label in active:
+            gap = elapsed - active[label]
+            if gap < 0:
+                raise ValueError('phase timestamps arrived out of order')
+            gaps[label].append(gap)
+            active[label] = elapsed
+            if event == 'end' and phase == 'test-body':
+                del active[label]
+    if active or not gaps:
+        raise ValueError('missing or incomplete instrumented test bodies')
+    return gaps, bodies
+
+
+def summary(values):
+    values = sorted(values)
+    return dict(count=len(values), minMs=values[0],
+                p50Ms=values[math.ceil(len(values) * .50) - 1],
+                p95Ms=values[math.ceil(len(values) * .95) - 1],
+                p99Ms=values[math.ceil(len(values) * .99) - 1], maxMs=values[-1])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('logs', type=Path, nargs='+')
+    args = parser.parse_args()
+    merged = defaultdict(list)
+    counts = defaultdict(int)
+    files = []
+    for path in args.logs:
+        gaps, bodies = measure(path.read_text())
+        files.append(dict(file=path.name, **summary([v for values in gaps.values() for v in values])))
+        for label, values in gaps.items():
+            merged[label].extend(values)
+            counts[label] += bodies[label]
+    print(json.dumps(dict(files=files, labels={label: dict(bodies=counts[label], **summary(values))
+                                             for label, values in sorted(merged.items())},
+                          overall=summary([v for values in merged.values() for v in values])), indent=2))
+
+
+if __name__ == '__main__':
+    main()

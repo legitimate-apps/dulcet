@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+import pathlib
+import runpy
+import unittest
+
+module = runpy.run_path(str(pathlib.Path(__file__).with_name('measure-conformance-phase-gaps')))
+
+
+class MeasurementTest(unittest.TestCase):
+    def test_snapshots_late_callbacks_and_between_body_time_are_excluded(self):
+        gaps, bodies = module['measure']('''
+CONFORMANCE_PHASE slow-account elapsedMs=0 begin test-body wallTimeMillis=1
+CONFORMANCE_PHASE slow-account elapsedMs=1 event engine-send wallTimeMillis=2
+CONFORMANCE_SNAPSHOT slow-account elapsedMs=10000 pending=[send] wallTimeMillis=10001
+CONFORMANCE_PHASE slow-account elapsedMs=10501 end send wallTimeMillis=10502
+CONFORMANCE_PHASE slow-account elapsedMs=10502 end test-body wallTimeMillis=10503
+CONFORMANCE_PHASE slow-account elapsedMs=20000 event request-complete wallTimeMillis=20001
+CONFORMANCE_PHASE slow-account elapsedMs=0 begin test-body wallTimeMillis=90000
+CONFORMANCE_PHASE slow-account elapsedMs=5 end test-body wallTimeMillis=90005
+BUILD SUCCESSFUL
+''')
+        self.assertEqual([1, 10500, 1, 5], gaps['slow-account'])
+        self.assertEqual(2, bodies['slow-account'])
+        self.assertEqual(dict(count=4, minMs=1, p50Ms=1, p95Ms=10500, p99Ms=10500, maxMs=10500),
+                         module['summary'](gaps['slow-account']))
+
+    def test_missing_failed_incomplete_and_out_of_order_are_rejected(self):
+        for text in ('BUILD SUCCESSFUL', 'BUILD FAILED',
+                     'CONFORMANCE_PHASE x elapsedMs=0 begin test-body\nBUILD SUCCESSFUL',
+                     'CONFORMANCE_PHASE x elapsedMs=5 begin test-body\n'
+                     'CONFORMANCE_PHASE x elapsedMs=4 end test-body\nBUILD SUCCESSFUL'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                module['measure'](text)
+
+
+if __name__ == '__main__':
+    unittest.main()

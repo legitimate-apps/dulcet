@@ -72,6 +72,9 @@ class AccessLogTest(unittest.TestCase):
                 print('SLOW CONTROL in-flight arrivals=2 completions=0', flush=True)
                 self.assertEqual([200, 200], [f.result() for f in futures])
             completions = await_records(path, 'completion', 2)
+            for row in arrivals + completions:
+                self.assertLess(abs(row['wallTimeMillis'] - time.time_ns() // 1_000_000), 20000)
+                self.assertGreater(row['monotonicNs'], 0)
             self.assertEqual({r['sequence'] for r in arrivals}, {r['requestId'] for r in completions})
             for row in completions:
                 self.assertEqual(target, row['path'])

@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlin.time.Clock
+import kotlin.test.assertTrue
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertFalse
@@ -21,6 +23,17 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class StallDiagnosticsTest {
+    @Test
+    fun snapshotWallAnchorUsesEpochTime() {
+        val before = Clock.System.now().toEpochMilliseconds()
+        val diagnostics = com.legitimateapps.dulcet.core.AccountConnectionDiagnostics("clock-control")
+        val snapshot = diagnostics.snapshot()
+        val after = Clock.System.now().toEpochMilliseconds()
+        val anchor = Regex("wallTimeMillis=(\\d+)").find(snapshot)!!.groupValues[1].toLong()
+        assertTrue(anchor in before..after)
+        assertContains(snapshot, "elapsedMs=")
+    }
+
     @Test
     fun outstandingPhaseSurvivesUntilCancellation() = runTest {
         withStallDiagnostics("cancellation-control") { diagnostics ->
