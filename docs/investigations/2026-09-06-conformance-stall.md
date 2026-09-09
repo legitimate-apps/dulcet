@@ -154,3 +154,107 @@ All three recorded `handlerReturned=true` and `bodyWriteFailed=false`. Independe
 reported `getOpenSubsonicExtensions.send durationMs=10519`; at 10010 ms its watchdog showed that
 phase pending and request 1 active, not cancelled or completed. This proves the slow-test wrapper
 and the server log observe the same successful local negotiation, not the unexplained CI delay.
+
+**6. Shared wall-clock anchors and a measured observer threshold (2026-09-08 follow-up).**
+
+OBSERVED — this follow-up supersedes section 5's missing-clock-anchor and 40-second-observer limits.
+Client phase markers and snapshots now append `wallTimeMillis`, using
+`Clock.System.now().toEpochMilliseconds()`. Fixture JSONL records use the same Unix-epoch-millisecond
+representation from `time.time_ns() // 1_000_000`. Neither changes durations: client elapsed time and
+server handler duration remain monotonic. The server captures both timestamps before waiting for its
+file lock. No header, query parameter or request ID was added to any request. The host capture tool
+also writes `dulcet-stall-phase-receipts.log`, containing host monotonic and wall time when each phase
+marker is received, plus `COMMAND_EXIT` on completion. It matches the existing failure artifact glob.
+A missing exit marker is incomplete evidence, not a healthy calibration run.
+
+OBSERVED — healthy local measurements, selected before changing the observer threshold:
+
+| Calibration population | Gaps | Minimum | p50 | p95 | p99 | Maximum |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Three retained JVM/native control logs from section 5, source monotonic | 121 | 0 ms | 0 ms | 26 ms | 156 ms | 10519 ms |
+| Five fresh Darwin runs, source monotonic | 520 | 0 ms | 0 ms | 4 ms | 158 ms | 10515 ms |
+| Three fresh Darwin runs through the actual capture wrapper, host receipt monotonic | 312 | 0 ms | 0 ms | 0 ms | 1 ms | 9707 ms |
+| All eleven healthy logs, source monotonic (including the three wrapped runs) | 953 | 0 ms | 0 ms | 6 ms | 158 ms | 10519 ms |
+
+Percentiles are nearest-rank. Source and host rows describe different clocks and are not pooled.
+Consecutive markers are measured only within a test body and label; snapshots, inter-test/run time,
+and late callbacks after body exit are excluded. Each fresh Darwin run selected
+`*StallDiagnosticsTest*`, `*slowSelfHostedServerCanCompleteAccountNegotiation*`,
+`*conf06DistinguishesAuthenticationAndTransportFailures*` and
+`*DarwinProxyAuthenticationConformanceTest*`. These run the unchanged 10.5-second endpoint sleep,
+port-1 failure, proxy challenge/observation and diagnostic controls. The source maximum came from
+the slow-account endpoint; low percentiles include the many adjacent zero/one-millisecond markers.
+The nine slow-account extension-wait gaps themselves span 10507–10519 ms, with median 10512 ms.
+Host receipts show batching through Gradle, so they were measured independently rather than assumed
+to equal source timing. This is a local healthy distribution, not a hosted-CI percentile guarantee.
+
+The committed [calibration dataset](2026-09-08-conformance-phase-gaps.json) retains per-run/per-label
+gap arrays, body counts and summaries without raw URLs or home paths. Reproduce summary extraction
+from successful Gradle logs with `python3 tools/measure-conformance-phase-gaps <logs...>`; use
+`--clock host` for the corresponding receipt logs. All five fresh unwrapped runs and three wrapped
+runs passed. The capture wrapper preserved exit status; none sampled with the then-current threshold.
+The measurement controls reject empty, failed, incomplete or out-of-order input and prove that a
+snapshot cannot break a 10.5-second phase gap into smaller apparent gaps.
+
+DECISION — set only the observer's `SAMPLE_AFTER_SECONDS` to **16**:
+`ceil(1.5 * max(10.519, 9.707)) = 16`. The margin above the larger observed healthy maximum is
+**5.481 seconds (52.1%)**; the trigger is **14 seconds below** the unchanged 30-second request budget.
+The existing two-second polling interval, 15-second resampling spacing, sampling commands, request
+timeouts, runTest budgets and assertions are unchanged. This initiates sampling before a 30-second
+failure on a responsive host; host starvation, output delivery delays or slow sampling tools can
+still delay the observation. A healthy run above the threshold would produce diagnostic evidence,
+not fail a test, retry a request, kill a process or change a deadline.
+
+OBSERVED — eight sequential slow-account requests were independently joined by wall time and
+endpoint/order. Client `engine-send request=1` to server arrival was **1–3 ms**; server completion to
+client `end getOpenSubsonicExtensions.send` was **1–2 ms**. One actual anchored sequence was:
+
+| Observation | wallTimeMillis |
+| --- | ---: |
+| Client engine-send | 1788915946553 |
+| Server parsed-request arrival | 1788915946556 |
+| Server handler completion | 1788915957067 |
+| Client response observation | 1788915957068 |
+
+Thus the observed pre-arrival interval was 3 ms, handler wall interval 10511 ms, and post-completion
+interval 1 ms. Monotonic handler durations remain the authoritative duration measurement. For this
+sequential, uniquely identifiable endpoint occurrence, **the before-arrival/after-completion split
+is now decidable**, including when output is forwarded later: use event wall time, not log-print
+order. A large wall-clock step should be checked against the paired monotonic durations. The anchor
+is not a transport identifier: genuinely overlapping identical requests can remain ambiguous. The
+arrival boundary is still after parsing; a prompt completion is still not proof of client delivery.
+
+OBSERVED — a real host control compiled a C executable that prints and flushes a test-body marker,
+sleeps **20 seconds**, and exits zero. At the new threshold it produced:
+
+```text
+HOST STALL CONTROL exit=0 samples=1 sampleAtSeconds=16.671 commandDurationSeconds=20.274 stack=nanosleep
+```
+
+The sample contained `Call graph:` and `nanosleep`. This control exits before the old 40-second
+threshold, so it discriminates the newly covered failure window. Capture-tool controls passed four
+tests, including the wall-anchored marker format and the observed healthy maximum staying below the
+trigger. Measurement-parser controls passed three tests. Access-log controls passed six tests in
+11.656 seconds, preserving the in-flight hit-count and credential negative controls while checking
+wall anchors. Core commands plus the updated JVM diagnostic controls returned
+`BUILD SUCCESSFUL in 49s`; JVM core 184, Android host 180, JVM diagnostics 4 tests, zero failures/errors.
+CI policy, parity, OS-floor configuration and migration gates passed. Independent review reproduced
+the raw-source and host distributions and found no remaining blocking issues.
+
+OBSERVED FROM SOURCE — **library browse in the Apple download integration is not covered by these
+paired access records**. `DulcetAppleDownloadIntegrationTest.loadLiveTrack` passes the environment's
+`baseURL` to `AppleLibraryBrowseRequest`; `AppleLibraryBrowseClient` invokes `LibraryBrowser` against
+that URL. The workflow supplies `http://127.0.0.1:4533`, served directly by the native Navidrome
+process. Browse requests include `getMusicFolders`, `getArtists`, `getAlbumList2` and `getAlbum`.
+The separately launched redirect/proxy fixtures on 4540/4541/4543 do not see them. The workflow's
+failure/cancellation artifact collection does include Navidrome's own `ROOT/logs/navidrome.log`, the
+download test log, xcresult and JUnit output. Collecting the fixture access file on that failure does
+not make it an access log for Navidrome. The reported `library browse failed: kind=timeout` in job
+102278787665 was not reproduced or diagnosed here; its path remains a stated instrumentation blind
+spot. No routing or server lifecycle was changed to broaden scope.
+
+
+OBSERVED — final healthy verification through the capture wrapper at the **new 16-second threshold**
+returned `FINAL HEALTHY CAPTURE exit=0 samples=0`. All seven selected Darwin tests passed. This run
+is a post-selection control, not an extra sample used to choose the threshold. The shared-clock and
+sampler changes are committed locally; no push or PR action was taken.
