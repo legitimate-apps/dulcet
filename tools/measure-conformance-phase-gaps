@@ -14,18 +14,24 @@ import re
 PHASE = re.compile(r"CONFORMANCE_PHASE (\S+) elapsedMs=(\d+) (begin|end|event) (\S+)")
 
 
-def measure(text):
-    if 'BUILD SUCCESSFUL' not in text or 'BUILD FAILED' in text:
+HOST_PHASE = re.compile(r"CONFORMANCE_HOST_PHASE (\S+) monotonicNs=(\d+) wallTimeMillis=\d+ (begin|end|event) (\S+)")
+
+
+def measure(text, clock='source'):
+    if clock == 'host':
+        if text.splitlines()[-1:] != ['COMMAND_EXIT 0']:
+            raise ValueError('host receipt log must have a successful command exit')
+    elif 'BUILD SUCCESSFUL' not in text or 'BUILD FAILED' in text:
         raise ValueError('input must be a successful Gradle run')
     active = {}
     gaps = defaultdict(list)
     bodies = defaultdict(int)
     for line in text.splitlines():
-        match = PHASE.search(line)
+        match = (HOST_PHASE if clock == 'host' else PHASE).search(line)
         if not match:
             continue
         label, elapsed, event, phase = match.groups()
-        elapsed = int(elapsed)
+        elapsed = int(elapsed) // 1_000_000 if clock == 'host' else int(elapsed)
         if event == 'begin' and phase == 'test-body':
             if label in active:
                 raise ValueError('overlapping bodies with the same label')
@@ -54,13 +60,14 @@ def summary(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--clock', choices=['source', 'host'], default='source')
     parser.add_argument('logs', type=Path, nargs='+')
     args = parser.parse_args()
     merged = defaultdict(list)
     counts = defaultdict(int)
     files = []
     for path in args.logs:
-        gaps, bodies = measure(path.read_text())
+        gaps, bodies = measure(path.read_text(), args.clock)
         files.append(dict(file=path.name, **summary([v for values in gaps.values() for v in values])))
         for label, values in gaps.items():
             merged[label].extend(values)

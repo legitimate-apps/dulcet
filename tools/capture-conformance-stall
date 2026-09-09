@@ -80,7 +80,8 @@ def main():
     progress = Progress()
     sampled_at = {}
     sequence = 0
-    with (args.output / "dulcet-stall-console.log").open("w") as transcript:
+    with (args.output / "dulcet-stall-console.log").open("w") as transcript, \
+            (args.output / "dulcet-stall-phase-receipts.log").open("w") as receipts:
         while True:
             try:
                 line = lines.get(timeout=2)
@@ -89,10 +90,18 @@ def main():
             if line is None:
                 break
             if line:
+                received_ns = time.monotonic_ns()
+                wall_ms = time.time_ns() // 1_000_000
+                match = PHASE.search(line)
+                if match:
+                    label, event, phase = match.groups()
+                    receipts.write(f"CONFORMANCE_HOST_PHASE {label} monotonicNs={received_ns} "
+                                   f"wallTimeMillis={wall_ms} {event} {phase}\n")
+                    receipts.flush()
                 print(line, end="", flush=True)
                 transcript.write(line)
                 transcript.flush()
-                progress.observe(line, time.monotonic())
+                progress.observe(line, received_ns / 1_000_000_000)
             now = time.monotonic()
             for label in progress.overdue(now, 40):
                 if now - sampled_at.get(label, float("-inf")) < 15:
@@ -103,7 +112,9 @@ def main():
                     sample_binary(args.binary.resolve(), args.output, sequence)
                 except (OSError, subprocess.TimeoutExpired) as failure:
                     print(f"CONFORMANCE_HOST_SAMPLE failed={type(failure).__name__}", flush=True)
-    return child.wait()
+        result = child.wait()
+        receipts.write(f"COMMAND_EXIT {result}\n")
+    return result
 
 
 if __name__ == "__main__":

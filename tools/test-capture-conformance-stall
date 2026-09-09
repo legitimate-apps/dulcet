@@ -21,6 +21,21 @@ class CaptureTest(unittest.TestCase):
         progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=42000 end test-body", 42)
         self.assertEqual([], progress.overdue(100, 40))
 
+    def test_wall_anchored_markers_produce_host_receipt_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = ("print('CONFORMANCE_PHASE probe elapsedMs=0 begin test-body wallTimeMillis=1'); "
+                      "print('CONFORMANCE_PHASE probe elapsedMs=1 end test-body wallTimeMillis=2')")
+            result = subprocess.run(
+                [sys.executable, str(TOOL), "--binary", "unused.kexe", "--output", directory,
+                 "--", sys.executable, "-c", script], capture_output=True, text=True,
+            )
+            self.assertEqual(0, result.returncode)
+            receipts = (pathlib.Path(directory) / "dulcet-stall-phase-receipts.log").read_text()
+            self.assertEqual(2, receipts.count("CONFORMANCE_HOST_PHASE"))
+            self.assertRegex(receipts, r"monotonicNs=\d+ wallTimeMillis=\d+ begin test-body")
+            self.assertTrue(receipts.endswith("COMMAND_EXIT 0\n"))
+            self.assertNotIn("CONFORMANCE_HOST_SAMPLE", result.stdout)
+
     def test_preserves_output_and_nonzero_test_exit(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(

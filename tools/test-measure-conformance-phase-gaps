@@ -24,6 +24,15 @@ BUILD SUCCESSFUL
         self.assertEqual(dict(count=4, minMs=1, p50Ms=1, p95Ms=10500, p99Ms=10500, maxMs=10500),
                          module['summary'](gaps['slow-account']))
 
+    def test_host_receipts_use_monotonic_time_and_require_success(self):
+        text = ("CONFORMANCE_HOST_PHASE x monotonicNs=1000000000 wallTimeMillis=100 begin test-body\n"
+                "CONFORMANCE_HOST_PHASE x monotonicNs=11519000000 wallTimeMillis=10619 end test-body\n"
+                "COMMAND_EXIT 0\n")
+        gaps, _ = module['measure'](text, 'host')
+        self.assertEqual([10519], gaps['x'])
+        with self.assertRaises(ValueError):
+            module['measure'](text.replace('COMMAND_EXIT 0', 'COMMAND_EXIT 7'), 'host')
+
     def test_missing_failed_incomplete_and_out_of_order_are_rejected(self):
         for text in ('BUILD SUCCESSFUL', 'BUILD FAILED',
                      'CONFORMANCE_PHASE x elapsedMs=0 begin test-body\nBUILD SUCCESSFUL',
