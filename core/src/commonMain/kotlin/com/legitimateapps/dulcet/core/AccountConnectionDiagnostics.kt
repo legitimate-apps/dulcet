@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet.core
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlin.time.Clock
 import kotlin.time.TimeSource
 
 /** Opt-in, value-free phase evidence. Conformance controls install this on every run. */
@@ -18,6 +19,7 @@ public class AccountConnectionDiagnostics(private val label: String) : LogSink {
     override fun write(message: String) {
         if (!message.startsWith("account.phase ")) return
         val now = elapsed()
+        val wallTimeMillis = Clock.System.now().toEpochMilliseconds()
         val event = message.removePrefix("account.phase ")
         var duration: Long? = null
         when {
@@ -30,7 +32,7 @@ public class AccountConnectionDiagnostics(private val label: String) : LogSink {
                 current.filterNot { it.name == name }
             }
         }
-        println("CONFORMANCE_PHASE $label elapsedMs=$now $event durationMs=$duration")
+        println("CONFORMANCE_PHASE $label elapsedMs=$now $event durationMs=$duration wallTimeMillis=$wallTimeMillis")
     }
 
     internal fun observeRequest(job: Job) {
@@ -46,11 +48,12 @@ public class AccountConnectionDiagnostics(private val label: String) : LogSink {
     /** Safe to call from a watchdog on another dispatcher while connect is suspended. */
     public fun snapshot(): String {
         val now = elapsed()
+        val wallTimeMillis = Clock.System.now().toEpochMilliseconds()
         val pending = phases.value.joinToString { "${it.name}:${now - it.since}ms" }
         val jobs = requests.value.mapIndexed { index, job ->
             "${index + 1}:active=${job.isActive},cancelled=${job.isCancelled},completed=${job.isCompleted}"
         }.joinToString(";")
-        return "CONFORMANCE_SNAPSHOT $label elapsedMs=$now pending=[$pending] requestJobs=[$jobs]"
+        return "CONFORMANCE_SNAPSHOT $label elapsedMs=$now pending=[$pending] requestJobs=[$jobs] wallTimeMillis=$wallTimeMillis"
     }
 }
 

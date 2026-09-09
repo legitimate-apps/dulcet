@@ -435,15 +435,19 @@ class AccessLog:
         print("CONFORMANCE_ACCESS_LOG_UNAVAILABLE", file=sys.stderr, flush=True)
 
     def emit(self, **fields: object) -> int:
+        # Capture observation time before waiting for the file lock. Durations stay monotonic.
+        monotonic_ns = time.monotonic_ns()
+        wall_time_millis = time.time_ns() // 1_000_000
         with self.lock:
             self.sequence += 1
             sequence = self.sequence
             if self.stopped:
                 return sequence
-            record = dict(monotonicNs=time.monotonic_ns(), sequence=sequence, **fields)
+            record = dict(monotonicNs=monotonic_ns, wallTimeMillis=wall_time_millis,
+                          sequence=sequence, **fields)
             data = (json.dumps(record, separators=(",", ":")) + "\n").encode()
             if self.size + len(data) > self.max_bytes - 256:
-                data = (json.dumps(dict(monotonicNs=time.monotonic_ns(),
+                data = (json.dumps(dict(monotonicNs=monotonic_ns, wallTimeMillis=wall_time_millis,
                                         event="log-limit", maxBytes=self.max_bytes)) + "\n").encode()
                 self.stopped = True
                 print("CONFORMANCE_ACCESS_LOG_LIMIT", file=sys.stderr, flush=True)
