@@ -1,0 +1,54 @@
+[
+  {
+    "name": "access-positive",
+    "exit": 0,
+    "output": [
+      "STRUCTURAL REDACTION CONTROL handlers=2 adversarialRequests=16 knownHealthHits=2",
+      "Ran 1 test in 1.028s",
+      "OK"
+    ]
+  },
+  {
+    "name": "access-legacy-prefix",
+    "exit": 1,
+    "output": [
+      "STRUCTURAL REDACTION CONTROL handlers=2 adversarialRequests=16 knownHealthHits=2",
+      "Ran 1 test in 1.033s",
+      "FAILED (failures=14)"
+    ]
+  },
+  {
+    "name": "capture-positive",
+    "exit": 0,
+    "output": [
+      "WRAPPER LOOP CONTROL thresholdSeconds=16 samples=1 hostCommands=lsof,ps,sample",
+      "SUPPORTED HOST CONTROL exactPid=true usableStack=stall_control_wait,nanosleep",
+      "Ran 6 tests in 22.038s",
+      "OK"
+    ]
+  },
+  {
+    "name": "capture-sampler-noop",
+    "exit": 1,
+    "output": [
+      "Ran 6 tests in 20.443s",
+      "FAILED (failures=2)"
+    ]
+  },
+  {
+    "name": "capture-overdue-loop-noop",
+    "exit": 1,
+    "output": [
+      "SUPPORTED HOST CONTROL exactPid=true usableStack=stall_control_wait,nanosleep",
+      "Ran 6 tests in 22.235s",
+      "FAILED (failures=1)"
+    ]
+  },
+  {
+    "name": "policy-gate-removed",
+    "exit": 1,
+    "output": [
+      "tools/test-conformance-access-log missing was accepted"
+    ]
+  }
+]

@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Real-socket controls for bounded, credential-free fixture access evidence."""
+import concurrent.futures
+import contextlib
+import http.client
+import json
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+
+TOOL = Path(__file__).parent / 'conformance-env' / 'redirect-server'
+module = runpy.run_path(str(TOOL))
+
+
+@contextlib.contextmanager
+def server(directory, handler='RedirectHandler', max_bytes=4 * 1024 * 1024):
+    path = Path(directory) / 'access.log'
+    log = module['AccessLog'](path, max_bytes=max_bytes)
+    httpd = module['ThreadingHTTPServer'](('127.0.0.1', 0), module[handler])
+    httpd.access_log = log
+    worker = threading.Thread(target=httpd.serve_forever)
+    worker.start()
+    try:
+        yield httpd.server_port, path
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        worker.join()
+        log.file.close()
+
+
+def request(port, path, method='GET', headers=None, body=None):
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=20)
+    try:
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        response.read()
+        return response.status
+    finally:
+        connection.close()
+
+
+def records(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def await_records(path, event, count):
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        found = [r for r in records(path) if r['event'] == event]
+        if len(found) >= count:
+            return found
+        time.sleep(.01)
+    raise AssertionError(f'expected {count} {event} records, found {len(found)}')
+
+
+class AccessLogTest(unittest.TestCase):
+    def test_slow_hits_arrive_before_completion_and_bad_query_is_visible(self):
+        with tempfile.TemporaryDirectory() as directory, server(directory) as (port, path):
+            target = '/slow-account/rest/getOpenSubsonicExtensions.view'
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(request, port, target + '?c=Dulcet&f=json&v=1.16.1')
+                           for _ in range(2)]
+                arrivals = await_records(path, 'arrival', 2)
+                self.assertEqual(0, len([r for r in records(path) if r['event'] == 'completion']))
+                print('SLOW CONTROL in-flight arrivals=2 completions=0', flush=True)
+                self.assertEqual([200, 200], [f.result() for f in futures])
+            completions = await_records(path, 'completion', 2)
+            for row in arrivals + completions:
+                self.assertLess(abs(row['wallTimeMillis'] - time.time_ns() // 1_000_000), 20000)
+                self.assertGreater(row['monotonicNs'], 0)
+            self.assertEqual({r['sequence'] for r in arrivals}, {r['requestId'] for r in completions})
+            for row in completions:
+                self.assertEqual(target, row['path'])
+                self.assertEqual('getOpenSubsonicExtensions', row['endpoint'])
+                self.assertEqual(200, row['status'])
+                self.assertTrue(row['handlerReturned'])
+                self.assertGreaterEqual(row['durationMs'], 10500)
+            print('SLOW CONTROL hits=2 statuses=200,200 durationsMs=' +
+                  ','.join(f"{r['durationMs']:.3f}" for r in completions), flush=True)
+            canaries = '&u=CANARY_USER&t=CANARY_TOKEN&s=CANARY_SALT&p=CANARY_PASSWORD'
+            self.assertEqual(500, request(port, target + '?c=Dulcet&f=json&v=1.16.1' + canaries))
+            rows = await_records(path, 'completion', 3)
+            self.assertEqual(500, rows[-1]['status'])
+            self.assertNotIn('CANARY_', path.read_text())
+            self.assertNotIn('?', path.read_text())
+            print('NEGATIVE CONTROL total slow hits=3 rejected-query status=500 credentials absent', flush=True)
+
+    def test_proxy_methods_keepalive_and_reflected_path_are_redacted(self):
+        with tempfile.TemporaryDirectory() as directory, server(directory, 'ForwardProxyAuthenticationHandler') as (port, path):
+            connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+            for _ in range(2):
+                connection.request('GET', '/health?p=CANARY_PASSWORD')
+                response = connection.getresponse()
+                self.assertEqual(200, response.status)
+                response.read()
+            connection.close()
+            self.assertEqual(407, request(port, 'CANARY_AUTHORITY:443', 'CONNECT',
+                                         {'Proxy-Authorization': 'Basic CANARY_HEADER'}))
+            self.assertEqual(407, request(port, '/cross-reflected-target/rest/u/CANARY_USER/t/CANARY_TOKEN/s/CANARY_SALT/getUser.view', 'POST', body='p=CANARY_BODY'))
+            rows = await_records(path, 'completion', 4)
+            self.assertEqual(['GET', 'GET', 'CONNECT', 'POST'], [r['method'] for r in rows])
+            self.assertEqual([200, 200, 407, 407], [r['status'] for r in rows])
+            self.assertNotIn('CANARY_', path.read_text())
+
+    def test_reflected_credentials_are_masked_even_when_they_match_route_words(self):
+        path, endpoint = module["access_path"](
+            "/cross-reflected-target/rest/u/health/t/ping/s/rest/getUser.view")
+        self.assertEqual("/cross-reflected-target/rest/[redacted]", path)
+        self.assertEqual("[redacted]", endpoint)
+
+    def test_encoded_and_unknown_structures_fail_closed_over_real_sockets(self):
+        paths = [
+            "/cross%2Dreflected-target/rest/u/health/t/ping/s/rest/getUser.view",
+            "/cross-reflected-target/re%73t/u/health/t/ping/s/rest/getUser.view",
+            "/cross-reflected-target/rest%2Fu/health/t/ping/s/rest/getUser.view",
+            "/cross%252Dreflected-target/rest/u/health/t/ping/s/rest/getUser.view",
+            "/unknown/rest/u/health/t/ping/s/rest/getUser.view",
+            "/slow-account/rest/u/health/t/ping/s/rest/getUser.view",
+            "/cross-reflected-target/rest/u/%68ealth/t/%70ing/s/%72est/getUser.view",
+            "/cross%2Dreflected-target/rest/u/%68ealth/t/%70ing/s/%72est/getUser.view",
+        ]
+        for handler in ('RedirectHandler', 'ForwardProxyAuthenticationHandler'):
+            with tempfile.TemporaryDirectory() as directory, server(directory, handler) as (port, path):
+                # Confirm this live logger records a known structure before accepting redacted output.
+                self.assertEqual(200, request(port, '/health'))
+                await_records(path, 'completion', 1)
+                self.assertEqual('/health', records(path)[1]['path'])
+                for index, target in enumerate(paths, 2):
+                    with self.subTest(handler=handler, target=target):
+                        request(port, target)
+                        row = await_records(path, 'completion', index)[-1]
+                        expected = ('/cross-reflected-target/rest/[redacted]'
+                                    if target.startswith('/cross-reflected-target/rest/') else '[redacted]')
+                        self.assertEqual(expected, row['path'])
+                        self.assertEqual('[redacted]', row['endpoint'])
+                        arrival = next(r for r in records(path) if r.get('sequence') == row['requestId'])
+                        self.assertEqual(expected, arrival['path'])
+                        self.assertEqual('[redacted]', arrival['endpoint'])
+        print('STRUCTURAL REDACTION CONTROL handlers=2 adversarialRequests=16 knownHealthHits=2', flush=True)
+
+    def test_suppressed_body_write_failure_is_observed(self):
+        class BrokenWriter:
+            def write(self, body):
+                raise BrokenPipeError()
+        handler = object.__new__(module['RedirectHandler'])
+        handler.send_response = lambda *args: None
+        handler.send_header = lambda *args: None
+        handler.end_headers = lambda: None
+        handler.wfile = BrokenWriter()
+        handler._access_write_failed = False
+        handler._send(200, b'body', 'text/plain')
+        self.assertTrue(handler._access_write_failed)
+
+    def test_bound_under_concurrent_writers_is_explicit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'bounded.log'
+            log = module['AccessLog'](path, max_bytes=2048)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(lambda _: log.emit(event='control', path='x' * 512), range(100)))
+            log.file.close()
+            self.assertLessEqual(path.stat().st_size, 2048)
+            self.assertEqual('log-start', records(path)[0]['event'])
+            self.assertEqual('log-limit', records(path)[-1]['event'])
+            self.assertEqual(1, sum(r['event'] == 'log-limit' for r in records(path)))
+            print(f'BOUND CONTROL bytes={path.stat().st_size} cap=2048 limitMarkers=1', flush=True)
+
+    def test_cli_default_arms_both_modes_in_runner_temp(self):
+        for flags in (['--target-port', '0'], ['--forward-proxy-auth']):
+            with tempfile.TemporaryDirectory() as directory:
+                process = subprocess.Popen([sys.executable, str(TOOL), '--port', '0', *flags],
+                                           env={**os.environ, 'RUNNER_TEMP': directory},
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        paths = list(Path(directory).glob('dulcet-conformance-access-*.log'))
+                        if paths and paths[0].stat().st_size:
+                            break
+                        time.sleep(.01)
+                    self.assertEqual(1, len(paths))
+                    self.assertEqual('log-start', records(paths[0])[0]['event'])
+                finally:
+                    process.terminate()
+                    process.communicate(timeout=5)
+
+
+if __name__ == '__main__':
+    unittest.main()

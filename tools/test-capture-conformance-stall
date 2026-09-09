@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+import contextlib
+import io
+from unittest import mock
+import importlib.machinery
+import pathlib
+import subprocess
+import sys
+import tempfile
+import unittest
+
+TOOL = pathlib.Path(__file__).with_name("capture-conformance-stall")
+module = importlib.machinery.SourceFileLoader("stall_capture", str(TOOL)).load_module()
+
+
+class CaptureTest(unittest.TestCase):
+    def test_watchdog_output_does_not_disguise_stalled_phase(self):
+        progress = module.Progress()
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=0 begin test-body", 0)
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=10 event engine-send", 0.01)
+        progress.observe("CONFORMANCE_SNAPSHOT conf06 elapsedMs=16000 pending=[connect]", 16)
+        self.assertEqual([], progress.overdue(16, module.SAMPLE_AFTER_SECONDS))
+        self.assertEqual(["conf06"], progress.overdue(16.01, module.SAMPLE_AFTER_SECONDS))
+        progress.observe("CONFORMANCE_PHASE conf06 elapsedMs=17000 end test-body", 17)
+        self.assertEqual([], progress.overdue(100, module.SAMPLE_AFTER_SECONDS))
+
+    def test_measured_healthy_gap_does_not_sample_but_thirty_second_wait_does(self):
+        progress = module.Progress()
+        progress.observe("CONFORMANCE_PHASE slow-account elapsedMs=0 begin test-body", 0)
+        self.assertEqual([], progress.overdue(10.519, module.SAMPLE_AFTER_SECONDS))
+        self.assertGreaterEqual(module.SAMPLE_AFTER_SECONDS, 1.5 * 10.519)
+        self.assertLess(module.SAMPLE_AFTER_SECONDS, 30)
+        self.assertEqual(["slow-account"], progress.overdue(module.SAMPLE_AFTER_SECONDS,
+                                                           module.SAMPLE_AFTER_SECONDS))
+
+    def test_actual_wrapper_loop_invokes_all_sampling_commands(self):
+        calls = []
+        def sample_command(command, **kwargs):
+            calls.append(command)
+            if command[0] == "/usr/sbin/lsof":
+                return subprocess.CompletedProcess(command, 0, stdout="12345\n", stderr="")
+            kwargs['stdout'].write("CONTROL STACK OUTPUT\n")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            script = ("import time; "
+                      "print('CONFORMANCE_PHASE loop-control elapsedMs=0 begin test-body', flush=True); "
+                      "time.sleep(20); "
+                      "print('CONFORMANCE_PHASE loop-control elapsedMs=20000 end test-body', flush=True)")
+            argv = [str(TOOL), '--binary', 'loop-control.kexe', '--output', directory,
+                    '--', sys.executable, '-c', script]
+            stdout = io.StringIO()
+            # Keep the real process, queue, clock, threshold and wrapper loop. Replace only host
+            # utilities so this control also runs on Linux; sample_binary itself is never replaced.
+            with mock.patch.object(sys, 'argv', argv), \
+                    mock.patch.object(module.subprocess, 'run', side_effect=sample_command), \
+                    contextlib.redirect_stdout(stdout):
+                self.assertEqual(0, module.main())
+            self.assertEqual(['/usr/sbin/lsof', '/bin/ps', '/usr/bin/sample'],
+                             [command[0] for command in calls])
+            self.assertEqual(['12345', '1', '10'], calls[2][1:])
+            self.assertIn('CONFORMANCE_HOST_SAMPLE sequence=1 matchingPids=[12345]', stdout.getvalue())
+            self.assertIn('CONTROL STACK OUTPUT',
+                          (pathlib.Path(directory) / 'dulcet-stall-1-12345.log').read_text())
+        print('WRAPPER LOOP CONTROL thresholdSeconds=16 samples=1 hostCommands=lsof,ps,sample', flush=True)
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'usable host stacks require macOS sample')
+    def test_supported_host_collects_usable_stack_for_exact_binary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source, binary = root / 'probe.c', root / 'probe'
+            source.write_text('#include <stdio.h>\n#include <unistd.h>\n'
+                              '__attribute__((noinline)) void stall_control_wait(void) { sleep(60); }\n'
+                              'int main(void) { puts("READY"); fflush(stdout); stall_control_wait(); }\n')
+            subprocess.run(['cc', '-g', '-O0', str(source), '-o', str(binary)],
+                           check=True, capture_output=True, text=True)
+            process = subprocess.Popen([str(binary)], stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual('READY\n', process.stdout.readline())
+                module.sample_binary(binary, root, 1)
+                report = root / f'dulcet-stall-1-{process.pid}.log'
+                self.assertTrue(report.is_file(), 'sampler wrote no report for the exact probe PID')
+                text = report.read_text()
+                self.assertIn('Call graph:', text)
+                self.assertIn('stall_control_wait', text)
+                self.assertIn('nanosleep', text)
+                print('SUPPORTED HOST CONTROL exactPid=true usableStack=stall_control_wait,nanosleep', flush=True)
+            finally:
+                process.terminate()
+                process.wait()
+                process.stdout.close()
+
+    def test_wall_anchored_markers_produce_host_receipt_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = ("print('CONFORMANCE_PHASE probe elapsedMs=0 begin test-body wallTimeMillis=1'); "
+                      "print('CONFORMANCE_PHASE probe elapsedMs=1 end test-body wallTimeMillis=2')")
+            result = subprocess.run(
+                [sys.executable, str(TOOL), "--binary", "unused.kexe", "--output", directory,
+                 "--", sys.executable, "-c", script], capture_output=True, text=True,
+            )
+            self.assertEqual(0, result.returncode)
+            receipts = (pathlib.Path(directory) / "dulcet-stall-phase-receipts.log").read_text()
+            self.assertEqual(2, receipts.count("CONFORMANCE_HOST_PHASE"))
+            self.assertRegex(receipts, r"monotonicNs=\d+ wallTimeMillis=\d+ begin test-body")
+            self.assertTrue(receipts.endswith("COMMAND_EXIT 0\n"))
+            self.assertNotIn("CONFORMANCE_HOST_SAMPLE", result.stdout)
+
+    def test_preserves_output_and_nonzero_test_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(TOOL), "--binary", "unused.kexe", "--output", directory,
+                 "--", sys.executable, "-c", "print('test-output'); raise SystemExit(7)"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(7, result.returncode)
+            self.assertIn("test-output", result.stdout)
+            self.assertEqual("test-output\n", (pathlib.Path(directory) / "dulcet-stall-console.log").read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()

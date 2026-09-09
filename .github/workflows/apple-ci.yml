@@ -44,6 +44,12 @@ jobs:
         run: python3 tools/test-account-removal-recovery
       - name: Prove nonexistent promotion targets are rejected
         run: python3 tools/test-promotion-condition-resolvability
+      - name: Prove conformance access logging and structural redaction
+        run: python3 tools/test-conformance-access-log
+      - name: Prove the conformance wrapper collects host stacks
+        run: python3 tools/test-capture-conformance-stall
+      - name: Prove phase-gap calibration rejects invalid evidence
+        run: python3 tools/test-measure-conformance-phase-gaps
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
@@ -593,6 +599,8 @@ jobs:
             -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
           "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
           navidrome_pid=$!
+          # Both fixture processes write capped, query-free access logs to RUNNER_TEMP by default.
+          # The existing failure upload below includes these dulcet-conformance-access-*.log files.
           python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
           redirect_pid=$!
           python3 tools/conformance-env/untrusted-tls-server --port 4542 \
@@ -959,6 +967,9 @@ jobs:
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
+            python3 tools/capture-conformance-stall \
+            --binary "$PWD/core-conformance/build/bin/iosSimulatorArm64/debugTest/test.kexe" \
+            --output "$RUNNER_TEMP" -- \
             ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
             -Pdulcet.iosSimulatorUdid="$conformance_sim"
           xcrun simctl shutdown "$conformance_sim" || true

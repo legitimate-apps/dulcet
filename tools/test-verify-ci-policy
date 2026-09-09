@@ -250,3 +250,74 @@ print(
     f"CI policy control passed: {len(CASES)}/{len(CASES)} core cases, "
     f"{len(APPLE_CASES)}/{len(APPLE_CASES)} apple cases"
 )
+
+# Exercise the standalone diagnostic contract separately from JUnit-directory coverage.
+DIAGNOSTIC_CONTROLS = (
+    'tools/test-conformance-access-log',
+    'tools/test-capture-conformance-stall',
+    'tools/test-measure-conformance-phase-gaps',
+)
+DIAGNOSTIC_WORKFLOW = '''name: apple-ci
+on:
+  pull_request:
+concurrency:
+  group: controls
+  cancel-in-progress: true
+jobs:
+  apple-ci:
+    name: apple-ci
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+'''
+
+def diagnostic_case(control=None, mutation=None):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / 'core-conformance').mkdir()
+        (root / 'tools').mkdir()
+        workflows = root / '.github/workflows'
+        workflows.mkdir(parents=True)
+        steps = []
+        for item in DIAGNOSTIC_CONTROLS:
+            if not (item == control and mutation == 'missing-file'):
+                (root / item).write_text('# synthetic control\n')
+            command = '        run: python3 ' + item + '\n'
+            condition = ''
+            if item == control:
+                if mutation == 'missing':
+                    command = '        run: true\n'
+                elif mutation == 'comment':
+                    command = '        # run: python3 ' + item + '\n        run: true\n'
+                elif mutation == 'echo':
+                    command = '        run: echo python3 ' + item + '\n'
+                elif mutation == 'disabled':
+                    condition = '        if: false\n'
+                elif mutation == 'allowed-failure':
+                    condition = '        continue-on-error: true\n'
+            steps.append('      - name: control\n' + condition + command)
+        apple = DIAGNOSTIC_WORKFLOW + ''.join(steps)
+        if mutation == 'job-disabled':
+            apple = apple.replace('    name: apple-ci', '    if: false\n    name: apple-ci')
+        if mutation == 'linux-only':
+            apple = apple.replace('macos-26', 'ubuntu-latest')
+        if mutation == 'manual-only':
+            apple = apple.replace('pull_request:', 'workflow_dispatch:')
+        (workflows / 'apple-ci.yml').write_text(apple)
+        (workflows / 'core-ci.yml').write_text(workflow_for(CASES[0]))
+        result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root,
+                                capture_output=True, text=True)
+        if mutation is None:
+            assert result.returncode == 0, result.stderr
+        else:
+            assert result.returncode != 0, f'{control} {mutation} was accepted'
+            assert 'required diagnostic control ' + (control or DIAGNOSTIC_CONTROLS[0]) in result.stderr, result.stderr
+    print(f'PASS: diagnostic wiring {mutation or "present"} {control or "job"}')
+
+diagnostic_case()
+for control in DIAGNOSTIC_CONTROLS:
+    for mutation in ('missing', 'comment', 'echo', 'disabled', 'allowed-failure', 'missing-file'):
+        diagnostic_case(control, mutation)
+for mutation in ('job-disabled', 'linux-only', 'manual-only'):
+    diagnostic_case(mutation=mutation)
+print('Diagnostic wiring controls passed: 22/22 cases')
