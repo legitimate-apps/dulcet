@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import re
+import os
 import runpy
 import subprocess
 import sys
@@ -11,6 +12,8 @@ import time
 controls = runpy.run_path(str(Path(__file__).with_name("test-transcode-probe-timeout-diagnostic")))
 controls["require_port_free"]()
 run_probe = controls["run_probe"]
+if "DULCET_TEST_CACHE_PROBE" in os.environ:
+    run_probe.__globals__["PROBE"] = Path(os.environ["DULCET_TEST_CACHE_PROBE"])
 subprocess.run([sys.executable, str(Path(__file__).with_name("test-cache-loopback-diagnostic"))], check=True)
 
 def resolved_counts(stderr: str) -> tuple[int, int]:

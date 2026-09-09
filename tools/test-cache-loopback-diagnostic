@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import re
 import socket
 import subprocess
 import sys
@@ -27,14 +28,16 @@ def branches():
     # Inject each layer independently. A virtual monotonic clock distinguishes slow success from
     # fast failure without making scheduler load part of the classification test.
     cases = [
-        ("healthy", None, 0, "server-answering"),
         ("connect", ConnectionRefusedError("refused"), 0, "connection-refused"),
+        ("healthy", None, 0, "server-answering"),
         ("connect", TimeoutError("timed out"), 0, "nothing-accepting"),
         ("connect", None, 1.01, "nothing-accepting"),
         ("ping", None, 1.01, "http-blocked"),
         ("rest", None, 1.01, "database-path-blocked"),
         ("ping", RuntimeError("HTTP failure"), 0, "server-answering"),
         ("rest", RuntimeError("auth failure"), 0, "server-answering"),
+        ("ping", TimeoutError("immediate timeout reply"), 0, "server-answering"),
+        ("rest", TimeoutError("immediate timeout reply"), 0, "server-answering"),
         ("failed-envelope", None, 0, "server-answering"),
         ("malformed-json", None, 0, "server-answering"),
     ]
@@ -77,7 +80,7 @@ def branches():
 
         with patch("socket.create_connection", connect), patch("urllib.request.urlopen", urlopen), patch("time.monotonic", lambda: clock[0]):
             result = diagnose(BASE)
-        assert f"diagnosis={verdict} " in result, f"{layer} delay={delay}: {result}"
+        assert re.search(r"diagnosis=" + verdict + r"(?:\s|$)", result), f"{layer} delay={delay}: {result}"
         expected = ["connect"] if verdict in ("nothing-accepting", "connection-refused") else ["connect", "ping"] if verdict == "http-blocked" else ["connect", "ping", "rest"]
         assert calls == expected, f"{layer}: probes {calls}, expected {expected}"
         if error and layer in ("ping", "rest"):

@@ -157,6 +157,9 @@ def diagnose_loopback(base_url: str, budget: float = DIAGNOSIS_TIMEOUT_SECONDS) 
     three answer in under ~15 ms, and the stall this diagnoses runs to 30 s, so the separation is
     about three orders of magnitude and no threshold tuning is required.
     """
+    class DiagnosisDeadlineExceeded(TimeoutError):
+        pass
+
     deadline = time.monotonic() + budget
     parsed = urllib.parse.urlparse(base_url)
     host, port = parsed.hostname or "127.0.0.1", parsed.port or 4533
@@ -178,11 +181,11 @@ def diagnose_loopback(base_url: str, budget: float = DIAGNOSIS_TIMEOUT_SECONDS) 
         start = time.monotonic()
         remaining = deadline - start
         if remaining <= 0:
-            return 0.0, TimeoutError("diagnosis wall-clock deadline exhausted")
+            return 0.0, DiagnosisDeadlineExceeded("diagnosis wall-clock deadline exhausted")
         previous_handler = signal.getsignal(signal.SIGALRM)
 
         def expired(_signum, _frame):
-            raise TimeoutError("diagnosis wall-clock deadline exhausted")
+            raise DiagnosisDeadlineExceeded("diagnosis wall-clock deadline exhausted")
 
         signal.signal(signal.SIGALRM, expired)
         signal.siginterrupt(signal.SIGALRM, True)
@@ -234,13 +237,13 @@ def diagnose_loopback(base_url: str, budget: float = DIAGNOSIS_TIMEOUT_SECONDS) 
             f"connect_error={safe(connect_error)} detail=refused immediately, so the port is not listening"
         )
     ping_s, ping_error = timed(bare_ping)
-    if ping_s >= STALLED or isinstance(ping_error, TimeoutError):
+    if ping_s >= STALLED or isinstance(ping_error, DiagnosisDeadlineExceeded):
         return (
             f"loopback diagnosis=http-blocked connect_seconds={connect_s:.3f} "
             f"ping_seconds={ping_s:.3f} ping_error={safe(ping_error)}"
         )
     rest_s, rest_error = timed(subsonic_ping)
-    if rest_s >= STALLED or isinstance(rest_error, TimeoutError):
+    if rest_s >= STALLED or isinstance(rest_error, DiagnosisDeadlineExceeded):
         return (
             f"loopback diagnosis=database-path-blocked connect_seconds={connect_s:.3f} "
             f"ping_seconds={ping_s:.3f} rest_ping_seconds={rest_s:.3f} rest_error={safe(rest_error)}"
