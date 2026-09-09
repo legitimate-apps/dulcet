@@ -1405,7 +1405,7 @@
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1417,7 +1417,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = Dulcet;
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet Mac App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "Dulcet CI Mac App Store";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1476,7 +1476,7 @@
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1488,7 +1488,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = Dulcet;
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet Mac App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "Dulcet CI Mac App Store";
 				SDKROOT = macosx;
 			};
 			name = Debug;
