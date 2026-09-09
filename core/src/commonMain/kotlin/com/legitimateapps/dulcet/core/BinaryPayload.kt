@@ -15,21 +15,19 @@ internal sealed interface SubsonicBinaryEnvelopeInspection {
 }
 
 internal fun ByteArray.inspectSubsonicBinaryEnvelope(): SubsonicBinaryEnvelopeInspection {
-    val start = binaryPayloadContentStartIndex()
-    if (start >= size) return SubsonicBinaryEnvelopeInspection.Unknown
-    return when (this[start].toInt().toChar()) {
-        '{' -> inspectJsonSubsonicBinaryEnvelope(start)
-        '<' -> inspectXmlSubsonicBinaryEnvelope(start)
+    val text = decodeBinaryDocumentPrefix()?.trimStart(' ', '\t', '\r', '\n')
+        ?: return SubsonicBinaryEnvelopeInspection.Unknown
+    if (text.isEmpty()) return SubsonicBinaryEnvelopeInspection.Unknown
+    return when (text.first()) {
+        '{' -> text.inspectJsonSubsonicBinaryEnvelope()
+        '<' -> text.inspectXmlSubsonicBinaryEnvelope()
         else -> SubsonicBinaryEnvelopeInspection.NotEnvelope
     }
 }
 
-private fun ByteArray.inspectJsonSubsonicBinaryEnvelope(
-    start: Int,
-): SubsonicBinaryEnvelopeInspection = try {
-    val root = BINARY_ENVELOPE_JSON.parseToJsonElement(
-        copyOfRange(start, size).decodeToString(),
-    ) as? JsonObject ?: return SubsonicBinaryEnvelopeInspection.NotEnvelope
+private fun String.inspectJsonSubsonicBinaryEnvelope(): SubsonicBinaryEnvelopeInspection = try {
+    val root = BINARY_ENVELOPE_JSON.parseToJsonElement(this) as? JsonObject
+        ?: return SubsonicBinaryEnvelopeInspection.NotEnvelope
     val payload = root["subsonic-response"] as? JsonObject
         ?: return SubsonicBinaryEnvelopeInspection.NotEnvelope
     val error = payload["error"] as? JsonObject
@@ -38,13 +36,11 @@ private fun ByteArray.inspectJsonSubsonicBinaryEnvelope(
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     SubsonicBinaryEnvelopeInspection.Error(code)
 } catch (_: IllegalArgumentException) {
-    BinaryJsonPrefix(copyOfRange(start, size).decodeToString()).inspect()
+    BinaryJsonPrefix(this).inspect()
 }
 
-private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
-    start: Int,
-): SubsonicBinaryEnvelopeInspection {
-    val xml = copyOfRange(start, size).decodeToString()
+private fun String.inspectXmlSubsonicBinaryEnvelope(): SubsonicBinaryEnvelopeInspection {
+    val xml = this
     // A declaration, processing instruction or comment may precede the root across many reads.
     // Search only after that prolog, not inside it; a root-looking string in a comment is not a root.
     var offset = 0
