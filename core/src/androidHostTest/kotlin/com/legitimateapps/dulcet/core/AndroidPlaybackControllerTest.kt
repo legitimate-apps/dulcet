@@ -121,8 +121,33 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun stopThenPlayPreservesRestoredQueueAndRestartsTheCurrentSelection() {
+        Fixture(savedOwner = OWNER, savedSongs = listOf("A", "B", "C")).use { f ->
+            val queues = PersistentQueueStore(f.store.database)
+            val original = queues.load(ServerId(OWNER))
+            assertEquals(listOf("A", "B", "C"), original.entries.map { it.providerItemId.rawId })
+            assertEquals(3, original.entries.map { it.queueEntryId }.toSet().size)
+            for (index in 0..1) {
+                if (index > 0) f.controller.next()
+                val before = queues.load(ServerId(OWNER))
+                val session = f.controller.state.value.playbackSessionId
+                assertEquals(index, before.currentIndex)
+                f.controller.stop()
+                assertEquals(before, queues.load(ServerId(OWNER)), "Stop must not edit persistence")
+                f.controller.play()
+                assertEquals(before, queues.load(ServerId(OWNER)), "Play must retain entries, IDs, order and selection")
+                assertEquals(original.entries, queues.load(ServerId(OWNER)).entries)
+                assertEquals(before.entries[index].providerItemId, f.prepared.last().itemId)
+                assertEquals(before.entries[index].queueEntryId.value, f.controller.state.value.queueEntryId)
+                assertNotEquals(session, f.controller.state.value.playbackSessionId, "Restart begins a fresh session")
+                assertTrue(f.probe.requested, "Transport Play must actually request playback")
+            }
+        }
+    }
+
     private class Fixture(
         savedOwner: String? = null,
+        savedSongs: List<String> = listOf("saved-song"),
         loadSong: suspend (String) -> AuthenticatedEndpointResponse = { song(it) },
         resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
         onDelivery: (Fixture, RecordedPlaybackEvent) -> Unit = { _, _ -> },
@@ -138,8 +163,8 @@ class AndroidPlaybackControllerTest {
         init {
             if (savedOwner != null) {
                 PlaybackQueueController(PersistentQueueStore(store.database), PersistentResumePositionStore(store.database),
-                    PlaybackIdentitySource { "$it:saved" }).replaceAndStart(PlaybackQueueRequest(
-                    listOf(PlaybackQueueItem(ProviderItemId(savedOwner, "saved-song"), 40.seconds)),
+                    PlaybackIdentitySource { "$it:${java.util.UUID.randomUUID()}" }).replaceAndStart(PlaybackQueueRequest(
+                    savedSongs.map { PlaybackQueueItem(ProviderItemId(savedOwner, it), 40.seconds) },
                     QueueSourceContext(QueueSourceKind.Search, null, "Search"), 0, false))
             }
             controller = AndroidPlaybackController(RuntimeEnvironment.getApplication(),

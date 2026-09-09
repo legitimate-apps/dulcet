@@ -63,7 +63,6 @@ public class AndroidPlaybackController internal constructor(
     private var activePlan: RemotePlaybackWirePlan? = null
     private var wantsPlay = false
     private var pendingResume: Long? = null
-    private var selectedSong: Triple<String, String, String>? = null
     private var requestGeneration = 0L
     private var closed = false
     private var title = ""
@@ -139,7 +138,6 @@ public class AndroidPlaybackController internal constructor(
         // Restore only this service's account. A prior account's persisted queue is never activated
         // with newly loaded credentials.
         restored.startDirective?.takeIf { it.itemId.providerInstanceId == account.providerInstanceId }?.let {
-            selectedSong = Triple(account.providerInstanceId, it.itemId.rawId, "Saved playback")
             title = "Saved playback"
             start(it)
         }
@@ -153,7 +151,6 @@ public class AndroidPlaybackController internal constructor(
         }
         requestGeneration++
         wantsPlay = true
-        selectedSong = Triple(providerInstanceId, rawId, displayTitle)
         val generation = requestGeneration
         resolution?.cancel()
         startJob?.cancel()
@@ -179,7 +176,7 @@ public class AndroidPlaybackController internal constructor(
         checkMain(); wantsPlay = true
         if (activePlan == null) {
             if (resolution?.isActive != true && startJob?.isActive != true)
-                selectedSong?.let { playSong(it.first, it.second, it.third) }
+                transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
         } else command(PlaybackCommand.Play(id()))
     }
     public fun pause() {

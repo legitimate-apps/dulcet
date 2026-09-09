@@ -145,6 +145,14 @@ internal class PlaybackQueueController(
         return restoreCurrentPaused()
     }
 
+    /** Transport restart keeps the persisted selection and every queue entry identity. */
+    fun restartCurrent(serverId: ServerId): PlaybackQueueTransition {
+        if (queues.activeServerId() != serverId) return emptyTransition()
+        val state = queues.load(serverId)
+        val entry = state.currentIndex?.let(state.entries::get) ?: return emptyTransition()
+        return beginSession(entry, replacingQueue = false)
+    }
+
     fun restoreCurrentPaused(): PlaybackQueueTransition {
         if (playback.currentSession != null) return emptyTransition()
         val serverId = queues.activeServerId() ?: return emptyTransition()
