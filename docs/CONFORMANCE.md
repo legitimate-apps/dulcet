@@ -85,7 +85,9 @@ pixels, a live network connection, or a successful OS Keychain save. Those are s
 
 A mutation replacing the production successful-connection/save-error publication of
 `accountErrorPersistence` with `accountConnectIdle` makes the observed set omit persistence failure:
-the focused test fails with one issue. Restoring the production publication makes it pass again.
+the focused test fails with one issue. A second mutation changes the production security-family
+mapping from `accountErrorSecurity` to `accountErrorTransport`, making the security render state
+unreachable; the same test fails with one issue. Restoring each production change makes it pass again.
 
 ## CONF identifier naming audit
 
@@ -108,10 +110,54 @@ partial coverage deserving a separate CONF-51 evidence review. Naming cannot dis
 categories. After the four CONF-09b replacements, the proposed rule would still flag 29 citations
 across 22 unique pairs. An exemption list would need 19 unique pairs for the 26 legitimate
 citations alone (or 22 pairs/29 citations if it also grandfathered the partial CONF-51 controls).
-Normalizing away platform test-module identities reduces those figures to eight legitimate
-`(CONF id, method)` exemptions, or eleven including CONF-51, but makes exemptions apply more broadly.
+Normalizing away platform test-module identities reduces those figures to eleven legitimate
+`(CONF id, method)` exemptions, or fourteen including CONF-51, but makes exemptions apply more broadly.
 
 **Recommendation: do not add this gate.** Most flags would require renaming valid tests or maintaining
 exceptions. A name can be added to a fixture-only test without improving its assertions; the rule
 cannot establish semantic coverage. Prefer reviewing the trigger-to-observation path and requiring
 a meaningful production mutation for a reachability claim. No naming gate or exemption list is added.
+
+### Reachability mutation output
+
+Focused selector: `-only-testing:DulcetKitTests/conf09bEveryDeclaredDistinctRenderStateIsReachable()`.
+The parentheses matter for Xcode's Swift Testing selection; an invocation that selects zero tests
+is not evidence. Both mutations were temporary and the production source was restored.
+
+Save-failure publication changed to idle (observed set: 11 states, missing persistence failure):
+
+```text
+✘ Test conf09bEveryDeclaredDistinctRenderStateIsReachable() failed after 0.003 seconds with 1 issue.
+✘ Test run with 1 test in 0 suites failed after 0.003 seconds with 1 issue.
+** TEST FAILED **
+```
+
+Security-family mapping changed to transport (observed set: 11 states, missing security error):
+
+```text
+✘ Test run with 1 test in 0 suites failed after 0.004 seconds with 1 issue.
+** TEST FAILED **
+```
+
+Restored production source, after each mutation:
+
+```text
+✔ Test run with 1 test in 0 suites passed after 0.003 seconds.
+** TEST SUCCEEDED **
+```
+
+### Verification for this evidence repair
+
+- Repository core command (`:core:allMetadataJar :core:jvmTest :core:testAndroidHostTest
+  :core:bundleAndroidMainAar :core:licensee`): passed, 44 tasks (24 executed, 20 from cache).
+  Both test tasks were then rerun with `--rerun-tasks`: 25 tasks executed, 184 JVM tests and
+  180 Android host tests, zero failures/errors/skips.
+- `DulcetKit-Package` on macOS: 86 tests passed.
+- `DulcetKitIOSTests` on iPhone: 77 tests passed; on iPad: 77 tests passed.
+- `DulcetKitTVOSTests` on tvOS: 78 tests passed.
+- Every Apple run used serial testing and a resolved internal-disk DerivedData path. The iPad
+  run used `test-without-building` with the same universal test products as the iPhone run.
+- `python3 tools/verify_ci_policy.py`: valid across 6 workflows.
+- `python3 tools/parity_gate.py`: valid, 6 feature rows.
+- `python3 tools/verify_os_floors.py --configuration-only`: macOS 14.0, iOS/tvOS 17.0 agree.
+- All 36 feature-cell statuses match the baseline; all six `account.connect` cells remain `partial`.
