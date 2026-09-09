@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Discriminate loopback layers, enforce the failure deadline, and inject URL canaries."""
+import argparse
+from contextlib import nullcontext
+import json
+import os
+from pathlib import Path
+import runpy
+import socket
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parent
+PROBE = Path(os.environ.get("DULCET_TEST_CACHE_PROBE", ROOT / "conformance-env/observe-transcode-cache"))
+sys.path.insert(0, str(ROOT / "conformance-env"))
+module = runpy.run_path(str(PROBE))
+diagnose = module["diagnose_loopback"]
+BASE = "http://127.0.0.1:4533"
+
+
+def branches():
+    # Inject each layer independently. A virtual monotonic clock distinguishes slow success from
+    # fast failure without making scheduler load part of the classification test.
+    cases = [
+        ("healthy", None, 0, "server-answering"),
+        ("connect", ConnectionRefusedError("refused"), 0, "connection-refused"),
+        ("connect", TimeoutError("timed out"), 0, "nothing-accepting"),
+        ("connect", None, 1.01, "nothing-accepting"),
+        ("ping", None, 1.01, "http-blocked"),
+        ("rest", None, 1.01, "database-path-blocked"),
+        ("ping", RuntimeError("HTTP failure"), 0, "server-answering"),
+        ("rest", RuntimeError("auth failure"), 0, "server-answering"),
+    ]
+    for layer, error, delay, verdict in cases:
+        clock = [100.0]
+        calls = []
+
+        def invoke(name):
+            calls.append(name)
+            if name == layer:
+                clock[0] += delay
+                if error:
+                    raise error
+
+        class Response:
+            def __init__(self, name):
+                self.name = name
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def read(self, *args):
+                invoke(self.name)
+                return b'{"subsonic-response":{"status":"ok"}}'
+
+        def connect(*args, **kwargs):
+            invoke("connect")
+            return nullcontext()
+
+        def urlopen(url, **kwargs):
+            assert url.startswith(BASE + "/"), url
+            if "/rest/" in url:
+                query = module["urllib"].parse.parse_qs(module["urllib"].parse.urlsplit(url).query)
+                assert all(query.get(key) for key in ("u", "t", "s")), query
+            return Response("rest" if "/rest/" in url else "ping")
+
+        with patch("socket.create_connection", connect), patch("urllib.request.urlopen", urlopen), patch("time.monotonic", lambda: clock[0]):
+            result = diagnose(BASE)
+        assert f"diagnosis={verdict} " in result, f"{layer} delay={delay}: {result}"
+        expected = ["connect"] if verdict in ("nothing-accepting", "connection-refused") else ["connect", "ping"] if verdict == "http-blocked" else ["connect", "ping", "rest"]
+        assert calls == expected, f"{layer}: probes {calls}, expected {expected}"
+        if error and layer in ("ping", "rest"):
+            assert "answered promptly but not as expected" in result and str(error) in result, result
+        print(f"PASS layer={layer} delay={delay} verdict={verdict}")
+
+    # Assert exact URL redaction, not global credential replacement: 'ping' must survive as a route
+    # word but disappear as a query value. Separators and encoded punctuation are intentional.
+    for canary in ("-leading-canary", "a&b=c;d/e?f", "%2Dencoded%26secret%3Dvalue", "ping"):
+        for layer in ("connect", "ping", "rest"):
+            url = BASE + "/rest/ping.view?u=" + canary + "&t=-token&s=%26salt"
+            error = RuntimeError("request '" + url + "' failed")
+            def connect(*args, **kwargs):
+                if layer == "connect":
+                    raise error
+                return nullcontext()
+            def urlopen(target, **kwargs):
+                name = "rest" if "/rest/" in target else "ping"
+                if name == layer:
+                    raise error
+                return nullcontext(type("Response", (), {"read": lambda self, *args: b'{"subsonic-response":{"status":"ok"}}'})())
+            with patch("socket.create_connection", connect), patch("urllib.request.urlopen", urlopen):
+                result = diagnose(BASE)
+            expected = "RuntimeError: request '" + BASE + "/rest/ping.view?<redacted>' failed"
+            assert expected in result and url not in result, f"redaction {layer} {canary!r}: {result}"
+        print(f"PASS credential exception canary={canary!r} layers=connect,ping,rest")
+
+
+def deadline(mode):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def do_GET(self):
+            if self.path.startswith("/rest/search3") or (mode == "ping-stall" and self.path == "/ping"):
+                time.sleep(15)
+                return
+            drip = (mode == "ping-drip" and self.path == "/ping") or (mode == "rest-drip" and self.path.startswith("/rest/ping"))
+            body = b'{"subsonic-response":{"status":"ok"}}' if self.path.startswith("/rest/") else b"1"
+            self.send_response(200)
+            self.send_header("Content-Length", "1000" if drip else str(len(body)))
+            self.end_headers()
+            try:
+                if drip:
+                    for _ in range(150):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.1)
+                else:
+                    self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+    with TemporaryDirectory() as tmp:
+        log = Path(tmp) / "server.log"
+        log.write_text("")
+        with ThreadingHTTPServer(("127.0.0.1", 4533), Handler) as server:
+            server.daemon_threads = True
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+            started = time.monotonic()
+            lines = []
+            env = {**os.environ, "DULCET_CONFORMANCE_DISPOSABLE": "true", "DULCET_CONFORMANCE_BASE_URL": BASE}
+            process = subprocess.Popen([sys.executable, str(PROBE), "--log-file", str(log)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            def collect():
+                for line in process.stderr:
+                    lines.append((time.monotonic() - started, line))
+            reader = threading.Thread(target=collect)
+            reader.start()
+            try:
+                try:
+                    process.wait(timeout=7.2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    reader.join()
+                    raise AssertionError(f"{mode}: failure path exceeded 7.2s; primary_seen={any('cache search never completed:' in line for _, line in lines)}")
+                reader.join()
+                elapsed = time.monotonic() - started
+                primary = [(at, line) for at, line in lines if "cache search never completed:" in line]
+                assert primary and primary[0][0] < 5.6, f"{mode}: primary failure delayed: {primary}"
+                diagnostic = [(at, line) for at, line in lines if "loopback diagnosis=" in line]
+                verdict = "database-path-blocked" if mode == "rest-drip" else "http-blocked"
+                assert diagnostic and f"diagnosis={verdict}" in diagnostic[0][1], lines
+                assert primary[0][0] <= diagnostic[0][0], lines
+                assert process.returncode == 1 and elapsed < 6.8, (process.returncode, elapsed, lines)
+                print(f"PASS {mode} primary_seconds={primary[0][0]:.3f} exit_seconds={elapsed:.3f} verdict={verdict}")
+            finally:
+                process.stdout.close()
+                process.stderr.close()
+                server.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case", choices=("branches", "ping-stall", "ping-drip", "rest-drip"))
+    args = parser.parse_args()
+    if args.case in (None, "branches"):
+        branches()
+    for mode in ("ping-stall", "ping-drip", "rest-drip"):
+        if args.case in (None, mode):
+            deadline(mode)

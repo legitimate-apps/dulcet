@@ -4,11 +4,14 @@
 from pathlib import Path
 import re
 import runpy
+import subprocess
+import sys
 import time
 
 controls = runpy.run_path(str(Path(__file__).with_name("test-transcode-probe-timeout-diagnostic")))
 controls["require_port_free"]()
 run_probe = controls["run_probe"]
+subprocess.run([sys.executable, str(Path(__file__).with_name("test-cache-loopback-diagnostic"))], check=True)
 
 def resolved_counts(stderr: str) -> tuple[int, int]:
     """Read the attempts/completed pair the probe reports, so a control can check the PROCESS."""
