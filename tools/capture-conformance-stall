@@ -76,8 +76,9 @@ def main():
 
     def read_output():
         try:
-            for line in child.stdout:
-                lines.put(line)
+            with child.stdout:
+                for line in child.stdout:
+                    lines.put(line)
         finally:
             lines.put(None)
 
