@@ -1,0 +1,110 @@
+{
+  "verdict": "reject; committed Navidrome logging configuration unchanged",
+  "version": "0.63.2 (be10f89c)",
+  "candidate": {
+    "LogLevel": "info",
+    "EnableLogRedacting": true,
+    "DevLogLevels": {
+      "server/middlewares": "debug"
+    }
+  },
+  "runs": [
+    {
+      "mode": "info",
+      "exit": 0,
+      "durationSeconds": 19.982,
+      "runBytes": 8706,
+      "runLines": 31,
+      "lifecycleBytes": 19992,
+      "lifecycleLines": 131,
+      "junit": {
+        "tests": 54,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "mode": "request-debug",
+      "exit": 0,
+      "durationSeconds": 15.907,
+      "runBytes": 103558,
+      "runLines": 301,
+      "lifecycleBytes": 126154,
+      "lifecycleLines": 433,
+      "junit": {
+        "tests": 54,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "canaryResults": {
+    "info": {
+      "ND_LOG_SALT_CANARY_20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "94d200f2229e17ac0cf7c701c0f0ff64": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "ND_PASSWORD_CANARY_!Plus+Amp&20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "ND_TOKEN_CANARY_WORD_20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "-ND_TOKEN_CANARY_LEADING_20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "-SUFFIX_20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      }
+    },
+    "request-debug": {
+      "ND_LOG_SALT_CANARY_20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "94d200f2229e17ac0cf7c701c0f0ff64": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "ND_PASSWORD_CANARY_!Plus+Amp&20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "ND_TOKEN_CANARY_WORD_20260908": {
+        "rawPresent": false,
+        "queryEncodedPresent": false
+      },
+      "-ND_TOKEN_CANARY_LEADING_20260908": {
+        "rawPresent": true,
+        "queryEncodedPresent": true
+      },
+      "-SUFFIX_20260908": {
+        "rawPresent": true,
+        "queryEncodedPresent": true
+      }
+    }
+  },
+  "artifactSelectionControl": {
+    "inventoryMatched": 1,
+    "archiveBytes": 103558,
+    "byteIdentical": true,
+    "negativeOutsidePatternMatches": 0,
+    "hostedUploadExecuted": false,
+    "httpEndpointCounts": {
+      "getMusicFolders": 10,
+      "getArtists": 10,
+      "getAlbumList2": 45,
+      "getAlbum": 78
+    }
+  }
+}
