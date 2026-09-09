@@ -416,19 +416,46 @@ jobs:
           # proving nothing.
           IPAD_DESTINATION="platform=iOS Simulator,id=$IPAD_UDID"
           echo "iPadOS destination: $IPAD_DESTINATION"
-          set +e
-          xcodebuild test \
-            -project apple/Dulcet.xcodeproj \
-            -scheme DulcetiOS \
-            -configuration Debug \
-            -destination "$IPAD_DESTINATION" \
-            -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
-            -parallel-testing-enabled NO \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
-          tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
-          xcode_status=${PIPESTATUS[0]}
-          set -e
+          # Xcode's destination enumeration goes transiently empty. resolve-ipad-destination
+          # succeeds moments earlier -- observed `candidates=18 simctl_ipads=18 query_attempts=1`
+          # -- and this invocation is then told "no available devices matched", listing ONLY
+          # dvtdevice placeholders. Measured in 2 of 20 runs that reached this step.
+          #
+          # #112 taught the RESOLVER to retry that condition; the race simply moved downstream to
+          # here, which had no retry at all.
+          #
+          # The retry is deliberately narrow: it requires device-not-found AND an available list
+          # containing no concrete simulator id. A real test failure, a launch failure, or a
+          # device-not-found while concrete simulators ARE listed all fall through unretried, so
+          # this cannot convert a product failure into a green run. The attempt count is printed
+          # so a run that needed a retry is visible rather than silently identical to a clean one.
+          ipados_attempts=0
+          while true; do
+            ipados_attempts=$((ipados_attempts + 1))
+            set +e
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
+            xcode_status=${PIPESTATUS[0]}
+            set -e
+            [[ "$xcode_status" -eq 0 ]] && break
+            [[ "$ipados_attempts" -ge 3 ]] && break
+            grep -Fq "Unable to find a device matching the provided destination specifier" \
+              "$RUNNER_TEMP/dulcet-ipados-ui-testing.log" || break
+            grep -Eq 'platform:iOS Simulator, arch:[^}]*id:[0-9A-Fa-f]{8}-' \
+              "$RUNNER_TEMP/dulcet-ipados-ui-testing.log" && break
+            echo "iPadOS destination enumeration listed no concrete simulator (attempt $ipados_attempts); retrying"
+            sleep 10
+            rm -rf "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult"
+          done
+          echo "IPADOS TEST ATTEMPTS attempts=$ipados_attempts status=$xcode_status"
           if [[ "$xcode_status" -ne 0 ]]; then
             if grep -Fq \
               "DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true" \
