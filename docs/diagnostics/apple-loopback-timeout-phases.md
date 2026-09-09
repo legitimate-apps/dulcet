@@ -9,7 +9,8 @@ This is not a no-behavior-change claim: failed browse awaits sequential probes t
 ten seconds before publishing the failure and trace; proxy failure adds a bounded three-second
 observation fetch. Successful browse now requires header/body diagnostic evidence, and proxy success
 requires a positive challenge count and an empty authorization list beyond the previous status check.
-`tools/conformance-env/await-library-ready` and workflow step ordering are unchanged.
+`tools/conformance-env/await-library-ready` and the relative order of existing workflow steps are unchanged.
+The failure-publication and proxy controls are now additional CI steps.
 The three reported failures remain separate cases. **Instrumented, mechanism still unknown.**
 
 **ASSUMED / unproven:** the original CI stalls will recur with these diagnostics enabled. No local
@@ -65,6 +66,34 @@ Navidrome library requests. That additional instrumentation is outside this chan
 
 Timestamps are process-local monotonic elapsed times; do not subtract timestamps from different
 processes as though they had a common origin.
+
+## Failure-publication regression controls
+
+`tools/test-download-browse-failure` builds the actual macOS Kotlin framework and compiles the
+integration test's `loadLiveTrack` path through the unwrapping and completion assertions, including
+the actual observer forwarding, continuation and assertion message expressions. A loopback socket
+receives the request and withholds the response until the real 30-second browse timeout returns.
+The control captures the message passed to the failed `XCTUnwrap` call and requires timeout,
+`http-started`, `http-failed`, and Swift/facade/completion evidence in that message. It substitutes
+the assertion sink (to inspect the message without failing the enclosing run) and post-failure
+reachability probes (already tested separately); it does not substitute the browse client or events.
+It does not exercise XCTest's reporter or xcresult persistence, the later downloadable-track
+conversion, or the probe implementation. The standalone executable uses macOS Darwin, not iOS.
+
+**OBSERVED (local Darwin control):** sending headers and withholding the body did not deliver
+`headers-received` to this hook before timeout. The two-way socket result above is JVM evidence;
+it does not establish Darwin header-phase visibility during a stalled body. The Apple publication
+control withholds the entire response and makes no claim to distinguish those two Darwin stalls.
+
+`LibraryBrowseDiagnosticsTest.failedBrowseRetainsTerminalHttpEvidence` uses the real JVM browser,
+receives and withholds the response, and asserts a timeout result plus terminal HTTP evidence before
+releasing the socket. This adds failed-browse coverage to the existing successful socket controls.
+
+`tools/test-proxy-challenge-output` loads the real fixture module, starts its actual HTTP handler and
+state recorder on a loopback socket, and requests a challenge with an authorization canary. Broken
+and blocked stdout must still yield 407, the exact `Proxy-Authenticate` header and an empty response
+body, while the real state reports one challenge and that canary. The control does not replace the
+recorder or discard response headers.
 
 ## Local controls
 

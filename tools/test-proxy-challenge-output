@@ -2,6 +2,7 @@
 """Execute the real proxy and recorder over sockets with hostile stdout."""
 import contextlib
 import http.client
+import os
 from pathlib import Path
 import runpy
 import threading
@@ -55,39 +56,45 @@ class ChallengeOutputTest(unittest.TestCase):
             self.assertEqual((1, ('invented-proxy-authorization-canary',)), state.proxy_auth_outcome())
 
     def test_backpressured_stdout_cannot_delay_response_or_handler(self):
-        release = threading.Event()
         done = threading.Event()
         failures = []
 
-        class Blocked:
-            def write(self, value):
-                release.wait()
+        read_fd, write_fd = os.pipe()
+        os.set_blocking(write_fd, False)
+        try:
+            while True:
+                os.write(write_fd, b'x' * 4096)
+        except BlockingIOError:
+            pass
+        os.set_blocking(write_fd, True)
+        blocked = os.fdopen(write_fd, 'w', buffering=1)
 
-            def flush(self):
-                release.wait()
+        try:
+            with proxy() as (port, state):
+                results = []
 
-        with proxy() as (port, state):
-            results = []
+                def run():
+                    try:
+                        results.append(challenge(port))
+                    except BaseException as failure:
+                        failures.append(failure)
+                    finally:
+                        done.set()
 
-            def run():
-                try:
-                    results.append(challenge(port))
-                except BaseException as failure:
-                    failures.append(failure)
-                finally:
-                    done.set()
-
-            with contextlib.redirect_stdout(Blocked()):
-                worker = threading.Thread(target=run)
-                worker.start()
-                try:
-                    self.assertTrue(done.wait(2), 'response waited for stdout')
-                    self.assertFalse(failures, failures)
-                    self.assertEqual([(407, 'Basic realm="dulcet-forward-proxy"', b'')], results)
-                    self.assertEqual((1, ('invented-proxy-authorization-canary',)), state.proxy_auth_outcome())
-                finally:
-                    release.set()
-                    worker.join(2)
+                with contextlib.redirect_stdout(blocked):
+                    worker = threading.Thread(target=run)
+                    worker.start()
+                    try:
+                        self.assertTrue(done.wait(2), 'response waited for stdout')
+                        self.assertFalse(failures, failures)
+                        self.assertEqual([(407, 'Basic realm="dulcet-forward-proxy"', b'')], results)
+                        self.assertEqual((1, ('invented-proxy-authorization-canary',)), state.proxy_auth_outcome())
+                    finally:
+                        os.read(read_fd, 65536)
+                        worker.join(2)
+        finally:
+            blocked.close()
+            os.close(read_fd)
 
 
 if __name__ == '__main__':
