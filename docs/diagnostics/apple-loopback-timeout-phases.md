@@ -3,8 +3,13 @@
 ## Scope and current conclusion
 
 **OBSERVED (source diff):** this change instruments the Darwin proxy authentication conformance
-case and the Apple download integration test's library browse. It does not change
-`tools/conformance-env/await-library-ready`, existing timeouts, workflow gates, or retry policy.
+case and the Apple download integration test's library browse, the largest measured apple-ci failure
+mechanism (3 of 15 unique failure logs, 20%). Existing request timeouts and retry policy are unchanged.
+This is not a no-behavior-change claim: failed browse awaits sequential probes that can add roughly
+ten seconds before publishing the failure and trace; proxy failure adds a bounded three-second
+observation fetch. Successful browse now requires header/body diagnostic evidence, and proxy success
+requires a positive challenge count and an empty authorization list beyond the previous status check.
+`tools/conformance-env/await-library-ready` and workflow step ordering are unchanged.
 The three reported failures remain separate cases. **Instrumented, mechanism still unknown.**
 
 **ASSUMED / unproven:** the original CI stalls will recur with these diagnostics enabled. No local
@@ -15,8 +20,10 @@ control below reproduces their cause, establishes a shared cause, or measures th
 **OBSERVED (implementation):** `PROXY AUTH TEST` emits a monotonic timeline while the test runs,
 covering ambient credential setup, connector entry/return, the observation request, and cleanup.
 The existing failure wrapper retains the timeline and its separately bounded observation fetch.
-The fixture's `PROXY AUTH challenge received` and `PROXY AUTH 407 sent` lines are emitted by the
-handler. A passing test requires its observation response to contain a positive challenge count and
+The fixture records challenge count and received authorization values in memory before sending
+407; it emits no `PROXY AUTH challenge received` or `PROXY AUTH 407 sent` lines. The test retrieves
+that state from `/observations/proxy-auth`; recording a challenge does not establish that the response
+was sent or observed. A passing test requires its observation response to contain a positive challenge count and
 an empty authorization list. An observation count of zero means the handler recorded no challenge;
 it does not prove whether a socket connected.
 
@@ -32,10 +39,13 @@ response-phase plugin. The stream covers:
   entry/return; Swift completion and continuation resumption.
 
 **OBSERVED (implementation):** endpoint names are allowlisted. The stream contains no URL, query
-string, parameters, raw headers, response body, opaque library IDs, or exception text. Swift writes
-live lines to stderr and retains the last 128 for the track-unwrapping failure message. Its passing
-browse asserts that header and body completion markers actually ran. The completion assertion does
-not claim a timeout occurred.
+string, parameters, raw headers, response body, opaque library IDs, or exception text. Swift captures
+timestamps and queues events in memory, retains the last 128, and exposes them through `summary`.
+The failed track-unwrapping assertion publishes that summary after browse completion and the probes.
+There is no live Swift stderr writer. A killed runner loses this in-memory tail. If completion never
+returns, or the runner dies before the assertion evaluates, there is no live browse trace to recover.
+Earlier events can also fall out of the 128-event window. A passing browse asserts header and body
+completion evidence but does not publish a trace or claim a timeout occurred.
 
 **ASSUMED (interpretation of a future trace):** a request with `http-started` but no
 `headers-received` has not reached the instrumented receive phase. This alone cannot distinguish
@@ -43,6 +53,16 @@ connection establishment, server handling, or engine scheduling. `headers-receiv
 `body-completed` narrows the pending work to body acquisition/buffering or subsequent processing
 before that marker. Neither pattern names a root cause. Use request IDs, terminal events and the
 handler/server observations; do not substitute nearby successful requests for the failed request.
+**OBSERVED (induced JVM timeouts):** a listening socket that never accepts and a handler that
+receives the request but withholds headers both produce `http-started` → `http-failed` at about
+30 seconds. Sending headers and withholding the body produces `http-started` → `headers-received`
+→ `http-failed`. This is a **two-way split: before versus after headers**, not a three-way separation
+of never arrived, slow handler and response not observed. There is no request-correlated library
+handler arrival/send observation. Adding one would require forwarding a safe diagnostic request ID
+to the disposable library server (or an instrumented intermediary), recording arrival and header-send
+against that ID, and retrieving those records independently. Proxy counters do not supply this for
+Navidrome library requests. That additional instrumentation is outside this change.
+
 Timestamps are process-local monotonic elapsed times; do not subtract timestamps from different
 processes as though they had a common origin.
 
