@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import re
+import shlex
 import sys
 
 
@@ -123,6 +124,105 @@ def contains_runner_label(value: str, label: str) -> bool:
         rf"(?<![A-Za-z0-9_-]){re.escape(label)}(?![A-Za-z0-9_-])",
         value,
     ) is not None
+
+
+def workflow_run_steps(text: str) -> list[dict[str, str]]:
+    """Parse block-style jobs/steps mappings and their run scalars without dependencies.
+
+    Only direct step properties count; env, names, comments and action inputs cannot
+    supply a command. Flow mappings, aliases and folded scalars are not certified.
+    A control using an unsupported representation must have a supported invocation.
+    """
+    lines = text.splitlines()
+    steps: list[dict[str, str]] = []
+    for index, line in enumerate(lines):
+        entry = mapping_entry(line)
+        if not entry or entry[1:] != ("steps", ""):
+            continue
+        indent = entry[0]
+        end = block_end(lines, index + 1, indent)
+        starts = [i for i in range(index + 1, end)
+                  if re.match(rf"^ {{{indent + 2}}}- ", lines[i])]
+        for position, start in enumerate(starts):
+            stop = starts[position + 1] if position + 1 < len(starts) else end
+            properties: dict[str, str] = {}
+            i = start
+            while i < stop:
+                raw = lines[i]
+                if i == start:
+                    raw = raw[:indent + 2] + "  " + raw[indent + 4:]
+                prop = mapping_entry(raw)
+                if prop and prop[0] == indent + 4:
+                    _, key, value = prop
+                    if value in {"|", "|-", "|+"}:
+                        last = min(block_end(lines, i + 1, indent + 4), stop)
+                        value = "\n".join(lines[i + 1:last])
+                        i = last - 1
+                    elif value.startswith('"'):
+                        try:
+                            value = json.loads(value)
+                        except ValueError:
+                            value = ""
+                    elif value.startswith("'") and value.endswith("'"):
+                        value = value[1:-1].replace("''", "'")
+                    if key in properties:
+                        # Duplicate properties are ambiguous, never a proof of wiring.
+                        properties["continue-on-error"] = "ambiguous"
+                    properties[key] = value
+                i += 1
+            steps.append(properties)
+    return steps
+
+
+def blocking_controls(step: dict[str, str]) -> set[str]:
+    """Recognize direct shell commands, not arbitrary shell programs as proofs.
+
+    Commands in compound statements, pipelines, command lists or substitutions do
+    not certify wiring. Runtime behavior inside the invoked tool remains its tests'
+    responsibility. GitHub's default bash/sh run shell enables errexit.
+    """
+    if step.get("continue-on-error", "false") != "false" or "if" in step:
+        return set()
+    if step.get("shell", "bash") not in {"bash", "sh"}:
+        return set()
+    found: set[str] = set()
+    depth = 0
+    errexit = True
+    for line in step.get("run", "").replace("\\\n", " ").splitlines():
+        code = code_before_comment(line).strip()
+        if not code:
+            continue
+        # Closing a block before considering the following direct command also
+        # handles the multi-line if-false shape (not just a one-line spelling).
+        if re.match(r"^(fi|done|esac)\b|^}", code):
+            depth = max(0, depth - 1)
+            continue
+        if re.match(r"^(if|for|while|until|case|select)\b|^[\w]+\s*\(\)\s*{|^\{$", code):
+            if not re.search(r";\s*(fi|done|esac)\s*$", code):
+                depth += 1
+            continue
+        if depth:
+            continue
+        if re.match(r"^set\s+\+\w*e", code):
+            errexit = False
+        if re.match(r"^set\s+-\w*e", code):
+            errexit = True
+        if re.match(r"^(exit|return|exec)\b", code):
+            break
+        # No shell operators, expansion-as-code or backgrounding in certified
+        # commands. Quoted ordinary arguments and inline comments are supported.
+        if not errexit or any(token in code for token in (";", "|", "&", "<", ">", "`", "$(")):
+            continue
+        try:
+            words = shlex.split(code, comments=True)
+        except ValueError:
+            continue
+        if not words:
+            continue
+        command = words[1] if words[0] == "python3" and len(words) > 1 else words[0]
+        if re.fullmatch(r"(?:\./)?tools/test-[\w.-]+", command):
+            found.add(command.removeprefix("./"))
+    return found
 
 
 errors: list[str] = []
@@ -374,31 +474,16 @@ if Path("core-conformance").is_dir():
 #
 # ➡️ "Is it wired?" is the FIRST question about a control, before "what does it assert?" -- the
 # second is moot without the first.
-# Joined with a newline, never "": concatenating the files edge-to-edge lets a match straddle the
-# boundary between one workflow's last line and the next one's first.
-# Comment lines are dropped first, because a name mentioned in a `#` line invokes nothing. This
-# strips shell comments inside a `run: |` block as well as YAML comments, and both are correct: a
-# real invocation never begins with `#`.
-workflow_text = "\n".join(
-    "\n".join(
-        line for line in workflow.read_text().splitlines() if not line.lstrip().startswith("#")
-    )
+wired_controls = set().union(*(
+    blocking_controls(step)
     for workflow in workflows
-)
+    for step in workflow_run_steps(workflow.read_text())
+))
 for control in sorted(Path("tools").glob("test-*")):
-    if not control.is_file():
-        continue
-    # 🚨 A bare `name in text` substring test has two silent holes, and this gate shipped with both.
-    # MEASURED 2026-09-08 against the real workflows: a genuine orphan `tools/test-cache-search`
-    # reads as WIRED, because its name is a strict prefix of the wired `test-cache-search-readiness`.
-    # Requiring the `tools/` prefix rejects an incidental mention; the negative lookahead rejects the
-    # prefix collision. Deliberately NOT also requiring `run:` on the same line -- an invocation on a
-    # later line of a `run: |` block is legitimate and that would reject it.
-    invocation = re.compile(rf"tools/{re.escape(control.name)}(?![\w.\-])")
-    if not invocation.search(workflow_text):
+    if control.is_file() and str(control) not in wired_controls:
         errors.append(
-            f"{control}: no workflow invokes this control, so it never runs; wire it into a "
-            "workflow or delete it, but do not leave it looking like a gate",
+            f"{control}: no workflow invokes this control as a blocking command; "
+            "require a direct run command with failure propagation and no conditional wrapper",
         )
 
 core_ci = Path(".github/workflows/core-ci.yml").read_text()

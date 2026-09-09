@@ -534,7 +534,7 @@ def run_transitive_invocation_case() -> None:
     print(f"PASS: {label}")
 
 
-def run_orphan_control_case() -> None:
+def run_orphan_control_case(variants=None) -> None:
     """A control in tools/ that no workflow names must be rejected, and a wired one accepted.
 
     Both directions matter. Rejecting the unwired one is the gate; accepting the wired one is what
@@ -543,7 +543,17 @@ def run_orphan_control_case() -> None:
     # Four variants, because a bare substring test passes two of them wrongly. MEASURED against the
     # real workflows before this was fixed: a genuine orphan whose name is a strict PREFIX of a wired
     # control read as wired, and a name appearing only in a `#` comment read as wired.
-    for wired in ("no", "yes", "prefix-of-a-wired-control", "named-only-in-a-comment"):
+    shapes = {
+        "echoed": "      - run: echo python3 tools/test-example-control\n",
+        "inline-comment": "      - run: true # python3 tools/test-example-control\n",
+        "suppressed": "      - run: python3 tools/test-example-control || true\n",
+        "continue-on-error": "      - run: python3 tools/test-example-control\n        continue-on-error: true\n",
+        "empty-comment": "      - run: # python3 tools/test-example-control\n",
+        "if-false": "      - run: |\n          if false; then\n            python3 tools/test-example-control\n          fi\n",
+        "literal-block": "      - run: |\n          python3 tools/test-example-control # real command\n",
+        "quoted": "      - run: 'python3 tools/test-example-control'\n",
+    }
+    for wired in variants or ("no", "yes", "prefix-of-a-wired-control", "named-only-in-a-comment", *shapes):
         with tempfile.TemporaryDirectory(prefix="dulcet-orphan-policy-") as temporary_directory:
             root = Path(temporary_directory)
             workflows = root / ".github" / "workflows"
@@ -556,6 +566,7 @@ def run_orphan_control_case() -> None:
                 core += "      - run: python3 tools/test-example-control-extended\n"
             elif wired == "named-only-in-a-comment":
                 core += "      # superseded by tools/test-example-control\n"
+            core += shapes.get(wired, "")
             (workflows / "core-ci.yml").write_text(core)
             tools = root / "tools"
             tools.mkdir()
@@ -566,14 +577,14 @@ def run_orphan_control_case() -> None:
                 [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True,
                 check=False,
             )
-        expected = 0 if wired == "yes" else 1
+        expected = 0 if wired in {"yes", "literal-block", "quoted"} else 1
         label = {
             "no": "an unwired control is rejected",
             "yes": "a wired control is accepted",
             "prefix-of-a-wired-control":
                 "an orphan whose name prefixes a wired control is still rejected",
             "named-only-in-a-comment": "a control named only in a comment is not wired",
-        }[wired]
+        }.get(wired, f"control invocation shape: {wired}")
         if result.returncode != expected:
             raise AssertionError(
                 f"{label}: expected exit {expected}, got {result.returncode}\n"
