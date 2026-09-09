@@ -199,3 +199,37 @@ The mutation is not committed; production Swift source is unchanged.
   gap controls and matching testcase declarations for each new citation's target classname.
 - CI policy: valid across 6 workflows. OS-floor configuration: macOS 14.0, iOS/tvOS 17.0 agree.
 - All 36 statuses match base `de69354`; all six account-connect cells remain `partial`.
+
+## Independent app-host result bundles
+
+The production input-error proof now uses its own `xcodebuild test-without-building` invocation,
+`dulcet-mac-account-input-test.xcresult`, log and JUnit directory. The existing live-connection
+persistence-failure proof retains `dulcet-mac-app-test.xcresult`. The new JUnit directory is included
+in the parity evidence collector; the existing artifact globs retain both bundles, logs and reports.
+`verify-xcode-test-execution` and its exactly-one-result contract are unchanged.
+
+The two invocation blocks were extracted from `apple-ci` and executed sequentially with the same
+built app, signing settings and serial-testing flag, using a fresh checksum-verified Navidrome
+0.63.2 instance and fixed disposable credentials. Only local result/DerivedData paths were substituted;
+DerivedData was resolved to an internal-disk directory. Each JUnit report contains one testcase.
+Actual guard output (both exit 0):
+
+```text
+xcode test execution valid: test=DulcetMacTests.DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState terminal=Passed individual-results=1
+xcode test execution valid: test=DulcetMacTests.DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore terminal=Passed individual-results=1
+```
+
+A third `test-without-building` invocation selected
+`DulcetMacTests/DulcetMacAccountConnectAppTest/nonexistentConf09bWiringControl` into a fresh result
+bundle. Xcode exited 0; the guard targeting that method exited 1:
+
+```text
+xcode test execution invalid: xcresult contains no individual Test Case results
+ZERO-EXECUTION xcodebuild_exit=0 guard_exit=1
+```
+
+`tools/test-xcode-test-execution-guard` passes its positive control and all nine rejection controls:
+summary-only, zero tests, wrong method, wrong class, skipped, failed, missing result, duplicate
+identity, and the newly added two-distinct-passing-tests case that reproduces this wiring defect.
+`verify_ci_policy.py`, `parity_gate.py`, and `test-parity-gate` all pass. No evidence claim, test
+implementation, cell status, or production connector behavior changes in this wiring repair.
