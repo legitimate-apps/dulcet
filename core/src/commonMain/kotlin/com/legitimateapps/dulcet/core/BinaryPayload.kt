@@ -38,17 +38,47 @@ private fun ByteArray.inspectJsonSubsonicBinaryEnvelope(
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     SubsonicBinaryEnvelopeInspection.Error(code)
 } catch (_: IllegalArgumentException) {
-    SubsonicBinaryEnvelopeInspection.Unknown
+    BinaryJsonPrefix(copyOfRange(start, size).decodeToString()).inspect()
 }
 
 private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
     start: Int,
 ): SubsonicBinaryEnvelopeInspection {
     val xml = copyOfRange(start, size).decodeToString()
-    if (!XML_SUBSONIC_RESPONSE_ROOT.containsMatchIn(xml)) {
-        return SubsonicBinaryEnvelopeInspection.NotEnvelope
+    // A declaration, processing instruction or comment may precede the root across many reads.
+    // Search only after that prolog, not inside it; a root-looking string in a comment is not a root.
+    var offset = 0
+    while (true) {
+        while (xml.getOrNull(offset) in listOf(' ', '\t', '\r', '\n')) offset++
+        if (offset == xml.length) return SubsonicBinaryEnvelopeInspection.Unknown
+        val rest = xml.substring(offset)
+        val terminator = when {
+            rest.startsWith("<?") -> "?>"
+            rest.startsWith("<!--") -> "-->"
+            "<?".startsWith(rest) || "<!--".startsWith(rest) -> return SubsonicBinaryEnvelopeInspection.Unknown
+            else -> null
+        }
+        if (terminator != null) {
+            val end = xml.indexOf(terminator, offset + if (terminator == "?>") 2 else 4)
+            val limit = if (end < 0) xml.length else end
+            if ((offset until limit).any { xml[it] < ' ' && xml[it] !in "\t\r\n" })
+                return SubsonicBinaryEnvelopeInspection.NotEnvelope
+            if (end < 0) return SubsonicBinaryEnvelopeInspection.Unknown
+            offset = end + terminator.length
+            continue
+        }
+        if (XML_SUBSONIC_RESPONSE_ROOT.find(xml, offset)?.range?.first != offset) {
+            // A split root name (including a namespace prefix) is still a possible envelope.
+            if (rest.startsWith('<') && rest.drop(1).all { it.isLetterOrDigit() || it in "_:.-" }) {
+                val local = rest.drop(1).substringAfter(':')
+                if ("subsonic-response".startsWith(local) || ':' !in rest)
+                    return SubsonicBinaryEnvelopeInspection.Unknown
+            }
+            return SubsonicBinaryEnvelopeInspection.NotEnvelope
+        }
+        break
     }
-    val code = XML_SUBSONIC_ERROR_CODE.find(xml)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    val code = XML_SUBSONIC_ERROR_CODE.find(xml, offset)?.groupValues?.getOrNull(1)?.toIntOrNull()
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     return SubsonicBinaryEnvelopeInspection.Error(code)
 }

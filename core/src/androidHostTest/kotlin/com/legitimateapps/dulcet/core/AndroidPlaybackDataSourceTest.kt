@@ -134,6 +134,65 @@ class AndroidPlaybackDataSourceTest {
         }
     }
 
+    @Test fun xmlPrologBeforeOversizedRangedEnvelopeRemainsUnclassifiedUntilTheRoot() {
+        val error = """<subsonic-response status="failed"><error code="40" message="TOKEN_CANARY"/></subsonic-response>"""
+        for (prolog in listOf(
+            "<?xml version=\"1.0\"?>" + " ".repeat(9000),
+            "<!--" + "comment padding ".repeat(900) + "-->",
+            "<?xml version=\"1.0\"?><!--" + "x".repeat(9000) + "--> ",
+        )) {
+            val envelope = (prolog + error).toByteArray()
+            var consumed = 0L
+            val factory = AndroidPlaybackDataSourceFactory(playbackPlan(), { position, _ ->
+                if (position == 0L) response(wav())
+                else response(envelope, status = 206,
+                    range = "bytes $position-${position + envelope.size - 1}/${position + envelope.size}",
+                    contentType = "application/octet-stream")
+            }, { consumed += it })
+            factory.createDataSource().also { it.open(spec()); it.close() }
+            val failure = assertFailsWith<AndroidPlaybackIOException> { factory.createDataSource().open(spec(100)) }
+            assertEquals(DomainError.Auth.InvalidCredentials, failure.error)
+            assertEquals(0L, consumed, "No error-envelope bytes may reach Media3")
+        }
+    }
+
+    @Test fun impossibleJsonAtAWitnessedSeekOffsetDeliversIdenticalBinaryWithoutReadingToEof() {
+        for (prefix in listOf(
+            byteArrayOf(123, 0, 1, 2),
+            "{not-json".toByteArray(),
+            "{\"key\":!".toByteArray(),
+            "{\"key\":\"bad\\q".toByteArray(),
+        )) {
+            val bytes = prefix + ByteArray(40000) { (it % 251).toByte() }
+            var readFromResource = 0
+            val factory = AndroidPlaybackDataSourceFactory(playbackPlan(), { position, _ ->
+                if (position == 0L) response(wav())
+                else {
+                    val ranged = response(bytes, status = 206,
+                        range = "bytes $position-${position + bytes.size - 1}/${position + bytes.size}",
+                        contentType = "application/octet-stream")
+                    AndroidPlaybackResponse(ranged.status, ranged.headers, object : ByteArrayInputStream(bytes) {
+                        override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                            super.read(buffer, offset, length).also { if (it > 0) readFromResource += it }
+                    }, {})
+                }
+            })
+            factory.createDataSource().also { it.open(spec()); it.close() }
+            val source = factory.createDataSource()
+            assertEquals(bytes.size.toLong(), source.open(spec(100)))
+            assertEquals(8192, readFromResource, "Impossible JSON must not buffer the full range")
+            val output = ByteArrayOutputStream()
+            val chunk = ByteArray(4096)
+            while (true) {
+                val n = source.read(chunk, 0, chunk.size)
+                if (n == C.RESULT_END_OF_INPUT) break
+                output.write(chunk, 0, n)
+            }
+            assertContentEquals(bytes, output.toByteArray())
+            source.close()
+        }
+    }
+
     @Test fun internallyConsistentShort206CannotAdvertiseAnUnservedSuffix() {
         val bytes = wav() + ByteArray(9988)
         val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ ->
@@ -196,7 +255,7 @@ class AndroidPlaybackDataSourceTest {
     private fun spec(position: Long = 0) = DataSpec.Builder().setUri(Uri.parse("dulcet://resource")).setPosition(position).build()
     private fun wav() = "RIFF\u0000\u0000\u0000\u0000WAVE".toByteArray()
     private fun response(bytes: ByteArray, declaredLength: Long = bytes.size.toLong(), status: Int = 200,
-        range: String? = null, close: () -> Unit = {}) = AndroidPlaybackResponse(status,
-        AuthenticatedEndpointResponseHeaders("audio/wav", PlaybackContentLength.Exact(declaredLength), null, "bytes", range),
+        range: String? = null, contentType: String = "audio/wav", close: () -> Unit = {}) = AndroidPlaybackResponse(status,
+        AuthenticatedEndpointResponseHeaders(contentType, PlaybackContentLength.Exact(declaredLength), null, "bytes", range),
         ByteArrayInputStream(bytes), close)
 }
