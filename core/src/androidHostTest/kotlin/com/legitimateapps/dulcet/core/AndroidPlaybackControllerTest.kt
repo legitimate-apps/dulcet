@@ -145,17 +145,111 @@ class AndroidPlaybackControllerTest {
         }
     }
 
-    @Test fun productionPreparationInstallsAnAttemptScopedMediaSourceOnTheRealPlayer() {
-        Fixture(realPlayer = true, resolve = { resolved(it) }).use { f ->
-            assertEquals(0, f.controller.sessionPlayer.mediaItemCount)
-            f.controller.playSong(OWNER, "source-song", "Source song")
-            val player = f.controller.sessionPlayer
-            assertEquals(1, player.mediaItemCount, "The production source must be installed, not just a recorded plan")
-            val item = player.getMediaItemAt(0)
-            assertEquals(f.controller.state.value.attemptId, item.mediaId)
-            assertEquals("Source song", item.mediaMetadata.title.toString())
-            assertEquals("dulcet://resource", item.localConfiguration?.uri.toString())
-            assertTrue(player.playWhenReady)
+    @Test fun productionPlayerConsumesAuthenticatedValidatedBytes() {
+        val audio = pcmWave()
+        PlaybackResourceReceiver(audio).use { receiver ->
+            Fixture(realPlayer = true, baseUrl = receiver.url, resolve = { resolved(it) }).use { f ->
+                assertEquals(0, f.controller.sessionPlayer.mediaItemCount)
+                f.controller.playSong(OWNER, "source-song", "Source song")
+                val player = f.controller.sessionPlayer
+                assertEquals(1, player.mediaItemCount)
+                val item = player.getMediaItemAt(0)
+                assertEquals(f.controller.state.value.attemptId, item.mediaId)
+                assertEquals("Source song", item.mediaMetadata.title.toString())
+                assertEquals("dulcet://resource", item.localConfiguration?.uri.toString())
+                assertTrue(player.playWhenReady)
+                awaitPlayer { f.controller.state.value.validatedBytesConsumed >= audio.size }
+                assertTrue(f.controller.state.value.validatedBytesConsumed >= audio.size,
+                    "The real player must consume the HTTP audio through the validating source and its byte counter")
+                receiver.assertAuthenticatedSong("source-song")
+                println("PRODUCTION SOURCE OBSERVED authenticated-http=true validated-bytes=${f.controller.state.value.validatedBytesConsumed} fixture-bytes=${audio.size} decoder-progression-not-claimed=true")
+            }
+        }
+    }
+
+    @Test fun productionPlayerRejectsAnHttpEnvelopeBeforeConsumingMediaBytes() {
+        val envelope = "<subsonic-response><error code=\"40\"/></subsonic-response>".toByteArray()
+        PlaybackResourceReceiver(envelope).use { receiver ->
+            Fixture(realPlayer = true, baseUrl = receiver.url, resolve = { resolved(it) }).use { f ->
+                f.controller.playSong(OWNER, "rejected-song", "Rejected song")
+                awaitPlayer { f.controller.state.value.error != null }
+                receiver.assertAuthenticatedSong("rejected-song")
+                assertEquals(DomainError.Auth.InvalidCredentials, f.controller.state.value.error,
+                    "The production player must surface the validator's envelope error")
+                assertEquals(0L, f.controller.state.value.validatedBytesConsumed)
+            }
+        }
+    }
+
+    private fun awaitPlayer(done: () -> Boolean) {
+        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+        while (!done() && System.nanoTime() < deadline) {
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(20))
+            Thread.sleep(10)
+        }
+    }
+
+    private fun pcmWave(): ByteArray = java.nio.ByteBuffer.allocate(44 + 16000)
+        .order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray()); putInt(36 + 16000); put("WAVEfmt ".toByteArray())
+            putInt(16); putShort(1); putShort(1); putInt(8000); putInt(8000)
+            putShort(1); putShort(8); put("data".toByteArray()); putInt(16000)
+            put(ByteArray(16000) { 128.toByte() })
+        }.array()
+
+    /** Supplies only the receiving socket. The controller builds its real HTTP resource and validator. */
+    private class PlaybackResourceReceiver(private val body: ByteArray) : AutoCloseable {
+        private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
+        val url = "http://127.0.0.1:${socket.localPort}"
+        private val requests = java.util.concurrent.CopyOnWriteArrayList<Map<String, String>>()
+        private val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        init {
+            executor.submit {
+                while (!socket.isClosed) {
+                    try {
+                        socket.accept().use { client ->
+                            client.soTimeout = 5000
+                            val reader = client.getInputStream().bufferedReader()
+                            val line = assertNotNull(reader.readLine()).split(' ')
+                            val uri = java.net.URI(line[1])
+                            assertEquals("GET", line[0])
+                            assertEquals("/rest/stream.view", uri.path)
+                            val headers = generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
+                            val query = uri.rawQuery.split('&').associate {
+                                val pair = it.split('=', limit = 2)
+                                java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
+                            }
+                            requests += query
+                            val range = headers.firstOrNull { it.startsWith("Range:", true) }?.substringAfter("bytes=")
+                            val start = range?.substringBefore('-')?.toInt() ?: 0
+                            val end = range?.substringAfter('-')?.toIntOrNull()?.coerceAtMost(body.lastIndex) ?: body.lastIndex
+                            val bytes = body.copyOfRange(start, end + 1)
+                            val response = if (range == null) "200 OK" else "206 Partial Content"
+                            val rangeHeader = if (range == null) "" else "Content-Range: bytes $start-$end/${body.size}\r\n"
+                            client.getOutputStream().apply {
+                                write(("HTTP/1.1 $response\r\nContent-Type: application/octet-stream\r\nContent-Length: ${bytes.size}\r\n$rangeHeader" +
+                                    "Connection: close\r\n\r\n").toByteArray())
+                                write(bytes); flush()
+                            }
+                        }
+                    } catch (error: Throwable) { if (!socket.isClosed) failures += error }
+                }
+            }
+        }
+        fun assertAuthenticatedSong(id: String) {
+            assertTrue(requests.isNotEmpty(), "The production source must reach the receiving HTTP socket")
+            for (query in requests) {
+                assertEquals(id, query["id"])
+                assertEquals("controller-canary", query["u"])
+                val salt = assertNotNull(query["s"])
+                assertEquals(AccountConnectionContract.saltedToken("controller-password-canary", salt), query["t"])
+            }
+        }
+        override fun close() {
+            socket.close(); executor.shutdown()
+            assertTrue(executor.awaitTermination(6, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(failures.isEmpty(), "Playback receiving fixture failed: $failures")
         }
     }
 
