@@ -6,6 +6,7 @@ import com.legitimateapps.dulcet.core.DarwinForwardProxyAccountConnector
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.SaltSource
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -49,7 +50,23 @@ class DarwinProxyAuthenticationConformanceTest {
                 "the fixture precondition never held, so the rest of this test proves nothing",
         )
 
-        val observationClient = HttpClient(Darwin) { expectSuccess = false }
+        // Bound this observation client explicitly. Without an HttpTimeout it inherits
+        // NSURLSession's 60-second timeoutIntervalForRequest, which EQUALS runTest's default
+        // 60-second bound -- so a hung observation cannot produce a timeout, only
+        // `UncompletedCoroutinesError: After waiting for 1m`, which names the test scope and not
+        // the request. OBSERVED 2026-09-09 in apple-ci on iosSimulatorArm64.
+        //
+        // 10s is 46x the slowest healthy proxy-auth phase measured in CI job logs (217ms, n=29)
+        // and 6x below the runTest bound, so it cannot fire spuriously and a real hang is
+        // reported as a request timeout. This is a test-only observation client; no product
+        // timeout changes.
+        val observationClient = HttpClient(Darwin) {
+            expectSuccess = false
+            install(HttpTimeout) {
+                requestTimeoutMillis = OBSERVATION_TIMEOUT_MILLIS
+                socketTimeoutMillis = OBSERVATION_TIMEOUT_MILLIS
+            }
+        }
         try {
             val result = DarwinForwardProxyAccountConnector(
                 proxyHost = PROXY_HOST,
@@ -91,6 +108,7 @@ class DarwinProxyAuthenticationConformanceTest {
     private companion object {
         const val PROXY_HOST = "127.0.0.1"
         const val PROXY_PORT = 4543
+        const val OBSERVATION_TIMEOUT_MILLIS: Long = 10_000
         const val PROXY_REALM = "dulcet-forward-proxy"
     }
 }
