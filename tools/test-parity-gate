@@ -830,6 +830,8 @@ passing_cases = """\
   <testcase classname="DulcetKitTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
   <testcase classname="DulcetKitTests"
+            name="conf09bEveryDeclaredDistinctRenderStateIsReachable" time="0.1" />
+  <testcase classname="DulcetKitTests"
             name="fixtureRendersEveryDeclaredDistinctState" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />
@@ -839,6 +841,8 @@ passing_cases = """\
             name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="conf09bEveryDeclaredDistinctRenderStateIsReachable" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
             name="accountConnectRootLoadsForIOS" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
@@ -865,6 +869,8 @@ passing_cases = """\
             name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
+  <testcase classname="DulcetKitTVOSTests"
+            name="conf09bEveryDeclaredDistinctRenderStateIsReachable" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
             name="accountConnectRootLoadsForTVOS" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
