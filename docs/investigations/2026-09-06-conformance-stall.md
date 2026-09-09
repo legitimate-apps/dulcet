@@ -34,3 +34,106 @@ ASSUMED — complete iOS CI integration remains unexecuted: no simulator or hist
 OBSERVED verdict confidence: high that the relevant product HTTP requests have 30-second deadlines; high that plaintext hostname resolution lacks an application deadline; **insufficient evidence to call the historical stalls harmless CI load or a product synchronization defect**. The first successful local control is milliseconds, which cannot justify enlarging a CI budget.
 ASSUMED deciding observation: one failed iOS occurrence with the outstanding phase, request-job state, dispatcher heartbeat ages, and simultaneous host stack sample. It would place the wait before the timer, inside timed transport/cancellation, after product completion, or in the separate fixture GET. Preserve 60 seconds until that observation exists; there is no measured basis for recommending 90 seconds or five minutes today. Investigate the DNS deadline/cancellation gap separately; simply wrapping blocking getaddrinfo in withTimeout would not make it interruptible.
 OBSERVED scope: diagnostic code only; no timeout, retry, assertion, branch, server lifecycle or product recovery change. JVM/native targets ran sequentially and used only the already-running disposable 4533 service. Neither failing endpoint was exercised locally. No push or PR action was performed.
+
+**5. 2026-09-08 follow-up: independent server evidence, diagnostic-only.**
+
+OBSERVED — `f0e6f1b` rebased cleanly onto `origin/main` at `4022bcc`, becoming `16f192c`.
+`git range-diff f0e6f1b^..f0e6f1b 4022bcc..16f192c` reports `=` for the instrument commit.
+Sections 1–4 describe the historical baseline, not all current-main behavior: main now includes
+host-resolution changes, which this branch preserves without re-investigating them.
+
+REPORTED by the maintainer — two iOS simulator failures in
+`slowSelfHostedServerCanCompleteAccountNegotiation`: job `102206147605` on PR #107 returned
+`Failed(error=Timeout)`; job `102220717052` on PR #97 exhausted the one-minute `runTest` bound.
+These reports were not independently reproduced here. The fixture sleeps 10.5 seconds only for
+extension discovery, against a 30-second individual request budget: the unexplained difference is
+approximately 19.5 seconds within one request. The fixture already uses `ThreadingHTTPServer`;
+its sleep does not serialize other requests. No timeout, retry, assertion, budget or server lifecycle
+was changed. The slow-account test now installs the same client instrument as conf06 and proxy auth,
+retaining its fixture salt source, host resolver and result assertion.
+
+OBSERVED — both fixture handler classes now emit independent JSONL access evidence. CLI startup
+always enables it, including in CI, at
+`$RUNNER_TEMP/dulcet-conformance-access-<port>-<pid>.log` (system temporary directory when
+`RUNNER_TEMP` is absent). `--access-log` overrides the file for a local control. The existing Apple
+failure/cancellation inventory and artifact upload already include `$RUNNER_TEMP/*.log`.
+Each file starts with `log-start`, including PID and its byte cap. A parsed request emits `arrival`
+before dispatch and `completion` after the handler and final flush return or raise. Records include
+absolute `monotonicNs`, a process-local sequence, method, sanitized path, endpoint and listener port.
+Completion links to the arrival sequence through `requestId` and includes selected response status,
+`durationMs`, `handlerReturned` and `bodyWriteFailed`. An unfinished handler leaves an arrival behind.
+The final flag records the body-write errors the redirect fixture already catches; their handling is
+unchanged. Status means the status selected by the handler, not proof of client receipt.
+
+OBSERVED — query strings are removed in full before parsing or recording; authorities, headers,
+bodies and exception text are excluded. Only fixed route vocabulary survives in paths; unknown
+segments are masked, and the credential-reflecting target route masks its entire suffix and endpoint
+regardless of vocabulary. Methods and endpoint names are restricted too. Paths are capped at 512
+characters. Serialized, unbuffered writes cap each process file at 4 MiB including one `log-limit`
+marker, then stop. The two ordinary listeners share one file; the proxy process owns another.
+Logging I/O failures produce a fixed `CONFORMANCE_ACCESS_LOG_UNAVAILABLE` stderr marker and stop
+logging without changing response handling. Saturation also prints `CONFORMANCE_ACCESS_LOG_LIMIT`.
+Neither marker contains input or filesystem paths. No rotation discards the early arrival history.
+
+OBSERVED — `python3 tools/test-conformance-access-log` ran six controls in 11.669 seconds, all passing.
+The actual output included:
+
+```text
+BOUND CONTROL bytes=1336 cap=2048 limitMarkers=1
+SLOW CONTROL in-flight arrivals=2 completions=0
+SLOW CONTROL hits=2 statuses=200,200 durationsMs=10502.182,10508.005
+NEGATIVE CONTROL total slow hits=3 rejected-query status=500 credentials absent
+Ran 6 tests in 11.669s
+OK
+```
+
+The two slow requests used real loopback sockets and the unchanged 10.5-second handler sleep. The
+third hit included `u`, `t`, `s`, `p` canaries and was rejected by the existing closed request oracle;
+its 500 completion was required to appear in the same log. Additional controls cover both CLI modes'
+default runner-temp activation, proxy GET/POST/CONNECT, two requests on one persistent connection,
+concurrent log saturation, reflected credentials that match allowed route words, and the existing
+suppressed body-write failure. This explicitly rejects an empty-log false pass.
+
+OBSERVED — the repository core command, with `--no-daemon --max-workers=1` and a 1536 MiB Gradle heap,
+ran `:core:verifySqlDelightMigration :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest
+:core:bundleAndroidMainAar :core:licensee`: `BUILD SUCCESSFUL in 1m`, 45 actionable tasks.
+JUnit totals were JVM 184 tests and Android host 180 tests, both with zero failures/errors.
+`python3 tools/verify_ci_policy.py` returned `CI policy valid across 6 workflows`;
+`python3 tools/parity_gate.py` returned `parity gate valid: 6 feature rows`.
+Configuration-only OS-floor verification and `tools/migration_gate.py` passed, as did the redirect
+credential-detector mutation controls. `python3 tools/test-capture-conformance-stall` returned
+`Ran 2 tests ... OK`. `git diff --check` passed.
+
+OBSERVED — the original `StallDiagnosticsTest` controls ran sequentially against a fresh disposable
+Navidrome 0.63.2 at `http://127.0.0.1:4533`, with `DULCET_CONFORMANCE_DISPOSABLE=true`, using the same
+Gradle options above and `--tests '*StallDiagnosticsTest*'`. JVM: `BUILD SUCCESSFUL in 13s`,
+3 tests, zero failures/errors. `macosArm64`: `BUILD SUCCESSFUL in 28s`, 3 tests, zero failures/errors.
+Actual native output included `elapsedMs=54 end connect durationMs=53`,
+`watchdogGapMs=51 testDispatcherPulseAgeMs=0`, and both request jobs `completed=true` at body exit.
+The watchdog control still asserts virtual test time equals zero. These are passing local controls,
+not reproductions of the CI stall.
+
+OBSERVED — the original host integration control was repeated using a compiled C executable that
+prints the first phase marker, flushes stdout and sleeps 43 seconds. The capture tool returned zero,
+printed `CONFORMANCE_HOST_SAMPLE sequence=1 matchingPids=[50377]`, and wrote a sample containing
+`Sampling completed, processing symbols...`, `Call graph:`, `85 sleep` and `85 nanosleep`.
+Independent adversarial review found the allowed-word reflected-credential case; the structural
+redaction fix and failing-writer observation were re-reviewed with no remaining blocking findings.
+
+INTERPRETATION LIMITS — the next failed iOS occurrence must still supply the deciding evidence.
+A complete, unsaturated log with other known hits but no slow-endpoint arrival supports “no parsed
+request reached this handler.” It cannot establish that no TCP connection or partial headers reached
+the host: logging begins after request parsing, not at accept. A slow arrival-to-completion interval,
+or arrival without completion, supports time inside the server handler. A roughly 10.5-second
+completion alongside a 30-second client timeout places the excess outside the measured handler,
+but does not alone prove it occurred after the response rather than before request arrival.
+`bodyWriteFailed=true` identifies a caught send failure; false does not prove delivery. Kernel/network
+transport and client engine/callback/dispatcher delay remain distinct unmeasured possibilities.
+
+The client uses relative elapsed time; the server uses its own absolute monotonic clock. No shared
+request ID or clock anchor crosses the transport. Match endpoint, order, port and count cautiously;
+concurrent identical requests can remain ambiguous. Missing/unavailable/saturated artifacts make a
+negative result inconclusive. The unchanged host sampler waits 40 seconds without phase progress,
+so a promptly propagated 30-second timeout can exit before a sample occurs. It supports the longer
+stall shape, not a guarantee of simultaneous stacks for every timeout. No real CI failure or iOS
+simulator run was observed in this follow-up; no push or pull-request action was performed.

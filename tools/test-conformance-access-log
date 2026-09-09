@@ -112,6 +112,19 @@ class AccessLogTest(unittest.TestCase):
         self.assertEqual("/cross-reflected-target/rest/[redacted]", path)
         self.assertEqual("[redacted]", endpoint)
 
+    def test_suppressed_body_write_failure_is_observed(self):
+        class BrokenWriter:
+            def write(self, body):
+                raise BrokenPipeError()
+        handler = object.__new__(module['RedirectHandler'])
+        handler.send_response = lambda *args: None
+        handler.send_header = lambda *args: None
+        handler.end_headers = lambda: None
+        handler.wfile = BrokenWriter()
+        handler._access_write_failed = False
+        handler._send(200, b'body', 'text/plain')
+        self.assertTrue(handler._access_write_failed)
+
     def test_bound_under_concurrent_writers_is_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'bounded.log'
