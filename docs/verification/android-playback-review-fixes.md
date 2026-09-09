@@ -1,5 +1,9 @@
 # Android playback review repairs — 2026-09-09
 
+The source-installation-only limitation recorded below was subsequently closed by
+[encoded-envelope and real-source-consumption controls](android-playback-encoded-source.md).
+That follow-up also states the supported encoding boundary and remaining blind spots.
+
 Base: `de69354`. Implementation/test commits: `6c57470`, `fcc700e`, `457cdee`,
 `27fcdc1`. No feature status is promoted by this work. No emulator evidence is claimed.
 
