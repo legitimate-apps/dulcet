@@ -374,7 +374,8 @@ def validate(document: dict, source: str) -> dict[str, dict]:
                         )
 
                 # Observation-only cells do not assert conformance coverage. Once any
-                # conformance row is cited, or the cell is shipped, require every declared id.
+                # conformance row is cited, require every declared id to have evidence or a
+                # named gap. Shipped cells are forbidden from carrying gaps above.
                 if schema_version == 2 and (evidence_conformance or status == "shipped"):
                     declared_conformance = [
                         *universal_conformance,

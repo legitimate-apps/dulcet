@@ -75,7 +75,7 @@ including credential saving, saved-account reconstruction and save-error handlin
 that production can originate each outcome or forward it through the Apple adapter. In particular,
 `capabilityUnsupported` is injected and must not be called a live account-connect state.
 
-The former claim of 12 distinct live states is withdrawn. The earlier persistence-publication and
+The former production-reachability claim is withdrawn. The earlier persistence-publication and
 security-family mutations detect presentation regressions only; they do not validate the production
 connector boundary. The four cells retain this useful conditional coverage as explicitly bounded
 `observes` entries, with matching declarations for all three target classnames in
@@ -131,6 +131,18 @@ snapshot with `invalidServerURL` and no credential save. The production origin i
 connector outcome is injected. This control covers idle, connecting and input-error only; it does
 not claim every domain-error family or a network failure. CI selects it and checks its individual
 execution before exporting the macOS JUnit report.
+
+| State coverage | Production-origin evidence and remaining gap |
+|---|---|
+| Idle, connecting, input error | New macOS app-host test executes the full production connector/facade/forwarding path |
+| Credential-persistence error | Existing `connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState` drives the disposable server and production save failure; its citation remains separately bounded, and it was not rerun in this revision |
+| Connected and saved/disconnected | Conditional store transitions and persistence/reconstruction are tested; this revision does not establish a successful production-connector plus OS-credential-store path |
+| Transport, security, protocol, server, authentication errors | Conditional presentation tests remain useful; this revision does not execute each family through the real Swift failure-forwarding path |
+| Capability error | No production origin exists; dead/reserved vocabulary, not a live-state proof |
+
+The iPhone/iPad/tvOS runs below execute conditional presentation tests. They do not borrow the new
+macOS app-host result as production-connector evidence for those platforms.
+
 
 ## Naming-gate audit retained from the initial investigation
 
