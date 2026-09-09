@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Decide whether a failed iPadOS `xcodebuild test` is Xcode's empty destination enumeration.
+
+Xcode's destination enumeration goes transiently empty on the hosted image. `resolve-ipad-destination`
+succeeds moments earlier -- OBSERVED `candidates=18 simctl_ipads=18 query_attempts=1` -- and the very
+next `xcodebuild test` is told "no available devices matched", listing ONLY dvtdevice placeholders.
+Measured in 2 of 20 runs that reached that step. Retrying that costs a few minutes. Retrying anything
+else would let a real product failure finish green on a second attempt, so the predicate has to be
+exact about which failure it is looking at.
+
+The decision is made on the AVAILABLE-DESTINATIONS SECTION, never on the whole transcript:
+
+    xcodebuild: error: Unable to find a device matching the provided destination specifier:
+            { platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }    <- the REQUEST
+        Available destinations for the "DulcetiOS" scheme:
+            { platform:iOS Simulator, id:dvtdevice-...-placeholder, ... }          <- the ANSWER
+
+A whole-transcript grep for "a concrete simulator is listed" cannot tell those two lines apart. The
+requested destination is itself a concrete simulator id on a `platform:iOS Simulator` row -- in both
+recorded failures, and with no `arch:` field. Section parsing is not a refinement here; it is the
+only thing that separates the question from the answer.
+
+The parse is `accepted_ids` from `resolve-ipad-destination`: one field-wise reader, shared with the
+resolver whose eligibility contract it already defines, indifferent to `arch:` and to spacing, and
+covered by `test-ipad-destination-resolver`. It raises rather than guessing when the header is absent
+or a row is malformed. Every raise is reported here as "do not retry" -- unrecognized output is a
+reason to stop, not to try again.
+
+Exit 0 means retry is warranted. Any other exit means it is not. Every outcome prints one
+`IPADOS RETRY DECISION` line naming the reason, so a run that was or was not retried says why.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import re
+import sys
+from pathlib import Path
+
+NO_MATCHING_DEVICE = "Unable to find a device matching the provided destination specifier"
+
+# Each marker proves xcodebuild got PAST destination resolution into building, launching or testing.
+# Destination resolution happens first -- in both recorded failures the transcript ends at package
+# resolution -- so any of these means the operative failure is something the retry must not touch,
+# even when the destination diagnostic is also present somewhere in the transcript.
+WORK_REACHED_MARKERS = (
+    "** BUILD FAILED **",
+    "** TEST FAILED **",
+    "** TEST EXECUTE FAILED **",
+    "** BUILD INTERRUPTED **",
+    "** TEST INTERRUPTED **",
+    "Testing failed:",
+    "Test Suite '",
+    "Test Case '",
+    "DULCET IPADOS APP LAUNCH",
+)
+
+# The same two launch phrasings the step's own failure classifier reports on, kept identical so the
+# two cannot disagree about what a launch failure looks like.
+WORK_REACHED_PATTERNS = (
+    re.compile(r"failed to launch .* via Xcode", re.IGNORECASE),
+    re.compile(r"timed out while launching application via Xcode", re.IGNORECASE),
+)
+
+
+def accepted_ids_reader():
+    """Import `accepted_ids` from the extensionless resolver without running its main()."""
+    path = Path(__file__).resolve().parent / "resolve-ipad-destination"
+    name = "dulcet_resolve_ipad_destination"
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module.accepted_ids
+
+
+def decide(transcript: str, scheme: str) -> tuple[bool, str]:
+    if NO_MATCHING_DEVICE not in transcript:
+        return False, "reason=not-a-destination-failure"
+
+    for marker in WORK_REACHED_MARKERS:
+        if marker in transcript:
+            return False, f"reason=build-or-test-already-ran marker={marker!r}"
+    for pattern in WORK_REACHED_PATTERNS:
+        if pattern.search(transcript):
+            return False, f"reason=build-or-test-already-ran marker={pattern.pattern!r}"
+
+    try:
+        concrete = accepted_ids_reader()(transcript, scheme)
+    except ValueError as error:
+        return False, f"reason=unreadable-destination-list detail={error}"
+
+    if concrete:
+        return False, f"reason=concrete-simulators-listed count={len(concrete)}"
+    return True, "reason=available-list-holds-no-concrete-simulator"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("log", help="the xcodebuild transcript to classify")
+    parser.add_argument("--scheme", default="DulcetiOS",
+                        help="scheme whose available-destinations section is authoritative")
+    args = parser.parse_args()
+
+    try:
+        transcript = Path(args.log).read_text(errors="replace")
+    except OSError as error:
+        print(f"IPADOS RETRY DECISION retry=no reason=transcript-unreadable detail={error.strerror}")
+        return 1
+
+    retry, reason = decide(transcript, args.scheme)
+    print(f"IPADOS RETRY DECISION retry={'yes' if retry else 'no'} {reason}")
+    return 0 if retry else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
