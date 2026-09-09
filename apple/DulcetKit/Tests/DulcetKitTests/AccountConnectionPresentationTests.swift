@@ -113,7 +113,7 @@ func conf09bEveryDeclaredDistinctRenderStateIsReachable() {
 
     // Explicit expected states keep a broken production mapping from changing the oracle too.
     // accountConnectEmpty and tlsUntrusted* are fixture variants, not distinct live states;
-    // accountRemoving/accountRemovalError belong to account removal (CONF-10c).
+    // accountRemoving/accountRemovalError belong to account removal.
     #expect(observed == Set<DulcetPresentationState>([
         .accountConnectIdle, .accountConnecting, .accountSavedDisconnected, .accountConnected,
         .accountErrorInput, .accountErrorTransport, .accountErrorSecurity, .accountErrorProtocol,

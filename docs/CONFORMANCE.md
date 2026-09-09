@@ -65,3 +65,53 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-51 | live exact and cold-estimated bodies validate before atomic promotion; exact mismatch never reaches destination and duplicate delivery is idempotent |
 | CONF-52 | a live item promoted locally yields a `LocalPlaybackPlan` and identical bytes after all conformance network clients close |
 | CONF-61 | unknown response fields are preserved and ignored |
+
+## Apple CONF-09b evidence
+
+`conf09bEveryDeclaredDistinctRenderStateIsReachable` runs in the macOS package and the shared
+iOS/iPadOS and tvOS test targets. It follows the Android reachability control: submit through
+`DulcetPresentationStore` into `DulcetAccountDataSource`, control connector completion and credential
+storage, and compare observed snapshots with an explicit expected set. It reaches idle, connecting,
+connected, restored saved/disconnected, all seven domain-error families, and credential-persistence
+failure (12 distinct live states). The restored account uses credentials saved by the successful
+submission; the persistence failure comes from a successful connector result followed by a throwing
+credential store. No deterministic fixture produces the observations.
+
+The enum also contains capture-only variants: `accountConnectEmpty`, `tlsUntrusted`, and
+`tlsUntrustedPopulatedForm` are not emitted by the production account state machine. Production uses
+`accountConnectIdle` with empty/editable form contents and `accountErrorSecurity` for TLS failures.
+This test does not claim reachability of those fixture identifiers, account-removal states, rendered
+pixels, a live network connection, or a successful OS Keychain save. Those are separate claims.
+
+A mutation replacing the production successful-connection/save-error publication of
+`accountErrorPersistence` with `accountConnectIdle` makes the observed set omit persistence failure:
+the focused test fails with one issue. Restoring the production publication makes it pass again.
+
+## CONF identifier naming audit
+
+Baseline `0e7e3ea` contains 165 conformance citations (supplementary `observes` rows excluded).
+Normalizing case and the hyphen in the CONF id, then requiring that id in the cited test identifier,
+flags 33 citations, representing 26 unique `(CONF id, test identifier)` pairs. This normalization
+accepts Android's existing `conf09b...` spelling.
+
+| Flagged group | Citations | Assessment from test bodies |
+|---|---:|---|
+| Apple CONF-09b fixture/root/layout controls | 4 | Wrong evidence for production reachability; replaced in this change |
+| Apple CONF-09a, CONF-09c, CONF-10a, CONF-10b | 16 | Relevant controls: production progress/cancellation, total error copy, unavailable Keychain failing closed, and saved credentials awaiting explicit reconnect |
+| Darwin CONF-10c proxy control | 4 | Relevant: establishes retrievable ambient credentials, connects through a challenge fixture, asserts typed rejection and no credential delivery |
+| Apple CONF-10e attribute controls | 3 | Relevant: production save, unconstrained attribute readback, and wrong-accessibility control |
+| Apple CONF-52 offline playback controls | 3 | Relevant: closes network access, obtains local playback asset, and asserts identical loaded bytes |
+| Apple CONF-51 download controls | 3 | Relevant but incomplete for the full registry wording: observes successful promotion and exact stored size, but does not independently exercise cold estimates, exact mismatch, or duplicate delivery |
+
+Thus 26/33 flags are legitimate descriptive names, four identify this defect, and three expose
+partial coverage deserving a separate CONF-51 evidence review. Naming cannot distinguish these
+categories. After the four CONF-09b replacements, the proposed rule would still flag 29 citations
+across 22 unique pairs. An exemption list would need 19 unique pairs for the 26 legitimate
+citations alone (or 22 pairs/29 citations if it also grandfathered the partial CONF-51 controls).
+Normalizing away platform test-module identities reduces those figures to eight legitimate
+`(CONF id, method)` exemptions, or eleven including CONF-51, but makes exemptions apply more broadly.
+
+**Recommendation: do not add this gate.** Most flags would require renaming valid tests or maintaining
+exceptions. A name can be added to a fixture-only test without improving its assertions; the rule
+cannot establish semantic coverage. Prefer reviewing the trigger-to-observation path and requiring
+a meaningful production mutation for a reachability claim. No naming gate or exemption list is added.
