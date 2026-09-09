@@ -593,6 +593,8 @@ jobs:
             -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
           "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
           navidrome_pid=$!
+          # Both fixture processes write capped, query-free access logs to RUNNER_TEMP by default.
+          # The existing failure upload below includes these dulcet-conformance-access-*.log files.
           python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
           redirect_pid=$!
           python3 tools/conformance-env/untrusted-tls-server --port 4542 \

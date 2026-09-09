@@ -404,6 +404,8 @@ def access_path(target: str) -> tuple[str, str]:
         path = urlsplit(target.split("?", 1)[0].split("#", 1)[0]).path
     except ValueError:
         return "[redacted]", "[redacted]"
+    if path.startswith("/cross-reflected-target/rest/"):
+        return "/cross-reflected-target/rest/[redacted]", "[redacted]"
     parts = path.split("/")
     safe = [part if part in ACCESS_PATH_WORDS or not part else "[redacted]" for part in parts]
     endpoint = parts[-1].removesuffix(".view")
@@ -479,6 +481,7 @@ class AccessLoggingHandler(BaseHTTPRequestHandler):
     def handle_one_request(self) -> None:
         self._access_started = None
         self._access_status = None
+        self._access_write_failed = False
         self._access_id = None
         returned = False
         try:
@@ -490,6 +493,7 @@ class AccessLoggingHandler(BaseHTTPRequestHandler):
             if self._access_id is not None:
                 log.emit(event="completion", requestId=self._access_id,
                          status=self._access_status, handlerReturned=returned,
+                         bodyWriteFailed=self._access_write_failed,
                          durationMs=(ended - self._access_started) / 1_000_000,
                          **self._access_fields)
 
@@ -1097,6 +1101,7 @@ class RedirectHandler(AccessLoggingHandler):
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
+            self._access_write_failed = True
             return
 
 
