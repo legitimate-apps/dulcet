@@ -1,7 +1,7 @@
 # Failed playback presentation regression
 
 Verified 2026-09-08 on macOS against the controller fix and regression test in
-`842d674` and `9103f03`.
+`bb5eda1` and `1cfab16` (rebased onto `0e7e3ea`).
 
 `recordFailedAfterPartial` can successfully record an engine failure and return a
 snapshot whose current session phase is `Failed`. The Apple controller previously
@@ -9,6 +9,16 @@ mapped that snapshot to preparing. It now calls the existing `publishFailure()`.
 Phase filtering and catalog lookup have separate guards. No other phase changes
 behavior, including `Stopped` and `TornDown`; a missing catalog item still maps to
 preparing. No failure view or copy was added.
+
+`Stopped` behavior is deliberately unchanged here and separately suspect. Source
+tracing shows `disconnect()` sends `.stop` and publishes `.unavailable`; the engine
+can then emit `.skipped` for an active attempt, Kotlin records `Stopped`, and the
+controller's unchanged phase fallback publishes `.preparing`. That queued event
+can overwrite the disconnect presentation despite no preparation being underway.
+This is a pre-existing, out-of-scope lifecycle issue, source-traced rather than
+reproduced in a running app. See `DulcetCorePlaybackController.disconnect()`,
+`DulcetAVPlayerEngine`'s stop handling, and `PlaybackCoreStateMachine`'s skipped
+handling.
 
 ## Regression coverage
 
