@@ -1,5 +1,8 @@
 # Android playback: host regressions and bounded device evidence
 
+For subsequent product repairs, production-wiring controls and mutation results, see
+[the September 9 review repairs](android-playback-review-fixes.md).
+
 No feature status is promoted by this evidence. The host tests execute in the Android host-test
 runtime; the repair section separately records an Android 14 emulator lifecycle test. Each
 observation names the production path exercised and the substitutions that bound its meaning.
