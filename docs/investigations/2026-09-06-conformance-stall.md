@@ -258,3 +258,80 @@ OBSERVED — final healthy verification through the capture wrapper at the **new
 returned `FINAL HEALTHY CAPTURE exit=0 samples=0`. All seven selected Darwin tests passed. This run
 is a post-selection control, not an extra sample used to choose the threshold. The shared-clock and
 sampler changes are committed locally; no push or PR action was taken.
+
+**7. Review repairs and enforced mutation controls (2026-09-09).**
+
+OBSERVED — independent review found that an encoded reflected-route prefix bypassed the literal
+mask and exposed credential values that happened to equal route vocabulary. The logger now preserves
+only **complete recognized structures**: fixed health/observation paths, known scenario/rest/endpoint
+positions, and a bounded numeric redirect-loop hop. Unknown structures return `[redacted]` for the
+entire path and endpoint. No percent-decoding is used to rescue unknown input. The literal reflected
+route continues to mask its entire suffix. Routing and responses are unchanged: a 404 is not a reason
+to log unrecognized input.
+
+OBSERVED — the committed socket control now checks encoded prefixes (`cross%2Dreflected-target`,
+`re%73t`, `rest%2Fu`, a double-encoded prefix), encoded values, an unknown scenario and misplaced safe
+words. It drives both actual handler classes with `health`, `ping`, and `rest` as canaries, verifies
+both arrival and completion records, and first requires a known `/health` response and log entry on
+each live logger. The new control makes **16 adversarial requests plus two known health hits**.
+Restoring the old logger in a disposable copy while retaining the new control produces 14 failures.
+
+OBSERVED — the sampler suite previously never required the wrapper to reach its sampling branch.
+The new cross-platform positive control invokes the **actual main loop**, real child process, output
+queue, clock and unchanged **16-second threshold**. Its child emits a phase and waits 20 seconds.
+Only host utilities are replaced, not `sample_binary`; the test requires ordered lsof/ps/sample calls,
+the expected PID and sample arguments, and a written artifact. The separate supported-macOS control
+compiles a probe, samples that exact live executable with the real host tools, and requires its PID's
+report to contain `Call graph:`, `stall_control_wait`, and `nanosleep`. It cleans up its owned process.
+The wrapper also closes the exhausted child stdout stream; no test/process deadline was changed.
+
+Actual mutation results, using disposable copies and the committed test suites:
+
+| Variant | Exit | Actual unittest result |
+| --- | ---: | --- |
+| New structural logger, focused socket control | 0 | Ran 1 test in 1.028s; OK |
+| Restore old literal-prefix/vocabulary logger | 1 | Ran 1 test in 1.033s; FAILED (failures=14) |
+| Unmodified capture tool, complete suite | 0 | Ran 6 tests in 22.038s; OK |
+| Replace `sample_binary()` body with `pass` | 1 | Ran 6 tests in 20.443s; FAILED (failures=2) |
+| Replace overdue sampling loop with `for label in []` | 1 | Ran 6 tests in 22.235s; FAILED (failures=1) |
+
+The two no-op-sampler failures are the actual-loop invocation assertion and the exact-PID usable
+stack assertion. The empty-loop mutation fails the wrapper assertion while the standalone real
+sampler still passes, distinguishing missing dispatch from missing stack collection. Passing output:
+
+```text
+WRAPPER LOOP CONTROL thresholdSeconds=16 samples=1 hostCommands=lsof,ps,sample
+SUPPORTED HOST CONTROL exactPid=true usableStack=stall_control_wait,nanosleep
+```
+
+OBSERVED — all three standalone suites are now unconditional steps in the required macOS apple-ci
+PR job: `test-conformance-access-log`, `test-capture-conformance-stall`, and
+`test-measure-conformance-phase-gaps`. macOS placement matters: Linux alone would skip the supported
+host stack test. Existing request/test budgets and the workflow's job timeout remain unchanged.
+
+**Orphan-gate verdict:** `verify_ci_policy.py` previously had **no standalone-control orphan gate**.
+Its `written - read` check only detects Apple JUnit directories written but not consumed by parity
+verification. Therefore it could not catch these three uninvoked scripts. This was a coverage gap,
+not a malfunction of the directory check. The added explicit contract now requires these three files
+and real unconditional Python invocations in the required macOS PR job. It is deliberately described
+as an explicit diagnostic-suite contract, **not universal discovery of every tools/test-* script**.
+
+The already-CI-invoked `test-verify-ci-policy` now includes **22 diagnostic-wiring cases**: a positive
+fixture; removal, comment-only, echo-only, disabled, allowed-failure and missing-file variants for each
+suite; disabled-job, Linux-only and manual-only variants. All passed. Replacing the verifier with its
+old version makes that control suite exit 1 with
+`tools/test-conformance-access-log missing was accepted`, so removing the new contract also bites.
+The existing policy controls still pass: six core and four Apple cases.
+
+OBSERVED — rebased onto `origin/main` **0e7e3ea** after the repairs. All 15 replayed patches compare
+identically in range-diff; no conflicts occurred. Both `tools/resolve-ipad-destination` and
+`tools/test-ipad-destination-resolver` have zero diff against that main, preserving #112 unchanged.
+Post-rebase checks: full access-log suite **7 tests / OK** (12.716s), measurement parser **3 / OK**,
+policy controls **6 core + 4 Apple + 22 diagnostic / pass**, CI policy valid across six workflows,
+parity valid across six feature rows, and `git diff --check` clean. Independent review found no
+blocking issues in the repair, sampling controls or wiring contract. The calibrated gaps, caps and
+wall/monotonic timing were not changed or re-calibrated. No Navidrome configuration change, push or
+PR action was performed.
+
+The [mutation result dataset](2026-09-09-stall-control-mutations.json) preserves the actual summaries
+without raw machine paths. The mutation copies did not edit the working branch.
