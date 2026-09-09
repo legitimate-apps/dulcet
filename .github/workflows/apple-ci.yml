@@ -353,7 +353,14 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
       - name: Verify iPhone uses the full display
-        timeout-minutes: 5
+        # 12, not 5. Measured across seven CI runs this step takes 165-290s, so the slowest
+        # SUCCESSFUL run sat at 97% of a 300s cap and one run was killed at 322s. The cap was
+        # sized from a local measurement and never matched CI. Peer simulator steps in this file
+        # use 6, 17, 18 and 23 minutes for comparable launch-and-test work, and xcodebuild is
+        # known to idle in "Finalize test log" for minutes after a test has already finished.
+        # This is not a stall being hidden: the step's observed working range simply exceeded
+        # its own ceiling.
+        timeout-minutes: 12
         run: |
           set -o pipefail
           xcodebuild test-without-building \
