@@ -780,6 +780,19 @@ jobs:
             "$RUNNER_TEMP/dulcet-playback-failure.xcresult" \
             DulcetPlaybackIntegrationTests.DulcetCorePlaybackPresentationTests \
             testFailedAfterPartialPublishesFailureThroughPresentationStore
+          xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetPlaybackIntegration \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
+              -parallel-testing-enabled NO \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-playback-failure-delivery.xcresult" \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetCorePlaybackPresentationTests/testEngineFailureAfterPlayingReachesPresentationStore 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-playback-failure-delivery.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-playback-failure-delivery.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetCorePlaybackPresentationTests \
+            testEngineFailureAfterPlayingReachesPresentationStore
           download_xctestrun="$(find \
             "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData/Build/Products" \
             -name 'DulcetPlaybackIntegration_*.xctestrun' -print -quit)"

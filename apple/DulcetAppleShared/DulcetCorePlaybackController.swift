@@ -2,10 +2,21 @@ import DulcetCore
 import DulcetKit
 import Foundation
 
+protocol DulcetCorePlaybackEngine: DulcetApplePlaybackEngine {
+    func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?)
+    @discardableResult
+    func updateRemoteCommandCapabilities(
+        _ capabilities: DulcetRemoteCommandCapabilities,
+        for sessionID: DulcetPlaybackSessionID
+    ) -> Bool
+}
+
+extension DulcetAVPlayerEngine: DulcetCorePlaybackEngine {}
+
 @MainActor
 final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     private let queueClient: ApplePlaybackQueueClient
-    private let engine: DulcetAVPlayerEngine
+    private let engine: any DulcetCorePlaybackEngine
     private let downloadController: (any DulcetDownloadControlling)?
     private var wireClient: ApplePlaybackWireClient?
     private var resolveOperation: (any ApplePlaybackWireOperation)?
@@ -23,13 +34,28 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
 
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
 
-    init(
+    convenience init(
         databaseName: String = "dulcet.db",
         engine: DulcetAVPlayerEngine = DulcetAVPlayerEngine(),
         downloadController: (any DulcetDownloadControlling)? = nil
     ) {
-        queueClient = ApplePlaybackQueueClient(databaseName: databaseName)
+        self.init(
+            queueClient: ApplePlaybackQueueClient(databaseName: databaseName),
+            engine: engine,
+            catalog: [],
+            downloadController: downloadController
+        )
+    }
+
+    init(
+        queueClient: ApplePlaybackQueueClient,
+        engine: any DulcetCorePlaybackEngine,
+        catalog tracks: [DulcetTrack],
+        downloadController: (any DulcetDownloadControlling)? = nil
+    ) {
+        self.queueClient = queueClient
         self.engine = engine
+        catalog = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         self.downloadController = downloadController
         engine.setEventListener { [weak self] event in
             Task { @MainActor [weak self] in
