@@ -16,6 +16,47 @@ import kotlin.test.assertTrue
 
 class LibraryBrowseDiagnosticsTest {
     @Test
+    fun failedBrowseRetainsTerminalHttpEvidence() = runBlocking {
+        // Keep the production 30-second request timeout: outer cancellation is a different path.
+        withTimeout(40_000) {
+            ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
+                val release = CompletableDeferred<Unit>()
+                val arrived = CompletableDeferred<Unit>()
+                val events = Collections.synchronizedList(mutableListOf<String>())
+                val handler = async(Dispatchers.IO) {
+                    server.accept().use { socket ->
+                        socket.soTimeout = 5_000
+                        val input = socket.getInputStream().bufferedReader()
+                        assertTrue(input.readLine().startsWith("GET /rest/getMusicFolders.view?"))
+                        while (!input.readLine().isNullOrEmpty()) { /* consume headers */ }
+                        arrived.complete(Unit)
+                        release.await() // Never send headers, even after the browse times out.
+                    }
+                }
+                try {
+                    val result = LibraryBrowser(diagnostics = LibraryBrowseDiagnostics(events::add)).browse(
+                        LibraryBrowseRequest("timeout-control", "http://127.0.0.1:${server.localPort}",
+                            "username-secret-canary", "password-secret-canary", true),
+                    )
+                    assertTrue(arrived.isCompleted, "handler must have received the failed browse")
+                    assertEquals(LibraryBrowseResult.Failed(DomainError.Transport.Timeout), result)
+                    val text = events.joinToString("; ")
+                    assertTrue(text.contains("http-started"), "failed browse lost HTTP entry")
+                    assertTrue(text.contains("http-failed"), "failed browse lost terminal HTTP marker")
+                    assertFalse(text.contains("headers-received"))
+                    assertFalse(text.contains("body-completed"))
+                    assertFalse(text.contains("secret-canary"))
+                    println("FAILED BROWSE CONTROL: JVM timeout retains http-started -> http-failed")
+                } finally {
+                    release.complete(Unit)
+                    server.close()
+                    handler.await()
+                }
+            }
+        }
+    }
+
+    @Test
     fun handlerWithheldHeadersAreDistinctFromWithheldBody() = runBlocking {
         for (holdBody in listOf(false, true)) {
             withTimeout(5_000) {
