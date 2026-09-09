@@ -14,9 +14,16 @@ import kotlin.time.Duration.Companion.minutes
 class LibrarySyncConformanceTest {
     @Test
     fun conf31GenerationPinnedReads() = runTest(timeout = 5.minutes) {
+        val result = LibrarySyncContract.generationPinnedReads(request("conf-31"))
         val observed = assertIs<LibrarySyncControlResult.GenerationPinnedReads>(
-            LibrarySyncContract.generationPinnedReads(request("conf-31")),
-            "CONF-31 must establish its own cold local database and disposable-server preconditions",
+            result,
+            // Bind the result so the message can name it. `Failed` carries a `DomainError`, so
+            // interpolation renders e.g. `Failed(error=Transport.Timeout)` and separates a server
+            // that never answered from a database that was not cold. `assertIs` alone prints only
+            // the type mismatch, which reports THAT a precondition failed and never WHICH one --
+            // observed in CI on 2026-09-09, where the run had to be abandoned undiagnosed.
+            "CONF-31 must establish its own cold local database and disposable-server " +
+                "preconditions, but got $result",
         )
 
         assertEquals(1, observed.generationBefore)
@@ -32,9 +39,11 @@ class LibrarySyncConformanceTest {
 
     @Test
     fun conf32AtomicSyncGenerationCommit() = runTest(timeout = 5.minutes) {
+        val result = LibrarySyncContract.atomicCommit(request("conf-32"))
         val observed = assertIs<LibrarySyncControlResult.AtomicCommit>(
-            LibrarySyncContract.atomicCommit(request("conf-32")),
-            "CONF-32 must establish its own cold local database and disposable-server preconditions",
+            result,
+            "CONF-32 must establish its own cold local database and disposable-server " +
+                "preconditions, but got $result",
         )
 
         assertTrue(observed.interruptedCommitFailed)
@@ -49,9 +58,11 @@ class LibrarySyncConformanceTest {
 
     @Test
     fun conf33BoundedStabilityWitness() = runTest(timeout = 5.minutes) {
+        val result = LibrarySyncContract.boundedStabilityWitness(request("conf-33"))
         val observed = assertIs<LibrarySyncControlResult.BoundedWitness>(
-            LibrarySyncContract.boundedStabilityWitness(request("conf-33")),
-            "CONF-33 must establish its own cold local database and disposable-server preconditions",
+            result,
+            "CONF-33 must establish its own cold local database and disposable-server " +
+                "preconditions, but got $result",
         )
 
         assertEquals(1, observed.generation)
