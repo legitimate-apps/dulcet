@@ -122,6 +122,7 @@ targets:
       - DulcetPlaybackIntegrationTests
       - DulcetAppleShared/DulcetCoreDownloads.swift
       - DulcetAppleShared/DulcetCorePlayback.swift
+      - DulcetAppleShared/DulcetCorePlaybackController.swift
       - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
       - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
         group: DulcetKitTests/Fixtures
