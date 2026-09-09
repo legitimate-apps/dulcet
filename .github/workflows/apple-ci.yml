@@ -424,14 +424,34 @@ jobs:
           # #112 taught the RESOLVER to retry that condition; the race simply moved downstream to
           # here, which had no retry at all.
           #
-          # The retry is deliberately narrow: it requires device-not-found AND an available list
-          # containing no concrete simulator id. A real test failure, a launch failure, or a
-          # device-not-found while concrete simulators ARE listed all fall through unretried, so
-          # this cannot convert a product failure into a green run. The attempt count is printed
-          # so a run that needed a retry is visible rather than silently identical to a clean one.
+          # The predicate lives in a tested tool rather than in greps here, because the transcript
+          # states the request and the answer in the same syntax:
+          #
+          #   xcodebuild: error: Unable to find a device matching ...:
+          #           { platform:iOS Simulator, id:D2D29ECE-... }        <- the REQUEST
+          #       Available destinations for the "DulcetiOS" scheme:
+          #           { platform:iOS Simulator, id:dvtdevice-...  }      <- the ANSWER
+          #
+          # No whole-transcript grep can tell those two lines apart. classify-ipad-destination-failure
+          # reads the available-destinations SECTION, through the same field-wise reader the resolver
+          # uses -- so it is indifferent to `arch:` and to spacing -- and it treats a section it
+          # cannot parse as a reason to stop rather than to try again.
+          #
+          # It retries only when all four hold: device-not-found is present, nothing indicates the
+          # build, launch or tests ever ran, the section parses, and it names no concrete simulator.
+          # What that buys, exactly: every failure shape recorded in this repository -- test failure,
+          # launch failure, build failure, gradle lock, browse timeout, proxy timeout, conformance
+          # stall, and device-not-found while concrete simulators ARE listed -- is refused a retry by
+          # a named control in test-ipad-destination-failure-classifier. That is a measured claim
+          # about known shapes, not a proof that no unknown shape could satisfy all four at once.
+          #
+          # Every attempt announces itself before it runs and every failed attempt prints why it was
+          # or was not retried, so an interrupted sequence is still readable and a run that retried
+          # is never silently identical to a clean one.
           ipados_attempts=0
           while true; do
             ipados_attempts=$((ipados_attempts + 1))
+            echo "IPADOS TEST ATTEMPT BEGIN attempt=$ipados_attempts"
             set +e
             xcodebuild test \
               -project apple/Dulcet.xcodeproj \
@@ -446,14 +466,14 @@ jobs:
             xcode_status=${PIPESTATUS[0]}
             set -e
             [[ "$xcode_status" -eq 0 ]] && break
-            [[ "$ipados_attempts" -ge 3 ]] && break
-            grep -Fq "Unable to find a device matching the provided destination specifier" \
+            # Classified before the attempt cap is consulted, so the transcript records a reason for
+            # every failed attempt including the last one.
+            python3 tools/classify-ipad-destination-failure \
               "$RUNNER_TEMP/dulcet-ipados-ui-testing.log" || break
-            grep -Eq 'platform:iOS Simulator, arch:[^}]*id:[0-9A-Fa-f]{8}-' \
-              "$RUNNER_TEMP/dulcet-ipados-ui-testing.log" && break
-            echo "iPadOS destination enumeration listed no concrete simulator (attempt $ipados_attempts); retrying"
-            sleep 10
-            rm -rf "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult"
+            [[ "$ipados_attempts" -ge 3 ]] && break
+            # `|| true`: neither of these may fail the step ahead of the attempt summary below.
+            sleep 10 || true
+            rm -rf "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" || true
           done
           echo "IPADOS TEST ATTEMPTS attempts=$ipados_attempts status=$xcode_status"
           if [[ "$xcode_status" -ne 0 ]]; then
