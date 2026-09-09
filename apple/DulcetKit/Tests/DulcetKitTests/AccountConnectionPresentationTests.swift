@@ -46,6 +46,91 @@ func credentialBearingPresentationValuesCannotPrintCredentials() {
     #expect(rendered.allSatisfy { $0.contains("<redacted>") })
 }
 
+// CONF-09b: observe production transitions, never request a fixture snapshot by enum case.
+// The connector controls completion timing/outcomes; credential stores control load/save results.
+@Test @MainActor
+func conf09bEveryDeclaredDistinctRenderStateIsReachable() {
+    let request = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid", username: "listener",
+        password: "fixture-password", allowLocalHTTP: false
+    )
+    let success = DulcetAccountConnectOutcome.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: request.serverURL
+    ))
+    var observed = Set<DulcetPresentationState>()
+
+    func makeStore(
+        _ connector: ControlledAccountConnector,
+        credentials: any DulcetCredentialStoring = MemoryCredentialStore(persisted: nil)
+    ) -> DulcetPresentationStore {
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+            connector: connector, credentialStore: credentials
+        ))
+        store.accountServerURL = request.serverURL
+        store.accountUsername = request.username
+        store.accountPassword = request.password
+        return store
+    }
+
+    let connector = ControlledAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let store = makeStore(connector, credentials: credentials)
+    observed.insert(store.snapshot.state)
+    store.submitAccountConnection()
+    #expect(connector.requests == [request])
+    observed.insert(store.snapshot.state)
+    connector.complete(success)
+    observed.insert(store.snapshot.state)
+    #expect(credentials.saved == [request])
+
+    // Reconstruct from credentials actually saved by the successful production submission.
+    let restoredConnector = ControlledAccountConnector()
+    let restored = makeStore(restoredConnector, credentials: credentials)
+    observed.insert(restored.snapshot.state)
+    #expect(restoredConnector.requests.isEmpty)
+
+    // Reach every distinct domain-error family through the connector completion path.
+    for kind in DulcetAccountFailureKind.allCases
+        where kind != .transportCancelled && kind != .credentialPersistenceFailed {
+        let failingConnector = ControlledAccountConnector()
+        let failed = makeStore(failingConnector)
+        failed.submitAccountConnection()
+        #expect(failingConnector.requests == [request])
+        failingConnector.complete(.failed(DulcetAccountErrorPresenter.presentation(
+            for: DulcetAccountErrorContext(kind: kind, serverName: "Music")
+        )))
+        observed.insert(failed.snapshot.state)
+    }
+
+    let persistenceConnector = ControlledAccountConnector()
+    let persistenceFailed = makeStore(
+        persistenceConnector, credentials: Conf09bFailingSaveCredentialStore()
+    )
+    persistenceFailed.submitAccountConnection()
+    #expect(persistenceConnector.requests == [request])
+    persistenceConnector.complete(success)
+    observed.insert(persistenceFailed.snapshot.state)
+
+    // Explicit expected states keep a broken production mapping from changing the oracle too.
+    // accountConnectEmpty and tlsUntrusted* are fixture variants, not distinct live states;
+    // accountRemoving/accountRemovalError belong to account removal (CONF-10c).
+    #expect(observed == Set<DulcetPresentationState>([
+        .accountConnectIdle, .accountConnecting, .accountSavedDisconnected, .accountConnected,
+        .accountErrorInput, .accountErrorTransport, .accountErrorSecurity, .accountErrorProtocol,
+        .accountErrorServer, .accountErrorAuthentication, .accountErrorCapability,
+        .accountErrorPersistence,
+    ]), "CONF-09b did not reach every declared distinct Apple account-connect render state")
+}
+
+@MainActor
+private final class Conf09bFailingSaveCredentialStore: DulcetCredentialStoring {
+    func load() throws -> DulcetAccountConnectRequest? { nil }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement
+    }
+    func delete() throws {}
+}
+
 @Test @MainActor
 func accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation() {
     let connector = ControlledAccountConnector()

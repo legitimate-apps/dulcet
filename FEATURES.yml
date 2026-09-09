@@ -81,7 +81,7 @@
               "conformance": "CONF-09b",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitTests/fixtureRendersEveryDeclaredDistinctState"
+              "test": "DulcetKitTests/conf09bEveryDeclaredDistinctRenderStateIsReachable"
             },
             {
               "conformance": "CONF-09c",
@@ -176,7 +176,7 @@
               "conformance": "CONF-09b",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitIOSTests/accountConnectRootLoadsForIOS"
+              "test": "DulcetKitIOSTests/conf09bEveryDeclaredDistinctRenderStateIsReachable"
             },
             {
               "conformance": "CONF-09c",
@@ -277,7 +277,7 @@
               "conformance": "CONF-09b",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout"
+              "test": "DulcetKitIOSTests/conf09bEveryDeclaredDistinctRenderStateIsReachable"
             },
             {
               "conformance": "CONF-09c",
@@ -378,7 +378,7 @@
               "conformance": "CONF-09b",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitTVOSTests/accountConnectRootLoadsForTVOS"
+              "test": "DulcetKitTVOSTests/conf09bEveryDeclaredDistinctRenderStateIsReachable"
             },
             {
               "conformance": "CONF-09c",
