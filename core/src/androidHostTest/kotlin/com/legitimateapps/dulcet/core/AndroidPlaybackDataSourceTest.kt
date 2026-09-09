@@ -140,6 +140,9 @@ class AndroidPlaybackDataSourceTest {
             "<?xml version=\"1.0\"?>" + " ".repeat(9000),
             "<!--" + "comment padding ".repeat(900) + "-->",
             "<?xml version=\"1.0\"?><!--" + "x".repeat(9000) + "--> ",
+            "<!DOCTYPE subsonic-response>",
+            "<!DOCTYPE subsonic-response [<?note ] > " + "x".repeat(9000) + " ?>]>",
+            "<!DOCTYPE subsonic-response [<!-- ] > " + "x".repeat(9000) + " --><!ENTITY note \"value > end\">]>",
         )) {
             val envelope = (prolog + error).toByteArray()
             var consumed = 0L

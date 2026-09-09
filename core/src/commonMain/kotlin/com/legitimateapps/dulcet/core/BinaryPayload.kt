@@ -52,6 +52,15 @@ private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
         while (xml.getOrNull(offset) in listOf(' ', '\t', '\r', '\n')) offset++
         if (offset == xml.length) return SubsonicBinaryEnvelopeInspection.Unknown
         val rest = xml.substring(offset)
+        if ("<!DOCTYPE".startsWith(rest)) return SubsonicBinaryEnvelopeInspection.Unknown
+        if (rest.startsWith("<!DOCTYPE") && rest.getOrNull(9) in listOf(' ', '\t', '\r', '\n')) {
+            // A DTD can contain quoted '>' characters and an internal subset. Neither ends the
+            // declaration; its root remains unknown until the outer closing delimiter arrives.
+            val end = xml.doctypeEnd(offset + 9)
+                ?: return SubsonicBinaryEnvelopeInspection.Unknown
+            offset = end
+            continue
+        }
         val terminator = when {
             rest.startsWith("<?") -> "?>"
             rest.startsWith("<!--") -> "-->"
@@ -81,6 +90,35 @@ private fun ByteArray.inspectXmlSubsonicBinaryEnvelope(
     val code = XML_SUBSONIC_ERROR_CODE.find(xml, offset)?.groupValues?.getOrNull(1)?.toIntOrNull()
         ?: return SubsonicBinaryEnvelopeInspection.Malformed
     return SubsonicBinaryEnvelopeInspection.Error(code)
+}
+
+private fun String.doctypeEnd(start: Int): Int? {
+    var index = start
+    var quote: Char? = null
+    var brackets = 0
+    while (index < length) {
+        val char = this[index]
+        if (quote != null) {
+            if (char == quote) quote = null
+        } else if (startsWith("<!--", index)) {
+            val end = indexOf("-->", index + 4)
+            if (end < 0) return null
+            index = end + 3
+            continue
+        } else if (startsWith("<?", index)) {
+            val end = indexOf("?>", index + 2)
+            if (end < 0) return null
+            index = end + 2
+            continue
+        } else when (char) {
+            '\'', '"' -> quote = char
+            '[' -> brackets++
+            ']' -> if (brackets > 0) brackets--
+            '>' -> if (brackets == 0) return index + 1
+        }
+        index++
+    }
+    return null
 }
 
 internal fun ByteArray.binaryPayloadContentStartIndex(): Int {
