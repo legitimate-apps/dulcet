@@ -55,7 +55,7 @@ class ChallengeOutputTest(unittest.TestCase):
             self.assertEqual((407, 'Basic realm="dulcet-forward-proxy"', b''), result)
             self.assertEqual((1, ('invented-proxy-authorization-canary',)), state.proxy_auth_outcome())
 
-    def test_backpressured_stdout_cannot_delay_response_or_handler(self):
+    def test_backpressured_stdout_cannot_delay_response(self):
         done = threading.Event()
         failures = []
 

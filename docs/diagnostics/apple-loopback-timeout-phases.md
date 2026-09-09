@@ -222,3 +222,13 @@ still be deleted while **these controls** pass (other tests may reject them):
 No library-handler arrival/send instrumentation exists to delete. A disappearing live Swift writer
 also cannot be detected because no such writer exists. A runner that dies before assertion
 publication remains outside the recoverable evidence boundary.
+
+**OBSERVED (verification after merging `50c98de`):** the conflict resolution retains
+`withStallDiagnostics("proxy-auth")`, its credential/client/observation/cleanup phase wrappers and
+connector `logSink`, inside the proxy timeline wrapper. The full JVM suite executed 187 tests with
+zero failures, errors or skips. The two Darwin proxy tests executed with zero failures, errors or
+skips against an owned disposable proxy fixture. Output included both
+`handler challenge asserted count=1; Proxy-Authorization absent` and
+`CONFORMANCE_SNAPSHOT proxy-auth ... test-body-exited`. The final real Swift failed-browse control
+passed. Parity (6 feature rows), CI policy (6 workflows) and `git diff --check` passed. These are local
+results; no new hosted CI result or iOS execution is claimed.
