@@ -1,6 +1,30 @@
 import XCTest
 
 final class DulcetiOSUITests: XCTestCase {
+    /// A missing launch-screen declaration opts into the legacy 320-by-480 canvas.
+    /// Compare the actual window with the display, independently of device resolution.
+    @MainActor
+    func testIPhoneWindowUsesFullDisplay() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments.append("-dulcet-account-connect-layout-fixture")
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let display = XCUIScreen.main.screenshot().image.size
+        let frame = window.frame
+        print("DULCET DISPLAY GEOMETRY window=\(frame) displayPixels=\(display)")
+        print(app.debugDescription)
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertLessThan(frame.width, 700, "Run this full-display proof on an iPhone")
+        XCTAssertEqual(frame.minX, 0, accuracy: 1)
+        XCTAssertEqual(frame.minY, 0, accuracy: 1)
+        XCTAssertEqual(
+            frame.height / frame.width, display.height / display.width, accuracy: 0.01,
+            "The app window must fill the portrait display without legacy letterboxing"
+        )
+    }
+
     private enum BlockingSystemDialogProbeResult {
         case absent
         case handled
