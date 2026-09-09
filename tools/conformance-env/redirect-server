@@ -384,18 +384,19 @@ def envelope(
 
 
 
-# Only fixed route vocabulary may reach diagnostics: some redirect scenarios reflect
-# credentials into path segments. Query strings, authorities, headers and bodies never do.
-ACCESS_PATH_WORDS = frozenset("""
-health observations observe ambient-auth cacheable-account target-count proxy-auth rest
-slow-account same same-target cross-reflected-get-user cross-reflected-target
+# Preserve only complete route structures with fixed, credential-free positions.
+# Unknown/encoded structures are opaque: a familiar word in them may be a credential.
+ACCESS_SCENARIOS = frozenset("""
+observe ambient-auth cacheable-account slow-account same same-target cross-reflected-get-user
  two-hop-get-user two-hop-get-user-intermediate two-hop-target cross cross-observe
-cross-observe-query cross-target cross-target-query loop funkwhale-2-0-9
-mixed-case-string-roles malformed-envelope-open-subsonic
-malformed-envelope-open-subsonic-string malformed-envelope-type malformed-envelope-download-role
-malformed-extensions-object malformed-extensions-string
-getOpenSubsonicExtensions getOpenSubsonicExtensions.view ping ping.view getUser getUser.view
+cross-observe-query cross-target cross-target-query funkwhale-2-0-9 mixed-case-string-roles
+malformed-envelope-open-subsonic malformed-envelope-open-subsonic-string
+malformed-envelope-type malformed-envelope-download-role malformed-extensions-object
+malformed-extensions-entry malformed-extensions-name malformed-extensions-versions
+malformed-extensions-version malformed-extensions-duplicate
 """.split())
+ACCESS_OBSERVATIONS = frozenset("observe ambient-auth cacheable-account target-count proxy-auth".split())
+ACCESS_ENDPOINT = r"(getOpenSubsonicExtensions|ping|getUser)(?:\.view)?"
 
 
 def access_path(target: str) -> tuple[str, str]:
@@ -406,12 +407,17 @@ def access_path(target: str) -> tuple[str, str]:
         return "[redacted]", "[redacted]"
     if path.startswith("/cross-reflected-target/rest/"):
         return "/cross-reflected-target/rest/[redacted]", "[redacted]"
-    parts = path.split("/")
-    safe = [part if part in ACCESS_PATH_WORDS or not part else "[redacted]" for part in parts]
-    endpoint = parts[-1].removesuffix(".view")
-    if endpoint not in {"getOpenSubsonicExtensions", "ping", "getUser"}:
-        endpoint = "[other]"
-    return "/".join(safe)[:512], endpoint
+    if path == "/health":
+        return path, "[other]"
+    if path in {f"/observations/{name}" for name in ACCESS_OBSERVATIONS}:
+        return path, "[other]"
+    match = re.fullmatch(r"/([^/]+)/rest/" + ACCESS_ENDPOINT, path)
+    if match and match[1] in ACCESS_SCENARIOS:
+        return path, match[2]
+    match = re.fullmatch(r"/loop/r[0-9]{1,6}/rest/" + ACCESS_ENDPOINT, path)
+    if match:
+        return path, match[1]
+    return "[redacted]", "[redacted]"
 
 
 class AccessLog:

@@ -115,6 +115,36 @@ class AccessLogTest(unittest.TestCase):
         self.assertEqual("/cross-reflected-target/rest/[redacted]", path)
         self.assertEqual("[redacted]", endpoint)
 
+    def test_encoded_and_unknown_structures_fail_closed_over_real_sockets(self):
+        paths = [
+            "/cross%2Dreflected-target/rest/u/health/t/ping/s/rest/getUser.view",
+            "/cross-reflected-target/re%73t/u/health/t/ping/s/rest/getUser.view",
+            "/cross-reflected-target/rest%2Fu/health/t/ping/s/rest/getUser.view",
+            "/cross%252Dreflected-target/rest/u/health/t/ping/s/rest/getUser.view",
+            "/unknown/rest/u/health/t/ping/s/rest/getUser.view",
+            "/slow-account/rest/u/health/t/ping/s/rest/getUser.view",
+            "/cross-reflected-target/rest/u/%68ealth/t/%70ing/s/%72est/getUser.view",
+            "/cross%2Dreflected-target/rest/u/%68ealth/t/%70ing/s/%72est/getUser.view",
+        ]
+        for handler in ('RedirectHandler', 'ForwardProxyAuthenticationHandler'):
+            with tempfile.TemporaryDirectory() as directory, server(directory, handler) as (port, path):
+                # Confirm this live logger records a known structure before accepting redacted output.
+                self.assertEqual(200, request(port, '/health'))
+                await_records(path, 'completion', 1)
+                self.assertEqual('/health', records(path)[1]['path'])
+                for index, target in enumerate(paths, 2):
+                    with self.subTest(handler=handler, target=target):
+                        request(port, target)
+                        row = await_records(path, 'completion', index)[-1]
+                        expected = ('/cross-reflected-target/rest/[redacted]'
+                                    if target.startswith('/cross-reflected-target/rest/') else '[redacted]')
+                        self.assertEqual(expected, row['path'])
+                        self.assertEqual('[redacted]', row['endpoint'])
+                        arrival = next(r for r in records(path) if r.get('sequence') == row['requestId'])
+                        self.assertEqual(expected, arrival['path'])
+                        self.assertEqual('[redacted]', arrival['endpoint'])
+        print('STRUCTURAL REDACTION CONTROL handlers=2 adversarialRequests=16 knownHealthHits=2', flush=True)
+
     def test_suppressed_body_write_failure_is_observed(self):
         class BrokenWriter:
             def write(self, body):
