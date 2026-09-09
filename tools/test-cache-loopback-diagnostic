@@ -117,12 +117,12 @@ def deadline(mode):
         def log_message(self, *args):
             pass
         def do_GET(self):
-            if self.path.startswith("/rest/search3") or (mode == "ping-stall" and self.path == "/ping"):
+            if self.path.startswith("/rest/search3") or (mode == "ping-stall" and self.path == "/ping") or (mode == "shared-rest-stall" and self.path.startswith("/rest/ping")):
                 time.sleep(15)
                 return
-            drip = (mode == "ping-drip" and self.path == "/ping") or (mode in ("rest-drip", "shared-rest-drip") and self.path.startswith("/rest/ping"))
+            drip = (mode == "ping-drip" and self.path == "/ping") or (mode in ("rest-drip", "shared-rest-drip", "shared-rest-stall") and self.path.startswith("/rest/ping"))
             body = b'{"subsonic-response":{"status":"ok"}}' if self.path.startswith("/rest/") else b"1"
-            if mode == "shared-rest-drip" and self.path == "/ping":
+            if mode in ("shared-rest-drip", "shared-rest-stall") and self.path == "/ping":
                 time.sleep(0.75)
             self.send_response(200)
             self.send_header("Content-Length", "1000" if drip else str(len(body)))
@@ -165,7 +165,7 @@ def deadline(mode):
                 primary = [(at, line) for at, line in lines if "cache search never completed:" in line]
                 assert primary and primary[0][0] < 5.6, f"{mode}: primary failure delayed: {primary}"
                 diagnostic = [(at, line) for at, line in lines if "loopback diagnosis=" in line]
-                verdict = "database-path-blocked" if mode in ("rest-drip", "shared-rest-drip") else "http-blocked"
+                verdict = "database-path-blocked" if mode in ("rest-drip", "shared-rest-drip", "shared-rest-stall") else "http-blocked"
                 assert diagnostic and f"diagnosis={verdict}" in diagnostic[0][1], lines
                 assert primary[0][0] <= diagnostic[0][0], lines
                 assert process.returncode == 1 and elapsed < 6.8, (process.returncode, elapsed, lines)
@@ -178,10 +178,10 @@ def deadline(mode):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=("branches", "ping-stall", "ping-drip", "rest-drip", "shared-rest-drip"))
+    parser.add_argument("--case", choices=("branches", "ping-stall", "ping-drip", "rest-drip", "shared-rest-drip", "shared-rest-stall"))
     args = parser.parse_args()
     if args.case in (None, "branches"):
         branches()
-    for mode in ("ping-stall", "ping-drip", "rest-drip", "shared-rest-drip"):
+    for mode in ("ping-stall", "ping-drip", "rest-drip", "shared-rest-drip", "shared-rest-stall"):
         if args.case in (None, mode):
             deadline(mode)
