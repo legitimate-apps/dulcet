@@ -472,7 +472,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         }
     }
 
-    private func publish(_ transition: ApplePlaybackQueueTransitionDto) {
+    func publish(_ transition: ApplePlaybackQueueTransitionDto) {
         guard transition.errorKind == nil, let snapshot = transition.snapshot else {
             publishFailure()
             return
@@ -482,8 +482,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             presentationHandler?(currentPresentation)
             return
         }
-        guard ["Ready", "Progressing", "Buffering", "Paused"].contains(session.phase),
-              let current = catalog[DulcetProviderItemID(
+        if session.phase == "Failed" {
+            publishFailure()
+            return
+        }
+        guard ["Ready", "Progressing", "Buffering", "Paused"].contains(session.phase) else {
+            publishPreparing()
+            return
+        }
+        guard let current = catalog[DulcetProviderItemID(
                 providerInstanceID: session.providerInstanceId,
                 rawID: session.rawId
               )] else {
