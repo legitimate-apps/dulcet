@@ -628,7 +628,14 @@ wired_controls = set().union(*(
     for workflow in workflows
     for step in workflow_run_steps(workflow.read_text())
 ))
-for control in sorted(Path("tools").glob("test-*")):
+# rglob, not glob: a non-recursive sweep lets relocation retire a check silently. Moving a wired
+# control into tools/ci/ and dropping its invocation removed it from CI entirely while this gate
+# still printed "CI policy valid" -- and tools/ci/ is exactly where this repository has already
+# relocated a check for real, which is what the extraction defect above was. A sweep that only
+# looks where controls used to live cannot answer the question it was added to answer.
+# MEASURED: recursive and non-recursive both find 42 files today, so this closes the hole at no
+# cost in false positives.
+for control in sorted(Path("tools").rglob("test-*")):
     if control.is_file() and str(control) not in wired_controls:
         errors.append(
             f"{control}: no workflow invokes this control as a blocking command; "

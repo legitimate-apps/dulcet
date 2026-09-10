@@ -1,9 +1,16 @@
 # CI policy gate repair: mutation evidence
 
-The three reported defects are repaired on `fix/restore-extracted-gate`, based on
-`origin/main` at `2fbc37b`. This report compares the pre-repair verifier at `a06ef7f`
-with the implementation at `f578871`. No workflow or extracted production script
-was edited. The restored class checks and their source separation remain intact.
+The three reported defects are repaired on `fix/restore-extracted-gate`. This report
+compares the pre-repair verifier at `b07444b` with the implementation at `ddf5161`.
+No workflow or extracted production script was edited. The restored class checks and
+their source separation remain intact.
+
+> **Citations corrected 2026-09-10.** This paragraph previously cited `a06ef7f` and
+> `f578871`. Neither is reachable from this branch — they are pre-rebase copies of the
+> two commits named above, so a reader following them got nothing. It also stated the
+> base as `origin/main` at `2fbc37b`; the base is now `50c98de`. A verification report
+> whose revisions cannot be checked out is not verification, and the rebase that
+> orphaned them is routine, so assume any SHA written here needs re-checking after one.
 
 ## What changed
 
@@ -127,6 +134,7 @@ would accept the same deletions:
    inventory is derived from existing files; there is no immutable required-control
    manifest. Erasing a control's assertions also passes because policy validation
    inspects wiring, not the meaning of a tool's implementation.
+   **Relocation is no longer in this bucket** — see the 2026-09-10 repairs below.
 2. Delete `tools/swift-testing-junit` itself. The inventory recognizes converter
    command text without checking that converter's implementation exists. Actually
    running its workflow command would fail.
@@ -187,3 +195,75 @@ parameterized helper call deletion/wrong-class emission. Original restoration
 fixtures continue to pass. The previously supplied three-version restoration,
 transitive discovery, filename-boundary, and workflow preservation investigations
 were not repeated.
+
+## Repairs from the independent review, 2026-09-10
+
+An adversarial review of this branch ran 19 repository mutations and reproduced the
+headline table exactly. It found two defects that this document had claimed were
+absent. Both are repaired here, and each repair is demonstrated by a mutation that
+fails without it.
+
+**The suite printed a total it did not count.** `tools/test-verify-ci-policy` ended with
+a literal `Diagnostic wiring controls passed: 22/22 cases`. Emptying every diagnostic
+case left that line unchanged and the exit status 0 — the precise defect this file
+exists to prevent, roughly seventy lines below the fix for it. The suite now records
+each case it runs and asserts the count against a declared constant.
+
+**Relocation still retired a check.** The orphan sweep globbed `tools/test-*`
+non-recursively, so moving a wired control into `tools/ci/` and dropping its invocation
+removed it from CI while the gate still printed `CI policy valid`. `tools/ci/` is
+exactly where this repository has already relocated a check for real, which is the
+extraction defect this branch exists to repair. The sweep now uses `rglob`.
+**MEASURED:** recursive and non-recursive find the same 42 files today, so this closes
+the hole at no cost in false positives.
+
+Two further holes surfaced while repairing the first one, neither reported:
+
+- **Deriving the expected total from the contract is self-consistent.** A count of
+  `1 + len(DIAGNOSTIC_CONTROLS) * 6 + 3` falls to match the actual when the contract is
+  emptied, and passes. There is now an explicit floor that does not move with it.
+- **The contract was declared twice.** `verify_ci_policy.py` and
+  `test-verify-ci-policy` each held their own copy, so growing the verifier's list
+  would leave the suite proving the old one and reporting a pass. The suite now reads
+  the contract out of the verifier and fails if they disagree.
+
+The first attempt at that last check used a regex for the parenthesised block and
+smeared: `\((.*?)^\)` ran to the next line-initial `)` and returned every quoted token
+in between, including regex source and comment prose. It read correctly on the
+unmutated file and failed only under mutation. It is now an `ast` parse.
+
+```text
+M1 empty the per-control mutation loop          exit=1  ran 4 cases, expected 22
+M2 empty the contract in both files             exit=1  shrank to 0 controls
+M3 drift the two contract copies                exit=1  1 drift error
+M4 relocate into tools/ci/ + drop invocation    exit=1  tools/ci/test-required-checks: no workflow invokes
+clean tree                                      exit=0  CI policy valid across 6 workflows
+                                                        Diagnostic wiring controls passed: 22/22 cases
+```
+
+**Control inventory, re-measured 2026-09-10** (the earlier "39 files / 36 wired" was
+stale):
+
+| ref | controls | named by a workflow | unnamed |
+|---|---|---|---|
+| `origin/main` `50c98de` | 42 | 39 | 3 |
+| this branch | 42 | 42 | 0 |
+
+The three unnamed on `main` are `tools/test-cache-search-readiness`,
+`tools/test-design-capture-variant-census` and `tools/test-health-request-policy` —
+the orphans this branch wires.
+
+### Reported and deliberately not fixed here
+
+- **"Wired" credits a workflow that never runs on a pull request.**
+  `tools/test-design-capture-pair-detector` is named only by `capture-soak.yml`, which
+  is `workflow_dispatch`-only, so the sweep counts it as wired while no pull request
+  ever runs it. Real, and a separate change: deciding which controls belong on the
+  pull-request path is a scope question, not a gate repair.
+- **Three verifier mutations the suite does not pin** — dropping the step-level `if:`
+  guard, dropping the job-level guard, and reverting the `read` scope. Current
+  behaviour is correct (`if: always()` is rejected at repository level, confirmed);
+  nothing pins it.
+- **Deleting `run_orphan_control_case()`** drops extras 33 to 16 and still exits 0:
+  core and apple have an identity ledger, the extras do not.
+

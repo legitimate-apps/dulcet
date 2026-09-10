@@ -7,7 +7,9 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import ast
 import json
+import re
 import sys
 import tempfile
 
@@ -827,7 +829,46 @@ def diagnostic_case(control=None, mutation=None):
         else:
             assert result.returncode != 0, f'{control} {mutation} was accepted'
             assert 'required diagnostic control ' + (control or DIAGNOSTIC_CONTROLS[0]) in result.stderr, result.stderr
+    diagnostic_cases_run.append((control, mutation))
     print(f'PASS: diagnostic wiring {mutation or "present"} {control or "job"}')
+
+def verifier_diagnostic_controls() -> tuple[str, ...]:
+    """Read the contract out of the verifier's own source.
+
+    This file and verify_ci_policy.py each declared DIAGNOSTIC_CONTROLS independently. Two copies of
+    a contract are one copy that lies as soon as they drift: grow the verifier's list and this suite
+    goes on proving the old one, reporting a pass for coverage it no longer has.
+    """
+    # Parsed, not matched. The first version of this used a regex for the parenthesised block and
+    # smeared: `\((.*?)^\)` ran past the declaration to the next line-initial ")" and returned every
+    # quoted token in between -- regex source strings, comment prose, the lot. It read correctly on
+    # the unmutated file, which is the only reason it survived one round of testing.
+    for node in ast.parse(VERIFIER.read_text()).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "DIAGNOSTIC_CONTROLS"
+            for target in node.targets
+        ):
+            return tuple(ast.literal_eval(node.value))
+    raise AssertionError("verify_ci_policy.py no longer declares DIAGNOSTIC_CONTROLS at module level")
+
+
+assert DIAGNOSTIC_CONTROLS == verifier_diagnostic_controls(), (
+    f"this suite tests {DIAGNOSTIC_CONTROLS} but the verifier enforces "
+    f"{verifier_diagnostic_controls()}"
+)
+# A FLOOR, deliberately not derived from the contract. Deriving the expected total from
+# DIAGNOSTIC_CONTROLS makes emptying it self-consistent -- expected falls to match actual and the
+# suite still passes, which is the defect being repaired here wearing a slightly better disguise.
+# Shrinking the contract has to be an explicit act that edits this number.
+MINIMUM_DIAGNOSTIC_CONTROLS = 3
+assert len(DIAGNOSTIC_CONTROLS) >= MINIMUM_DIAGNOSTIC_CONTROLS, (
+    f"the diagnostic contract shrank to {len(DIAGNOSTIC_CONTROLS)} controls; "
+    f"at least {MINIMUM_DIAGNOSTIC_CONTROLS} are required"
+)
+
+# 1 unmutated baseline + one per (control x mutation) + 3 job-level mutations.
+EXPECTED_DIAGNOSTIC_CASES = 1 + len(DIAGNOSTIC_CONTROLS) * 6 + 3
+diagnostic_cases_run: list[tuple[str | None, str | None]] = []
 
 diagnostic_case()
 for control in DIAGNOSTIC_CONTROLS:
@@ -835,4 +876,20 @@ for control in DIAGNOSTIC_CONTROLS:
         diagnostic_case(control, mutation)
 for mutation in ('job-disabled', 'linux-only', 'manual-only'):
     diagnostic_case(mutation=mutation)
-print('Diagnostic wiring controls passed: 22/22 cases')
+
+# The count is asserted against a declared constant, not printed from one. An independent review
+# emptied every case above and this suite still printed "22/22 cases" and exited 0 -- a literal
+# total is a claim about the code that wrote it, never evidence that anything ran. That is the
+# exact defect this whole file exists to prevent, so it may not live inside it.
+#
+# Changing the contract deliberately means changing this number too. That is the point: a surface
+# change must update every declaration of that surface, or the declaration is not a control.
+assert len(diagnostic_cases_run) == EXPECTED_DIAGNOSTIC_CASES, (
+    f'diagnostic wiring ran {len(diagnostic_cases_run)} cases, expected '
+    f'{EXPECTED_DIAGNOSTIC_CASES}; cases={diagnostic_cases_run}'
+)
+assert len(set(diagnostic_cases_run)) == len(diagnostic_cases_run), (
+    f'diagnostic wiring repeated a case: {diagnostic_cases_run}'
+)
+print(f'Diagnostic wiring controls passed: '
+      f'{len(diagnostic_cases_run)}/{EXPECTED_DIAGNOSTIC_CASES} cases')
