@@ -104,6 +104,51 @@ MALFORMED = {
 }
 
 
+# A well-formed, placeholder-only available-destinations section with NO device-not-found line.
+# This is the ONLY control that pins condition 1. An independent review deleted the
+# NO_MATCHING_DEVICE guard entirely and all 22 controls still passed, because every other fixture
+# lacking the phrase also lacks a parseable section -- the parse refused those on its own and the
+# guard never had to hold. A condition that no fixture can distinguish is not being tested.
+SECTION_WITHOUT_THE_ERROR = """xcodebuild: error: Signing for "DulcetiOS" requires a development team.
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+"""
+
+# The second launch phrasing. The first had a fixture; this one had none.
+LAUNCH_TIMED_OUT = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+Timed out while launching application via Xcode
+"""
+
+# A line torn into the middle of the destination rows. `accepted_ids` stops at it and never sees the
+# concrete simulator below, so without a contiguity check this is retried while a real simulator was
+# listed. Not observed on this runner; the direction of the failure is why it is closed.
+INTERLEAVED_SECTION = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+note: Using codesigning identity override
+\t\t{ platform:iOS Simulator, id:46A1D6B5-D058-48BE-9721-28BF4BA8CFD9, OS:26.5, name:iPad Pro 13-inch (M5) }
+"""
+
+# An Ineligible section after the Available one is NORMAL, not tearing. Without this control the
+# contiguity check could be written to reject every real transcript that has both sections.
+INELIGIBLE_SECTION_FOLLOWS = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+
+\tIneligible destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device, error:iOS 26.5 is not installed }
+"""
+
+
 def classify(transcript: str | None, scheme: str = "DulcetiOS") -> subprocess.CompletedProcess:
     with TemporaryDirectory() as tmp:
         log = Path(tmp) / "dulcet-ipados-ui-testing.log"
@@ -164,6 +209,15 @@ def main() -> None:
 
     for label, transcript in MALFORMED.items():
         check(f"{label} blocks the retry", not decide(transcript))
+
+    # Condition 1: the device-not-found line must be present. Nothing else pins this.
+    check("a destination list without the error line blocks the retry",
+          not decide(SECTION_WITHOUT_THE_ERROR))
+    check("the second launch phrasing blocks the retry", not decide(LAUNCH_TIMED_OUT))
+    check("a torn destination section blocks the retry", not decide(INTERLEAVED_SECTION))
+    # ...and the contiguity check must not reject a normal two-section transcript.
+    check("an ineligible section after the available one still retries",
+          decide(INELIGIBLE_SECTION_FOLLOWS))
 
     # Fail closed on a scheme whose section is not the one in the transcript, and on no transcript.
     check("a mismatched scheme blocks the retry",

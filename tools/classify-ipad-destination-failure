@@ -20,14 +20,34 @@ requested destination is itself a concrete simulator id on a `platform:iOS Simul
 recorded failures, and with no `arch:` field. Section parsing is not a refinement here; it is the
 only thing that separates the question from the answer.
 
+Be precise about why, because the obvious version of this claim is not true. An independent review
+MEASURED a real device-not-found block on Xcode 26.6: **all twelve** concrete `platform:iOS Simulator`
+rows carried `arch:arm64`, and only the placeholder lacked it. So "real xcodebuild lists concrete
+simulators without arch:" -- which an earlier version of this file asserted -- is not established on
+any Xcode this project runs. The load-bearing fact is the other one, and it is confirmed on both
+recorded failures: **the REQUESTED destination is arch-less**, so a whole-transcript grep with `arch:`
+made optional matches the request and stops the retry firing on the very failures it exists for.
+
 The parse is `accepted_ids` from `resolve-ipad-destination`: one field-wise reader, shared with the
-resolver whose eligibility contract it already defines, indifferent to `arch:` and to spacing, and
-covered by `test-ipad-destination-resolver`. It raises rather than guessing when the header is absent
+resolver whose eligibility contract it already defines, indifferent to `arch:` and to spacing.
+
+⚠️ Its arch-indifference and its two raises are covered HERE, in
+`test-ipad-destination-failure-classifier`, and NOT by `test-ipad-destination-resolver` -- an earlier
+version of this comment claimed the latter. MEASURED: making `accepted_ids` require `arch:`, dropping
+its malformed-row raise, and dropping its missing-header raise each leave the resolver suite
+**passing**, because its fixtures put `arch:arm64` on every row and its "malformed" case is a missing
+header. Deleting the fixtures here on the strength of that sentence would have removed the only
+controls holding those three properties.
+
+It raises rather than guessing when the header is absent
 or a row is malformed. Every raise is reported here as "do not retry" -- unrecognized output is a
 reason to stop, not to try again.
 
-Exit 0 means retry is warranted. Any other exit means it is not. Every outcome prints one
+Exit 0 means retry is warranted. Any other exit means it is not. Every DECISION prints one
 `IPADOS RETRY DECISION` line naming the reason, so a run that was or was not retried says why.
+Two paths exit without one and are not decisions: argparse usage errors (exit 2) and a failure to
+import the resolver, which raises. Both are broken-tool conditions, and the loop treats every
+non-zero exit as "do not retry", so neither can produce a retry.
 """
 
 from __future__ import annotations
@@ -49,6 +69,7 @@ WORK_REACHED_MARKERS = (
     "** BUILD FAILED **",
     "** TEST FAILED **",
     "** TEST EXECUTE FAILED **",
+    "** TEST BUILD FAILED **",
     "** BUILD INTERRUPTED **",
     "** TEST INTERRUPTED **",
     "Testing failed:",
@@ -76,6 +97,40 @@ def accepted_ids_reader():
     return module.accepted_ids
 
 
+DESTINATION_SECTION_HEADER = re.compile(r"destinations for the \"[^\"]*\" scheme:\s*$")
+
+
+def section_is_contiguous(transcript: str, scheme: str) -> bool:
+    """Reject an available-destinations section that something interleaved a line into.
+
+    `accepted_ids` ends the section at the first line that is not a `{...}` row, which is right for a
+    well-formed transcript and fails OPEN for a torn one: a line merged into the middle of the rows --
+    plausible where `2>&1 | tee` interleaves two streams -- hides every row below it, so a listed
+    concrete simulator goes uncounted and the run is retried when it must not be. Not observed on this
+    runner; closed here because the failure direction is the one that matters.
+
+    Contiguity is judged by what follows the terminator: another destination row before any new
+    section header means rows belonging to this section were skipped. A row under a later header
+    (`Ineligible destinations for ...`) is a different section and is not evidence of tearing.
+    """
+    lines = transcript.splitlines()
+    header = f'Available destinations for the "{scheme}" scheme:'
+    try:
+        index = next(i for i, line in enumerate(lines) if line.strip() == header)
+    except StopIteration:
+        return True  # No header at all: accepted_ids raises, and that path already refuses a retry.
+    index += 1
+    while index < len(lines) and (not lines[index].strip() or lines[index].strip().startswith("{")):
+        index += 1
+    for line in lines[index:]:
+        stripped = line.strip()
+        if DESTINATION_SECTION_HEADER.search(stripped):
+            return True
+        if stripped.startswith("{"):
+            return False
+    return True
+
+
 def decide(transcript: str, scheme: str) -> tuple[bool, str]:
     if NO_MATCHING_DEVICE not in transcript:
         return False, "reason=not-a-destination-failure"
@@ -86,6 +141,9 @@ def decide(transcript: str, scheme: str) -> tuple[bool, str]:
     for pattern in WORK_REACHED_PATTERNS:
         if pattern.search(transcript):
             return False, f"reason=build-or-test-already-ran marker={pattern.pattern!r}"
+
+    if not section_is_contiguous(transcript, scheme):
+        return False, "reason=destination-section-not-contiguous"
 
     try:
         concrete = accepted_ids_reader()(transcript, scheme)
