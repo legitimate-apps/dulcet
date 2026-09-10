@@ -1277,11 +1277,14 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
 }
 
 @MainActor
-private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
+private final class ControlledLibraryBrowser: DulcetLibraryBrowsing, DulcetAlbumTracksLoading {
     private let onCancel: @MainActor () -> Void
     private(set) var requests: [DulcetLibraryBrowseRequest] = []
     private(set) var operations: [ControlledLibraryOperation] = []
+    private(set) var albumTrackRequests: [String] = []
     private var completions: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+    private var delivered: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+    private var albumTrackCompletions: [(@MainActor (DulcetAlbumTracksOutcome) -> Void)] = []
 
     init(onCancel: @escaping @MainActor () -> Void = {}) {
         self.onCancel = onCancel
@@ -1298,9 +1301,32 @@ private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
         return operation
     }
 
+    func loadAlbumTracks(
+        _ request: DulcetLibraryBrowseRequest,
+        albumRawID: String,
+        completion: @escaping @MainActor (DulcetAlbumTracksOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        albumTrackRequests.append(albumRawID)
+        albumTrackCompletions.append(completion)
+        return ControlledLibraryOperation(onCancel: onCancel)
+    }
+
     func complete(_ outcome: DulcetLibraryBrowseOutcome) {
         guard !completions.isEmpty else { return }
-        completions.removeFirst()(outcome)
+        let completion = completions.removeFirst()
+        delivered.append(completion)
+        completion(outcome)
+    }
+
+    /// The production browser answers one library open more than once — a fast preview, then the
+    /// committed library — so a double is only faithful if it can do the same.
+    func completeAgain(_ outcome: DulcetLibraryBrowseOutcome) {
+        delivered.last?(outcome)
+    }
+
+    func completeAlbumTracks(_ outcome: DulcetAlbumTracksOutcome) {
+        guard !albumTrackCompletions.isEmpty else { return }
+        albumTrackCompletions.removeFirst()(outcome)
     }
 }
 
@@ -1496,6 +1522,24 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
 }
 
 @MainActor
+/// The album as the grid receives it after a first paint: the server's declared track count and
+/// no track list at all.
+private func fixtureUnreadAlbum(trackCount: Int = 12) -> DulcetAlbum {
+    let album = fixtureLibraryAlbum()
+    return DulcetAlbum(
+        id: album.id,
+        title: album.title,
+        credits: album.credits,
+        year: album.year,
+        duration: album.duration,
+        mediaSourceID: album.mediaSourceID,
+        artwork: album.artwork,
+        tracks: [],
+        trackCount: trackCount,
+        areTracksLoaded: false
+    )
+}
+
 private func fixtureLibraryAlbum() -> DulcetAlbum {
     let providerID = "provider-instance-fixture"
     let artistID = DulcetProviderItemID(providerInstanceID: providerID, rawID: "artist:opaque")
@@ -1649,4 +1693,164 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
 @MainActor
 private final class ControlledDeleteDecision {
     var shouldFail = true
+}
+
+// MARK: - Lazy album track lists
+
+@MainActor
+private func connectedLibraryStore(
+    connector: ControlledAccountConnector,
+    libraryBrowser: ControlledLibraryBrowser,
+    playback: ControlledPlaybackController
+) -> DulcetPresentationStore {
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    return store
+}
+
+/// The control for the whole change on this side of the boundary: drawing the library must not
+/// read a single album. Asserting "the library appeared" passed before this change too.
+@Test @MainActor
+func theAlbumGridIsDrawnWithoutReadingAnyAlbumsTrackList() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+
+    let albums = (0 ..< 25).map { index in
+        let base = fixtureUnreadAlbum(trackCount: index + 1)
+        return DulcetAlbum(
+            id: DulcetProviderItemID(
+                providerInstanceID: "provider-instance-fixture",
+                rawID: "album:opaque-\(index)"
+            ),
+            title: base.title,
+            credits: base.credits,
+            year: base.year,
+            duration: base.duration,
+            mediaSourceID: base.mediaSourceID,
+            artwork: base.artwork,
+            tracks: [],
+            trackCount: index + 1,
+            areTracksLoaded: false
+        )
+    }
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: albums))
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums.count == 25)
+    #expect(store.snapshot.albums.map(\.trackCount) == Array(1 ... 25))
+    #expect(store.snapshot.albums.allSatisfy { $0.tracks.isEmpty })
+    #expect(store.snapshot.albums.allSatisfy { !$0.areTracksLoaded })
+    #expect(libraryBrowser.albumTrackRequests.isEmpty)
+
+    // The instrument is not blind: opening one album moves the counter off zero, and by exactly
+    // one, so the zero above is a measurement.
+    store.selectAlbum(try #require(albums.first).id)
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque-0"])
+}
+
+@Test @MainActor
+func openingAnAlbumReadsItsTracksAndReRunsQueueRestoration() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+
+    // The first paint knows no tracks, so the catalog handed to the controller is empty. The
+    // controller decides what to do with that; the library must not withhold the call.
+    #expect(playback.restoredCatalogs.last?.isEmpty == true)
+
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.areTracksLoaded == false)
+    #expect(store.snapshot.selectedAlbumTracksFailure == nil)
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque"])
+
+    let tracks = fixtureLibraryAlbum().tracks
+    libraryBrowser.completeAlbumTracks(.loaded(tracks))
+
+    let selected = try #require(store.snapshot.selectedAlbum)
+    #expect(selected.areTracksLoaded)
+    #expect(selected.tracks.map(\.id) == tracks.map(\.id))
+    #expect(selected.trackCount == tracks.count)
+    #expect(store.snapshot.albums.first?.tracks.map(\.id) == tracks.map(\.id))
+    // The saved queue can now be restored, because these tracks are known.
+    #expect(playback.restoredCatalogs.last?.map(\.id) == tracks.map(\.id))
+}
+
+@Test @MainActor
+func aFailedTrackReadIsShownOnTheAlbumAndTheRetryReadsItAgain() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+
+    store.selectAlbum(album.id)
+    libraryBrowser.completeAlbumTracks(.failed(DulcetLibraryFailure(kind: .timeout)))
+
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbumTracksFailure?.kind == .timeout)
+    #expect(store.snapshot.selectedAlbum?.areTracksLoaded == false)
+
+    store.retryAlbumTracks()
+    #expect(store.snapshot.selectedAlbumTracksFailure == nil)
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque", "album:opaque"])
+
+    let tracks = fixtureLibraryAlbum().tracks
+    libraryBrowser.completeAlbumTracks(.loaded(tracks))
+    #expect(store.snapshot.selectedAlbum?.tracks.map(\.id) == tracks.map(\.id))
+    #expect(store.snapshot.selectedAlbumTracksFailure == nil)
+}
+
+/// A library open publishes more than once now — a fast preview, then the committed library. The
+/// later one must not throw someone out of the album they are reading.
+@Test @MainActor
+func aSecondLibraryPublicationKeepsThePersonOnTheAlbumTheyAreReading() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    let complete = fixtureLibraryAlbum()
+    libraryBrowser.completeAgain(.loaded(musicFolders: [], artists: [], albums: [complete]))
+
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(store.snapshot.selectedAlbum?.areTracksLoaded == true)
+    #expect(store.snapshot.selectedAlbum?.tracks.map(\.id) == complete.tracks.map(\.id))
 }

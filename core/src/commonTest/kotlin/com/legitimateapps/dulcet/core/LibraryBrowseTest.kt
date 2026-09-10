@@ -250,6 +250,40 @@ class LibraryBrowseTest {
         assertEquals(DomainError.Transport.Timeout, failure.error)
     }
 
+    /**
+     * A walk that runs out of budget part way through has albums in hand. Reporting those as the
+     * library would present a truncated library as a complete one, which is worse than the stall
+     * it came from: the deadline exists to REPORT, so the partial result is discarded in favour
+     * of a typed failure.
+     */
+    @Test
+    fun aWalkThatRunsOutOfBudgetReportsRatherThanPublishingAShortLibrary() = runTest {
+        val transport = LibraryEndpointTransport { endpoint, parameters ->
+            when (endpoint) {
+                "getMusicFolders" -> success(musicFoldersBody())
+                "getArtists" -> success(artistsBody())
+                "getAlbumList2" -> if (parameters.getValue("offset") == "0") {
+                    success(albumListBody(listOf("album:answered-0", "album:answered-1")))
+                } else {
+                    awaitCancellation()
+                }
+                else -> error("unexpected endpoint $endpoint")
+            }
+        }
+
+        val result = LibraryBrowser(
+            transport,
+            albumPageSize = 2,
+            albumConcurrency = 4,
+            firstPaintBudget = 30.seconds,
+        ).browse(fixtureRequest())
+
+        assertEquals(
+            DomainError.Transport.Timeout,
+            assertIs<LibraryBrowseResult.Failed>(result).error,
+        )
+    }
+
     @Test
     fun anAlbumTrackReadThatNeverAnswersBecomesATypedTimeout() = runTest {
         val transport = LibraryEndpointTransport { _, _ -> awaitCancellation() }
