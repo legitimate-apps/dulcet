@@ -54,12 +54,23 @@ STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SE
 # p99 60.40 s, max 79.52 s. Sixty seconds covers p99 of that measured range. It is deliberately not
 # the max: a window above it still FAILS, and now fails naming a stall.
 #
-# SEARCH_ATTEMPT_TIMEOUT_SECONDS is sized from the server side instead. Navidrome's own log shows
-# it answers this exact query in 150-710 ms once the request reaches its handler (OBSERVED in the
-# two failing runs whose server-side evidence survives in the log tail), and in those runs it began
-# handling the request one to two seconds AFTER the client had already given up. Ten seconds is
-# more than an order of magnitude above the handling time, so an attempt that exceeds it is starved
-# rather than slow, and retiring it to try again is the right response.
+# SEARCH_ATTEMPT_TIMEOUT_SECONDS is sized from the server side instead. In the two failing runs
+# whose server-side evidence survives in the log tail, Navidrome had been executing this exact
+# query for 149.7 / 187.6 / 190.9 ms and 326.7 / 362.6 / 710.3 ms when it logged
+# `Error searching ...: context canceled` -- and it registered the client at or after the moment
+# the client had already given up.
+#
+# ⚠️ Those are times-until-CANCEL, so they are a LOWER bound on how long the query would have taken,
+# not the answer time. The sizing argument survives that: even at ten times the observed lower
+# bound the work is ~7 s, and the failing attempts ran 11.5-44.9 s without an answer. What the
+# evidence supports is that an attempt past ten seconds is starved rather than merely slow, so
+# retiring it and trying again is the right response -- not that the server is "14x faster".
+#
+# ⚠️ A SECOND CALLER shares these budgets: core-ci's `conformance-env-linux` job
+# (`timeout-minutes: 15`) reaches this tool through `tools/conformance-env/linux-local`, whose
+# `reset` runs it, twice per run. A permanently unreachable server therefore costs that job about
+# 2 minutes more than it used to. It has no simulators and no host contention, so its search is
+# always in the sub-second population; the env overrides above exist if that ever stops being true.
 #
 # An attempt already in flight is not cut short by the total deadline -- only starting a NEW one is
 # gated -- so the worst-case search phase is deadline + one attempt.
