@@ -69,6 +69,7 @@ dependencies {
     // time. `test-junit` supplies the JUnit4 binding these variants actually run on.
     testImplementation(kotlin("test-junit"))
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.media3.session)
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
@@ -76,6 +77,7 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.media3.session)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 }
 
