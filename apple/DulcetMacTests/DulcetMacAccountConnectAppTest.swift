@@ -1138,7 +1138,10 @@ private final class SearchIntentPlaybackController: DulcetPlaybackControlling {
     }
 
     func configure(account: DulcetPlaybackAccount) {}
-    func restorePersistedQueue(with tracks: [DulcetTrack]) {}
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    ) {}
 
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
         queueReplacementCount += 1

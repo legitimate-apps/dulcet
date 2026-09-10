@@ -93,6 +93,20 @@ public struct DulcetPlaybackPresentation: Sendable, Hashable {
     public static let unavailable = Self(status: .unavailable, nowPlaying: nil)
 }
 
+/// How much of the library the catalog handed to restoration can speak for.
+///
+/// Absence means two different things and they must not share one value. Under `wholeLibrary`,
+/// a queue entry missing from the catalog cannot resolve, and the saved selection is cleared so
+/// no launch tries to start it again. Under `partial` the catalog is whatever track lists have
+/// been read so far, so absence proves nothing — clearing a saved position on that basis would
+/// throw away a good position from no evidence at all.
+public enum DulcetLibraryCatalogCoverage: Sendable, Hashable {
+    /// Every album's track list is present, so the catalog is authoritative about absence.
+    case wholeLibrary
+    /// Some albums have not been read, so absence is unknown rather than gone.
+    case partial
+}
+
 @MainActor
 public protocol DulcetPlaybackControlling: AnyObject {
     var currentPresentation: DulcetPlaybackPresentation { get }
@@ -100,7 +114,10 @@ public protocol DulcetPlaybackControlling: AnyObject {
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     )
     func configure(account: DulcetPlaybackAccount)
-    func restorePersistedQueue(with tracks: [DulcetTrack])
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    )
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent)
     func send(_ intent: DulcetPlaybackControlIntent)
     func disconnect()

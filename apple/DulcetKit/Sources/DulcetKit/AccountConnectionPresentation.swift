@@ -981,7 +981,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         // The catalog is whatever tracks are known right now, which after a first paint is
         // nothing. The controller decides whether that covers the saved queue; handing it a
         // catalog that does not is how a saved playback position gets thrown away.
-        playbackController?.restorePersistedQueue(with: libraryAlbums.flatMap(\.tracks))
+        playbackController?.restorePersistedQueue(
+            with: libraryAlbums.flatMap(\.tracks),
+            catalogCoverage: libraryCatalogCoverage
+        )
         if let selection {
             if presentLibrarySelection(selection) {
                 return
@@ -1115,7 +1118,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
         // A queue saved from this album can now be restored, because its tracks are known.
-        playbackController?.restorePersistedQueue(with: libraryAlbums.flatMap(\.tracks))
+        playbackController?.restorePersistedQueue(
+            with: libraryAlbums.flatMap(\.tracks),
+            catalogCoverage: libraryCatalogCoverage
+        )
         guard currentSnapshot.state == .albumDetailMultiDisc,
               currentSnapshot.selectedAlbum?.id == id else { return }
         publishAlbumDetail(album)
@@ -1133,6 +1139,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedAlbum: album,
             selectedAlbumTracksFailure: selectedAlbumTracksFailure
         )
+    }
+
+    /// A catalog assembled from albums that have not all been read cannot say an entry is gone.
+    private var libraryCatalogCoverage: DulcetLibraryCatalogCoverage {
+        libraryAlbums.allSatisfy(\.areTracksLoaded) ? .wholeLibrary : .partial
     }
 
     private func cancelAlbumTracks() {

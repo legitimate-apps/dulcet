@@ -1429,6 +1429,7 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
     private(set) var queueIntents: [DulcetPlaybackQueueIntent] = []
     private(set) var controlIntents: [DulcetPlaybackControlIntent] = []
     private(set) var restoredCatalogs: [[DulcetTrack]] = []
+    private(set) var restoredCoverages: [DulcetLibraryCatalogCoverage] = []
     private(set) var disconnectCount = 0
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
 
@@ -1447,8 +1448,12 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
         publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
     }
 
-    func restorePersistedQueue(with tracks: [DulcetTrack]) {
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    ) {
         restoredCatalogs.append(tracks)
+        restoredCoverages.append(catalogCoverage)
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
@@ -1779,9 +1784,10 @@ func openingAnAlbumReadsItsTracksAndReRunsQueueRestoration() throws {
     let album = fixtureUnreadAlbum()
     libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
 
-    // The first paint knows no tracks, so the catalog handed to the controller is empty. The
-    // controller decides what to do with that; the library must not withhold the call.
+    // The first paint knows no tracks, so the catalog handed to the controller is empty — and it
+    // is declared PARTIAL, because "not in the catalog" here means "not read yet", not "gone".
     #expect(playback.restoredCatalogs.last?.isEmpty == true)
+    #expect(playback.restoredCoverages.last == .partial)
 
     store.selectAlbum(album.id)
     #expect(store.snapshot.state == .albumDetailMultiDisc)
@@ -1797,8 +1803,10 @@ func openingAnAlbumReadsItsTracksAndReRunsQueueRestoration() throws {
     #expect(selected.tracks.map(\.id) == tracks.map(\.id))
     #expect(selected.trackCount == tracks.count)
     #expect(store.snapshot.albums.first?.tracks.map(\.id) == tracks.map(\.id))
-    // The saved queue can now be restored, because these tracks are known.
+    // The saved queue can now be restored, because these tracks are known — and with every album
+    // read, the catalog is authoritative again.
     #expect(playback.restoredCatalogs.last?.map(\.id) == tracks.map(\.id))
+    #expect(playback.restoredCoverages.last == .wholeLibrary)
 }
 
 @Test @MainActor
