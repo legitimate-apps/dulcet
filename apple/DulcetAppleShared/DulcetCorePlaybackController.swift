@@ -124,12 +124,30 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         start(transition.startDirective)
     }
 
+    /// Restores the saved queue from whatever tracks are known so far.
+    ///
+    /// The core reads the supplied catalog as "what can resolve now" and clears the saved
+    /// position when the current entry is missing from it. Before track lists were read lazily
+    /// the catalog was always the whole library, so missing meant gone. It no longer does: right
+    /// after a first paint the catalog is empty because nobody has read any album's tracks yet.
+    /// Passing that through would clear the saved position permanently, from no evidence at all.
+    /// So this says nothing until the catalog can actually speak about the current entry, and the
+    /// library calls it again as album track lists arrive.
     func restorePersistedQueue(with tracks: [DulcetTrack]) {
         guard let account else { return }
         catalog.merge(
             Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) }),
             uniquingKeysWith: { _, latest in latest }
         )
+        guard let persisted = queueClient.snapshot().snapshot else { return }
+        let currentIndex = Int(persisted.currentIndex)
+        guard currentIndex >= 0, currentIndex < persisted.entries.count else { return }
+        let currentEntry = persisted.entries[currentIndex]
+        let currentID = DulcetProviderItemID(
+            providerInstanceID: currentEntry.providerInstanceId,
+            rawID: currentEntry.rawId
+        )
+        guard catalog[currentID] != nil else { return }
         let transition = queueClient.restoreCurrentPausedWithCatalog(
             providerInstanceId: account.providerInstanceId,
             availableRawIds: tracks.filter {

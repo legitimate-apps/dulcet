@@ -79,13 +79,34 @@ struct DulcetiOSProductionComposition {
 }
 #endif
 
+/**
+ The library the person sees, and the sync that keeps it durable — deliberately not the same read.
+
+ Opening the library used to wait for a whole `LibrarySync` pass: folders, artists, album pages, a
+ `getAlbum` per album, playlists, starred, genres, and a stability re-walk of each stage. At the
+ design's target scale that is thousands of requests, and nothing was drawn until the last one
+ answered. So `browse` now runs two things at once and publishes whichever is ready:
+
+ - a **preview** from `AppleLibraryBrowseClient`, which is a constant handful of requests and
+   carries every field the album grid draws. Track lists arrive per album, on open.
+ - the **sync**, unchanged, which commits a generation and then publishes the committed snapshot
+   with every track.
+
+ The completion is therefore called **more than once** — the preview first when it wins, then the
+ committed snapshot. A preview *failure* is never delivered: only the sync's outcome can put the
+ library into an error state, so a preview that cannot reach the server does not flash an error
+ over a sync that is still working.
+ */
 @MainActor
-final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing {
+final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing,
+    DulcetAlbumTracksLoading {
     private let client: AppleLibrarySyncClient
+    private let previewClient = AppleLibraryBrowseClient()
 
     private(set) var startedSyncCount = 0
     private(set) var completedSyncGenerations: [Int64] = []
     private(set) var displayedCommittedGenerations: [Int64] = []
+    private(set) var deliveredPreviewCount = 0
 
     init(databaseName: String = "dulcet.db") {
         client = AppleLibrarySyncClient(
@@ -94,11 +115,51 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         )
     }
 
+    func loadAlbumTracks(
+        _ request: DulcetLibraryBrowseRequest,
+        albumRawID: String,
+        completion: @escaping @MainActor (DulcetAlbumTracksOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        let operation = previewClient.startAlbumTracks(
+            request: request.coreBrowseRequest,
+            albumRawId: albumRawID
+        ) { outcome in
+            if let album = outcome.album {
+                completion(.loaded(Self.copyAlbum(album).tracks))
+                return
+            }
+            guard let kind = outcome.error?.kind else {
+                preconditionFailure("An album track outcome must carry an album or an error")
+            }
+            if kind == "cancelled" {
+                completion(.cancelled)
+                return
+            }
+            guard let failure = Self.failureKind(kind) else {
+                preconditionFailure("The core exported an unmapped library error kind")
+            }
+            completion(.failed(DulcetLibraryFailure(kind: failure)))
+        }
+        return DulcetCoreBrowseOperation(operation: operation)
+    }
+
     func browse(
         _ request: DulcetLibraryBrowseRequest,
         completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation {
         startedSyncCount += 1
+        var syncFinished = false
+        var previewDelivered = false
+        // A preview FAILURE is deliberately dropped: only the sync can put the library into an
+        // error state, so a preview that cannot reach the server never flashes an error over a
+        // sync that is still working.
+        let preview = previewClient.startBrowse(request: request.coreBrowseRequest) {
+            [weak self] outcome in
+            guard let self, !syncFinished, let snapshot = outcome.snapshot else { return }
+            previewDelivered = true
+            self.deliveredPreviewCount += 1
+            completion(Self.copyBrowsed(snapshot))
+        }
         let coreRequest = AppleLibrarySyncRequest(
             providerInstanceId: request.providerInstanceID,
             normalizedBaseUrl: request.normalizedServerURL,
@@ -112,6 +173,8 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             progress: { _ in }
         ) { [weak self] outcome in
             guard let self else { return }
+            syncFinished = true
+            preview.cancel()
             if let success = outcome.success {
                 self.completedSyncGenerations.append(success.generation)
                 self.completeFromCommitted(
@@ -129,14 +192,18 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
                 completion(.cancelled)
                 return
             }
+            // A preview already put a real, live read of this server on screen. Replacing it with
+            // "the library could not be loaded" would discard a good result and describe the
+            // screen wrongly, so a sync failure only speaks when nothing else can. When the
+            // preview failed too, nothing was delivered and the failure is delivered here.
             self.completeFromCommitted(
                 providerInstanceID: request.providerInstanceID,
                 requiredGeneration: nil,
-                fallbackErrorKind: error.kind,
+                fallbackErrorKind: previewDelivered ? nil : error.kind,
                 completion: completion
             )
         }
-        return DulcetCoreLibraryOperation(operation: operation)
+        return DulcetCoreLibraryPairOperation(sync: operation, preview: preview)
     }
 
     func browseCommitted(
@@ -166,11 +233,23 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             completion(Self.copyCommitted(snapshot.library))
             return
         }
-        let errorKind = outcome.error?.kind ?? fallbackErrorKind ?? "protocol"
+        guard let errorKind = outcome.error?.kind ?? fallbackErrorKind else {
+            // The caller asked for no failure to be reported, because something better is
+            // already on screen.
+            return
+        }
         guard let kind = Self.failureKind(errorKind) else {
             preconditionFailure("The core exported an unmapped library sync error kind")
         }
         completion(.failed(DulcetLibraryFailure(kind: kind)))
+    }
+
+    /// The preview's albums keep `areTracksLoaded` as the core reported it, so the UI can tell an
+    /// album nobody has read from an album with no tracks.
+    private static func copyBrowsed(
+        _ snapshot: AppleLibraryBrowseSnapshotDto
+    ) -> DulcetLibraryBrowseOutcome {
+        copyCommitted(snapshot)
     }
 
     private static func copyCommitted(
@@ -243,7 +322,9 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
                         artworkKey: track.artworkKey ?? album.artworkKey
                     )
                 )
-            }
+            },
+            trackCount: Int(album.trackCount),
+            areTracksLoaded: album.tracksLoaded
         )
     }
 
@@ -574,6 +655,49 @@ final class DulcetCoreLibraryOperation: DulcetLibraryBrowseOperation {
 @MainActor
 private final class DulcetCompletedLibraryOperation: DulcetLibraryBrowseOperation {
     func cancel() {}
+}
+
+@MainActor
+private final class DulcetCoreBrowseOperation: DulcetLibraryBrowseOperation {
+    private let operation: any AppleLibraryBrowseOperation
+
+    init(operation: any AppleLibraryBrowseOperation) {
+        self.operation = operation
+    }
+
+    func cancel() {
+        operation.cancel()
+    }
+}
+
+/// One library open is a preview read and a sync. Cancelling it has to reach both, or a cancelled
+/// library open keeps a sync running against the server.
+@MainActor
+private final class DulcetCoreLibraryPairOperation: DulcetLibraryBrowseOperation {
+    private let sync: any AppleLibrarySyncOperation
+    private let preview: any AppleLibraryBrowseOperation
+
+    init(sync: any AppleLibrarySyncOperation, preview: any AppleLibraryBrowseOperation) {
+        self.sync = sync
+        self.preview = preview
+    }
+
+    func cancel() {
+        preview.cancel()
+        sync.cancel()
+    }
+}
+
+private extension DulcetLibraryBrowseRequest {
+    var coreBrowseRequest: AppleLibraryBrowseRequest {
+        AppleLibraryBrowseRequest(
+            providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: normalizedServerURL,
+            username: username,
+            password: password,
+            allowLocalHttp: allowLocalHTTP
+        )
+    }
 }
 
 @MainActor

@@ -995,6 +995,23 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             )
             return
         }
+        // A library open publishes more than once, and the later publication can land while the
+        // person is reading an album or an artist. Put them back where they were rather than
+        // throwing them out to the grid.
+        if selection == nil, currentSnapshot.selectedDestination == .library {
+            if currentSnapshot.state == .albumDetailMultiDisc,
+               let id = currentSnapshot.selectedAlbum?.id,
+               libraryAlbums.contains(where: { $0.id == id }) {
+                presentAlbum(id, loadingTracks: true)
+                return
+            }
+            if currentSnapshot.state == .artistDetail,
+               let id = currentSnapshot.selectedArtist?.id,
+               libraryArtists.contains(where: { $0.id == id }) {
+                _ = presentLibrarySelection(.artist(id))
+                return
+            }
+        }
         publish(
             state: albums.isEmpty && artists.isEmpty
                 ? .emptyLibraryConnected
@@ -1010,6 +1027,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     private func scheduleLibraryRefresh() {
         guard case .connected = currentSnapshot.accountConnection else { return }
+        // One library open can publish more than once — a fast preview and then the committed
+        // library. Scheduling per publication would leak a scheduler per extra publication.
+        guard libraryRefreshOperation == nil else { return }
         libraryRefreshOperation = libraryRefreshScheduler.schedule(
             after: libraryRefreshCadence
         ) { [weak self] in
