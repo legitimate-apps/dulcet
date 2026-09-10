@@ -250,6 +250,23 @@ public protocol DulcetLibraryBrowsing: AnyObject {
     ) -> any DulcetLibraryBrowseOperation
 }
 
+public enum DulcetAlbumTracksOutcome: Sendable {
+    case loaded([DulcetTrack])
+    case failed(DulcetLibraryFailure)
+    case cancelled
+}
+
+/// Reading one album's track list. Separate from `DulcetLibraryBrowsing` because a browser that
+/// serves a committed local snapshot already has every track and never needs it.
+@MainActor
+public protocol DulcetAlbumTracksLoading: AnyObject {
+    func loadAlbumTracks(
+        _ request: DulcetLibraryBrowseRequest,
+        albumRawID: String,
+        completion: @escaping @MainActor (DulcetAlbumTracksOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation
+}
+
 @MainActor
 public protocol DulcetCommittedLibraryBrowsing: AnyObject {
     func browseCommitted(
@@ -445,6 +462,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var libraryMusicFolders: [DulcetMusicFolder] = []
     private var libraryArtists: [DulcetArtist] = []
     private var libraryAlbums: [DulcetAlbum] = []
+    private var activeAlbumTracksOperation: (any DulcetLibraryBrowseOperation)?
+    private var albumTracksGeneration = 0
+    private var selectedAlbumTracksFailure: DulcetLibraryFailure?
 
     static let defaultSearchDebounce: Duration = .milliseconds(250)
     private static let searchPageSize = 20
@@ -568,17 +588,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             activateSearchResult(id)
         case let .selectAlbum(id):
             guard currentSnapshot.selectedDestination == .library,
-                  let album = currentSnapshot.albums.first(where: { $0.id == id }) else { return }
-            publish(
-                state: .albumDetailMultiDisc,
-                destination: .library,
-                form: currentSnapshot.accountForm,
-                status: currentSnapshot.accountConnection,
-                musicFolders: currentSnapshot.musicFolders,
-                artists: currentSnapshot.artists,
-                albums: currentSnapshot.albums,
-                selectedAlbum: album
-            )
+                  libraryAlbums.contains(where: { $0.id == id }) else { return }
+            presentAlbum(id, loadingTracks: true)
+        case .retryAlbumTracks:
+            guard let album = currentSnapshot.selectedAlbum else { return }
+            presentAlbum(album.id, loadingTracks: true)
         case let .playLibrary(shuffle):
             let tracks = currentSnapshot.albums.flatMap(\.tracks) + currentSnapshot.looseTracks
             guard !tracks.isEmpty else { return }
@@ -721,7 +735,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         selectedAlbum: DulcetAlbum? = nil,
         selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
-        nowPlaying: DulcetNowPlaying? = nil
+        nowPlaying: DulcetNowPlaying? = nil,
+        selectedAlbumTracksFailure: DulcetLibraryFailure? = nil
     ) {
         currentSnapshot = Self.snapshot(
             state: state,
@@ -735,6 +750,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedArtist: selectedArtist,
             libraryFailure: libraryFailure,
             nowPlaying: nowPlaying,
+            selectedAlbumTracksFailure: selectedAlbumTracksFailure,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,
@@ -757,6 +773,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
+        selectedAlbumTracksFailure: DulcetLibraryFailure? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -799,7 +816,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             accountForm: form,
             accountConnection: status,
             accountRemoval: accountRemoval,
-            libraryFailure: libraryFailure
+            libraryFailure: libraryFailure,
+            selectedAlbumTracksFailure: selectedAlbumTracksFailure
         )
     }
 
@@ -958,6 +976,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryMusicFolders = musicFolders
         libraryArtists = artists
         libraryAlbums = albums.map { applyingDownloadStates(to: $0) }
+        cancelAlbumTracks()
+        selectedAlbumTracksFailure = nil
+        // The catalog is whatever tracks are known right now, which after a first paint is
+        // nothing. The controller decides whether that covers the saved queue; handing it a
+        // catalog that does not is how a saved playback position gets thrown away.
         playbackController?.restorePersistedQueue(with: libraryAlbums.flatMap(\.tracks))
         if let selection {
             if presentLibrarySelection(selection) {
@@ -1004,17 +1027,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func presentLibrarySelection(_ selection: DulcetLibrarySelection) -> Bool {
         switch selection {
         case let .album(id):
-            guard let album = libraryAlbums.first(where: { $0.id == id }) else { return false }
-            publish(
-                state: .albumDetailMultiDisc,
-                destination: .library,
-                form: currentSnapshot.accountForm,
-                status: currentSnapshot.accountConnection,
-                musicFolders: libraryMusicFolders,
-                artists: libraryArtists,
-                albums: libraryAlbums,
-                selectedAlbum: album
-            )
+            guard libraryAlbums.contains(where: { $0.id == id }) else { return false }
+            presentAlbum(id, loadingTracks: true)
         case let .artist(id):
             guard let artist = libraryArtists.first(where: { $0.id == id }) else { return false }
             publish(
@@ -1031,11 +1045,89 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         return true
     }
 
+    /// Shows one album, and reads its track list if nobody has yet. The grid draws from the
+    /// album list alone, so an album arrives here with `areTracksLoaded == false` and an empty
+    /// `tracks` — the detail view shows its own loading row until this completes.
+    private func presentAlbum(_ id: DulcetProviderItemID, loadingTracks: Bool) {
+        cancelAlbumTracks()
+        selectedAlbumTracksFailure = nil
+        guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
+        publishAlbumDetail(album)
+        guard loadingTracks, !album.areTracksLoaded else { return }
+        guard let loader = libraryBrowser as? any DulcetAlbumTracksLoading,
+              case let .connected(account) = currentSnapshot.accountConnection else { return }
+        albumTracksGeneration += 1
+        let requestGeneration = albumTracksGeneration
+        let form = currentSnapshot.accountForm
+        let operation = loader.loadAlbumTracks(
+            DulcetLibraryBrowseRequest(
+                providerInstanceID: providerInstanceID ?? providerInstanceIDFactory(),
+                normalizedServerURL: account.normalizedServerURL,
+                username: form.username,
+                password: form.password,
+                allowLocalHTTP: form.allowLocalHTTP
+            ),
+            albumRawID: id.rawID
+        ) { [weak self] outcome in
+            guard let self, self.albumTracksGeneration == requestGeneration else { return }
+            self.activeAlbumTracksOperation = nil
+            switch outcome {
+            case let .loaded(tracks):
+                self.adoptAlbumTracks(tracks, for: id)
+            case let .failed(failure):
+                self.selectedAlbumTracksFailure = failure
+                guard let album = self.libraryAlbums.first(where: { $0.id == id }) else { return }
+                self.publishAlbumDetail(album)
+            case .cancelled:
+                break
+            }
+        }
+        if albumTracksGeneration == requestGeneration {
+            activeAlbumTracksOperation = operation
+        }
+    }
+
+    private func adoptAlbumTracks(_ tracks: [DulcetTrack], for id: DulcetProviderItemID) {
+        libraryAlbums = libraryAlbums.map { album in
+            album.id == id
+                ? applyingDownloadStates(to: album.adoptingLoadedTracks(tracks))
+                : album
+        }
+        guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
+        // A queue saved from this album can now be restored, because its tracks are known.
+        playbackController?.restorePersistedQueue(with: libraryAlbums.flatMap(\.tracks))
+        guard currentSnapshot.state == .albumDetailMultiDisc,
+              currentSnapshot.selectedAlbum?.id == id else { return }
+        publishAlbumDetail(album)
+    }
+
+    private func publishAlbumDetail(_ album: DulcetAlbum) {
+        publish(
+            state: .albumDetailMultiDisc,
+            destination: .library,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection,
+            musicFolders: libraryMusicFolders,
+            artists: libraryArtists,
+            albums: libraryAlbums,
+            selectedAlbum: album,
+            selectedAlbumTracksFailure: selectedAlbumTracksFailure
+        )
+    }
+
+    private func cancelAlbumTracks() {
+        albumTracksGeneration += 1
+        let operation = activeAlbumTracksOperation
+        activeAlbumTracksOperation = nil
+        operation?.cancel()
+    }
+
     private func cancelLibraryBrowse() {
         libraryGeneration += 1
         let operation = activeLibraryOperation
         activeLibraryOperation = nil
         operation?.cancel()
+        cancelAlbumTracks()
     }
 
     private func cancelLibraryRefresh() {

@@ -7,6 +7,7 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case retrySearch
     case activateSearchResult(DulcetProviderItemID)
     case selectAlbum(DulcetProviderItemID)
+    case retryAlbumTracks
     case playLibrary(shuffle: Bool)
     case playAlbum(DulcetProviderItemID, shuffle: Bool)
     case activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID)
@@ -96,6 +97,11 @@ public final class DulcetPresentationStore {
 
     public func dismissAccountRemovalFailure() {
         source.send(.dismissAccountRemovalFailure)
+    }
+
+    /// Re-reads the selected album's track list after a failure.
+    public func retryAlbumTracks() {
+        source.send(.retryAlbumTracks)
     }
 
     public func selectAlbum(_ id: DulcetProviderItemID) {
