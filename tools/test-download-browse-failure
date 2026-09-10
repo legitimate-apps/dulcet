@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Run the actual Swift browse/observer/assertion path against a withheld response.
+
+Only the assertion sink and the post-failure reachability probes are substituted.
+The real Kotlin framework supplies the client, transport, timeout and phase events.
+"""
+from pathlib import Path
+import socket
+import subprocess
+import tempfile
+import threading
+
+root = Path(__file__).resolve().parent.parent
+subprocess.run([str(root / 'gradlew'), ':core:linkDebugFrameworkMacosArm64'], cwd=root, check=True)
+source = (root / 'apple/DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest.swift').read_text()
+start = source.index('    private func loadLiveTrack(')
+end = source.index('        let container = try XCTUnwrap(', start)
+# Retain the real observer, continuation, probes call and both assertions verbatim.
+method = source[start:end].replace('-> DulcetTrack {', '-> LiveDownloadTrackSeed {')
+method += '        return source\n    }\n'
+start = source.index('private struct LiveDownloadTrackSeed:')
+seed = source[start:source.index('\nprivate enum DownloadIntegrationPrecondition:', start)]
+start = source.index('private final class DownloadBrowseTrace:')
+trace = source[start:source.index('\n\n\n/// Two bounded', start)]
+
+harness = r'''
+import Foundation
+import DulcetCore
+
+private struct PublishedFailure: Error { let message: String }
+// Capture the message passed to the real call site; XCTest's own reporter is not under test.
+private func XCTUnwrap<T>(_ value: T?, _ message: @autoclosure () -> String) throws -> T {
+    guard let value else { throw PublishedFailure(message: message()) }
+    return value
+}
+private func XCTAssertTrue(_ value: Bool, _ message: @autoclosure () -> String) {
+    precondition(value, message())
+}
+private func probeDisposableServer(baseURL: String) async -> String { "PROBE control=omitted" }
+
+@MainActor
+private struct FailureControl {
+    let providerInstanceID = "failure-control"
+    let fixtureUsername = "username-secret-canary"
+    let fixturePassword = "password-secret-canary"
+    METHOD
+    func run() async throws {
+        do {
+            _ = try await loadLiveTrack(baseURL: CommandLine.arguments[1])
+            fatalError("stalled browse unexpectedly succeeded")
+        } catch let failure as PublishedFailure {
+            let message = failure.message
+            for marker in ["library browse failed: kind=timeout", "LIBRARY BROWSE elapsed=",
+                           "swift-start", "facade-start", "http-started",
+                           "http-failed", "swift-completion-entered", "swift-continuation-resumed"] {
+                guard message.contains(marker) else {
+                    fatalError("failure message missing required marker: \(marker)")
+                }
+            }
+            precondition(!message.contains("body-completed"), "withheld response completed")
+            precondition(!message.contains("secret-canary"), "failure message leaked credentials")
+            print("FAILED BROWSE CONTROL: published timeout, forwarded HTTP terminal and Swift phases")
+        }
+    }
+}
+@main struct Main {
+    static func main() async throws { try await FailureControl().run() }
+}
+'''.replace('    METHOD', method)
+(root / 'build').mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='browse-failure-', dir=root / 'build') as tmp:
+    tmp = Path(tmp)
+    swift = tmp / 'Failure.swift'
+    swift.write_text(harness + seed + trace)
+    framework = root / 'core/build/bin/macosArm64/debugFramework'
+    binary = tmp / 'failure'
+    subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
+                    '-F', str(framework), '-framework', 'DulcetCore',
+                    '-framework', 'Security', '-lsqlite3', '-Xlinker', '-dead_strip', str(swift), '-o', str(binary)], check=True)
+    release = threading.Event()
+    arrived = threading.Event()
+    errors = []
+    with socket.socket() as server:
+        server.bind(('127.0.0.1', 0))
+        server.listen(1)
+        server.settimeout(45)
+
+        def hold_response():
+            try:
+                with server.accept()[0] as client:
+                    client.settimeout(5)
+                    request = b''
+                    while b'\r\n\r\n' not in request:
+                        part = client.recv(4096)
+                        if not part:
+                            raise AssertionError('client closed before request headers')
+                        request += part
+                    assert request.startswith(b'GET /rest/getMusicFolders.view?')
+                    arrived.set()
+                    release.wait(45)  # Never release until browse has timed out and published.
+            except BaseException as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=hold_response)
+        worker.start()
+        try:
+            result = subprocess.run([str(binary), f'http://127.0.0.1:{server.getsockname()[1]}'],
+                                    capture_output=True, text=True, timeout=40)
+            assert arrived.is_set(), 'control never received browse request'
+            assert not errors, errors
+            assert result.returncode == 0, result.stderr[-5000:]
+            print(result.stdout, end='')
+        finally:
+            release.set()
+            worker.join(6)

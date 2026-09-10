@@ -87,8 +87,22 @@ public class AppleLibraryBrowseOutcome internal constructor(
 /** Objective-C-compatible completion-handler facade for the read-through library walk. */
 public class AppleLibraryBrowseClient internal constructor(
     private val browser: LibraryBrowser,
+    private val diagnostics: LibraryBrowseDiagnostics? = null,
 ) {
     public constructor() : this(LibraryBrowser())
+
+    /**
+     * Opt-in redacted phase stream for conformance, including callbacks on HTTP engine threads.
+     * Observer must be thread-safe and return promptly. Observer exceptions are discarded.
+     * Completion remains on Main.
+     */
+    public constructor(diagnosticObserver: (String) -> Unit) : this(
+        LibraryBrowseDiagnostics(diagnosticObserver),
+    )
+
+    private constructor(diagnostics: LibraryBrowseDiagnostics) : this(
+        LibraryBrowser(diagnostics = diagnostics), diagnostics,
+    )
 
     private val scope: CoroutineScope = MainScope()
 
@@ -96,7 +110,8 @@ public class AppleLibraryBrowseClient internal constructor(
         request: AppleLibraryBrowseRequest,
         completion: (AppleLibraryBrowseOutcome) -> Unit,
     ): AppleLibraryBrowseOperation {
-        val operation = AppleLibraryBrowseOperationImpl(scope, browser, request, completion)
+        diagnostics?.mark("facade-start")
+        val operation = AppleLibraryBrowseOperationImpl(scope, browser, request, completion, diagnostics)
         operation.start()
         return operation
     }
@@ -107,9 +122,11 @@ private class AppleLibraryBrowseOperationImpl(
     private val browser: LibraryBrowser,
     private val request: AppleLibraryBrowseRequest,
     private val completion: (AppleLibraryBrowseOutcome) -> Unit,
+    private val diagnostics: LibraryBrowseDiagnostics?,
 ) : AppleLibraryBrowseOperation {
     private var delivered = false
     private val job: Job = scope.launch(start = CoroutineStart.LAZY) {
+        diagnostics?.mark("coroutine-entered")
         val result = try {
             browser.browse(request.toCoreRequest())
         } catch (_: CancellationException) {
@@ -117,7 +134,10 @@ private class AppleLibraryBrowseOperationImpl(
         } catch (failure: Throwable) {
             LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure))
         }
-        deliver(result.toAppleOutcome())
+        diagnostics?.mark("browse-returned")
+        val outcome = result.toAppleOutcome()
+        diagnostics?.mark("dto-created")
+        deliver(outcome)
     }.also { operationJob ->
         operationJob.invokeOnCompletion { failure ->
             if (failure is CancellationException) {
@@ -141,7 +161,9 @@ private class AppleLibraryBrowseOperationImpl(
     private fun deliver(outcome: AppleLibraryBrowseOutcome) {
         if (delivered) return
         delivered = true
+        diagnostics?.mark("completion-entered")
         completion(outcome)
+        diagnostics?.mark("completion-returned")
     }
 }
 

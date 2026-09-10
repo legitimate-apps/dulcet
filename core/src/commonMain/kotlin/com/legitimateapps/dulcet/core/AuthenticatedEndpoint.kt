@@ -98,6 +98,7 @@ internal class AuthenticatedEndpointClient(
     saltSource: SaltSource? = null,
     logSink: LogSink? = null,
     hostResolver: HostResolver = systemHostResolver(),
+    private val diagnostics: LibraryBrowseDiagnostics? = null,
 ) {
     private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
@@ -107,6 +108,7 @@ internal class AuthenticatedEndpointClient(
         expectSuccess = false
         followRedirects = false
         install(RequestTracePlugin) { observe = traceRecorder::observe }
+        if (diagnostics != null) install(LibraryResponsePhasePlugin)
         install(HttpTimeout) {
             connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
             requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
@@ -155,11 +157,17 @@ internal class AuthenticatedEndpointClient(
         options: AuthenticatedEndpointRequestOptions,
         jsonBody: String?,
     ): AuthenticatedEndpointResponse {
+        val mark = diagnostics?.request(endpoint)
+        mark?.invoke("authentication-started")
         val common = authenticatedParameters(parameters)
+        mark?.invoke("authentication-completed")
         var currentUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
         var redirects = 0
         while (true) {
+            mark?.invoke("target-policy-started hop=$redirects")
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
+            mark?.invoke("target-policy-completed hop=$redirects")
+            mark?.invoke("http-started hop=$redirects")
             val snapshot = try {
                 if (
                     jsonBody == null &&
@@ -169,6 +177,7 @@ internal class AuthenticatedEndpointClient(
                     var completedSnapshot: AuthenticatedEndpointHttpSnapshot? = null
                     try {
                         client.prepareGet(target.url) {
+                            mark?.let { attributes.put(LibraryRequestPhase, it) }
                             applyRequestParts(target.hostHeader, common, options)
                         }.execute { response ->
                             response.toSnapshot(
@@ -188,10 +197,12 @@ internal class AuthenticatedEndpointClient(
                 } else {
                     val response = if (jsonBody == null) {
                         client.get(target.url) {
+                            mark?.let { attributes.put(LibraryRequestPhase, it) }
                             applyRequestParts(target.hostHeader, common, options)
                         }
                     } else {
                         client.post(target.url) {
+                            mark?.let { attributes.put(LibraryRequestPhase, it) }
                             applyRequestParts(target.hostHeader, common, options)
                             contentType(ContentType.Application.Json)
                             setBody(jsonBody)
@@ -200,6 +211,7 @@ internal class AuthenticatedEndpointClient(
                     response.toSnapshot(response.bodyAsBytes(), options)
                 }
             } catch (failure: Throwable) {
+                mark?.invoke("http-failed")
                 if (clientTransport.challengeTracker.consumeUnsupported()) {
                     throw AuthenticatedEndpointFailure(
                         DomainError.Auth.UnsupportedAuthenticationChallenge,
@@ -207,6 +219,7 @@ internal class AuthenticatedEndpointClient(
                 }
                 throw failure
             }
+            mark?.invoke("body-completed hop=$redirects")
             val redactedUrl = traceRecorder.latestRedactedUrl()
             if (snapshot.statusCode !in REDIRECT_STATUS_CODES) {
                 return AuthenticatedEndpointResponse(

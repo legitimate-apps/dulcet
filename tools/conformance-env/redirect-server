@@ -1148,6 +1148,7 @@ class ForwardProxyAuthenticationHandler(AccessLoggingHandler):
 
     def _challenge(self) -> None:
         values = self.headers.get_all("Proxy-Authorization", failobj=[]) or []
+        # Observation stays in memory: stdout backpressure must never delay the 407.
         STATE.record_proxy_auth_challenge(values)
         self.send_response(407, "Proxy Authentication Required")
         self.send_header("Proxy-Authenticate", 'Basic realm="dulcet-forward-proxy"')

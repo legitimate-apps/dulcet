@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Execute the real proxy and recorder over sockets with hostile stdout."""
+import contextlib
+import http.client
+import os
+from pathlib import Path
+import runpy
+import threading
+import unittest
+from http.server import ThreadingHTTPServer
+
+SOURCE = Path(__file__).parent / 'conformance-env/redirect-server'
+
+
+@contextlib.contextmanager
+def proxy():
+    module = runpy.run_path(str(SOURCE), run_name='proxy_control')
+    handler = module['ForwardProxyAuthenticationHandler']
+    state = module['STATE']
+    server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    worker = threading.Thread(target=server.serve_forever)
+    worker.start()
+    try:
+        yield server.server_port, state
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+
+
+def challenge(port):
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
+    try:
+        connection.request('GET', '/challenge', headers={
+            'Proxy-Authorization': 'invented-proxy-authorization-canary',
+        })
+        response = connection.getresponse()
+        return response.status, response.getheader('Proxy-Authenticate'), response.read()
+    finally:
+        connection.close()
+
+
+class ChallengeOutputTest(unittest.TestCase):
+    def test_broken_stdout_cannot_prevent_407(self):
+        class Broken:
+            def write(self, value):
+                raise BrokenPipeError('injected broken stdout')
+
+            def flush(self):
+                raise BrokenPipeError('injected broken stdout')
+
+        with proxy() as (port, state):
+            with contextlib.redirect_stdout(Broken()):
+                result = challenge(port)
+            self.assertEqual((407, 'Basic realm="dulcet-forward-proxy"', b''), result)
+            self.assertEqual((1, ('invented-proxy-authorization-canary',)), state.proxy_auth_outcome())
+
+    def test_backpressured_stdout_cannot_delay_response(self):
+        done = threading.Event()
+        failures = []
+
+        read_fd, write_fd = os.pipe()
+        os.set_blocking(write_fd, False)
+        try:
+            while True:
+                os.write(write_fd, b'x' * 4096)
+        except BlockingIOError:
+            pass
+        os.set_blocking(write_fd, True)
+        blocked = os.fdopen(write_fd, 'w', buffering=1)
+
+        try:
+            with proxy() as (port, state):
+                results = []
+
+                def run():
+                    try:
+                        results.append(challenge(port))
+                    except BaseException as failure:
+                        failures.append(failure)
+                    finally:
+                        done.set()
+
+                with contextlib.redirect_stdout(blocked):
+                    worker = threading.Thread(target=run)
+                    worker.start()
+                    try:
+                        self.assertTrue(done.wait(2), 'response waited for stdout')
+                        self.assertFalse(failures, failures)
+                        self.assertEqual([(407, 'Basic realm="dulcet-forward-proxy"', b'')], results)
+                        self.assertEqual((1, ('invented-proxy-authorization-canary',)), state.proxy_auth_outcome())
+                    finally:
+                        os.read(read_fd, 65536)
+                        worker.join(2)
+        finally:
+            blocked.close()
+            os.close(read_fd)
+
+
+if __name__ == '__main__':
+    unittest.main()

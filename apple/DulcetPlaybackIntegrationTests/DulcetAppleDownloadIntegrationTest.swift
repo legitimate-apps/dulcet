@@ -323,7 +323,12 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     }
 
     private func loadLiveTrack(baseURL: String) async throws -> DulcetTrack {
-        let client = AppleLibraryBrowseClient()
+        let trace = DownloadBrowseTrace()
+        trace.mark("swift-start")
+        let client = AppleLibraryBrowseClient(diagnosticObserver: { phase in
+            trace.mark(phase)
+        })
+        defer { trace.mark("swift-load-track-exited") }
         let (seed, failure): (LiveDownloadTrackSeed?, String) = await withCheckedContinuation { continuation in
             _ = client.startBrowse(request: AppleLibraryBrowseRequest(
                 providerInstanceId: providerInstanceID,
@@ -332,6 +337,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 password: fixturePassword,
                 allowLocalHttp: true
             )) { outcome in
+                trace.mark("swift-completion-entered")
                 if let error = outcome.error {
                     continuation.resume(returning: (nil, "library browse failed: kind=\(error.kind)"))
                     return
@@ -362,9 +368,20 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 ), ""))
             }
         }
+        trace.mark("swift-continuation-resumed")
+        // Only on the failure path, and only ever adding to a run that is already failing: ask the
+        // server two questions the browse itself cannot answer. The browse times out after 30s
+        // reporting nothing but "timed out", which does not say whether the server was blocked or
+        // whether that one connection stalled. A raw POSIX connect is a genuinely different
+        // instrument from URLSession -- two probes sharing the same stack would be one probe twice.
+        let diagnosis = seed == nil ? await probeDisposableServer(baseURL: baseURL) : ""
         let source = try XCTUnwrap(
             seed,
-            "the disposable library must expose one downloadable track; \(failure)"
+            "the disposable library must expose one downloadable track; \(failure); \(diagnosis); \(trace.summary)"
+        )
+        XCTAssertTrue(
+            trace.observedHTTPCompletion,
+            "the real browse must emit both header and body phase evidence; \(trace.summary)"
         )
         let container = try XCTUnwrap(
             source.sourceContainer.flatMap(downloadContainer),
@@ -471,4 +488,106 @@ private struct DownloadIntegrationContext {
         controller.disconnect()
         try? FileManager.default.removeItem(at: downloadRoot)
     }
+}
+
+// Callbacks can originate in the HTTP engine. Capture time and enqueue only: formatting and
+// bounded storage run on a separate serial queue. No live I/O can backpressure the request or
+// the summary reader. A killed runner may lose this in-memory tail; timestamps still represent
+// capture time, not the later processing time. This is lightweight, not zero-overhead tracing.
+private final class DownloadBrowseTrace: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.browse-trace")
+    private let started = ContinuousClock.now
+    // Accessed only on queue.
+    private var events: [String] = []
+    private var sawHeaders = false
+    private var sawBody = false
+
+    func mark(_ phase: String) {
+        let captured = ContinuousClock.now
+        queue.async { [self] in
+            let line = "LIBRARY BROWSE elapsed=\(started.duration(to: captured)) \(phase)"
+            events.append(line)
+            sawHeaders = sawHeaders || phase.hasSuffix("headers-received")
+            sawBody = sawBody || phase.contains("body-completed hop=")
+            if events.count > 128 { events.removeFirst() }
+        }
+    }
+
+    var observedHTTPCompletion: Bool {
+        queue.sync { sawHeaders && sawBody }
+    }
+
+    var summary: String {
+        queue.sync { events.joined(separator: "; ") }
+    }
+}
+
+
+/// Two bounded, independent probes of the disposable server, run only when a browse has already
+/// failed. The probes run sequentially and can add roughly ten seconds after failure;
+/// they do not change the timeout of the request under test.
+///
+/// These are later observations, not proof of server health during the original request.
+/// Fast connect/ping supports current reachability; a slow ping or failed connect narrows
+/// follow-up investigation without identifying the cause of the original stall.
+private func probeDisposableServer(baseURL: String) async -> String {
+    guard let components = URLComponents(string: baseURL),
+          let host = components.host else {
+        return "PROBE unavailable=malformed-base-url"
+    }
+    let port = UInt16(components.port ?? 80)
+    let connect = probeTCPConnect(host: host, port: port, timeout: 5)
+
+    var ping = "ping=skipped"
+    if let url = URL(string: "\(baseURL)/rest/ping.view?v=1.16.1&c=dulcet-probe&f=json") {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 5
+        let session = URLSession(configuration: configuration)
+        let started = ContinuousClock.now
+        do {
+            let (_, response) = try await session.data(from: url)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            ping = "ping=\(status) after=\(started.duration(to: .now))"
+        } catch {
+            ping = "ping=failed(\((error as NSError).code)) after=\(started.duration(to: .now))"
+        }
+        session.invalidateAndCancel()
+    }
+    return "PROBE \(connect) \(ping)"
+}
+
+/// A non-blocking POSIX connect with an explicit deadline. Deliberately not URLSession: the point is
+/// to ask through a different stack than the one that just timed out.
+private func probeTCPConnect(host: String, port: UInt16, timeout: Int32) -> String {
+    let started = ContinuousClock.now
+    let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { return "connect=socket-failed" }
+    defer { close(descriptor) }
+    _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL, 0) | O_NONBLOCK)
+
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = port.bigEndian
+    guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else { return "connect=unresolvable" }
+
+    let outcome = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+            Darwin.connect(descriptor, rebound, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    if outcome == 0 { return "connect=immediate after=\(started.duration(to: .now))" }
+    guard errno == EINPROGRESS else {
+        return "connect=refused(\(errno)) after=\(started.duration(to: .now))"
+    }
+    var descriptors = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+    let ready = poll(&descriptors, 1, timeout * 1000)
+    if ready == 0 { return "connect=timeout(\(timeout)s)" }
+    if ready < 0 { return "connect=poll-failed(\(errno))" }
+    var pending: Int32 = 0
+    var size = socklen_t(MemoryLayout<Int32>.size)
+    getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &size)
+    if pending != 0 { return "connect=error(\(pending)) after=\(started.duration(to: .now))" }
+    return "connect=ok after=\(started.duration(to: .now))"
 }

@@ -526,6 +526,9 @@ jobs:
         run: >-
           echo "path=$(tools/conformance-env/new-class-root
           --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Prove failed browse publishes its phase report
+        timeout-minutes: 3
+        run: python3 tools/test-download-browse-failure
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
       - name: Install and verify checksum-pinned Darwin conformance closure
