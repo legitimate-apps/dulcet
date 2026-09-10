@@ -162,7 +162,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             previewDelivered = true
             self.deliveredPreviewCount += 1
             self.publicationOrder.append("preview")
-            completion(Self.copyBrowsed(snapshot))
+            completion(Self.previewOutcome(snapshot))
         }
         let coreRequest = AppleLibrarySyncRequest(
             providerInstanceId: request.providerInstanceID,
@@ -249,12 +249,18 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         completion(.failed(DulcetLibraryFailure(kind: kind)))
     }
 
-    /// The preview's albums keep `areTracksLoaded` as the core reported it, so the UI can tell an
-    /// album nobody has read from an album with no tracks.
-    private static func copyBrowsed(
+    /// A preview is delivered as `.preview`, never as `.loaded`. The distinction is what tells
+    /// the caller that this operation will deliver again — so it keeps the handle that cancels
+    /// the still-running sync, and does not start the refresh cadence from a first paint.
+    /// The albums keep `areTracksLoaded` as the core reported it, so the UI can tell an album
+    /// nobody has read from an album with no tracks.
+    private static func previewOutcome(
         _ snapshot: AppleLibraryBrowseSnapshotDto
     ) -> DulcetLibraryBrowseOutcome {
-        copyCommitted(snapshot)
+        guard case let .loaded(musicFolders, artists, albums) = copyCommitted(snapshot) else {
+            preconditionFailure("copyCommitted always produces a loaded outcome")
+        }
+        return .preview(musicFolders: musicFolders, artists: artists, albums: albums)
     }
 
     private static func copyCommitted(

@@ -228,6 +228,16 @@ public struct DulcetLibraryBrowseRequest: Sendable,
 }
 
 public enum DulcetLibraryBrowseOutcome: Sendable {
+    /// A fast, incomplete first paint. Albums carry no track lists, and the SAME operation will
+    /// deliver again. A preview is deliberately not a `.loaded`: everything a caller does once a
+    /// library open has finished — releasing the operation, starting the refresh cadence — is
+    /// wrong to do while the authoritative read is still in flight.
+    case preview(
+        musicFolders: [DulcetMusicFolder],
+        artists: [DulcetArtist],
+        albums: [DulcetAlbum]
+    )
+    /// The authoritative result of this open. Nothing further is delivered for it.
     case loaded(
         musicFolders: [DulcetMusicFolder],
         artists: [DulcetArtist],
@@ -886,9 +896,23 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             guard let self,
                   self.libraryGeneration == requestGeneration,
                   self.currentSnapshot.selectedDestination == .library else { return }
-            self.activeLibraryOperation = nil
             switch outcome {
+            case let .preview(musicFolders, artists, albums):
+                // The operation is deliberately NOT released and the refresh cadence is
+                // deliberately NOT started: the authoritative read is still running. Releasing it
+                // would leave a sync nothing can cancel, and starting the cadence here would
+                // measure from first paint rather than from the last completed read — so a sync
+                // slower than the cadence would have a refresh fired on top of it.
+                self.publishLoadedLibrary(
+                    musicFolders: musicFolders,
+                    artists: artists,
+                    albums: albums,
+                    form: form,
+                    status: self.currentSnapshot.accountConnection,
+                    selection: selection
+                )
             case let .loaded(musicFolders, artists, albums):
+                self.activeLibraryOperation = nil
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
@@ -899,6 +923,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
                 self.scheduleLibraryRefresh()
             case let .failed(failure):
+                self.activeLibraryOperation = nil
                 self.publish(
                     state: .libraryError,
                     destination: .library,
@@ -907,7 +932,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     libraryFailure: failure
                 )
             case .cancelled:
-                break
+                self.activeLibraryOperation = nil
             }
         }
         if libraryGeneration == requestGeneration,
@@ -939,7 +964,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                   self.currentSnapshot.selectedDestination == .library else { return }
             self.activeLibraryOperation = nil
             switch outcome {
-            case let .loaded(musicFolders, artists, albums):
+            case let .preview(musicFolders, artists, albums),
+                 let .loaded(musicFolders, artists, albums):
+                // A committed read is answered from the local database and has no preview stage,
+                // so both shapes mean the same thing here.
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
@@ -1028,11 +1056,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         )
     }
 
+    /// Called only from a FINAL publication, so the cadence measures time since the library was
+    /// last read in full — never time since a preview painted the grid.
     private func scheduleLibraryRefresh() {
         guard case .connected = currentSnapshot.accountConnection else { return }
-        // One library open can publish more than once — a fast preview and then the committed
-        // library. Scheduling per publication would leak a scheduler per extra publication.
-        guard libraryRefreshOperation == nil else { return }
         libraryRefreshOperation = libraryRefreshScheduler.schedule(
             after: libraryRefreshCadence
         ) { [weak self] in
