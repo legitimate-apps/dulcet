@@ -29,9 +29,25 @@ from readiness_transport import TRANSPORT_ERRORS, read_json
 
 ADMIN_USER = "dulcet-admin"
 ADMIN_PASSWORD = "dulcet-ci-canary-password"
+# One request's budget, shared by both modes. It is deliberately NOT derived from the remaining
+# overall deadline: an attempt handed "whatever is left" spends the whole window, and a loop that
+# makes one attempt is not a poll. `--timeout-seconds` bounds when a NEW attempt may start, so the
+# worst case is the deadline plus one request.
+#
+# Neither budget is raised here. MEASURED, 167 apple-ci job logs 2026-09-02..2026-09-10: the widest
+# restart-readiness window in the corpus is 90.9 s (`TRANSCODE CACHE CLEARED` ->
+# `TRANSCODE CACHE OBSERVATION`, restart #2), and the 180 s default already covers it with room.
+# What was wrong was the SHAPE of the budget and the diagnosis on exhaustion, not its size.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 15.0
 
 
-def call(base_url: str, endpoint: str, *, timeout_seconds: float = 15, **parameters: str) -> dict:
+def call(
+    base_url: str,
+    endpoint: str,
+    *,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    **parameters: str,
+) -> dict:
     salt = secrets.token_hex(16)
     token = hashlib.md5((ADMIN_PASSWORD + salt).encode()).hexdigest()
     query = {
@@ -68,32 +84,64 @@ def main() -> None:
     )
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     parser.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        help="budget for ONE request; must be strictly smaller than --timeout-seconds",
+    )
     arguments = parser.parse_args()
 
     if arguments.timeout_seconds <= 0:
         parser.error("--timeout-seconds must be greater than zero")
     if arguments.poll_interval_seconds <= 0:
         parser.error("--poll-interval-seconds must be greater than zero")
+    if arguments.request_timeout_seconds <= 0:
+        parser.error("--request-timeout-seconds must be greater than zero")
+    # A per-request budget at or above the overall one leaves no room for a second attempt, so the
+    # loop degrades into a single request while still reading like a poll. Refuse the shape rather
+    # than trusting the numbers to stay apart.
+    if arguments.request_timeout_seconds >= arguments.timeout_seconds:
+        parser.error(
+            "--request-timeout-seconds must be strictly smaller than --timeout-seconds, or the "
+            f"poll can only ever make one attempt: request={arguments.request_timeout_seconds}s "
+            f"overall={arguments.timeout_seconds}s"
+        )
 
     if arguments.print_last_scan:
-        deadline = time.monotonic() + arguments.timeout_seconds
+        started = time.monotonic()
+        deadline = started + arguments.timeout_seconds
+        response = None
+        attempts = 0
+        last = "no observation"
         while time.monotonic() < deadline:
+            attempts += 1
             try:
                 response = call(
                     arguments.base_url, "getScanStatus",
-                    timeout_seconds=min(15, max(0, deadline - time.monotonic())),
+                    timeout_seconds=arguments.request_timeout_seconds,
                 )
                 break
             except urllib.error.HTTPError:
                 # HTTP responses are failures, not a missing transport response.
                 raise
             except TRANSPORT_ERRORS as error:
-                if time.monotonic() >= deadline:
-                    raise
-                print(f"scan baseline transport error; retrying: {error}", file=sys.stderr)
+                last = str(error) or type(error).__name__
+                print(
+                    f"scan baseline transport error; retrying (attempt {attempts}): {last}",
+                    file=sys.stderr,
+                )
                 time.sleep(min(arguments.poll_interval_seconds, max(0, deadline - time.monotonic())))
-        else:
-            raise TimeoutError("timed out")
+        if response is None:
+            # Match the sibling below: name what was being waited on and how hard it was tried. A
+            # bare `TimeoutError: timed out` traceback says neither, and reads as a tool defect.
+            print(
+                f"scan baseline never answered within {arguments.timeout_seconds}s: "
+                f"attempts={attempts} elapsed_seconds={time.monotonic() - started:.3f} "
+                f"request_timeout_seconds={arguments.request_timeout_seconds} last={last}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         status = response.get("scanStatus", {})
         if error := status.get("error"):
             raise SystemExit(f"library scan status reported an error: {error}")
@@ -103,11 +151,17 @@ def main() -> None:
 
     baseline_value, baseline = parse_last_scan(arguments.after_last_scan)
 
-    deadline = time.monotonic() + arguments.timeout_seconds
+    started = time.monotonic()
+    deadline = started + arguments.timeout_seconds
     last = "no observation"
+    attempts = 0
     while time.monotonic() < deadline:
+        attempts += 1
         try:
-            status = call(arguments.base_url, "getScanStatus").get("scanStatus", {})
+            status = call(
+                arguments.base_url, "getScanStatus",
+                timeout_seconds=arguments.request_timeout_seconds,
+            ).get("scanStatus", {})
             scanning = bool(status.get("scanning"))
             count = int(status.get("count") or 0)
             if error := status.get("error"):
@@ -117,12 +171,15 @@ def main() -> None:
             if not scanning and advanced and count > 0:
                 albums = call(
                     arguments.base_url, "getAlbumList2",
+                    timeout_seconds=arguments.request_timeout_seconds,
                     type="alphabeticalByName", size="1",
                 ).get("albumList2", {}).get("album", [])
                 if albums:
                     print(
                         f"library ready: scanning=false lastScan={current_value} "
-                        f"advanced_from={baseline_value} count={count} queryable_albums>=1"
+                        f"advanced_from={baseline_value} count={count} queryable_albums>=1 "
+                        f"attempts={attempts} "
+                        f"elapsed_seconds={time.monotonic() - started:.3f}"
                     )
                     return
                 last = f"scan complete (count={count}) but getAlbumList2 returned no rows"
@@ -135,8 +192,11 @@ def main() -> None:
             last = f"probe error: {error}"
         time.sleep(min(arguments.poll_interval_seconds, max(0, deadline - time.monotonic())))
 
-    print(f"library never became queryable within {arguments.timeout_seconds}s: {last}",
-          file=sys.stderr)
+    print(
+        f"library never became queryable within {arguments.timeout_seconds}s: attempts={attempts} "
+        f"elapsed_seconds={time.monotonic() - started:.3f} {last}",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 
 
