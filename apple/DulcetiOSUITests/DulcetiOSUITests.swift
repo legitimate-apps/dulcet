@@ -81,34 +81,51 @@ final class DulcetiOSUITests: XCTestCase {
         let searchField = app.textFields["dulcet.search.field"].firstMatch
 
         // Reveals the sidebar the way a person does, and reports which control it used so a
-        // failure names the control rather than only its effect.
-        func revealSidebar(_ phase: String) -> Bool {
+        // failure names the control rather than only its effect. Returns whether the back control
+        // was needed: on a compact window the detail is showing at both call sites, so a run that
+        // found the sidebar already open did not exercise the path this proof is about, and the
+        // caller asserts that rather than accepting a pass that skipped it.
+        func revealSidebar(_ phase: String) -> (reached: Bool, usedBackControl: Bool) {
+            var usedBackControl = false
             if !searchRow.isHittable {
                 let backControl = app.navigationBars.buttons.firstMatch
                 guard backControl.waitForExistence(timeout: 5) else {
                     XCTFail("\(phase): a compact window must expose the sidebar through a back"
                         + " control: " + app.debugDescription)
-                    return false
+                    return (false, false)
                 }
                 print("DULCET COMPACT NAV \(phase) back-control=\(backControl.identifier)")
                 backControl.tap()
+                usedBackControl = true
             }
             guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
                 XCTFail("\(phase): the Search row must be reachable in the sidebar: "
                     + app.debugDescription)
-                return false
+                return (false, usedBackControl)
             }
-            return true
+            return (true, usedBackControl)
         }
 
-        guard revealSidebar("first") else { return }
+        let firstReveal = revealSidebar("first")
+        guard firstReveal.reached else { return }
+        XCTAssertTrue(
+            firstReveal.usedBackControl,
+            "A compact window opens on the detail column, so reaching the sidebar must have gone"
+                + " through the back control; a run that skipped it did not set up this proof"
+        )
         searchRow.tap()
         XCTAssertTrue(
             searchField.waitForExistence(timeout: 5),
             "Choosing Search must show the Search detail: " + app.debugDescription
         )
 
-        guard revealSidebar("second") else { return }
+        let secondReveal = revealSidebar("second")
+        guard secondReveal.reached else { return }
+        XCTAssertTrue(
+            secondReveal.usedBackControl,
+            "The Search detail must have been showing before the back control was used; without"
+                + " that, the re-selection below is not the case this proof is about"
+        )
         // The store's selected destination is still Search here. That is the whole point: the
         // second choice must push the detail again even though the value does not change.
         XCTAssertFalse(
@@ -120,7 +137,8 @@ final class DulcetiOSUITests: XCTestCase {
         let reselectPushed = searchField.waitForExistence(timeout: 5)
         // Print the observed value, not a verdict: a bare "PASS" line printed after an assertion
         // that already failed is a claim nothing checked.
-        print("DULCET COMPACT NAV OBSERVED first-push=true back-cleared-detail=true"
+        print("DULCET COMPACT NAV OBSERVED"
+            + " first-back=\(firstReveal.usedBackControl) second-back=\(secondReveal.usedBackControl)"
             + " reselect-push=\(reselectPushed)")
         XCTAssertTrue(
             reselectPushed,
