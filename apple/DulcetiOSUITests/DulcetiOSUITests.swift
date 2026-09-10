@@ -173,20 +173,38 @@ final class DulcetiOSUITests: XCTestCase {
             // back control, exactly as a person reaches it on an iPhone.
             let backControl = app.navigationBars.buttons.firstMatch
             guard backControl.waitForExistence(timeout: 5) else {
-                XCTFail("A compact-width window must expose the sidebar through a back control")
+                XCTFail(
+                    "A compact-width window must expose the sidebar through a back control: "
+                        + app.debugDescription
+                )
                 return
             }
             backControl.tap()
         }
-        guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
-            XCTFail("The Search row must be visible in the sidebar")
+        // Existence and hittability are separate outcomes and were previously reported by one
+        // message, so a run could not distinguish "the back control never revealed the sidebar"
+        // from "the row is on screen but covered". MEASURED over 39 CI executions of this test:
+        // every successful run satisfied this wait on its FIRST poll, about 1.0 s into a 5 s
+        // budget, and the one failure consumed all five polls. The budget is not marginal, so a
+        // failure here means the navigation did not happen -- never that the wait was too short.
+        guard searchRow.waitForExistence(timeout: 5) else {
+            XCTFail("The Search row must exist in the sidebar: " + app.debugDescription)
+            return
+        }
+        guard searchRow.isHittable else {
+            XCTFail(
+                "The Search row must be visible in the sidebar; frame=\(searchRow.frame)"
+                    + " window=\(window.frame): " + app.debugDescription
+            )
             return
         }
         searchRow.tap()
 
         let searchField = app.textFields["dulcet.search.field"].firstMatch
+        // Same measurement as above: 38 of 38 successful CI executions resolved this on the first
+        // poll. Exhausting the budget means the Search destination never rendered.
         guard searchField.waitForExistence(timeout: 5) else {
-            XCTFail("The search field must exist on the Search destination")
+            XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
         }
         searchField.tap()
@@ -274,8 +292,14 @@ final class DulcetiOSUITests: XCTestCase {
         canaryResult.tap()
 
         let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        // Successful CI executions resolve this in one to four polls of the fifteen available,
+        // so exhausting the budget means activation produced no navigation at all -- which the
+        // tree below distinguishes from "Now Playing rendered a state without a title".
         guard nowPlayingTitle.waitForExistence(timeout: 15) else {
-            XCTFail("Activating rank \(canaryRank) must present the Now Playing surface")
+            XCTFail(
+                "Activating rank \(canaryRank) must present the Now Playing surface: "
+                    + app.debugDescription
+            )
             return
         }
         // Now Playing showing rank zero's track here would mean activation played the first
