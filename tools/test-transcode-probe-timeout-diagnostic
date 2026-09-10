@@ -24,7 +24,7 @@ STREAM_LINE = (
 )
 
 
-def make_handler(*, mode: str, log_file: Path):
+def make_handler(*, mode: str, log_file: Path, stall_first: int = 0):
     class Handler(BaseHTTPRequestHandler):
         search_requests = 0
 
@@ -39,6 +39,9 @@ def make_handler(*, mode: str, log_file: Path):
                     self.connection.close()
                     return
                 if mode == "search-stall":
+                    time.sleep(30)
+                    return
+                if mode == "search-stall-then-answer" and self.search_requests <= stall_first:
                     time.sleep(30)
                     return
                 if mode == "search-http-error":
@@ -90,14 +93,27 @@ def make_handler(*, mode: str, log_file: Path):
     return Handler
 
 
-def run_probe(*, mode: str, budget: float) -> subprocess.CompletedProcess:
+def run_probe(
+    *,
+    mode: str,
+    budget: float,
+    search_deadline: float = 5.0,
+    search_attempt: float = 0.4,
+    search_settle: float = 5.0,
+    stall_first: int = 0,
+    observed: dict | None = None,
+) -> subprocess.CompletedProcess:
+    """Run the probe against a stub and, via `observed`, report what the SERVER saw.
+
+    The server-side request count is the point: a poll that quietly makes one attempt satisfies
+    every assertion about the probe's OUTPUT, so the count has to come from the other end.
+    """
+
     with TemporaryDirectory() as tmp:
         log_file = Path(tmp) / "navidrome.log"
         log_file.write_text("")
-        server = ThreadingHTTPServer(
-            ("127.0.0.1", PORT),
-            make_handler(mode=mode, log_file=log_file),
-        )
+        handler = make_handler(mode=mode, log_file=log_file, stall_first=stall_first)
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
         server.daemon_threads = True
         thread = threading.Thread(
             target=server.serve_forever,
@@ -115,13 +131,18 @@ def run_probe(*, mode: str, budget: float) -> subprocess.CompletedProcess:
                     "DULCET_CONFORMANCE_DISPOSABLE": "true",
                     "DULCET_CONFORMANCE_BASE_URL": f"http://127.0.0.1:{PORT}",
                     "DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS": str(budget),
+                    "DULCET_TRANSCODE_SEARCH_DEADLINE_SECONDS": str(search_deadline),
+                    "DULCET_TRANSCODE_SEARCH_ATTEMPT_SECONDS": str(search_attempt),
+                    "DULCET_TRANSCODE_SEARCH_SETTLE_SECONDS": str(search_settle),
                 },
                 check=False,
-                timeout=15,
+                timeout=30,
             )
         finally:
             server.shutdown()
             server.server_close()
+            if observed is not None:
+                observed["search_requests"] = handler.search_requests
 
 
 def require_port_free() -> None:

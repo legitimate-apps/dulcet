@@ -1,38 +1,133 @@
 #!/usr/bin/env python3
-"""Exercise cache-search recovery without changing stream or corpus assertions."""
+"""Prove the cache search POLLS, and that a stall is reported as a stall.
+
+Every assertion in the previous version of this file checked an OUTCOME -- the exit code, the
+message, the elapsed time -- and every one of them passed while the loop made exactly one attempt.
+MEASURED across 167 apple-ci job logs (2026-09-02..2026-09-10): all five `cache search transport
+error` failures printed one transport-error line and exited, so the retry never ran. An
+outcome-checking control cannot see that, because a one-attempt poll and a real poll fail the same
+way once the deadline expires.
+
+So the controls below assert the PROCESS: the number of `search3` requests the stub server actually
+received, cross-checked against the count the tool reports for itself. A poll that quietly stops
+polling fails here even when its output is unchanged.
+
+⚠️ What these controls do NOT establish: that a starved apple-ci runner can deliver SIGALRM to this
+process on time. They prove the retry path exists and runs; they cannot prove preemption on a host
+they are not running on.
+"""
 
 from pathlib import Path
 import runpy
+import re
 import time
 
 controls = runpy.run_path(str(Path(__file__).with_name("test-transcode-probe-timeout-diagnostic")))
 controls["require_port_free"]()
 run_probe = controls["run_probe"]
 
-recovered = run_probe(mode="search-reset", budget=2)
-assert recovered.returncode == 0, recovered.stdout + recovered.stderr
-assert "cache search transport error:" in recovered.stderr, recovered.stderr
-assert "TRANSCODE CACHE OBSERVATION cached=false transcoding=true" in recovered.stdout, recovered.stdout
-print("POSITIVE CONTROL PASS cache_search_transport_retried=true")
-print(recovered.stderr.strip())
-print(recovered.stdout.strip())
 
+def reported_attempts(stdout: str) -> int | None:
+    match = re.search(r"^TRANSCODE CACHE SEARCH attempts=(\d+)\b", stdout, re.MULTILINE)
+    return int(match.group(1)) if match else None
+
+
+def failed_attempts(stderr: str) -> int | None:
+    matches = re.findall(r"\battempts=(\d+)\b", stderr)
+    return int(matches[-1]) if matches else None
+
+
+# --- 1. a reset connection is retried, and the retry is a SECOND request ---------------------
+observed: dict = {}
+recovered = run_probe(mode="search-reset", budget=2, search_attempt=0.4, observed=observed)
+assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+assert "cache search transport error (attempt 1):" in recovered.stderr, recovered.stderr
+assert "TRANSCODE CACHE OBSERVATION cached=false transcoding=true" in recovered.stdout, recovered.stdout
+assert reported_attempts(recovered.stdout) == 2, recovered.stdout
+assert observed["search_requests"] == 2, observed
+print(
+    "POSITIVE CONTROL PASS cache_search_transport_retried=true "
+    f"server_observed_requests={observed['search_requests']} "
+    f"tool_reported_attempts={reported_attempts(recovered.stdout)}"
+)
+
+# --- 2. THE PROCESS CONTROL: three stalled attempts, then an answer --------------------------
+# This is the assertion the previous control was missing. With the per-attempt timeout derived from
+# the remaining deadline, attempt one consumes the whole window and this reads
+# server_observed_requests=1 -- a failure that names exactly what went wrong.
+observed = {}
+polled = run_probe(
+    mode="search-stall-then-answer",
+    budget=2,
+    search_attempt=0.3,
+    search_deadline=6,
+    stall_first=3,
+    observed=observed,
+)
+assert polled.returncode == 0, polled.stdout + polled.stderr
+assert observed["search_requests"] == 4, (
+    f"the poll made {observed['search_requests']} server-observed attempt(s), not 4; "
+    "a per-attempt timeout that is not independent of the total deadline produces exactly 1\n"
+    + polled.stdout
+    + polled.stderr
+)
+assert reported_attempts(polled.stdout) == 4, polled.stdout
+assert polled.stderr.count("cache search transport error (attempt") == 3, polled.stderr
+print(
+    "POSITIVE CONTROL PASS cache_search_is_a_poll=true "
+    f"server_observed_requests={observed['search_requests']} "
+    f"tool_reported_attempts={reported_attempts(polled.stdout)}"
+)
+
+# --- 3. a total stall is named a stall, not an absent corpus item ----------------------------
+observed = {}
 started = time.monotonic()
-stalled = run_probe(mode="search-stall", budget=2)
+stalled = run_probe(
+    mode="search-stall", budget=2, search_attempt=0.3, search_deadline=1.5, observed=observed
+)
 elapsed = time.monotonic() - started
 assert stalled.returncode != 0, stalled.stdout
-assert "cache search transport error: timed out" in stalled.stderr, stalled.stderr
-assert "known transcode cache probe is absent from the disposable corpus" in stalled.stderr, stalled.stderr
-assert elapsed < 7, f"search escaped its five-second deadline: {elapsed:.3f}s"
-print(f"NEGATIVE CONTROL PASS cache_search_deadline=true elapsed_seconds={elapsed:.3f}")
+assert "cache search never received an answer from the disposable server" in stalled.stderr, (
+    stalled.stderr
+)
+assert "This is a stall, not an absent corpus item" in stalled.stderr, stalled.stderr
+assert "known transcode cache probe is absent" not in stalled.stderr, (
+    "a stall is still being reported as an empty corpus:\n" + stalled.stderr
+)
+assert observed["search_requests"] >= 3, (
+    f"a stalling server was asked {observed['search_requests']} time(s) in 1.5s with a 0.3s "
+    "per-attempt timeout; that is not a poll\n" + stalled.stderr
+)
+assert failed_attempts(stalled.stderr) == observed["search_requests"], (
+    f"the tool reported {failed_attempts(stalled.stderr)} attempts while the server received "
+    f"{observed['search_requests']}\n" + stalled.stderr
+)
+assert elapsed < 6, f"search escaped its deadline: {elapsed:.3f}s"
+print(
+    f"NEGATIVE CONTROL PASS cache_search_stall_named=true elapsed_seconds={elapsed:.3f} "
+    f"server_observed_requests={observed['search_requests']}"
+)
 
+# --- 4. the incoherent budget shape is refused outright --------------------------------------
+# The numbers can drift back; the guard cannot. A per-attempt timeout at or above the total
+# deadline leaves no room for a second attempt, so the tool must refuse to run at all rather than
+# silently degrade into a single request.
+incoherent = run_probe(mode="healthy", budget=2, search_attempt=5, search_deadline=5)
+assert incoherent.returncode != 0, incoherent.stdout
+assert "must be strictly smaller than its total" in incoherent.stderr, incoherent.stderr
+print("NEGATIVE CONTROL PASS one_attempt_budget_refused=true")
+
+# --- 5. answers that are not transport failures keep their own diagnosis ---------------------
 for mode, message in [
     ("search-http-error", "HTTP Error 503"),
     ("search-missing-id", "known transcode cache probe is absent from the disposable corpus"),
     ("search-error-envelope", "known transcode cache probe is absent from the disposable corpus"),
 ]:
-    rejected = run_probe(mode=mode, budget=2)
+    rejected = run_probe(
+        mode=mode, budget=2, search_attempt=0.3, search_deadline=6, search_settle=0.4
+    )
     assert rejected.returncode != 0, rejected.stdout
     assert message in rejected.stderr, rejected.stderr
-    assert "cache search transport error:" not in rejected.stderr, rejected.stderr
+    assert "cache search transport error" not in rejected.stderr, rejected.stderr
+    assert "never received an answer" not in rejected.stderr, rejected.stderr
     print(f"NEGATIVE CONTROL PASS {mode}=rejected message={message}")

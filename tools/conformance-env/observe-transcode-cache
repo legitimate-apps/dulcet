@@ -30,6 +30,51 @@ STREAM_LOG = 'msg="Streaming file"'
 # operation timeout. Overridable so the controls can exercise both timeout phases quickly.
 STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS", "180"))
 
+# --- the search that finds the probe track --------------------------------------------------
+# The per-attempt timeout and the total deadline are INDEPENDENT budgets. Deriving the per-attempt
+# timeout from the remaining deadline -- `min(10, deadline - now)`, which is what this loop used to
+# do -- spends the entire window on attempt one and turns a poll into a single request.
+#
+# MEASURED, 167 apple-ci job logs 2026-09-02..2026-09-10: every one of the five
+# `cache search transport error` failures printed exactly ONE transport-error line and exited
+# immediately, 11.5 / 13.0 / 20.1 / 42.3 / 44.9 s after the preceding `library ready:`. So the loop
+# never ran a second attempt, and the nominal five-second total bounded nothing either.
+#
+# SEARCH_DEADLINE_SECONDS is sized from the window this call actually runs in. Same corpus, n=137
+# successful observations, taking (`library ready:` -> `TRANSCODE CACHE OBSERVATION`) minus the
+# stream's own reported total_request_seconds as an UPPER bound on the search phase, at the second
+# of the three restarts where that window is worst: median 0.795 s, p90 9.50 s, p95 30.17 s,
+# p99 60.40 s, max 79.52 s. Sixty seconds covers p99 of that measured range. It is deliberately not
+# the max: a window above it still FAILS, and now fails naming a stall.
+#
+# SEARCH_ATTEMPT_TIMEOUT_SECONDS is sized from the server side instead. Navidrome's own log shows
+# it answers this exact query in 150-710 ms once the request reaches its handler (OBSERVED in the
+# two failing runs whose server-side evidence survives in the log tail), and in those runs it began
+# handling the request one to two seconds AFTER the client had already given up. Ten seconds is
+# more than an order of magnitude above the handling time, so an attempt that exceeds it is starved
+# rather than slow, and retiring it to try again is the right response.
+#
+# An attempt already in flight is not cut short by the total deadline -- only starting a NEW one is
+# gated -- so the worst-case search phase is deadline + one attempt.
+SEARCH_DEADLINE_SECONDS = float(
+    os.environ.get("DULCET_TRANSCODE_SEARCH_DEADLINE_SECONDS", "60")
+)
+SEARCH_ATTEMPT_TIMEOUT_SECONDS = float(
+    os.environ.get("DULCET_TRANSCODE_SEARCH_ATTEMPT_SECONDS", "10")
+)
+# A responsive server that answers without the probe track is reporting on the corpus, not on the
+# transport, so it gets the original short settling window rather than the transport budget. This
+# keeps a genuine absence failing in seconds instead of a minute.
+SEARCH_CORPUS_SETTLE_SECONDS = float(
+    os.environ.get("DULCET_TRANSCODE_SEARCH_SETTLE_SECONDS", "5")
+)
+SEARCH_POLL_INTERVAL_SECONDS = 0.05
+# A transport failure can also be instantaneous (connection refused while the server is still
+# coming up). Re-asking every 50 ms for a minute would emit ~1200 stderr lines and bury the one
+# fact worth reading, so failed attempts back off. A STARVED attempt already costs its full
+# per-attempt timeout, which is the case this budget exists for, so the backoff barely moves it.
+SEARCH_RETRY_BACKOFF_SECONDS = (0.25, 0.5, 1.0, 2.0)
+
 
 class StreamDeadlineExceeded(TimeoutError):
     def __init__(self, phase: str, elapsed: float) -> None:
@@ -139,6 +184,87 @@ def timeout_diagnostic(error: StreamDeadlineExceeded, budget: float) -> str:
     )
 
 
+class CacheSearchStalled(SystemExit):
+    """The search never got an answer, which is a different fact from an empty corpus."""
+
+
+def find_probe_song(search_url: str) -> tuple[dict, int, float]:
+    """Poll `search3` for the fixed probe track, retrying transport failures until the deadline.
+
+    Returns (song, attempts, elapsed_seconds). Raises `CacheSearchStalled` when no attempt ever
+    got an answer, and `SystemExit` naming an absent corpus when answers arrived without the track.
+    """
+
+    started = time.monotonic()
+    transport_deadline = started + SEARCH_DEADLINE_SECONDS
+    settle_deadline: float | None = None
+    attempts = 0
+    transport_errors = 0
+    last_transport_error = ""
+    while True:
+        attempts += 1
+        attempt_failed = False
+        try:
+            document = read_json(search_url, SEARCH_ATTEMPT_TIMEOUT_SECONDS)
+        except urllib.error.HTTPError:
+            # An HTTP response is an answer. Retrying it would only repeat the same refusal.
+            raise
+        except TRANSPORT_ERRORS as error:
+            attempt_failed = True
+            transport_errors += 1
+            last_transport_error = str(error) or type(error).__name__
+            print(
+                f"cache search transport error (attempt {attempts}): {last_transport_error}",
+                file=sys.stderr,
+            )
+        else:
+            songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
+            song = next(
+                (value for value in songs if value.get("title") == "Dulcet Health Probe"), None
+            )
+            if song is not None and isinstance(song.get("id"), str):
+                elapsed = time.monotonic() - started
+                print(
+                    f"TRANSCODE CACHE SEARCH attempts={attempts} "
+                    f"transport_errors={transport_errors} elapsed_seconds={elapsed:.3f}"
+                )
+                return song, attempts, elapsed
+            if settle_deadline is None:
+                settle_deadline = time.monotonic() + SEARCH_CORPUS_SETTLE_SECONDS
+        now = time.monotonic()
+        if now >= transport_deadline:
+            break
+        if settle_deadline is not None and now >= settle_deadline:
+            break
+        delay = (
+            SEARCH_RETRY_BACKOFF_SECONDS[
+                min(transport_errors, len(SEARCH_RETRY_BACKOFF_SECONDS)) - 1
+            ]
+            if attempt_failed
+            else SEARCH_POLL_INTERVAL_SECONDS
+        )
+        time.sleep(min(delay, max(0.0, transport_deadline - now)))
+
+    elapsed = time.monotonic() - started
+    census = (
+        f"attempts={attempts} transport_errors={transport_errors} "
+        f"elapsed_seconds={elapsed:.3f}"
+    )
+    if settle_deadline is None:
+        # Not one attempt was answered. Reporting that as an empty corpus attributes a stall to the
+        # fixture library and sends the next reader to look for a missing file that is present.
+        raise CacheSearchStalled(
+            "cache search never received an answer from the disposable server: "
+            f"{census} last_error={last_transport_error!r} "
+            f"attempt_timeout_seconds={SEARCH_ATTEMPT_TIMEOUT_SECONDS} "
+            f"deadline_seconds={SEARCH_DEADLINE_SECONDS}. This is a stall, not an absent corpus "
+            "item; the transcode cache state was never observed."
+        )
+    raise SystemExit(
+        f"known transcode cache probe is absent from the disposable corpus: {census}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -148,6 +274,21 @@ def main() -> None:
     args = parser.parse_args()
     if STREAM_TIMEOUT_SECONDS <= 0:
         raise SystemExit("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS must be greater than zero")
+    if SEARCH_DEADLINE_SECONDS <= 0:
+        raise SystemExit("DULCET_TRANSCODE_SEARCH_DEADLINE_SECONDS must be greater than zero")
+    if SEARCH_ATTEMPT_TIMEOUT_SECONDS <= 0:
+        raise SystemExit("DULCET_TRANSCODE_SEARCH_ATTEMPT_SECONDS must be greater than zero")
+    if SEARCH_CORPUS_SETTLE_SECONDS <= 0:
+        raise SystemExit("DULCET_TRANSCODE_SEARCH_SETTLE_SECONDS must be greater than zero")
+    # Refusing the incoherent shape is the durable half of this fix. A per-attempt timeout at or
+    # above the total deadline cannot leave room for a second attempt, so the loop degrades into a
+    # single request while still reading like a poll -- and nothing downstream would report it.
+    if SEARCH_ATTEMPT_TIMEOUT_SECONDS >= SEARCH_DEADLINE_SECONDS:
+        raise SystemExit(
+            "the cache search per-attempt timeout must be strictly smaller than its total "
+            f"deadline, or the poll can only ever make one attempt: attempt="
+            f"{SEARCH_ATTEMPT_TIMEOUT_SECONDS}s deadline={SEARCH_DEADLINE_SECONDS}s"
+        )
     if os.environ.get("DULCET_CONFORMANCE_DISPOSABLE") != "true":
         raise SystemExit("cache observation requires DULCET_CONFORMANCE_DISPOSABLE=true")
     base_url = os.environ.get("DULCET_CONFORMANCE_BASE_URL")
@@ -160,23 +301,7 @@ def main() -> None:
         "search3",
         {"query": "Dulcet Health Probe", "songCount": "10"},
     )
-    search_deadline = time.monotonic() + 5
-    song = None
-    while time.monotonic() < search_deadline:
-        try:
-            document = read_json(search_url, min(10, max(0, search_deadline - time.monotonic())))
-        except urllib.error.HTTPError:
-            raise
-        except TRANSPORT_ERRORS as error:
-            print(f"cache search transport error: {error}", file=sys.stderr)
-        else:
-            songs = document.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
-            song = next((value for value in songs if value.get("title") == "Dulcet Health Probe"), None)
-            if song is not None:
-                break
-        time.sleep(min(0.05, max(0, search_deadline - time.monotonic())))
-    if not song or not isinstance(song.get("id"), str):
-        raise SystemExit("known transcode cache probe is absent from the disposable corpus")
+    song, _search_attempts, _search_elapsed = find_probe_song(search_url)
 
     stream_url = subsonic_url(
         base_url,
