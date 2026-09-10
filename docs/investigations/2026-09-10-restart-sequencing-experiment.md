@@ -132,6 +132,33 @@ Recipe, from a job log:
 - `TRANSCODE CACHE SEARCH attempts=... elapsed_seconds=` gives the search phase directly, instead
   of by subtracting the stream time from the surrounding wall clock.
 
+## Adjacent finding: the "5 s iOS browse probe" is not a gate, and is not on `main`
+
+The forensic pass that produced this experiment also flagged an "iOS `LiveDownloadTrackSeed` browse
+probe" with a 5 s budget, against a 7.4 s p90 in the neighbouring window, and attributed 7 step
+failures to it. Re-derived against `main`, that row conflates two different budgets:
+
+- **The 5 s belongs to a post-failure diagnostic**, and only exists on the branch of the open pull
+  request that adds it, not on `main`. It is invoked as
+  `seed == nil ? await probeDisposableServer(baseURL:) : ""` — it runs *only after* the browse
+  under test has already returned nothing, and its own comment says it "does not change the timeout
+  of the request under test". It cannot cause a failure, so raising it cannot prevent one; it would
+  only add up to 20 s to every already-failed browse in a job that has hit a 75-minute ceiling five
+  times. **The 5 s is correct and should stay.**
+- **The 7 failures belong to the browse itself**, which runs on the core's 30 s Ktor budget. That
+  budget is firing on a genuine stall — one `getMusicFolders` reached `http-started` at 113 ms and
+  then produced nothing for 30.23 s — and the forensic report's own ranked-fixes table says not to
+  touch it, because raising it converts a visible stall into a 75-minute job timeout.
+
+Query used, with its positive control, because a clean-looking negative from a broken query is how
+this project has lost the most time: `git grep -nE 'timeoutInterval[A-Za-z]*[[:space:]]*=[[:space:]]*[0-9]'`
+returns the two 5 s lines on the pull request's branch and nothing on `main`. An earlier attempt
+using `\s` returned nothing on *both*, because `git grep`'s POSIX engine does not accept it — the
+positive control is what exposed that.
+
+So no budget change is proposed for the browse path here. The stall it reports is real, and the
+sequencing experiment above is the test of what causes it.
+
 ## If it is refuted
 
 Revert the reorder. The elevation is real either way — three instruments re-derived here agree on
