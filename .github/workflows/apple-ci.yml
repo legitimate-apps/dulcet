@@ -379,6 +379,27 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testIPhoneWindowUsesFullDisplay
+      - name: Verify compact sidebar re-selection restores the detail
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          # Compact-width navigation only, on the deterministic layout fixture -- no disposable
+          # server, so this step cannot fail for a reason that belongs to the fixture server and
+          # can run here rather than inside the conformance step.
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactSidebarRestoresTheDetailForTheSameDestination 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-compact-nav.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testCompactSidebarRestoresTheDetailForTheSameDestination
       - name: Boot iPadOS simulator before the layout launch
         timeout-minutes: 6
         id: ipados_layout_destination

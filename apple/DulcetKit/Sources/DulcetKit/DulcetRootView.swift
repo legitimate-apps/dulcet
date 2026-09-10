@@ -50,7 +50,7 @@ public struct DulcetRootView: View {
                 ZStack {
                     Color.dulcetWindow.ignoresSafeArea()
                     NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-                        DulcetSidebar(store: store)
+                        DulcetSidebar(store: store, compactColumn: $preferredCompactColumn)
                     } detail: {
                         DulcetStateSurface(store: store)
                     }
@@ -229,6 +229,11 @@ private struct DulcetTVSectionNavigation: View {
 #if !os(tvOS)
 private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
+#if os(iOS)
+    /// Which column the compact layout is showing. Owned by ``DulcetRootView``; SwiftUI writes it
+    /// itself when the person uses the navigation bar's back control.
+    @Binding var compactColumn: NavigationSplitViewColumn
+#endif
 
     var body: some View {
         VStack(spacing: 0) {
@@ -279,9 +284,23 @@ private struct DulcetSidebar: View {
         Binding(
             get: { store.selectedDestination },
             set: { destination in
-                if let destination {
-                    store.selectDestination(destination)
-                }
+                guard let destination else { return }
+                store.selectDestination(destination)
+#if os(iOS)
+                // Ask for the detail column explicitly instead of leaving SwiftUI to infer a push
+                // from a changed selection. A compact window shows one column at a time, so
+                // reaching a destination, using the back control, and choosing that same
+                // destination again reads back an unchanged selection -- and without this line
+                // the detail is never pushed again. OBSERVED twice on an iPhone 17 Pro simulator
+                // (26.5): the second choice left the person on the sidebar, and the only way
+                // forward was choosing a different destination. This setter does still run for
+                // that second choice, which is why one line here is enough.
+                //
+                // Regular-width windows show both columns at once. The iPadOS split-layout and
+                // search proofs were re-run with this line present and were unchanged; what has
+                // NOT been measured is whether SwiftUI reads the value at all in that class.
+                compactColumn = .detail
+#endif
             }
         )
     }

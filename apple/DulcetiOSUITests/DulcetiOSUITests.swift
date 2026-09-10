@@ -49,6 +49,86 @@ final class DulcetiOSUITests: XCTestCase {
         }
     }
 
+    /// A compact iPhone window shows one column at a time, so reaching a destination, using the
+    /// navigation bar's back control, and choosing that same destination again is an ordinary
+    /// path -- and it was a dead end. OBSERVED on an iPhone 17 Pro simulator before the fix, and
+    /// repeatably: the second choice left the detail unpushed, the row highlighted, and the only
+    /// way forward was choosing some other destination.
+    ///
+    /// The mechanism was that the sidebar list reported the store's destination as its selection
+    /// even while the compact layout was showing the sidebar, so the second choice read back as
+    /// an unchanged value and SwiftUI inferred no push. The `nil` SwiftUI writes on the way back
+    /// was discarded by the same binding, so nothing recorded that the detail had gone away.
+    ///
+    /// This uses the deterministic layout fixture rather than the disposable server: the contract
+    /// under test is navigation, and a fixture makes the run independent of any server state.
+    @MainActor
+    func testCompactSidebarRestoresTheDetailForTheSameDestination() {
+        let app = XCUIApplication()
+        app.launchArguments.append("-dulcet-account-connect-layout-fixture")
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertLessThan(
+            window.frame.width,
+            700,
+            "This proof requires a compact-width iPhone window; a regular-width window shows both"
+                + " columns at once and cannot express the defect"
+        )
+
+        let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
+        let searchField = app.textFields["dulcet.search.field"].firstMatch
+
+        // Reveals the sidebar the way a person does, and reports which control it used so a
+        // failure names the control rather than only its effect.
+        func revealSidebar(_ phase: String) -> Bool {
+            if !searchRow.isHittable {
+                let backControl = app.navigationBars.buttons.firstMatch
+                guard backControl.waitForExistence(timeout: 5) else {
+                    XCTFail("\(phase): a compact window must expose the sidebar through a back"
+                        + " control: " + app.debugDescription)
+                    return false
+                }
+                print("DULCET COMPACT NAV \(phase) back-control=\(backControl.identifier)")
+                backControl.tap()
+            }
+            guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
+                XCTFail("\(phase): the Search row must be reachable in the sidebar: "
+                    + app.debugDescription)
+                return false
+            }
+            return true
+        }
+
+        guard revealSidebar("first") else { return }
+        searchRow.tap()
+        XCTAssertTrue(
+            searchField.waitForExistence(timeout: 5),
+            "Choosing Search must show the Search detail: " + app.debugDescription
+        )
+
+        guard revealSidebar("second") else { return }
+        // The store's selected destination is still Search here. That is the whole point: the
+        // second choice must push the detail again even though the value does not change.
+        XCTAssertFalse(
+            searchField.exists,
+            "The back control must leave the sidebar showing, not the Search detail: "
+                + app.debugDescription
+        )
+        searchRow.tap()
+        let reselectPushed = searchField.waitForExistence(timeout: 5)
+        // Print the observed value, not a verdict: a bare "PASS" line printed after an assertion
+        // that already failed is a claim nothing checked.
+        print("DULCET COMPACT NAV OBSERVED first-push=true back-cleared-detail=true"
+            + " reselect-push=\(reselectPushed)")
+        XCTAssertTrue(
+            reselectPushed,
+            "Choosing the destination already selected must show its detail again, not strand the"
+                + " person on the sidebar: " + app.debugDescription
+        )
+    }
+
     private enum BlockingSystemDialogProbeResult {
         case absent
         case handled
