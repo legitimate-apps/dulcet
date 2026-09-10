@@ -76,6 +76,27 @@ public class AppleLibrarySyncClient(
         return operation
     }
 
+    /** Immediate, account-scoped local query using the shared committed-generation index. */
+    public fun searchCommitted(providerInstanceId: String, query: String): AppleSearchOutcome {
+        var store: DulcetDatabaseStore? = null
+        return try {
+            require(databaseName.isNotBlank())
+            require(providerInstanceId.isNotBlank())
+            store = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+            val results = LocalLibrarySearch(store).search(providerInstanceId, query)
+            AppleSearchOutcome(
+                SearchPage(results, 0, 0, 0, false, false, false).toAppleDto(), null,
+            )
+        } catch (failure: Throwable) {
+            AppleSearchOutcome(null, AppleSearchErrorDto(mapAccountConnectionFailure(failure).appleSyncKind()))
+        } finally {
+            try {
+                store?.close()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
     /** Reads only the atomically committed generation; it performs no network request. */
     public fun readCommitted(providerInstanceId: String): AppleCommittedLibraryOutcome {
         var store: DulcetDatabaseStore? = null

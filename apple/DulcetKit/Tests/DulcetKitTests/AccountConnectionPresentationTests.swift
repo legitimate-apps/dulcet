@@ -417,6 +417,9 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     )))
     store.selectDestination(.search)
 
+    #expect(store.snapshot.searchSummaryKey == "search.summary")
+    #expect(store.snapshot.searchIdleTitleKey == "search.idle.title")
+    #expect(store.snapshot.searchIdleBodyKey == "search.idle.body")
     store.searchQuery = "a"
     await settleSearchTask()
     #expect(search.requests.isEmpty)
@@ -472,6 +475,166 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     store.selectDestination(.nowPlaying)
     #expect(search.operations[3].cancelCount == 1)
     #expect(store.snapshot.state == .nowPlayingUnavailable)
+}
+
+@Test @MainActor
+func localSearchStartsImmediatelyAndServerReplacesWithoutMovingRows() async {
+    let connector = ControlledAccountConnector()
+    let server = ControlledServerSearch()
+    let local = ControlledLocalLibrarySearch()
+    let source = DulcetAccountDataSource(
+        connector: connector, libraryBrowser: local, serverSearch: server,
+        searchDebounce: .zero, providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://127.0.0.1:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Fixture", normalizedServerURL: "http://127.0.0.1:4533"
+    )))
+    store.selectDestination(.search)
+    store.searchQuery = "a"
+    #expect(local.queries == ["a"])
+    #expect(local.accounts == ["provider-instance-fixture"])
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchResults.map(\.id.rawID) == ["opaque:local-only", "opaque:shared"])
+    await settleSearchTask()
+    #expect(server.requests.isEmpty)
+    print("LOCAL SEARCH query=a rows=opaque:local-only,opaque:shared server-requests=0")
+
+    store.searchQuery = "at"
+    #expect(store.snapshot.searchResults.count == 2)
+    #expect(server.requests.isEmpty)
+    await settleSearchTask(until: { server.requests.count == 1 })
+    server.complete(at: 0, .loaded(searchPage(results: [
+        searchResult(id: "opaque:shared", title: "Server refreshed"),
+        searchResult(id: "opaque:server-only", title: "Server new"),
+    ], trackHasMore: true)))
+    #expect(store.snapshot.searchResults.map(\.title) == ["Local only", "Server refreshed", "Server new"])
+    store.loadMoreSearchResults(.track)
+    #expect(server.requests.last?.trackOffset == 2)
+    server.complete(at: 1, .loaded(searchPage(results: [
+        searchResult(id: "opaque:shared", title: "Page refreshed")
+    ])))
+    #expect(store.snapshot.searchResults.map(\.id.rawID) == ["opaque:local-only", "opaque:shared", "opaque:server-only"])
+    print("LOCAL MERGE shared-id=replaced-in-place rows=3 server-offset=2")
+    store.searchQuery = "atlas"
+    store.selectDestination(.nowPlaying)
+    store.selectDestination(.search)
+    await settleSearchTask(until: { server.requests.count == 3 })
+    #expect(server.requests.count == 3)
+    #expect(server.requests.last?.query == "atlas")
+    server.complete(at: 2, .failed(DulcetSearchFailure(kind: .unreachable)))
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchResults.map(\.title) == ["Local only", "Local shared"])
+    store.searchQuery = " "
+    #expect(store.snapshot.searchResults.isEmpty)
+    #expect(store.snapshot.state == .searchIdle)
+    #expect(local.queries == ["a", "at", "atlas", "atlas"])
+}
+
+@MainActor
+private func connectedSearchStore(local: ControlledLocalLibrarySearch, server: ControlledServerSearch) -> DulcetPresentationStore {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector, libraryBrowser: local, serverSearch: server,
+        searchDebounce: .zero, providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://127.0.0.1:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Fixture", normalizedServerURL: "http://127.0.0.1:4533"
+    )))
+    store.selectDestination(.search)
+    return store
+}
+
+@Test @MainActor
+func retryOneCharacterLocalFailure() async {
+    let local = ControlledLocalLibrarySearch()
+    let server = ControlledServerSearch()
+    let store = connectedSearchStore(local: local, server: server)
+    local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+    store.searchQuery = "t"
+    #expect(store.snapshot.state == .searchError)
+    local.outcome = .loaded(searchPage(results: [searchResult(id: "t", title: "Track")]))
+    store.retrySearch()
+    #expect(local.queries == ["t", "t"])
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchFailure == nil)
+    #expect(store.snapshot.searchResults.map(\.title) == ["Track"])
+    await settleSearchTask()
+    #expect(server.requests.isEmpty)
+}
+
+@Test @MainActor
+func navigationRecoversLocalFailureAndCancelledServerSearch() async {
+    for requestStarted in [false, true] {
+        let local = ControlledLocalLibrarySearch()
+        let server = ControlledServerSearch()
+        let store = connectedSearchStore(local: local, server: server)
+        local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+        store.searchQuery = "at"
+        if requestStarted { await settleSearchTask(until: { server.requests.count == 1 }) }
+        store.selectDestination(.nowPlaying)
+        if requestStarted { #expect(server.operations.first?.cancelCount == 1) }
+        local.outcome = .loaded(searchPage(results: []))
+        store.selectDestination(.search)
+        let expectedCount = requestStarted ? 2 : 1
+        await settleSearchTask(until: { server.requests.count == expectedCount })
+        #expect(local.queries == ["at", "at"])
+        #expect(server.requests.count == expectedCount)
+        #expect(store.snapshot.state == .searchLoading)
+        if server.requests.count == expectedCount {
+            server.complete(at: expectedCount - 1, .loaded(searchPage(results: [searchResult(id: "fresh", title: "Fresh")])) )
+            #expect(store.snapshot.searchResults.map(\.title) == ["Fresh"])
+            #expect(store.snapshot.searchFailure == nil)
+        }
+    }
+}
+
+@Test @MainActor
+func localRefreshReplacesRemovedRowsAndRanking() {
+    let local = ControlledLocalLibrarySearch()
+    let server = ControlledServerSearch()
+    let store = connectedSearchStore(local: local, server: server)
+    let a = searchResult(id: "a", title: "Track A")
+    let b = searchResult(id: "b", title: "Track B")
+    local.outcome = .loaded(searchPage(results: [a, b]))
+    store.searchQuery = "t"
+    for results in [[b, a], [b], [], [a]] {
+        store.selectDestination(.nowPlaying)
+        local.outcome = .loaded(searchPage(results: results))
+        store.selectDestination(.search)
+        #expect(store.snapshot.searchResults == results)
+        #expect(store.snapshot.state == (results.isEmpty ? .searchEmpty : .searchResults))
+    }
+    #expect(server.requests.isEmpty)
+}
+
+@MainActor
+private final class ControlledLocalLibrarySearch: DulcetLibraryBrowsing, DulcetLocalSearching {
+    var queries: [String] = []
+    var accounts: [String] = []
+    var outcome: DulcetSearchPageOutcome?
+    func searchCommitted(providerInstanceID: String, query: String) -> DulcetSearchPageOutcome {
+        queries.append(query)
+        accounts.append(providerInstanceID)
+        if let outcome { return outcome }
+        return .loaded(searchPage(results: [
+            searchResult(id: "opaque:local-only", title: "Local only"),
+            searchResult(id: "opaque:shared", title: "Local shared"),
+        ]))
+    }
+    func browse(_ request: DulcetLibraryBrowseRequest,
+                completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void) -> any DulcetLibraryBrowseOperation {
+        ControlledLibraryOperation(onCancel: {})
+    }
 }
 
 @Test @MainActor
@@ -1649,4 +1812,67 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
 @MainActor
 private final class ControlledDeleteDecision {
     var shouldFail = true
+}
+
+@Test
+func localSearchCopyKeysDescribeCache() {
+    let expected = [
+        "search.local.summary": "Search saved library items from the first character. Server search begins after two characters.",
+        "search.local.idle.title": "Search your library",
+        "search.local.idle.body": "Enter a name to search saved artists, albums, and tracks. Enter at least two characters to also search the server.",
+        "search.local.empty.title": "No saved library matches",
+        "search.local.empty.body": "Try a different name, or enter at least two characters to search the server.",
+        "search.local.error.title": "Saved library could not be searched",
+        "search.local.error.body": "Try again to read the saved library. You can also enter at least two characters to search the server."
+    ]
+    for (key, value) in expected {
+        #expect(DulcetStrings.dynamicText(key, fallback: key) == value)
+    }
+    #expect(DulcetStrings.dynamicText("search.empty.title", fallback: "") == "No server matches")
+    #expect(DulcetStrings.dynamicText("search.error.body", fallback: "") == "Check the server and network, then try again.")
+}
+
+@Test @MainActor
+func searchCopySelectsExactKeysForLocalAndServerStates() async {
+    let local = ControlledLocalLibrarySearch()
+    let server = ControlledServerSearch()
+    let store = connectedSearchStore(local: local, server: server)
+    #expect(store.snapshot.searchSummaryKey == "search.local.summary")
+    #expect(store.snapshot.searchIdleTitleKey == "search.local.idle.title")
+    #expect(store.snapshot.searchIdleBodyKey == "search.local.idle.body")
+    local.outcome = .loaded(searchPage(results: []))
+    store.searchQuery = "t"
+    #expect(store.snapshot.state == .searchEmpty)
+    #expect(store.snapshot.searchEmptyTitleKey == "search.local.empty.title")
+    #expect(store.snapshot.searchEmptyBodyKey == "search.local.empty.body")
+    local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+    store.retrySearch()
+    #expect(store.snapshot.state == .searchError)
+    #expect(store.snapshot.searchErrorTitleKey == "search.local.error.title")
+    #expect(store.snapshot.searchErrorBodyKey == "search.local.error.body")
+    local.outcome = nil
+    store.retrySearch()
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.snapshot.searchSummaryKey == "search.local.summary")
+    #expect(server.requests.isEmpty)
+
+    local.outcome = .loaded(searchPage(results: []))
+    store.searchQuery = "tt"
+    await settleSearchTask(until: { server.requests.count == 1 })
+    server.complete(at: 0, .loaded(searchPage(results: [])))
+    #expect(store.snapshot.state == .searchEmpty)
+    #expect(store.snapshot.searchEmptyTitleKey == "search.empty.title")
+    #expect(store.snapshot.searchEmptyBodyKey == "search.empty.body")
+    local.outcome = .failed(DulcetSearchFailure(kind: .unreachable))
+    store.retrySearch()
+    await settleSearchTask(until: { server.requests.count == 2 })
+    server.complete(at: 1, .failed(DulcetSearchFailure(kind: .timeout)))
+    #expect(store.snapshot.state == .searchError)
+    #expect(store.snapshot.searchErrorTitleKey == "search.error.title")
+    #expect(store.snapshot.searchErrorBodyKey == "search.error.body")
+    store.selectDestination(.nowPlaying)
+    store.selectDestination(.search)
+    await settleSearchTask()
+    #expect(server.requests.count == 2) // A real server failure still waits for explicit Retry.
+    #expect(store.snapshot.searchErrorBodyKey == "search.error.body")
 }

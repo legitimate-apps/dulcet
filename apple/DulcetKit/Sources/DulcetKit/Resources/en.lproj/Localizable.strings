@@ -215,3 +215,11 @@
 "track.accessibility" = "%1$@, %2$@, %3$@";
 "track.accessibility.current" = "Current track, %@";
 "track.accessibility.unavailable" = "%1$@, %2$@, %3$@, %4$@";
+
+"search.local.summary" = "Search saved library items from the first character. Server search begins after two characters.";
+"search.local.idle.title" = "Search your library";
+"search.local.idle.body" = "Enter a name to search saved artists, albums, and tracks. Enter at least two characters to also search the server.";
+"search.local.empty.title" = "No saved library matches";
+"search.local.empty.body" = "Try a different name, or enter at least two characters to search the server.";
+"search.local.error.title" = "Saved library could not be searched";
+"search.local.error.body" = "Try again to read the saved library. You can also enter at least two characters to search the server.";

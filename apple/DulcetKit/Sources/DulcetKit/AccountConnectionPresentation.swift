@@ -407,6 +407,12 @@ public protocol DulcetServerSearching: AnyObject {
     ) -> any DulcetSearchOperation
 }
 
+/// Immediate read of the active account's committed cache; never performs network I/O.
+@MainActor
+public protocol DulcetLocalSearching: AnyObject {
+    func searchCommitted(providerInstanceID: String, query: String) -> DulcetSearchPageOutcome
+}
+
 /// Live presentation source for account setup. Network and persistence adapters stay replaceable.
 @MainActor
 public final class DulcetAccountDataSource: DulcetDataSource {
@@ -439,9 +445,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var savedServerName: String?
     private var searchQuery = ""
     private var searchResults: [DulcetSearchResult] = []
+    private var initialServerPageLoaded = false
+    private var serverResultCounts: [DulcetSearchResultKind: Int] = [:]
     private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
     private var searchLoadingMoreKind: DulcetSearchResultKind?
-    private var searchFailure: DulcetSearchFailure?
+    private var localSearchFailure: DulcetSearchFailure?
+    private var serverSearchFailure: DulcetSearchFailure?
+    private var searchFailure: DulcetSearchFailure? { serverSearchFailure ?? localSearchFailure }
     private var libraryMusicFolders: [DulcetMusicFolder] = []
     private var libraryArtists: [DulcetArtist] = []
     private var libraryAlbums: [DulcetAlbum] = []
@@ -563,7 +573,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .loadMoreSearchResults(kind):
             loadMoreSearchResults(kind)
         case .retrySearch:
-            startInitialSearch(debounce: false, destination: currentSnapshot.selectedDestination)
+            guard currentSnapshot.selectedDestination == .search else { return }
+            if searchQuery.trimmedForSearch.count < 2 {
+                openSearch()
+            } else {
+                startInitialSearch(debounce: false, destination: currentSnapshot.selectedDestination)
+            }
         case let .activateSearchResult(id):
             activateSearchResult(id)
         case let .selectAlbum(id):
@@ -740,6 +755,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchHasMoreKinds: searchHasMoreKinds,
             searchLoadingMoreKind: searchLoadingMoreKind,
             searchFailure: searchFailure,
+            searchIncludesLocalCache: libraryBrowser is any DulcetLocalSearching,
+            searchFailureIsLocal: serverSearchFailure == nil && localSearchFailure != nil,
             accountRemoval: accountRemovalStatus
         )
         snapshotHandler?(currentSnapshot)
@@ -762,6 +779,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
         searchLoadingMoreKind: DulcetSearchResultKind? = nil,
         searchFailure: DulcetSearchFailure? = nil,
+        searchIncludesLocalCache: Bool = false,
+        searchFailureIsLocal: Bool = false,
         accountRemoval: DulcetAccountRemovalStatus = .idle
     ) -> DulcetSnapshot {
         let connectivity: DulcetConnectivity = switch status {
@@ -795,6 +814,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchHasMoreKinds: searchHasMoreKinds,
             searchLoadingMoreKind: searchLoadingMoreKind,
             searchFailure: searchFailure,
+            searchIncludesLocalCache: searchIncludesLocalCache,
+            searchFailureIsLocal: searchFailureIsLocal,
             captureDate: Date(timeIntervalSince1970: 0),
             accountForm: form,
             accountConnection: status,
@@ -1054,16 +1075,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             return
         }
         if searchQuery.trimmedForSearch.count >= 2,
-           searchResults.isEmpty,
-           searchFailure == nil {
+           (searchResults.isEmpty || !initialServerPageLoaded),
+           serverSearchFailure == nil {
             // currentSnapshot.selectedDestination is still the OLD destination here: this method
             // runs before anything has published the move to .search, so pass the destination we
             // are switching to explicitly instead of letting startInitialSearch() read it back.
             startInitialSearch(debounce: false, destination: .search)
             return
         }
+        if searchQuery.trimmedForSearch.count == 1 { loadLocalSearch() }
         let state: DulcetPresentationState = if searchQuery.trimmedForSearch.count < 2 {
-            .searchIdle
+            localSearchState
         } else if searchResults.isEmpty {
             searchFailure == nil ? .searchEmpty : .searchError
         } else {
@@ -1080,14 +1102,18 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func updateSearchQuery(_ query: String) {
         searchQuery = query
         searchResults = []
+        initialServerPageLoaded = false
+        serverResultCounts = [:]
+        localSearchFailure = nil
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
-        searchFailure = nil
+        serverSearchFailure = nil
         cancelSearchRequest()
         guard currentSnapshot.selectedDestination == .search else { return }
         guard query.trimmedForSearch.count >= 2 else {
+            loadLocalSearch()
             publish(
-                state: .searchIdle,
+                state: localSearchState,
                 destination: .search,
                 form: currentSnapshot.accountForm,
                 status: currentSnapshot.accountConnection
@@ -1095,6 +1121,30 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             return
         }
         startInitialSearch(debounce: true, destination: currentSnapshot.selectedDestination)
+    }
+
+    private var localSearchState: DulcetPresentationState {
+        if searchQuery.trimmedForSearch.isEmpty { return .searchIdle }
+        if !searchResults.isEmpty { return .searchResults }
+        if localSearchFailure != nil { return .searchError }
+        return libraryBrowser is any DulcetLocalSearching ? .searchEmpty : .searchIdle
+    }
+
+    private func loadLocalSearch() {
+        guard !searchQuery.trimmedForSearch.isEmpty,
+              case .connected = currentSnapshot.accountConnection,
+              let localSearch = libraryBrowser as? any DulcetLocalSearching else { return }
+        let instanceID = providerInstanceID ?? providerInstanceIDFactory()
+        providerInstanceID = instanceID
+        switch localSearch.searchCommitted(providerInstanceID: instanceID, query: searchQuery.trimmedForSearch) {
+        case let .loaded(page):
+            localSearchFailure = nil
+            // This is a complete ranked local snapshot. Callers either have a local-only
+            // query or have cleared results before starting the initial server request.
+            searchResults = page.results
+        case let .failed(failure): localSearchFailure = failure
+        case .cancelled: break
+        }
     }
 
     private func startInitialSearch(debounce: Bool, destination: DulcetSidebarDestination) {
@@ -1110,11 +1160,15 @@ public final class DulcetAccountDataSource: DulcetDataSource {
               case .connected = currentSnapshot.accountConnection,
               searchQuery.trimmedForSearch.count >= 2 else { return }
         searchResults = []
+        initialServerPageLoaded = false
+        serverResultCounts = [:]
+        localSearchFailure = nil
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
-        searchFailure = nil
+        serverSearchFailure = nil
+        loadLocalSearch()
         publish(
-            state: .searchLoading,
+            state: searchResults.isEmpty ? .searchLoading : .searchResults,
             destination: destination,
             form: currentSnapshot.accountForm,
             status: currentSnapshot.accountConnection
@@ -1136,7 +1190,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
               activeSearchOperation == nil,
               searchDebounceTask == nil else { return }
         searchLoadingMoreKind = kind
-        searchFailure = nil
+        serverSearchFailure = nil
         publish(
             state: .searchResults,
             destination: .search,
@@ -1153,7 +1207,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchDebounceTask = nil
         guard let serverSearch,
               case let .connected(account) = currentSnapshot.accountConnection else {
-            searchFailure = DulcetSearchFailure(kind: .capability)
+            serverSearchFailure = DulcetSearchFailure(kind: .capability)
             publish(
                 state: searchResults.isEmpty ? .searchError : .searchResults,
                 destination: .search,
@@ -1187,12 +1241,21 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchLoadingMoreKind = nil
             switch outcome {
             case let .loaded(page):
-                searchFailure = nil
+                serverSearchFailure = nil
+                for resultKind in DulcetSearchResultKind.allCases where kind == nil || kind == resultKind {
+                    let count = switch resultKind {
+                    case .artist: page.artistResultCount
+                    case .album: page.albumResultCount
+                    case .track: page.trackResultCount
+                    }
+                    serverResultCounts[resultKind, default: 0] += count
+                }
                 if let kind {
                     appendOrReplace(page.results)
                     setHasMore(page.hasMore(for: kind), for: kind)
                 } else {
-                    searchResults = page.results
+                    initialServerPageLoaded = true
+                    appendOrReplace(page.results)
                     searchHasMoreKinds = Set(DulcetSearchResultKind.allCases.filter(page.hasMore))
                 }
                 publish(
@@ -1202,7 +1265,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: currentSnapshot.accountConnection
                 )
             case let .failed(failure):
-                searchFailure = failure
+                serverSearchFailure = failure
                 publish(
                     state: searchResults.isEmpty ? .searchError : .searchResults,
                     destination: .search,
@@ -1229,7 +1292,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     private func resultCount(for kind: DulcetSearchResultKind) -> Int {
-        searchResults.lazy.filter { $0.kind == kind }.count
+        serverResultCounts[kind, default: 0]
     }
 
     private func appendOrReplace(_ incoming: [DulcetSearchResult]) {
@@ -1385,9 +1448,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryAlbums = []
         searchQuery = ""
         searchResults = []
+        initialServerPageLoaded = false
+        serverResultCounts = [:]
+        localSearchFailure = nil
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
-        searchFailure = nil
+        serverSearchFailure = nil
         accountRemovalStatus = .idle
         publish(
             state: .accountConnectIdle,

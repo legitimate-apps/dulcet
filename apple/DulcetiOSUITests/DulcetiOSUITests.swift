@@ -102,6 +102,41 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
+    func testSimulatorLocalCacheSearchFromFirstCharacter() {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"])
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", configuration.serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30))
+        let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
+        if !library.isHittable { app.navigationBars.buttons.firstMatch.tap() }
+        XCTAssertTrue(library.waitForExistence(timeout: 5))
+        library.tap()
+        XCTAssertTrue(app.staticTexts["Albums"].firstMatch.waitForExistence(timeout: 90),
+                      "Committed library must load before querying its cache")
+        let search = app.staticTexts["dulcet.sidebar.search"].firstMatch
+        if !search.isHittable { app.navigationBars.buttons.firstMatch.tap() }
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("t")
+        XCTAssertEqual(field.value as? String, "t")
+        let row = app.buttons["dulcet.search.result.0"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "Character one must render a local row")
+        XCTAssertFalse(row.label.isEmpty)
+        print("DULCET LOCAL UI width=\(app.windows.firstMatch.frame.width) query=t first=\(row.label)")
+    }
+
+    @MainActor
     private func proveSearchQueryRanksAndActivatesTrack(
         windowExpectation: SearchUIWindowExpectation
     ) {
