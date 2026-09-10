@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import hashlib
+import math
 import secrets
 import sys
 import time
@@ -92,12 +93,17 @@ def main() -> None:
     )
     arguments = parser.parse_args()
 
-    if arguments.timeout_seconds <= 0:
-        parser.error("--timeout-seconds must be greater than zero")
-    if arguments.poll_interval_seconds <= 0:
-        parser.error("--poll-interval-seconds must be greater than zero")
-    if arguments.request_timeout_seconds <= 0:
-        parser.error("--request-timeout-seconds must be greater than zero")
+    # `float()` accepts "inf" and "nan", and neither is caught by `x <= 0`. MEASURED before this
+    # guard existed: `--timeout-seconds inf` never returned, and `--timeout-seconds nan` printed
+    # "scan baseline never answered ... attempts=0" -- a verdict about the server delivered without
+    # ever asking it. An outcome-checking control passes on that; only the attempt count shows it.
+    for flag, value in (
+        ("--timeout-seconds", arguments.timeout_seconds),
+        ("--poll-interval-seconds", arguments.poll_interval_seconds),
+        ("--request-timeout-seconds", arguments.request_timeout_seconds),
+    ):
+        if not math.isfinite(value) or value <= 0:
+            parser.error(f"{flag} must be a finite number greater than zero, observed {value}")
     # A per-request budget at or above the overall one leaves no room for a second attempt, so the
     # loop degrades into a single request while still reading like a poll. Refuse the shape rather
     # than trusting the numbers to stay apart.

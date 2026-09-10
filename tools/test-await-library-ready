@@ -196,6 +196,36 @@ require(
 )
 print("NEGATIVE CONTROL PASS one_attempt_budget_refused=true")
 
+# A non-finite budget is not a positive one. `nan` is the instructive case: before the guard it
+# exited with "scan baseline never answered ... attempts=0" -- a verdict about the server produced
+# without a single request. Every outcome-shaped assertion in this file passes on that, which is
+# why the attempt count is asserted here too.
+observed = {}
+for label, overall, request in [
+    ("infinite overall", "inf", "0.2"),
+    ("nan overall", "nan", "0.2"),
+    ("nan request", "5", "nan"),
+]:
+    observed.clear()
+    started = time.monotonic()
+    nonfinite = run_tool(
+        [{"stall": True}],
+        "--print-last-scan", "--timeout-seconds", overall, "--poll-interval-seconds", "0.01",
+        "--request-timeout-seconds", request,
+        observed=observed,
+    )
+    require(nonfinite.returncode != 0, f"{label} was accepted")
+    require(
+        "must be a finite number greater than zero" in nonfinite.stderr,
+        f"{label} was not refused by the budget guard:\n" + nonfinite.stderr,
+    )
+    require(
+        observed["scan_status_requests"] == 0,
+        f"{label} reached the server before being refused: {observed}",
+    )
+    require(time.monotonic() - started < 5, f"{label} ran before the guard rejected it")
+    print(f"NEGATIVE CONTROL PASS nonfinite_budget_refused={label.replace(' ', '_')}")
+
 for invalid, message in [
     ({}, "scan status did not carry lastScan: None"),
     ({"envelope": {"status": "failed", "error": {"message": "denied"}}},

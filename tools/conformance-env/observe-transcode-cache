@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import http.client
 import os
 from pathlib import Path
@@ -36,11 +37,15 @@ STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SE
 # do -- spends the entire window on attempt one and turns a poll into a single request.
 #
 # MEASURED, 167 apple-ci job logs 2026-09-02..2026-09-10: the corpus contains five
-# `cache search transport error` lines in total -- one per failed run, none in any of the 99 green
-# runs -- and each was followed immediately by the process exiting, 11.5 / 13.0 / 20.1 / 42.3 /
-# 44.9 s after the preceding `library ready:`. So the retry has fired ZERO times in 167 runs: every
-# transport error this loop has ever seen was fatal on the spot, and the nominal five-second total
-# bounded nothing either. A poll with a 0/167 retry rate is not a poll.
+# `cache search transport error` lines in total -- one each in five of the 46 failed runs, none in
+# any of the 99 green runs -- and each was followed immediately by the process exiting, 11.5 / 13.0
+# / 20.1 / 42.3 / 44.9 s after the preceding `library ready:`.
+#
+# The denominator that matters is 94, not 167: the retry (and this string) were introduced by
+# 084007c, and only 94 of the 167 run heads contain it -- the other 71 predate it and had no retry
+# path to fire at all. So the retry has fired ZERO times in the 94 runs that HAD one. Every
+# transport error this loop has ever been able to survive was fatal on the spot, and the nominal
+# five-second total bounded nothing either. A poll with a 0-of-94 retry rate is not a poll.
 #
 # SEARCH_DEADLINE_SECONDS is sized from the window this call actually runs in. Same corpus, n=137
 # successful observations, taking (`library ready:` -> `TRANSCODE CACHE OBSERVATION`) minus the
@@ -262,6 +267,18 @@ def find_probe_song(search_url: str) -> tuple[dict, int, float]:
             f"deadline_seconds={SEARCH_DEADLINE_SECONDS}. This is a stall, not an absent corpus "
             "item; the transcode cache state was never observed."
         )
+    if transport_errors:
+        # Answered at least once WITHOUT the track, and stalled at least once. Two different facts
+        # arrived through one variable, and the bare absence sentence would report only the first
+        # while the second is the more likely explanation of why the window ran out. Reachable
+        # whenever getScanStatus reports ready before search3 has indexed the probe track, which is
+        # the only reason the settling window exists at all.
+        raise SystemExit(
+            "cache search cannot separate an absent corpus item from a stall: "
+            f"{census} last_error={last_transport_error!r}. At least one attempt was answered "
+            "without the probe track AND at least one never got an answer, so neither conclusion "
+            "is supported and the transcode cache state was not observed."
+        )
     raise SystemExit(
         f"known transcode cache probe is absent from the disposable corpus: {census}"
     )
@@ -274,14 +291,17 @@ def main() -> None:
     source.add_argument("--log-file")
     parser.add_argument("--expect-cached", choices=("true", "false"))
     args = parser.parse_args()
-    if STREAM_TIMEOUT_SECONDS <= 0:
-        raise SystemExit("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS must be greater than zero")
-    if SEARCH_DEADLINE_SECONDS <= 0:
-        raise SystemExit("DULCET_TRANSCODE_SEARCH_DEADLINE_SECONDS must be greater than zero")
-    if SEARCH_ATTEMPT_TIMEOUT_SECONDS <= 0:
-        raise SystemExit("DULCET_TRANSCODE_SEARCH_ATTEMPT_SECONDS must be greater than zero")
-    if SEARCH_CORPUS_SETTLE_SECONDS <= 0:
-        raise SystemExit("DULCET_TRANSCODE_SEARCH_SETTLE_SECONDS must be greater than zero")
+    # `float()` accepts "inf", "nan" and "1e400". `x <= 0` is False for all three, so a bare
+    # positivity check lets `inf` through as an unbounded budget and lets `nan` reach settimeout(),
+    # where it dies as an uncaught ValueError -- safe by accident, and silent about the cause.
+    for name, budget in (
+        ("DULCET_TRANSCODE_PROBE_TIMEOUT_SECONDS", STREAM_TIMEOUT_SECONDS),
+        ("DULCET_TRANSCODE_SEARCH_DEADLINE_SECONDS", SEARCH_DEADLINE_SECONDS),
+        ("DULCET_TRANSCODE_SEARCH_ATTEMPT_SECONDS", SEARCH_ATTEMPT_TIMEOUT_SECONDS),
+        ("DULCET_TRANSCODE_SEARCH_SETTLE_SECONDS", SEARCH_CORPUS_SETTLE_SECONDS),
+    ):
+        if not math.isfinite(budget) or budget <= 0:
+            raise SystemExit(f"{name} must be a finite number greater than zero, observed {budget}")
     # Refusing the incoherent shape is the durable half of this fix. A per-attempt timeout at or
     # above the total deadline cannot leave room for a second attempt, so the loop degrades into a
     # single request while still reading like a poll -- and nothing downstream would report it.

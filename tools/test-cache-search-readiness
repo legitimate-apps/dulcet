@@ -117,17 +117,80 @@ assert incoherent.returncode != 0, incoherent.stdout
 assert "must be strictly smaller than its total" in incoherent.stderr, incoherent.stderr
 print("NEGATIVE CONTROL PASS one_attempt_budget_refused=true")
 
+# --- 4b. a non-finite budget is not a positive one ------------------------------------------
+# `float("inf") <= 0` is False and `inf >= inf` is False, so a bare positivity check plus the
+# coherence check both wave `inf` through as an unbounded search. `nan` is worse: it fails every
+# comparison, reaches settimeout() and dies there as an uncaught ValueError -- safe by accident,
+# and silent about why.
+for label, attempt, deadline in [
+    ("infinite deadline", "0.3", "inf"),
+    ("infinite attempt", "inf", "60"),
+    ("nan deadline", "0.3", "nan"),
+]:
+    started = time.monotonic()
+    nonfinite = run_probe(
+        mode="search-stall", budget=2, search_attempt=attempt, search_deadline=deadline
+    )
+    elapsed = time.monotonic() - started
+    assert nonfinite.returncode != 0, f"{label} was accepted: {nonfinite.stdout}"
+    assert "must be a finite number greater than zero" in nonfinite.stderr, (
+        f"{label} was not refused by the budget guard:\n" + nonfinite.stderr
+    )
+    assert "Traceback" not in nonfinite.stderr, (
+        f"{label} died by accident rather than being refused:\n" + nonfinite.stderr
+    )
+    assert elapsed < 5, f"{label} ran a search before the guard rejected it: {elapsed:.3f}s"
+    print(f"NEGATIVE CONTROL PASS nonfinite_budget_refused={label.replace(' ', '_')}")
+
 # --- 5. answers that are not transport failures keep their own diagnosis ---------------------
+# The elapsed assertion is the point of the `search_settle` parameter. Without it, deleting the
+# settling window's break leaves every assertion here green while an absent corpus goes from
+# reporting in half a second to consuming the whole transport deadline -- 5 s to 60 s with the
+# shipped defaults, which is exactly the regression the settle window exists to prevent.
 for mode, message in [
     ("search-http-error", "HTTP Error 503"),
     ("search-missing-id", "known transcode cache probe is absent from the disposable corpus"),
     ("search-error-envelope", "known transcode cache probe is absent from the disposable corpus"),
 ]:
+    started = time.monotonic()
     rejected = run_probe(
-        mode=mode, budget=2, search_attempt=0.3, search_deadline=6, search_settle=0.4
+        mode=mode, budget=2, search_attempt=0.3, search_deadline=8, search_settle=0.4
     )
+    elapsed = time.monotonic() - started
     assert rejected.returncode != 0, rejected.stdout
     assert message in rejected.stderr, rejected.stderr
     assert "cache search transport error" not in rejected.stderr, rejected.stderr
     assert "never received an answer" not in rejected.stderr, rejected.stderr
-    print(f"NEGATIVE CONTROL PASS {mode}=rejected message={message}")
+    assert elapsed < 3, (
+        f"{mode} took {elapsed:.3f}s against a 0.4s settling window and an 8s transport deadline; "
+        "a responsive server that answers without the track is being given the transport budget\n"
+        + rejected.stderr
+    )
+    print(
+        f"NEGATIVE CONTROL PASS {mode}=rejected elapsed_seconds={elapsed:.3f} message={message}"
+    )
+
+# --- 6. answered once without the track, then stalled: neither conclusion is claimed ---------
+# `settle_deadline` is set by the first answered response and never cleared, so a host that stalls
+# afterwards used to exit through the absence branch and print the exact sentence this work set out
+# to remove. Two different facts were arriving through one variable.
+observed = {}
+mixed = run_probe(
+    mode="search-absent-then-stall",
+    budget=2,
+    search_attempt=0.3,
+    search_deadline=2.5,
+    search_settle=5,
+    observed=observed,
+)
+assert mixed.returncode != 0, mixed.stdout
+assert "cannot separate an absent corpus item from a stall" in mixed.stderr, mixed.stderr
+assert "known transcode cache probe is absent from the disposable corpus" not in mixed.stderr, (
+    "a window that both answered and stalled is still reported as a plain absence:\n"
+    + mixed.stderr
+)
+assert observed["search_requests"] >= 2, observed
+print(
+    "NEGATIVE CONTROL PASS answered_then_stalled_not_called_absent=true "
+    f"server_observed_requests={observed['search_requests']}"
+)
