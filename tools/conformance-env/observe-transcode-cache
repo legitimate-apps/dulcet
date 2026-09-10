@@ -35,10 +35,12 @@ STREAM_TIMEOUT_SECONDS = float(os.environ.get("DULCET_TRANSCODE_PROBE_TIMEOUT_SE
 # timeout from the remaining deadline -- `min(10, deadline - now)`, which is what this loop used to
 # do -- spends the entire window on attempt one and turns a poll into a single request.
 #
-# MEASURED, 167 apple-ci job logs 2026-09-02..2026-09-10: every one of the five
-# `cache search transport error` failures printed exactly ONE transport-error line and exited
-# immediately, 11.5 / 13.0 / 20.1 / 42.3 / 44.9 s after the preceding `library ready:`. So the loop
-# never ran a second attempt, and the nominal five-second total bounded nothing either.
+# MEASURED, 167 apple-ci job logs 2026-09-02..2026-09-10: the corpus contains five
+# `cache search transport error` lines in total -- one per failed run, none in any of the 99 green
+# runs -- and each was followed immediately by the process exiting, 11.5 / 13.0 / 20.1 / 42.3 /
+# 44.9 s after the preceding `library ready:`. So the retry has fired ZERO times in 167 runs: every
+# transport error this loop has ever seen was fatal on the spot, and the nominal five-second total
+# bounded nothing either. A poll with a 0/167 retry rate is not a poll.
 #
 # SEARCH_DEADLINE_SECONDS is sized from the window this call actually runs in. Same corpus, n=137
 # successful observations, taking (`library ready:` -> `TRANSCODE CACHE OBSERVATION`) minus the
