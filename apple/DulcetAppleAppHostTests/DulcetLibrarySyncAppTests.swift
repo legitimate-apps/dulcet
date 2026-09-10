@@ -91,6 +91,22 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
         XCTAssertEqual(firstCommitted.generation, 1)
         XCTAssertEqual(library.startedSyncCount, 1)
         XCTAssertEqual(library.displayedCommittedGenerations, [firstCommitted.generation])
+        // Why an exact sequence and not just an invariant: within one open a preview can only be
+        // delivered before the commit — a preview arriving after the sync has finished is
+        // suppressed — and the preview issues a strict SUBSET of the sync's own first three
+        // requests while the sync additionally reads every album, the playlists, the starred set,
+        // the genres and a stability re-walk before it commits. So the preview losing this race
+        // would mean its three requests took longer than all of that, which is a result worth
+        // failing on rather than tolerating.
+        XCTAssertEqual(library.publicationOrder, ["preview", "committed"])
+        // Order-free invariants, so a future reordering cannot quietly retire the control above:
+        // every preview is followed by exactly one committed publication, and the generations the
+        // person was shown never go backwards.
+        XCTAssertEqual(library.deliveredPreviewCount, library.displayedCommittedGenerations.count)
+        XCTAssertEqual(
+            library.displayedCommittedGenerations,
+            library.displayedCommittedGenerations.sorted()
+        )
         assertDisplayedLibrary(store.snapshot, equals: firstCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 1)
         XCTAssertFalse(firstCommitted.library.albums.isEmpty)
@@ -110,6 +126,18 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
         XCTAssertEqual(secondCommitted.generation, 2)
         XCTAssertEqual(library.startedSyncCount, 2)
         XCTAssertEqual(library.displayedCommittedGenerations, [1, 2])
+        XCTAssertEqual(
+            library.publicationOrder,
+            ["preview", "committed", "preview", "committed"]
+        )
+        // Order-free invariants, so a future reordering cannot quietly retire the control above:
+        // every preview is followed by exactly one committed publication, and the generations the
+        // person was shown never go backwards.
+        XCTAssertEqual(library.deliveredPreviewCount, library.displayedCommittedGenerations.count)
+        XCTAssertEqual(
+            library.displayedCommittedGenerations,
+            library.displayedCommittedGenerations.sorted()
+        )
         assertDisplayedLibrary(store.snapshot, equals: secondCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 2)
 
@@ -156,6 +184,10 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
         XCTAssertEqual(reopenedLibrary.startedSyncCount, 0)
         XCTAssertEqual(reopenedLibrary.completedSyncGenerations, [])
         XCTAssertEqual(reopenedLibrary.displayedCommittedGenerations, [2])
+        // A saved-account reopen reads the committed library only: no server is contacted, so it
+        // publishes once and there is no preview at all.
+        XCTAssertEqual(reopenedLibrary.publicationOrder, ["committed"])
+        XCTAssertEqual(reopenedLibrary.deliveredPreviewCount, 0)
         assertDisplayedLibrary(reopenedStore.snapshot, equals: secondCommitted.library)
 
         print(

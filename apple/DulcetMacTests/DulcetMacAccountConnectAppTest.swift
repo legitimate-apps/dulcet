@@ -626,7 +626,22 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // pass whether or not it ran. Within one open a preview can only arrive before the
         // commit, so an out-of-order pair means the preview lost its race and was published on
         // top of the committed library.
+        // Why an exact sequence and not just an invariant: within one open a preview can only be
+        // delivered before the commit — a preview arriving after the sync has finished is
+        // suppressed — and the preview issues a strict SUBSET of the sync's own first three
+        // requests while the sync additionally reads every album, the playlists, the starred set,
+        // the genres and a stability re-walk before it commits. So the preview losing this race
+        // would mean its three requests took longer than all of that, which is a result worth
+        // failing on rather than tolerating.
         XCTAssertEqual(library.publicationOrder, ["preview", "committed"])
+        // Order-free invariants, so a future reordering cannot quietly retire the control above:
+        // every preview is followed by exactly one committed publication, and the generations the
+        // person was shown never go backwards.
+        XCTAssertEqual(library.deliveredPreviewCount, library.displayedCommittedGenerations.count)
+        XCTAssertEqual(
+            library.displayedCommittedGenerations,
+            library.displayedCommittedGenerations.sorted()
+        )
         assertDisplayedLibrary(store.snapshot, equals: firstCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 1)
         try await waitUntil(
@@ -645,6 +660,14 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(
             library.publicationOrder,
             ["preview", "committed", "preview", "committed"]
+        )
+        // Order-free invariants, so a future reordering cannot quietly retire the control above:
+        // every preview is followed by exactly one committed publication, and the generations the
+        // person was shown never go backwards.
+        XCTAssertEqual(library.deliveredPreviewCount, library.displayedCommittedGenerations.count)
+        XCTAssertEqual(
+            library.displayedCommittedGenerations,
+            library.displayedCommittedGenerations.sorted()
         )
         assertDisplayedLibrary(store.snapshot, equals: secondCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 2)
