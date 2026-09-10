@@ -159,6 +159,8 @@ jobs:
           echo "DYNAMIC TYPE NEGATIVE CONTROL PASS setup=binary-built exact-diagnostic=true label=accessibility5 rejected=true output-created=false"
       - name: Prove deterministic capture mismatch forensics measure a known delta
         run: python3 tools/test-design-capture-forensics
+      - name: Prove the capture variant census distinguishes states from processes
+        run: python3 tools/test-design-capture-variant-census
       - name: Prove macOS capture rejects a focused responder
         run: |
           capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"

@@ -111,6 +111,10 @@ jobs:
         run: python3 tools/test-seed-corpus-gates
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
+      - name: Prove the cache-search readiness probe separates a stall from a real absence
+        run: python3 tools/test-cache-search-readiness
+      - name: Prove the health request policy preserves an error envelope's message
+        run: python3 tools/test-health-request-policy
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
