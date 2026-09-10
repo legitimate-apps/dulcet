@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Keep the restart-sequencing experiment measurable, and keep its arms apart.
+
+`apple-ci` restarts the disposable Navidrome three times. Across 99 green runs 2026-09-02..09-10
+the readiness window was elevated exactly where an `xcrun simctl create`+`boot` immediately
+preceded the restart -- restart #1 (0/99 preceded) median 2.61 s, restart #2 (99/99, iOS) median
+9.49 s and max 89.01 s, restart #3 (99/99, tvOS) median 5.84 s -- and paired within each run,
+restart #2 exceeded restart #1 in 99/99. The causal link is ASSUMED, so restart #2 was moved ahead
+of its simulator create+boot as a test of it while restart #3 was deliberately left in place as an
+in-run control.
+
+That design is only worth anything while both arms survive. Two ways it dies quietly:
+
+  * someone tidies restart #3 into the same position, and every run then has one arm and no
+    within-run comparison -- the result still looks measurable and is not;
+  * an argument drifts out of step with the code around it, so the log claims an arm the script
+    does not implement, and the measurement is then taken against a label rather than a fact.
+
+Neither shows up as a red build, and neither is visible in a diff that only moves lines. So this
+gate reads the declared arm and the declared simulator adjacency out of the workflow and checks
+both against the ORDER of the commands themselves.
+
+It deliberately does NOT assert which arm each phase is in. The experiment is meant to end: when
+the result is in, restart #3 gets moved too and this gate should then fail on the missing control
+arm, which is the correct moment to retire it -- not silently, and not by a gate that pinned the
+answer instead of the design.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import sys
+
+WORKFLOW = Path(".github/workflows/apple-ci.yml")
+MARKER_TEXT = "RESTART SEQUENCING"
+MARKER_FIELDS = ("index=", "phase=", "arm=", "simulator_created_before=")
+DEFINITION = re.compile(r"^\s*restart_navidrome_cold\s*\(\)\s*\{")
+CALL = re.compile(r"^\s*restart_navidrome_cold\s+(?P<arguments>\S.*?)\s*$")
+CREATE = re.compile(r"\bxcrun\s+simctl\s+create\b")
+MARKER = re.compile(r"""echo\s+["'](?P<payload>RESTART SEQUENCING[^"']*)["']""")
+ARMS = ("baseline", "resequenced", "unchanged")
+
+
+def code_lines(text: str) -> list[str]:
+    """Non-comment lines only. A `#` line cannot run a command or emit a marker."""
+    return [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+
+def problems(text: str) -> list[str]:
+    found: list[str] = []
+    lines = code_lines(text)
+
+    markers = [match for line in lines if (match := MARKER.search(line))]
+    if not markers:
+        found.append(
+            f"no step emits a {MARKER_TEXT} marker, so the arm of each restart cannot be read "
+            "from a job log"
+        )
+    for match in markers:
+        payload = match.group("payload")
+        missing = [field for field in MARKER_FIELDS if field not in payload]
+        if missing:
+            found.append(f"the {MARKER_TEXT} marker omits {missing}: {payload!r}")
+        if "$1" not in payload or "$2" not in payload or "$3" not in payload:
+            found.append(
+                f"the {MARKER_TEXT} marker does not report the caller's own arguments, so it can "
+                f"disagree with what the call site actually passed: {payload!r}"
+            )
+
+    calls: list[tuple[int, list[str], bool]] = []
+    created_since_restart = False
+    for index, line in enumerate(lines):
+        if DEFINITION.search(line):
+            continue
+        if CREATE.search(line):
+            created_since_restart = True
+            continue
+        match = CALL.match(line)
+        if match:
+            calls.append((index, match.group("arguments").split(), created_since_restart))
+            created_since_restart = False
+
+    if not calls:
+        found.append("no restart_navidrome_cold call sites found")
+        return found
+
+    seen_phases: list[str] = []
+    declared_arms: list[str] = []
+    for position, (line_index, arguments, created_before) in enumerate(calls, start=1):
+        where = f"restart #{position} (line {line_index + 1} of the non-comment script)"
+        if len(arguments) != 3:
+            found.append(
+                f"{where} passes {len(arguments)} argument(s), not phase/arm/"
+                f"simulator_created_before: {arguments}"
+            )
+            continue
+        phase, arm, declared = arguments
+        seen_phases.append(phase)
+        declared_arms.append(arm)
+        if arm not in ARMS:
+            found.append(f"{where} declares an unknown arm {arm!r}; expected one of {list(ARMS)}")
+        if declared not in ("true", "false"):
+            found.append(f"{where} declares simulator_created_before={declared!r}, not true/false")
+            continue
+        actual = "true" if created_before else "false"
+        if declared != actual:
+            found.append(
+                f"{where} declares simulator_created_before={declared} while the script "
+                f"{'does' if created_before else 'does not'} run `xcrun simctl create` between the "
+                "previous restart and this one; the log would report an arm the script does not "
+                "implement"
+            )
+
+    if len(set(seen_phases)) != len(seen_phases):
+        found.append(f"restart phases must be distinct so evidence cannot be substituted: "
+                     f"{seen_phases}")
+    if "resequenced" not in declared_arms or "unchanged" not in declared_arms:
+        found.append(
+            "the experiment needs both arms in the same run: at least one restart declared "
+            "arm=resequenced and at least one arm=unchanged. Observed "
+            f"{declared_arms}. Without the unchanged control every run measures one arm and the "
+            "comparison degrades to run-against-run, which is what this design exists to avoid."
+        )
+    return found
+
+
+REAL = """
+          restart_navidrome_cold() {
+            restart_index=$((restart_index + 1))
+            echo "RESTART SEQUENCING index=${restart_index} phase=$1 arm=$2 simulator_created_before=$3"
+          }
+          restart_navidrome_cold macos baseline false
+          restart_navidrome_cold ios resequenced false
+          conformance_sim="$(xcrun simctl create dulcet-conformance TYPE)"
+          xcrun simctl boot "$conformance_sim"
+          tvos_sim="$(xcrun simctl create dulcet-tvos-conformance TYPE)"
+          xcrun simctl boot "$tvos_sim"
+          restart_navidrome_cold tvos unchanged true
+"""
+
+MUTATIONS = (
+    (
+        "both arms collapsed into one position",
+        REAL.replace("restart_navidrome_cold ios resequenced false\n", "")
+            .replace("restart_navidrome_cold tvos unchanged true",
+                     "restart_navidrome_cold tvos resequenced true"),
+        "at least one restart declared arm=resequenced and at least one arm=unchanged",
+    ),
+    (
+        "declared adjacency disagrees with the script",
+        REAL.replace("restart_navidrome_cold ios resequenced false",
+                     "restart_navidrome_cold ios resequenced true"),
+        "declares simulator_created_before=true while the script does not run",
+    ),
+    (
+        "the marker was dropped",
+        "\n".join(line for line in REAL.splitlines() if MARKER_TEXT not in line),
+        "cannot be read from a job log",
+    ),
+    (
+        "the marker stopped reporting the caller's arguments",
+        REAL.replace('phase=$1 arm=$2 simulator_created_before=$3',
+                     'phase=ios arm=resequenced simulator_created_before=false'),
+        "does not report the caller's own arguments",
+    ),
+    (
+        "an argument was dropped at a call site",
+        REAL.replace("restart_navidrome_cold ios resequenced false",
+                     "restart_navidrome_cold ios resequenced"),
+        "passes 2 argument(s)",
+    ),
+)
+
+
+def main() -> None:
+    if problems(REAL):
+        raise SystemExit(
+            "POSITIVE CONTROL FAILED: the reference shape is rejected:\n"
+            + "\n".join(problems(REAL))
+        )
+    print("POSITIVE CONTROL PASS reference_shape_accepted=true")
+
+    for label, mutated, expected in MUTATIONS:
+        reported = problems(mutated)
+        if not any(expected in problem for problem in reported):
+            raise SystemExit(
+                f"NEGATIVE CONTROL FAILED: {label} was accepted, or reported something else.\n"
+                f"expected a problem containing {expected!r}, observed: {reported}"
+            )
+        print(f"NEGATIVE CONTROL PASS {label!r} rejected")
+
+    if not WORKFLOW.is_file():
+        # Synthetic policy fixtures run this file without the workflow. Say so rather than passing
+        # silently: a gate that reports success on an absent subject is worse than one that fails.
+        print(f"SKIP-SUBJECT-ABSENT {WORKFLOW} is not present; the controls above still ran")
+        return
+    reported = problems(WORKFLOW.read_text())
+    if reported:
+        print("\n".join(f"{WORKFLOW}: {problem}" for problem in reported), file=sys.stderr)
+        raise SystemExit(1)
+    print(f"{WORKFLOW}: restart sequencing experiment intact, both arms present")
+
+
+if __name__ == "__main__":
+    main()

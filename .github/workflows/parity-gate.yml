@@ -46,6 +46,8 @@ jobs:
         run: python3 tools/test-required-checks
       - name: Prove library readiness belongs to the current Navidrome process
         run: python3 tools/test-await-library-ready
+      - name: Prove the restart-sequencing experiment keeps both of its arms
+        run: python3 tools/test-restart-sequencing-experiment
       - name: Prove the play-count reader fails closed
         run: python3 tools/test-read-play-count
       - name: Prove the main-health reporter refuses rather than reporting nothing
