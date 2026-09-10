@@ -200,6 +200,20 @@ query result costs this project time. The substantive claim was right; the recor
 So no budget change is proposed for the browse path here. The stall it reports is real, and the
 sequencing experiment above is the test of what causes it.
 
+## Corrections to earlier statements on this branch
+
+Kept here because two of them live in commit messages that are already pushed and cannot be
+amended without rewriting published history. This section is where the correction lives instead.
+
+| stated | where | correct |
+|---|---|---|
+| "a job that has hit its 75-minute ceiling five times" | commit `dd91418`, and this doc before 2026-09-10 | The apple-ci job is `timeout-minutes: 120` and its conformance step is `timeout-minutes: 67`. `git log -S'timeout-minutes: 75'` shows `9f58ddb` moved it to 120. **0 of the 167 corpus logs carry a max-execution-time cancellation** — the 22 carrying `##[error]The operation was canceled` are `concurrency` cancels. Measured step durations: median 20.2 min, p90 48.1, max **57.8** of 67. |
+| "the retry has fired ZERO times in 167 runs" | commit `bfbaedd` | True but the denominator is inflated. The retry and its message arrived with `084007c`; re-derived with `git merge-base --is-ancestor` over every run head, **94** contain it, **71** predate it and had no retry path at all, 2 are unresolvable locally. The finding is **0 of 94**, which is the stronger sentence. |
+| "one per failed run" | commit `bfbaedd` | One each in five of the **46** failed runs. |
+| the recorded `git grep` result | this doc, before 2026-09-10 | See the adjacent-finding section: 4 hits on the branch, 2 on `main`, only the 5 s pair branch-specific. |
+| "the anchor definitions must differ" | this doc, before 2026-09-10 | It is an outcome difference, not an anchor difference. See the rho table above. |
+| Navidrome "answers this exact query in 150-710 ms" | commit `8e36da3` | Those are times until `context canceled` — a **lower** bound on the answer time, not the answer time. The per-attempt sizing argument survives; the ratio claim built on it did not. |
+
 ## If it is refuted
 
 Revert the reorder. The elevation is real either way — three instruments re-derived here agree on
