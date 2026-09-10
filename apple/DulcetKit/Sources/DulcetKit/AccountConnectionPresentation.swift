@@ -475,6 +475,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var activeAlbumTracksOperation: (any DulcetLibraryBrowseOperation)?
     private var albumTracksGeneration = 0
     private var selectedAlbumTracksFailure: DulcetLibraryFailure?
+    /// Whether the library currently held was read to completion for the current connection.
+    private var libraryReadCompleted = false
 
     static let defaultSearchDebounce: Duration = .milliseconds(250)
     private static let searchPageSize = 20
@@ -576,7 +578,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
             case .library:
                 cancelSearchRequest()
-                openLibrary()
+                openLibrary(reason: .entered)
             case .search:
                 cancelLibraryBrowse()
                 openSearch()
@@ -665,6 +667,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func submit(_ request: DulcetAccountConnectRequest) {
         cancelLibraryBrowse()
         cancelLibraryRefresh()
+        // Whatever is held describes the connection being replaced, so it stops being an answer
+        // even if this submission is for the same server.
+        libraryReadCompleted = false
         // Where the person was when they asked to connect. Reconnect is reachable from the library
         // surface now, and sending them to settings on success answers a request they did not make:
         // they pressed Reconnect on the library screen to see their library.
@@ -701,7 +706,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                         status: .connected(account)
                     )
                     if origin == .library {
-                        self.openLibrary()
+                        // A connection was just established, so anything held is another session's.
+                        self.openLibrary(reason: .connected)
                     }
                 } catch {
                     let failure = DulcetAccountErrorPresenter.presentation(
@@ -831,7 +837,39 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         )
     }
 
-    private func openLibrary(selecting selection: DulcetLibrarySelection? = nil) {
+    /// Why the library surface is being opened. Only one of these is a reason to contact the
+    /// server again, which is the whole point of naming them: re-entering a screen is not an
+    /// event about the library, it is an event about navigation.
+    private enum DulcetLibraryOpenReason {
+        /// The person navigated to the library, or activated a search result that lives in it.
+        /// Whatever is already held is still the answer.
+        case entered
+        /// A connection was just established. Anything held describes a different session.
+        case connected
+        /// The refresh cadence elapsed. Reading is what the cadence is for.
+        case refresh
+    }
+
+    /// The read policy, in one place because the previous behaviour was not a policy — it was the
+    /// absence of one, and it re-read the whole library on every tap of the Library button.
+    ///
+    /// A read happens when there is nothing held (first entry, or the held data was invalidated),
+    /// when the previous attempt failed (the error surface's Try Again re-enters), when a
+    /// connection is established, and when the cadence elapses. It does NOT happen because
+    /// somebody came back to the screen. Staleness is already the cadence's job; adding a second,
+    /// implicit staleness rule keyed on navigation would mean the library is re-read as often as
+    /// the person happens to tab around, which is not a property anyone chose.
+    private func openLibrary(
+        reason: DulcetLibraryOpenReason,
+        selecting selection: DulcetLibrarySelection? = nil
+    ) {
+        if reason == .entered, libraryReadCompleted, currentSnapshot.accountConnection.isConnected {
+            // Deliberately before the cancels below: the refresh cadence measures time since the
+            // last full read and must keep running across navigation, and there is no in-flight
+            // read to cancel because a completed one is what got us here.
+            republishHeldLibrary(selecting: selection)
+            return
+        }
         cancelLibraryBrowse()
         cancelLibraryRefresh()
         guard case let .connected(account) = currentSnapshot.accountConnection else {
@@ -880,6 +918,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryGeneration += 1
         let requestGeneration = libraryGeneration
         let form = currentSnapshot.accountForm
+        // A read that has started has not finished. If it is cancelled — by leaving the screen,
+        // reconnecting, or removing the account — re-entering must read again rather than redraw
+        // a half-answered library.
+        libraryReadCompleted = false
         publish(
             state: .libraryLoading,
             destination: .library,
@@ -913,6 +955,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
             case let .loaded(musicFolders, artists, albums):
                 self.activeLibraryOperation = nil
+                self.libraryReadCompleted = true
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
@@ -968,6 +1011,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                  let .loaded(musicFolders, artists, albums):
                 // A committed read is answered from the local database and has no preview stage,
                 // so both shapes mean the same thing here.
+                self.libraryReadCompleted = true
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
@@ -1067,7 +1111,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.libraryRefreshOperation = nil
             if self.currentSnapshot.selectedDestination == .library,
                case .connected = self.currentSnapshot.accountConnection {
-                self.openLibrary()
+                self.openLibrary(reason: .refresh)
             } else if case .connected = self.currentSnapshot.accountConnection {
                 self.scheduleLibraryRefresh()
             }
@@ -1171,6 +1215,27 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// A catalog assembled from albums that have not all been read cannot say an entry is gone.
     private var libraryCatalogCoverage: DulcetLibraryCatalogCoverage {
         libraryAlbums.allSatisfy(\.areTracksLoaded) ? .wholeLibrary : .partial
+    }
+
+    /// Redraws the library already held, without contacting the server.
+    ///
+    /// This deliberately publishes the GRID rather than restoring whichever album or artist was
+    /// last open. `selectDestination(.library)` is also the only way back out of an album on this
+    /// surface — there is no separate back action — so restoring the detail here would leave the
+    /// grid unreachable.
+    private func republishHeldLibrary(selecting selection: DulcetLibrarySelection?) {
+        if let selection, presentLibrarySelection(selection) { return }
+        publish(
+            state: libraryAlbums.isEmpty && libraryArtists.isEmpty
+                ? .emptyLibraryConnected
+                : .libraryBrowse,
+            destination: .library,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection,
+            musicFolders: libraryMusicFolders,
+            artists: libraryArtists,
+            albums: libraryAlbums
+        )
     }
 
     private func cancelAlbumTracks() {
@@ -1417,10 +1482,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             ))
         case .album:
             cancelSearchRequest()
-            openLibrary(selecting: .album(id))
+            // Showing one album from a search result is navigation, not a reason to re-read.
+            openLibrary(reason: .entered, selecting: .album(id))
         case .artist:
             cancelSearchRequest()
-            openLibrary(selecting: .artist(id))
+            openLibrary(reason: .entered, selecting: .artist(id))
         }
     }
 
@@ -1533,6 +1599,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryMusicFolders = []
         libraryArtists = []
         libraryAlbums = []
+        libraryReadCompleted = false
         searchQuery = ""
         searchResults = []
         searchHasMoreKinds = []

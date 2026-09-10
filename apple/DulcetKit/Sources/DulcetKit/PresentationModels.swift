@@ -204,6 +204,13 @@ public enum DulcetAccountConnectOutcome: Sendable, Hashable {
     case failed(DulcetAccountFailurePresentation)
 }
 
+public extension DulcetAccountConnectionStatus {
+    var isConnected: Bool {
+        if case .connected = self { return true }
+        return false
+    }
+}
+
 public enum DulcetAccountConnectionStatus: Sendable, Hashable {
     case idle
     case saved(serverName: String)

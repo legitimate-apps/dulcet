@@ -154,11 +154,19 @@ func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
     #expect(store.snapshot.albums == [album])
     #expect(store.snapshot.artists.map(\.name) == ["Opaque Artist"])
 
+    // Re-entering a library that is already held redraws it without contacting the server, so
+    // there is no second request and nothing in flight for the next departure to cancel. This
+    // previously asserted the opposite — that re-entry starts a read and leaving cancels it —
+    // which was the defect, not the contract. The cancellation control it carried now lives in
+    // `leavingTheLibraryCancelsAReadThatHasNotFinished`, where a read really is in flight.
     store.selectDestination(.library)
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [album])
+    #expect(libraryBrowser.requests.count == 1)
     #expect(libraryBrowser.operations.last?.cancelCount == 0)
     store.selectDestination(.search)
-    #expect(libraryBrowser.operations.last?.cancelCount == 1)
-    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
     #expect(store.snapshot.state == .searchIdle)
     #expect(store.snapshot.selectedDestination == .search)
 }
@@ -1997,4 +2005,174 @@ func aFinishedLibraryOpenReleasesItsOperation() {
 
     store.selectDestination(.search)
     #expect(libraryBrowser.operations.last?.cancelCount == 0)
+}
+
+// MARK: - Re-entering the library
+
+/// The control for the operator's "when i tap out and tap in it has to refresh". Asserting that
+/// the library is shown passes before and after the fix, so this asserts the REQUEST COUNT across
+/// navigate-away-and-back cycles: it must not grow.
+@Test @MainActor
+func reEnteringTheLibraryRedrawsItWithoutAskingTheServerAgain() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(libraryBrowser.requests.count == 1)
+
+    for destination in [DulcetSidebarDestination.search, .nowPlaying, .settings] {
+        store.selectDestination(destination)
+        store.selectDestination(.library)
+        #expect(store.snapshot.state == .libraryBrowse, "returning from \(destination)")
+        #expect(store.snapshot.albums == [album], "returning from \(destination)")
+        #expect(libraryBrowser.requests.count == 1, "returning from \(destination)")
+    }
+
+    // The cadence keeps running across navigation, because it measures time since the last full
+    // read — not time since the person last looked at the screen.
+    #expect(refreshScheduler.scheduledCount == 1)
+}
+
+/// The instrument is not blind: the counter does move when a read is genuinely required.
+@Test @MainActor
+func reconnectingReadsTheLibraryAgainEvenWhenOneIsHeld() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 1)
+
+    // Connecting again describes a different session, so the held library stops being an answer
+    // and the connection itself reads — the person pressed Reconnect on the library screen.
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    #expect(libraryBrowser.requests.count == 2)
+    libraryBrowser.complete(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+
+    // And once that read has finished, re-entry is free again.
+    store.selectDestination(.search)
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+}
+
+/// A read that failed is not a library, so the error surface's Try Again — which re-enters the
+/// destination — must reach the server.
+@Test @MainActor
+func aFailedLibraryReadIsRetriedWhenTheLibraryIsEnteredAgain() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    libraryBrowser.complete(.failed(DulcetLibraryFailure(kind: .timeout)))
+    #expect(store.snapshot.state == .libraryError)
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}
+
+/// A read interrupted part way through is not a library either: leaving cancels it, and coming
+/// back must read rather than redraw a half-answered one.
+@Test @MainActor
+func leavingTheLibraryCancelsAReadThatHasNotFinished() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    #expect(store.snapshot.state == .libraryLoading)
+
+    store.selectDestination(.search)
+    #expect(libraryBrowser.operations.last?.cancelCount == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}
+
+/// Connecting from Settings does not itself open the library — only a Reconnect pressed ON the
+/// library screen does that. So the held library has to be invalidated by the connection, or
+/// walking to Library afterwards would redraw the previous session's albums without asking.
+/// Found by mutation: removing that invalidation left every other test green.
+@Test @MainActor
+func connectingFromSettingsInvalidatesTheHeldLibrary() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(libraryBrowser.requests.count == 1)
+
+    // Connect again from Settings, which does not open the library.
+    store.selectDestination(.settings)
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Other",
+        normalizedServerURL: "https://other.example.invalid"
+    )))
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
 }
