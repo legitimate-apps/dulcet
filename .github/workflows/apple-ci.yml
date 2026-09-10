@@ -958,7 +958,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-download-conf52.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit/TEST-CONF-52.xml" \
             DulcetAppleDownloadIntegrationTest
-          # No simulator has been created since this job started; this is the tight reference window.
+          # BASELINE ARM. No `xcrun simctl create` has run in this step -- but simulators ARE
+          # running: the four xcodebuild runs above use iOS and iPadOS Simulator destinations and
+          # nothing shuts them down before here. `simulator_created_before=false` means exactly
+          # what it says and is not a claim that no simulator is up. That distinction is the
+          # hypothesis: this is the FASTEST of the three restarts despite those boots, which points
+          # at a freshly CREATED device rather than at a running one.
           restart_navidrome_cold macos baseline false
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \

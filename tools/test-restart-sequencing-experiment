@@ -23,7 +23,19 @@ both against the ORDER of the commands themselves.
 It deliberately does NOT assert which arm each phase is in. The experiment is meant to end: when
 the result is in, restart #3 gets moved too and this gate should then fail on the missing control
 arm, which is the correct moment to retire it -- not silently, and not by a gate that pinned the
-answer instead of the design.
+answer instead of the design. What it DOES pin is the meaning of the arm names, because the whole
+analysis groups runs by `arm=`: a run whose arms are swapped is not broken, it is inverted, and an
+inverted experiment is read backwards rather than discarded.
+
+Two limits of the adjacency notion used here, so nobody reads more into a pass than it carries:
+
+  * it is "any `xcrun simctl create` since the previous restart", not "this restart's own create".
+    Correct for the shipped order. A future legitimate move of restart #3 ahead of its own create
+    while the iOS create still sits between them would be rejected as a lie when it is not one --
+    at which point tighten this to pair each restart with the create that belongs to its phase.
+  * it cannot see simulators booted by an `xcodebuild` destination rather than by `simctl create`.
+    Several are booted, and left booted, before restart #1. `simulator_created_before=false` means
+    exactly what it says and is not a claim that no simulator is running.
 """
 
 from __future__ import annotations
@@ -39,7 +51,19 @@ DEFINITION = re.compile(r"^\s*restart_navidrome_cold\s*\(\)\s*\{")
 CALL = re.compile(r"^\s*restart_navidrome_cold\s+(?P<arguments>\S.*?)\s*$")
 CREATE = re.compile(r"\bxcrun\s+simctl\s+create\b")
 MARKER = re.compile(r"""echo\s+["'](?P<payload>RESTART SEQUENCING[^"']*)["']""")
-ARMS = ("baseline", "resequenced", "unchanged")
+# What each arm NAME means, as an adjacency. This is the definition the whole analysis keys on --
+# every harvest in the doc's recipe groups runs by `arm=` -- so it has to be checked against the
+# code, not merely declared. It pins the meaning of the names, NOT which phase carries which name;
+# the phase assignment is deliberately left free so the experiment can be retired.
+ARM_REQUIRES_CREATE_BEFORE = {
+    # never moved: no `simctl create` has run in the step at all
+    "baseline": "false",
+    # moved AHEAD of its own create -- the manipulation
+    "resequenced": "false",
+    # left where it was, after a create -- the in-run control
+    "unchanged": "true",
+}
+ARMS = tuple(ARM_REQUIRES_CREATE_BEFORE)
 
 
 def code_lines(text: str) -> list[str]:
@@ -111,6 +135,20 @@ def problems(text: str) -> list[str]:
                 "previous restart and this one; the log would report an arm the script does not "
                 "implement"
             )
+        # Checking the literal against the code is NOT enough on its own: correcting the literal
+        # while leaving the arm name alone -- or swapping the two arms outright -- keeps every
+        # other assertion here satisfied and inverts the experiment, so the harvest would read a
+        # moved restart as the control and the control as the moved one. MEASURED: both of those
+        # mutations passed this gate before this check existed.
+        required = ARM_REQUIRES_CREATE_BEFORE.get(arm)
+        if required is not None and actual != required:
+            found.append(
+                f"{where} is labelled arm={arm}, which means simulator_created_before={required}, "
+                f"but the script places it where simulator_created_before={actual}. The arm names "
+                "are what every harvest groups by, so this would invert the experiment rather than "
+                "break it: the resequenced arm and its control would swap identities and the "
+                "verdict would be read backwards."
+            )
 
     if len(set(seen_phases)) != len(seen_phases):
         found.append(f"restart phases must be distinct so evidence cannot be substituted: "
@@ -163,6 +201,30 @@ MUTATIONS = (
         REAL.replace('phase=$1 arm=$2 simulator_created_before=$3',
                      'phase=ios arm=resequenced simulator_created_before=false'),
         "does not report the caller's own arguments",
+    ),
+    (
+        # The reviewer's W3: the adjacency literal is corrected, so every check that compares the
+        # literal to the code is satisfied -- and the arm name is now the thing that lies.
+        "the reorder was reverted and the literal corrected, leaving the arm name stale",
+        REAL.replace("          restart_navidrome_cold ios resequenced false\n", "")
+            .replace('          xcrun simctl boot "$conformance_sim"\n',
+                     '          xcrun simctl boot "$conformance_sim"\n'
+                     '          restart_navidrome_cold ios resequenced true\n'),
+        "is labelled arm=resequenced",
+    ),
+    (
+        # The reviewer's W4, the sharp one: both arms swapped. The experiment still has two arms,
+        # every literal agrees with the code, and the verdict would be read backwards.
+        "both arms swapped, so the control and the manipulation trade places",
+        REAL.replace("          restart_navidrome_cold ios resequenced false\n", "")
+            .replace('          xcrun simctl boot "$conformance_sim"\n',
+                     '          xcrun simctl boot "$conformance_sim"\n'
+                     '          restart_navidrome_cold ios resequenced true\n')
+            .replace("          restart_navidrome_cold tvos unchanged true\n", "")
+            .replace('          tvos_sim="$(xcrun simctl create dulcet-tvos-conformance TYPE)"\n',
+                     '          restart_navidrome_cold tvos unchanged false\n'
+                     '          tvos_sim="$(xcrun simctl create dulcet-tvos-conformance TYPE)"\n'),
+        "is labelled arm=unchanged",
     ),
     (
         "an argument was dropped at a call site",
