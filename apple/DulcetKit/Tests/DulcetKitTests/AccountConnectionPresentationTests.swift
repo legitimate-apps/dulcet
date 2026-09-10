@@ -2176,3 +2176,52 @@ func connectingFromSettingsInvalidatesTheHeldLibrary() throws {
     #expect(libraryBrowser.requests.count == 2)
     #expect(store.snapshot.state == .libraryLoading)
 }
+
+/// A search can return an album the last library read did not include — the server has it and we
+/// simply have not looked since. Held data answers navigation only when it can actually answer it,
+/// so that case reads rather than dropping the person on a grid they did not ask for.
+@Test @MainActor
+func activatingASearchResultAbsentFromTheHeldLibraryReadsAgain() async throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    let album = fixtureLibraryAlbum()
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.search)
+    store.searchQuery = "opaque"
+    await settleSearchTask(until: { search.requests.count == 1 })
+    let held = searchResult(id: album.id.rawID, title: album.title, kind: .album)
+    let absent = searchResult(id: "album:not-in-the-held-library", title: "Newer", kind: .album)
+    search.complete(at: 0, .loaded(searchPage(results: [held, absent])))
+
+    // An album the held library does contain is navigation, and costs nothing.
+    store.activateSearchResult(held.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(libraryBrowser.requests.count == 1)
+
+    // One it does not contain must reach the server rather than silently show the grid.
+    store.selectDestination(.search)
+    store.activateSearchResult(absent.id)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}

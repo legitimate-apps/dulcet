@@ -867,8 +867,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             // Deliberately before the cancels below: the refresh cadence measures time since the
             // last full read and must keep running across navigation, and there is no in-flight
             // read to cancel because a completed one is what got us here.
-            republishHeldLibrary(selecting: selection)
-            return
+            //
+            // Held data answers navigation only when it can actually answer it. A search can
+            // return an album the last read did not include — the server has it and we simply
+            // have not looked since — so an unsatisfiable selection falls through and reads
+            // rather than dropping the person on the grid they did not ask for.
+            if let selection {
+                if presentLibrarySelection(selection) { return }
+            } else {
+                republishHeldLibrary()
+                return
+            }
         }
         cancelLibraryBrowse()
         cancelLibraryRefresh()
@@ -1223,8 +1232,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// last open. `selectDestination(.library)` is also the only way back out of an album on this
     /// surface — there is no separate back action — so restoring the detail here would leave the
     /// grid unreachable.
-    private func republishHeldLibrary(selecting selection: DulcetLibrarySelection?) {
-        if let selection, presentLibrarySelection(selection) { return }
+    private func republishHeldLibrary() {
         publish(
             state: libraryAlbums.isEmpty && libraryArtists.isEmpty
                 ? .emptyLibraryConnected
