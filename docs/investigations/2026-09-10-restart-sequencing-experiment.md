@@ -66,11 +66,28 @@ Two different tools, hitting two different endpoints, move together and in the s
   opposite directions, which is what noise looks like rather than a decaying transient. So the
   association is with a booted simulator being *present*, not with a boot still settling.
 
-  ⚠️ These two figures are the one place a re-derivation disagreed with the report this work came
-  from, which quoted +0.125 and +0.248. The conclusion is unchanged — both readings are far too
-  weak to support a decaying transient — but the restart #2 figure differs in sign, so the anchor
-  definitions must differ. Anchor used here: the `No runtime specified, using ...` line that
-  `simctl create` emits, to `TRANSCODE CACHE CLEARED`.
+  ⚠️ **Resolved.** These two figures looked like a disagreement with the forensic report this work
+  came from, which quoted +0.125 and +0.248, and the first version of this doc guessed that the
+  *anchors* must differ. They do not. Independent review computed both anchors against three
+  outcome variables over the same 99 green runs and reproduced all four numbers from **one**
+  anchor — `No runtime specified, using ...` (emitted by `simctl create`) → `TRANSCODE CACHE
+  CLEARED`. What differs is the **outcome**:
+
+  | outcome measured from that one anchor | restart #2 | restart #3 |
+  |---|---|---|
+  | stream `first_response_seconds` | **+0.125** | **+0.248** |
+  | `libwait` (CLEARED → `library ready:`) | **−0.080** | **+0.239** |
+  | whole window (CLEARED → OBSERVATION) | −0.036 | +0.161 |
+
+  So restart #3's apparent agreement (+0.248 vs +0.239) is coincidence — two different variables
+  landing together there and splitting at restart #2. The conclusion is unaffected: the strongest
+  of the four is +0.248, and a **sign flip between two latency measurements of the same restart**
+  is itself evidence that neither is a real effect.
+
+  🚨 One anchor–outcome pair must stay excluded: `simctl create` → `library ready:` gives rho
+  **+0.448 / +0.618**, which looks like the transient everyone is hunting for and is **circular** —
+  `libwait` is a component of that interval, so the outcome is inside its own predictor. It is
+  omitted deliberately, not by oversight.
 
 ## What is NOT established
 
@@ -91,6 +108,17 @@ contend for a 3-core runner, is **ASSUMED**. (The runner is 3-core: OBSERVED fro
   comparing runs to each other.
 - **Restart #1 stays the baseline**, and remains the denominator for both paired ratios.
 
+🚨 **"Baseline" means no `xcrun simctl create` has run in the step. It does NOT mean no simulator
+is running.** Four `xcodebuild` invocations above it use iOS and iPadOS Simulator destinations, and
+nothing shuts them down before restart #1 — the only `simctl shutdown` calls come after restarts #1
+and #2. So the *number of booted simulators* also differs across the three arms, and the marker
+field `simulator_created_before` is a statement about `simctl create` alone.
+
+That is not a weakness to apologise for; it is the sharpest thing in the dataset. **Restart #1 is
+the fastest of the three despite four simulator boots immediately before it.** Whatever the
+mechanism is, "a simulator is running" does not capture it — a freshly *created* device does, which
+is what the experiment manipulates.
+
 Each restart announces itself, so the arm is a fact in the log rather than something inferred from
 nearby `simctl` lines:
 
@@ -110,12 +138,19 @@ Take the same paired ratios from runs of the changed workflow, green runs only, 
 denominator in both cases. About 30 runs is ample: the pre-change effect is 99/99 and 97/99
 directional, so a sign test on 30 paired runs detects a collapse comfortably.
 
+Tolerances are numeric on purpose. "Near 3.6x" is not a criterion — a #2/#1 of 2.9x would be
+"inconclusive" by this table while still reading as "near 3.6x" to someone who wanted it to.
+
 | outcome | libwait #2 / #1 | libwait #3 / #1 | reading |
 |---|---|---|---|
-| **supported** | falls to **< 1.5x**, direction no longer consistent | holds near **2.3x** | the adjacency is doing the work |
-| **REFUTED** | holds near **3.6x** | holds near 2.3x | the association is with job position; the simulator is a bystander and the reorder should be reverted |
-| **confounded** | falls | also falls | something other than the reorder changed; do not credit this change until the other change is identified |
-| **inconclusive** | between 1.5x and 3.6x | holds | collect more runs before concluding either way |
+| **supported** | **< 1.5x**, and no longer directionally consistent (below 1 in ≥ 20% of runs) | **≥ 1.8x** | the adjacency is doing the work |
+| **REFUTED** | **≥ 3.0x** | ≥ 1.8x | the association is with job position; the simulator is a bystander and the reorder should be reverted |
+| **confounded** | **< 1.5x** | **< 1.8x** | both arms moved; something other than the reorder changed, and this change must not be credited until that is identified |
+| **inconclusive** | 1.5x – 3.0x | any | collect more runs before concluding either way |
+| **anomalous** | **> 3.6x** (rose), or #3/#1 rose above 2.6x | any | the manipulation made it worse, or the environment changed under the experiment; stop and re-measure the baseline before reading anything else into it |
+
+The pre-change values these are judged against are #2/#1 = **3.613x** and #3/#1 = **2.280x**, both
+99/99 directional. Any row is read only from **green** runs, with restart #1 as the denominator.
 
 The "confounded" row matters: this branch also changes two probe budgets in the same series of
 commits. Those changes alter what happens *after* a stall, not how long the restart's readiness
@@ -143,18 +178,24 @@ failures to it. Re-derived against `main`, that row conflates two different budg
   `seed == nil ? await probeDisposableServer(baseURL:) : ""` — it runs *only after* the browse
   under test has already returned nothing, and its own comment says it "does not change the timeout
   of the request under test". It cannot cause a failure, so raising it cannot prevent one; it would
-  only add up to 20 s to every already-failed browse in a job that has hit a 75-minute ceiling five
-  times. **The 5 s is correct and should stay.**
+  only add up to 20 s to every already-failed browse in a job that is already the slowest thing in
+  the queue. **The 5 s is correct and should stay.**
 - **The 7 failures belong to the browse itself**, which runs on the core's 30 s Ktor budget. That
   budget is firing on a genuine stall — one `getMusicFolders` reached `http-started` at 113 ms and
   then produced nothing for 30.23 s — and the forensic report's own ranked-fixes table says not to
-  touch it, because raising it converts a visible stall into a 75-minute job timeout.
+  touch it, because raising it converts a visible stall into a job that runs to its time limit.
 
 Query used, with its positive control, because a clean-looking negative from a broken query is how
 this project has lost the most time: `git grep -nE 'timeoutInterval[A-Za-z]*[[:space:]]*=[[:space:]]*[0-9]'`
-returns the two 5 s lines on the pull request's branch and nothing on `main`. An earlier attempt
-using `\s` returned nothing on *both*, because `git grep`'s POSIX engine does not accept it — the
-positive control is what exposed that.
+returns **4 hits on the pull request's branch and 2 on `main`**: the two 5 s lines at
+`DulcetAppleDownloadIntegrationTest.swift:544-545` are branch-specific, and two unrelated `= 0.5`
+lines are present on both refs. Only the 5 s pair is branch-specific, and `probeDisposableServer`
+exists on no other ref. An earlier attempt using `\s` returned nothing on *both* refs, because
+`git grep`'s POSIX engine does not accept it — the positive control is what exposed that.
+
+⚠️ The first version of this paragraph recorded the outcome as "the two 5 s lines on the branch and
+nothing on `main`", which is wrong in the one paragraph whose whole subject is that a mis-recorded
+query result costs this project time. The substantive claim was right; the recorded result was not.
 
 So no budget change is proposed for the browse path here. The stall it reports is real, and the
 sequencing experiment above is the test of what causes it.
