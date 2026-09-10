@@ -55,10 +55,12 @@ final class DulcetiOSUITests: XCTestCase {
     /// repeatably: the second choice left the detail unpushed, the row highlighted, and the only
     /// way forward was choosing some other destination.
     ///
-    /// The mechanism was that the sidebar list reported the store's destination as its selection
-    /// even while the compact layout was showing the sidebar, so the second choice read back as
-    /// an unchanged value and SwiftUI inferred no push. The `nil` SwiftUI writes on the way back
-    /// was discarded by the same binding, so nothing recorded that the detail had gone away.
+    /// MEASURED mechanism: the sidebar list's selection binding reports the store's destination,
+    /// which the back control does not change, so the second choice reads back as an unchanged
+    /// value and SwiftUI infers no push. The binding's setter does still run for that choice --
+    /// established by the fix, which is one line inside that setter asking for the detail column.
+    /// What SwiftUI writes into the selection on the way back was NOT measured, and a first
+    /// attempt built on assuming a `nil` there was measured not to carry the fix.
     ///
     /// This uses the deterministic layout fixture rather than the disposable server: the contract
     /// under test is navigation, and a fixture makes the run independent of any server state.
