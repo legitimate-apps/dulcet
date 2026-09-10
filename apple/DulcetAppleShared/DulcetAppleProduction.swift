@@ -107,6 +107,9 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
     private(set) var completedSyncGenerations: [Int64] = []
     private(set) var displayedCommittedGenerations: [Int64] = []
     private(set) var deliveredPreviewCount = 0
+    /// `"preview"` / `"committed"`, in delivery order. A test that only checks the committed
+    /// result passes whether or not the preview ever ran, which is the whole point of it.
+    private(set) var publicationOrder: [String] = []
 
     init(databaseName: String = "dulcet.db") {
         client = AppleLibrarySyncClient(
@@ -158,6 +161,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             guard let self, !syncFinished, let snapshot = outcome.snapshot else { return }
             previewDelivered = true
             self.deliveredPreviewCount += 1
+            self.publicationOrder.append("preview")
             completion(Self.copyBrowsed(snapshot))
         }
         let coreRequest = AppleLibrarySyncRequest(
@@ -230,6 +234,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
            snapshot.generation > 0,
            requiredGeneration == nil || snapshot.generation == requiredGeneration {
             displayedCommittedGenerations.append(snapshot.generation)
+            publicationOrder.append("committed")
             completion(Self.copyCommitted(snapshot.library))
             return
         }

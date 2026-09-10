@@ -622,6 +622,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(firstCommitted.generation, 1)
         XCTAssertEqual(library.startedSyncCount, 1)
         XCTAssertEqual(library.displayedCommittedGenerations, [firstCommitted.generation])
+        // The fast preview is what removes the wait; asserting only the committed result would
+        // pass whether or not it ran. Within one open a preview can only arrive before the
+        // commit, so an out-of-order pair means the preview lost its race and was published on
+        // top of the committed library.
+        XCTAssertEqual(library.publicationOrder, ["preview", "committed"])
         assertDisplayedLibrary(store.snapshot, equals: firstCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 1)
         try await waitUntil(
@@ -637,6 +642,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(secondCommitted.generation, 2)
         XCTAssertEqual(library.startedSyncCount, 2)
         XCTAssertEqual(library.displayedCommittedGenerations, [1, 2])
+        XCTAssertEqual(
+            library.publicationOrder,
+            ["preview", "committed", "preview", "committed"]
+        )
         assertDisplayedLibrary(store.snapshot, equals: secondCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 2)
 
@@ -678,6 +687,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(reopenedLibrary.startedSyncCount, 0)
         XCTAssertEqual(reopenedLibrary.completedSyncGenerations, [])
         XCTAssertEqual(reopenedLibrary.displayedCommittedGenerations, [2])
+        // A saved-account reopen reads the committed library only: no server is contacted, so
+        // it publishes once and there is no preview at all.
+        XCTAssertEqual(reopenedLibrary.publicationOrder, ["committed"])
+        XCTAssertEqual(reopenedLibrary.deliveredPreviewCount, 0)
         assertDisplayedLibrary(reopenedStore.snapshot, equals: secondCommitted.library)
 
         print(
