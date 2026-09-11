@@ -622,7 +622,30 @@ jobs:
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
+          # EXPERIMENT, not a fix. `restart_navidrome_cold` runs three times, and across 99 green
+          # apple-ci runs 2026-09-02..2026-09-10 its readiness window was elevated exactly where a
+          # `simctl create`+`boot` immediately preceded it: restart #1 (0/99 preceded) median 2.61 s,
+          # restart #2 (99/99 preceded, iOS) median 9.49 s and max 89.01 s, restart #3 (99/99
+          # preceded, tvOS) median 5.84 s. Paired within each run, restart #2 exceeded restart #1 in
+          # 99/99 runs (median 3.61x) and the stream probe's first response in 97/99 (median 5.47x).
+          # Restart #3 is BELOW restart #2, so "later in the job is slower" does not explain it.
+          #
+          # A perfect correlation is where a confound hides, and the causal link is ASSUMED. So this
+          # is a designed test of it: restart #2 is moved AHEAD of its simulator create+boot, and
+          # restart #3 is deliberately LEFT where it is as an in-run control. Every future run then
+          # carries its own comparison between a moved restart and an unmoved one, which is stronger
+          # than comparing runs to each other.
+          #
+          # REFUTED if restart #2's paired ratio against restart #1 stays near 3.6x while restart
+          # #3's holds near 2.3x: the association would then be with job position, and the
+          # simulator a bystander. Design, criteria and the measurement recipe:
+          # docs/investigations/2026-09-10-restart-sequencing-experiment.md
+          restart_index=0
           restart_navidrome_cold() {
+            restart_index=$((restart_index + 1))
+            # Names which restarts were resequenced and which were not, so the comparison can be
+            # made from the log without inferring the arm from nearby simctl lines.
+            echo "RESTART SEQUENCING index=${restart_index} phase=$1 arm=$2 simulator_created_before=$3"
             # Navidrome 0.63.2 exposes its latest successful library ScanEnd as
             # scanStatus.lastScan. Snapshot it while this process is still alive, then require the
             # replacement process to advance it. The database survives this restart, so a non-zero
@@ -935,13 +958,23 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-download-conf52.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit/TEST-CONF-52.xml" \
             DulcetAppleDownloadIntegrationTest
-          restart_navidrome_cold
+          # BASELINE ARM. No `xcrun simctl create` has run in this step -- but simulators ARE
+          # running: the four xcodebuild runs above use iOS and iPadOS Simulator destinations and
+          # nothing shuts them down before here. `simulator_created_before=false` means exactly
+          # what it says and is not a claim that no simulator is up. That distinction is the
+          # hypothesis: this is the FASTEST of the three restarts despite those boots, which points
+          # at a freshly CREATED device rather than at a running one.
+          restart_navidrome_cold macos baseline false
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
+          # RESEQUENCED ARM. This restart used to sit after the simulator create+boot below.
+          # Nothing between it and the suite streams audio, so the empty-cache assertion the restart
+          # makes still holds at the suite's first request; only its simulator adjacency changed.
+          restart_navidrome_cold ios resequenced false
           # Same suite, iOS target. A per-platform matrix is worthless if one
           # platform's run is cited as another's evidence, so account.connect/ios
           # names THIS run. The simulator shares the host loopback, so it reaches
@@ -958,7 +991,6 @@ jobs:
           conformance_sim="$(xcrun simctl create \
             dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
           xcrun simctl boot "$conformance_sim"
-          restart_navidrome_cold
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
@@ -983,7 +1015,9 @@ jobs:
             dulcet-tvos-conformance \
             com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p)"
           xcrun simctl boot "$tvos_conformance_sim"
-          restart_navidrome_cold
+          # UNCHANGED ARM -- the in-run control. Leave this restart after its simulator create+boot.
+          # Moving it too would remove the within-run comparison the experiment is built on.
+          restart_navidrome_cold tvos unchanged true
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
