@@ -243,9 +243,12 @@ internal data class LibraryEnumerationProbe(
  * **OBSERVED 2026-09-11, Navidrome 0.63.2, 2,500-album library:** `search3` does *not* clamp its
  * counts — `albumCount=501` returns 501, `1000` returns 1,000, `5000` returns the whole 2,500.
  * `getAlbumList2` does, silently: `size=501` and `size=1000` both return exactly 500 rows with
- * `status="ok"` and nothing marking the truncation. 500 is the value the original Subsonic
- * documentation gives as the maximum, other servers clamp there too, and a walk must never depend
- * on being able to ask for more than the protocol promises.
+ * `status="ok"` and nothing marking the truncation.
+ *
+ * 500 is also what the protocol promises: `getAlbumList2`'s `size` is documented "The number of
+ * albums to return. Max 500." (OBSERVED 2026-09-11, subsonic.org/pages/api.jsp), while `search3`'s
+ * counts document no maximum at all. A walk must never depend on being able to ask for more than
+ * the documented limit — other servers are reported to clamp there too, and a clamp is invisible.
  */
 internal const val MAX_LIBRARY_ENUMERATION_PAGE_SIZE: Int = 500
 
@@ -254,8 +257,10 @@ internal const val MAX_LIBRARY_ENUMERATION_PAGE_SIZE: Int = 500
  *
  * OpenSubsonic requires a server to enumerate everything for an empty query, but it layers that on
  * a base specification where `query` is mandatory, so servers disagree about which spelling of
- * "empty" they accept. The quoted form is the one the widest set of servers treats as "all", and
- * **OBSERVED 2026-09-11** it enumerates on the reference server exactly like the bare empty value.
+ * "empty" they accept. **OBSERVED 2026-09-11:** on the reference server `""`, the bare empty value,
+ * `" "` and `"*"` all enumerate identically, so the choice costs nothing there; the quoted form is
+ * chosen because it is the spelling other servers are REPORTED to accept, which is a claim about
+ * them that this project has not measured.
  */
 internal const val WHOLE_LIBRARY_QUERY: String = "\"\""
 
@@ -263,8 +268,8 @@ internal const val WHOLE_LIBRARY_QUERY: String = "\"\""
  * `search3` parameters for one page of one whole-library walk.
  *
  * The other two counts are zeroed deliberately. **OBSERVED 2026-09-11, Navidrome 0.63.2:** a zero
- * count makes the server skip that entity's query entirely — the response carries no `artist` or
- * `song` key at all — so one page costs one query instead of three.
+ * count removes that entity from the response entirely — no `artist` or `song` key at all, not an
+ * empty array — so a page carries only the entity it asked for and nothing is paid for the rest.
  */
 internal fun libraryEnumerationParameters(
     kind: LibraryEnumerationKind,

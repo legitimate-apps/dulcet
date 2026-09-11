@@ -2089,10 +2089,13 @@ spinner.
 
 1. **Never ask for more than 500 rows, and never infer end-of-list from "shorter than I asked for".**
    OBSERVED 2026-09-11: `getAlbumList2` silently caps `size` at 500 — `size=501` and `size=1000` both
-   return exactly 500 rows, `status="ok"`, nothing marking the truncation. (`search3` does not clamp:
-   `albumCount=5000` returned all 2,500. Other servers do clamp, so 500 is the portable ceiling.) A
-   walk advances its offset by **what the server returned** and ends only on an empty page or one
-   shorter than the largest page that server has returned.
+   return exactly 500 rows, `status="ok"`, nothing marking the truncation. 500 is also the documented
+   maximum: *"The number of albums to return. Max 500."* (OBSERVED 2026-09-11,
+   subsonic.org/pages/api.jsp). `search3`'s counts document no maximum and the reference server does
+   not clamp them — `albumCount=5000` returned all 2,500 — but 500 stays the ceiling, because other
+   servers are reported to clamp and a clamp is invisible. A walk advances its offset by **what the
+   server returned** and ends only on an empty page or one shorter than the largest page that server
+   has returned.
 2. **A page that contributes no new id does not end the walk.** That is what an insertion during the
    pass looks like, and the walk *becomes* the library. A server that will not let a walk terminate
    fails the import instead.
@@ -2105,8 +2108,9 @@ spinner.
    finds none — rather than committing an empty generation over a full one and reporting success.
 
 The query sent is the literal two characters `""`. OBSERVED 2026-09-11: the reference server
-enumerates identically for `""`, the bare empty value, `" "` and `"*"`; the quoted form is the one the
-widest set of servers treats as "all".
+enumerates identically for `""`, the bare empty value, `" "` and `"*"`, so the choice costs nothing
+here; the quoted form is chosen because it is the spelling other servers are *reported* to accept —
+a claim about them that this project has not measured.
 
 ### 16.3 Commit model: row versioning, reads pinned to a committed generation
 
