@@ -2157,7 +2157,9 @@ func reconnectingReadsTheLibraryAgainEvenWhenOneIsHeld() throws {
 }
 
 /// 🚨 The window this protects is everything between the preview painting and the sync
-/// committing — about ten seconds at the corpus the proxy measurement was taken against.
+/// committing. Its DURATION is a property of the sync's transport, not of this behaviour, and it
+/// has already changed once by about two orders of magnitude — so this control deliberately does
+/// not depend on it, and neither does the guard it covers.
 ///
 /// `selectDestination(.library)` is this surface's ONLY way back out of an album detail; there is
 /// no separate back action, which `republishHeldLibrary` says in so many words. During that window

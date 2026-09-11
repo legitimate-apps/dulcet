@@ -863,9 +863,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     ///
     /// 🚨 **Initiation is guarded here, not just publication.** `libraryGeneration` stops a
     /// superseded read from *publishing*, which is a different question from whether a second read
-    /// should have *started*. One open already costs a preview walk plus a two-pass sync — measured
-    /// 2026-09-11 at 21 requests before first paint and 4,996 `getAlbum` after it, against a
-    /// 2,498-album server — so starting another one is not a rounding error.
+    /// should have *started*. One open costs a preview walk plus a sync that walks every stage
+    /// twice — 57 requests against a 2,498-album / 4,996-track server, measured by execution in
+    /// `LibraryFirstPaintCostTest`.
+    ///
+    /// ⚠️ **The request count is no longer the argument, and the correctness is.** Before the
+    /// whole-library enumeration transport landed, the same duplicate open cost about 5,023
+    /// requests, and saving those was reason enough on its own. It is now 57, so what this guard
+    /// is actually worth is what it was always worth underneath the arithmetic: a read that has
+    /// already painted is not thrown away, and the grid the person is looking at is not replaced
+    /// by a spinner. Do not re-derive the value of this guard from the request count.
     private func openLibrary(
         reason: DulcetLibraryOpenReason,
         selecting selection: DulcetLibrarySelection? = nil
@@ -890,11 +897,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                       currentSnapshot.selectedDestination == .library {
                 // A read is already running, on the screen the person is already on — so this is
                 // not a navigation event at all, and the read it would start is the one already in
-                // flight. The window is real and it is long: the preview paints in well under a
-                // second and the sync behind it commits about ten seconds later, and
-                // `selectDestination(.library)` is this surface's ONLY way back out of an album
-                // (see `republishHeldLibrary`). Falling through here cancelled that read and began
-                // another, which replaced the grid the person was looking at with a spinner.
+                // flight. The window is the gap between the preview painting and the sync
+                // committing, and `selectDestination(.library)` is this surface's ONLY way back out
+                // of an album (see `republishHeldLibrary`), so the person walks into it by using
+                // the app normally. Falling through here cancelled that read and began another,
+                // which replaced the grid the person was looking at with a spinner.
+                //
+                // How LONG that window is, is a property of the sync's transport and not of this
+                // file: the enumeration walks shortened it by roughly two orders of magnitude in
+                // request count. It is narrower than it was, and it is not zero — nothing here may
+                // assume a duration, which is why the guard is on the operation being live rather
+                // than on any elapsed time.
                 //
                 // A *selection* is still a real request: it names something the in-flight read was
                 // not asked to select and may not carry, so an unsatisfiable one reads, exactly as
