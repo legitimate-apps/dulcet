@@ -3682,9 +3682,12 @@ OBSERVED on `main`: run 34635969077 failed a required check with `Timeout waitin
 Configuration Cache` when `DulcetiOS` and `DulcetKitIOSTests` built concurrently, each running the
 `Compile Kotlin Framework` phase; run 34127121022 had lost the journal lock the same way on
 2026-09-07. Measured over the 40 most recent `apple-ci` runs: 1 of 40 carries the string in its
-failed-step logs (6 cancelled runs expose no failed-step log to that instrument). Reproduced locally
-without Xcode by starting two `:core:embedAndSignAppleFrameworkForXcode` invocations together, with
-and without the runner — `docs/verification/serialised-kotlin-script-phases.md`. The committed
+failed-step logs (6 cancelled runs expose no failed-step log to that instrument). The lock timeout
+was NOT reproduced locally: five attempts starting two bare
+`:core:embedAndSignAppleFrameworkForXcode` invocations together, cold and warm, all stored the
+configuration cache concurrently. What was OBSERVED locally is serialisation under the runner — the
+second invocation waits, names the holder, and both complete —
+`docs/verification/serialised-kotlin-script-phases.md`. The committed
 project is regenerated with the pinned XcodeGen, and `tools/verify_xcode_script_phases.py` now
 fails the parity gate when `apple/project.yml`'s script bodies and the committed project disagree.
 
