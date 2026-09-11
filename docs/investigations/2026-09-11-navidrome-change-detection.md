@@ -142,6 +142,12 @@ not catalog state, and the scanner does not touch it. The consequence is binding
 Compare parsed instants, or compare the raw strings for *equality only*; never order raw strings,
 and never assume a fixed-length field.
 
+⚠️ **A single clean run does not refute this.** Trimming only shows when the microsecond value
+happens to end in a zero, so a short series often reports one width and looks fixed: a later 8-scan
+run of the same tool reported `fractional_digit_widths: [6]` and `fixed_width_fraction: true`. The
+variable width is a property of the *formatter*, evidenced by the run that caught three widths —
+not something a run that happened to miss it can un-observe.
+
 **Restart survival — OBSERVED.** Stopping the server and restarting it with `ScanOnStartup=false`
 returned the identical record:
 
