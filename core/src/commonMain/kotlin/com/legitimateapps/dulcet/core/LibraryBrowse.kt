@@ -160,7 +160,10 @@ internal class LibraryBrowser private constructor(
     ) : this({ transport }, albumPageSize, albumConcurrency, firstPaintBudget)
 
     init {
-        require(albumPageSize > 0)
+        // Subsonic documents 500 as the maximum for `getAlbumList2`'s `size`, and the reference
+        // server enforces it silently (see [readAlbumSummaries]). Asking for more buys nothing
+        // and makes the request describe something the protocol cannot deliver.
+        require(albumPageSize in 1..MAX_ALBUM_PAGE_SIZE)
         require(albumConcurrency > 0)
         require(firstPaintBudget.isPositive() && firstPaintBudget.isFinite())
     }
@@ -232,17 +235,32 @@ internal class LibraryBrowser private constructor(
     }
 
     /**
-     * Pages `getAlbumList2` until a short page, exactly as a one-page-at-a-time walk would, but
-     * reads a look-ahead window concurrently once the server has proved there is more than one
-     * page. Pages are merged in offset order, so the album order and the dedupe are identical to
-     * the sequential walk; the only difference is round trips. The first page is read alone so a
-     * library that fits in one page still costs one request.
+     * Pages `getAlbumList2` to completion, learning the server's real page size rather than
+     * assuming it honours the one we asked for.
      *
-     * Two independent stops, because "page until a short page" alone trusts the server to end:
-     * a short page, and a whole window that contributes no album id we have not already seen.
-     * Neither is a tolerance — both mean the server has stopped offering distinct albums. A server
-     * that keeps offering new ids forever is stopped by the caller's deadline, as a reported
-     * timeout.
+     * 🚨 **A server may silently return fewer albums than `size` asks for.** OBSERVED 2026-09-11
+     * against the pinned reference server (Navidrome 0.63.2, 1,208 albums): `size=499` returns
+     * 499, `size=500` returns 500, and `size=501`, `600`, `1000`, `5000` all return **500** with
+     * `status="ok"` and no indication of truncation. So "the page was shorter than I asked for"
+     * does NOT mean "that was the end" — measured through this client, a walk that believed it
+     * reported `Loaded` with 500 of 1,208 albums.
+     *
+     * Two rules make a truncated read unrepresentable, and neither trusts the requested size:
+     *
+     * 1. **The offset advances by what the server actually returned**, never by what was asked
+     *    for. Advancing by the request would have skipped albums 500..4,999 outright.
+     * 2. **A page ends the walk only when it is empty, or shorter than the largest page this
+     *    server has returned.** A cap reveals itself as a page that is short against the request
+     *    but full against the server's own behaviour.
+     *
+     * The look-ahead window only opens once a page has come back at exactly the requested size —
+     * that is the server proving it honours the request, which is what makes a computed offset
+     * safe. Against a capping server the walk is sequential and slower; it is never short.
+     *
+     * The third stop is unchanged: a whole window that contributes no album id we have not
+     * already seen. None of the three is a tolerance — each means the server has stopped offering
+     * distinct albums. A server that keeps offering new ids forever is stopped by the caller's
+     * deadline, as a reported timeout.
      */
     private suspend fun readAlbumSummaries(
         providerInstanceId: String,
@@ -251,10 +269,12 @@ internal class LibraryBrowser private constructor(
         val summaries = mutableListOf<AlbumSummary>()
         val seenAlbumIds = mutableSetOf<String>()
         var offset = 0
+        var stride = albumPageSize
         var windowSize = 1
+        var largestPage = 0
         while (true) {
             val pages = coroutineScope {
-                List(windowSize) { index -> offset + index * albumPageSize }
+                List(windowSize) { index -> offset + index * stride }
                     .map { pageOffset ->
                         async {
                             parseAlbumList(
@@ -272,28 +292,37 @@ internal class LibraryBrowser private constructor(
                     }.awaitAll()
             }
             var addedInWindow = 0
-            var reachedShortPage = false
+            var reachedEnd = false
             for (page in pages) {
+                largestPage = maxOf(largestPage, page.size)
                 page.forEach { album ->
                     if (seenAlbumIds.add(album.id.rawId)) {
                         summaries += album
                         addedInWindow += 1
                     }
                 }
-                if (page.size < albumPageSize) {
-                    reachedShortPage = true
+                if (page.size < largestPage) {
+                    reachedEnd = true
                     break
                 }
             }
-            if (reachedShortPage || addedInWindow == 0) break
-            offset += windowSize * albumPageSize
-            windowSize = albumConcurrency
+            if (reachedEnd || addedInWindow == 0) break
+            // The advance covers the pages just FETCHED, so it is computed before the window is
+            // allowed to widen. Using the widened size here skips everything between.
+            val fetchedPages = windowSize
+            if (windowSize == 1) {
+                // The first page is the only evidence of what this server is willing to serve.
+                stride = largestPage
+                if (largestPage == albumPageSize) windowSize = albumConcurrency
+            }
+            offset += fetchedPages * stride
         }
         return summaries
     }
 
     internal companion object {
-        const val DEFAULT_ALBUM_PAGE_SIZE = 500
+        const val MAX_ALBUM_PAGE_SIZE = 500
+        const val DEFAULT_ALBUM_PAGE_SIZE = MAX_ALBUM_PAGE_SIZE
         const val DEFAULT_ALBUM_CONCURRENCY = 4
 
         /**

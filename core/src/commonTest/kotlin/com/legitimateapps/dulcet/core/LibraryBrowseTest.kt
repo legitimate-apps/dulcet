@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
@@ -99,23 +100,77 @@ class LibraryBrowseTest {
         assertEquals(0, transport.requestsTo("getAlbum"))
     }
 
+    /**
+     * The honest shape of the cost, at the SHIPPED page size.
+     *
+     * It is not constant — it grows with PAGES. What it must never contain is a request per
+     * album, which is the defect this file exists to prevent returning. A previous version of
+     * this test claimed constancy and got it by setting the page size to 5,000, which is both
+     * above the protocol maximum and the exact configuration that made the walk truncate.
+     */
     @Test
-    fun firstPaintRequestCountDoesNotGrowWithAlbumCount() = runTest {
-        suspend fun requestsFor(albumCount: Int): CountingLibraryTransport {
+    fun firstPaintCostsNoRequestPerAlbumAndOnlyOnePerPage() = runTest {
+        val expected = mapOf(
+            40 to 4,
+            400 to 4,
+            1_200 to 7,
+            2_950 to 11,
+            4_000 to 11,
+            12_000 to 27,
+        )
+        val observed = expected.keys.sorted().associateWith { albumCount ->
             val transport = CountingLibraryTransport(albumCount = albumCount)
-            assertIs<LibraryBrowseResult.Loaded>(
-                LibraryBrowser(transport, albumPageSize = 5_000, albumConcurrency = 4)
-                    .browse(fixtureRequest()),
-            )
-            return transport
+            val loaded = assertIs<LibraryBrowseResult.Loaded>(
+                LibraryBrowser(
+                    transport,
+                    albumPageSize = LibraryBrowser.DEFAULT_ALBUM_PAGE_SIZE,
+                    albumConcurrency = LibraryBrowser.DEFAULT_ALBUM_CONCURRENCY,
+                ).browse(fixtureRequest()),
+            ).snapshot
+            assertEquals(albumCount, loaded.albums.size, "albums at $albumCount")
+            assertEquals(0, transport.requestsTo("getAlbum"), "getAlbum at $albumCount")
+            transport.totalRequests
         }
 
-        val small = requestsFor(40)
-        val large = requestsFor(4_000)
+        assertEquals(expected.toSortedMap().toMap(), observed)
+        // 12,000 albums cost 27 requests. The walk this replaced cost 12,000 of them plus the
+        // same paging.
+        assertTrue(observed.getValue(12_000) < 30)
+    }
 
-        assertEquals(3, small.totalRequests)
-        assertEquals(3, large.totalRequests)
-        assertEquals(0, large.requestsTo("getAlbum"))
+    /**
+     * 🚨 A server may return fewer albums than `size` asked for, without saying so. OBSERVED
+     * 2026-09-11 against the pinned reference server (Navidrome 0.63.2, 1,208 albums): `size=501`
+     * and `size=5000` both return 500 with `status="ok"`. A walk that reads "shorter than I asked
+     * for" as "that was the end" reports a truncated library as a complete one — measured through
+     * the production client at 500 of 1,208.
+     */
+    @Test
+    fun aServerThatSilentlyCapsThePageSizeIsPagedToCompletionRatherThanTruncated() = runTest {
+        val transport = CountingLibraryTransport(albumCount = 1_000, serverPageCap = 100)
+        val loaded = assertIs<LibraryBrowseResult.Loaded>(
+            LibraryBrowser(transport, albumPageSize = 500, albumConcurrency = 4)
+                .browse(fixtureRequest()),
+        ).snapshot
+
+        assertEquals(1_000, loaded.albums.size)
+        assertEquals(
+            (0 until 1_000).map { "album:counted-$it" },
+            loaded.albums.map { it.id.rawId },
+        )
+        assertEquals(0, transport.requestsTo("getAlbum"))
+    }
+
+    /** A page size above what the protocol allows describes a request no server can answer. */
+    @Test
+    fun theAlbumPageSizeCannotExceedTheProtocolMaximum() {
+        assertEquals(500, LibraryBrowser.MAX_ALBUM_PAGE_SIZE)
+        assertFailsWith<IllegalArgumentException> {
+            LibraryBrowser(RecordedLibraryTransport(), albumPageSize = 501)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            LibraryBrowser(RecordedLibraryTransport(), albumPageSize = 0)
+        }
     }
 
     /**
@@ -125,7 +180,7 @@ class LibraryBrowseTest {
     @Test
     fun theRequestCounterObservesGetAlbumWhenATrackListIsRead() = runTest {
         val transport = CountingLibraryTransport(albumCount = 40)
-        val browser = LibraryBrowser(transport, albumPageSize = 5_000, albumConcurrency = 4)
+        val browser = LibraryBrowser(transport, albumPageSize = 500, albumConcurrency = 4)
 
         assertIs<LibraryBrowseResult.Loaded>(browser.browse(fixtureRequest()))
         assertEquals(0, transport.requestsTo("getAlbum"))
@@ -134,14 +189,17 @@ class LibraryBrowseTest {
             browser.albumTracks(fixtureRequest(), "album:counted-0"),
         )
         assertEquals(1, transport.requestsTo("getAlbum"))
-        assertEquals(4, transport.totalRequests)
+        // getMusicFolders + getArtists + the album page + the page that confirms the end of the
+        // list, then one getAlbum. The confirming page is what stops a server that silently caps
+        // its page size from reading as a finished library.
+        assertEquals(5, transport.totalRequests)
     }
 
     @Test
     fun browseCarriesTheServerDeclaredTrackCountWithoutReadingTheTrackList() = runTest {
         val transport = CountingLibraryTransport(albumCount = 3, songCount = 7)
         val loaded = assertIs<LibraryBrowseResult.Loaded>(
-            LibraryBrowser(transport, albumPageSize = 5_000).browse(fixtureRequest()),
+            LibraryBrowser(transport, albumPageSize = 500).browse(fixtureRequest()),
         ).snapshot
 
         assertTrue(loaded.albums.all { it.trackCount == 7 })
@@ -471,6 +529,8 @@ class LibraryBrowseTest {
         private val albumCount: Int,
         private val songCount: Int = 1,
         private val repeatEveryPage: Boolean = false,
+        /** What the server will actually serve per page, however much is asked for. */
+        private val serverPageCap: Int = Int.MAX_VALUE,
     ) : LibraryEndpointTransport {
         private val counts = mutableMapOf<String, Int>()
 
@@ -487,7 +547,7 @@ class LibraryBrowseTest {
                 "getMusicFolders" -> success(musicFoldersBody())
                 "getArtists" -> success(artistsBody())
                 "getAlbumList2" -> {
-                    val size = parameters.getValue("size").toInt()
+                    val size = minOf(parameters.getValue("size").toInt(), serverPageCap)
                     val offset = if (repeatEveryPage) 0 else parameters.getValue("offset").toInt()
                     success(
                         albumListBody(
