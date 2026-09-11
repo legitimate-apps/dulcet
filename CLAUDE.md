@@ -82,6 +82,11 @@ measured — several CONF tests exist precisely to do that promotion.
 
 ```sh
 ./gradlew :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest :core:bundleAndroidMainAar :core:licensee
+# commonTest compiles for Kotlin/Native too, and neither command above covers that: the first
+# compiles MAIN sources for native, the second compiles commonTest only for the JVM. A JVM-only
+# stdlib call in commonTest falls straight through the gap -- `toSortedMap` did, and cost a full
+# apple-ci cycle to discover. This is seconds locally.
+./gradlew :core:compileTestKotlinIosSimulatorArm64
 python3 tools/parity_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
