@@ -309,10 +309,41 @@ final class DulcetiOSUITests: XCTestCase {
         }
         searchField.tap()
         searchField.typeText(query)
+        // The field's value settles asynchronously, and `typeText` returning does not mean every
+        // synthesized keystroke has been delivered and rendered -- XCUITest's own post-typing idle
+        // wait is not that guarantee. Reading `.value` once therefore conflated "the field lost
+        // characters" with "the sample was early", and one apple-ci run failed on the second.
+        //
+        // MEASURED on an iPad Pro 11-inch (M5) simulator with per-keystroke app cost induced at
+        // 0, 20, 60, 150, 400 and 1000 ms, tracing the app's own text binding: all 9 keystrokes
+        // reach it in order in every case, and across 84 keystrokes no value ever regressed. So a
+        // short read is the sample being early. The 400 ms run reproduced the CI failure exactly
+        // -- a prefix, everything after it passing -- while the trace showed the field completing
+        // 3.8 s later.
+        //
+        // This polls the same assertion instead of sampling it. A field that genuinely drops
+        // characters still fails, because the poll requires the full query and has an end; what it
+        // no longer does is fail for being late. `settleAttempts` is printed rather than asserted:
+        // one attempt is the normal outcome, and a run that needed many is a responsiveness signal
+        // worth seeing in the log rather than a reason to fail.
+        // Monotonic, per this repository's clock rule: a wall-clock deadline can be moved by the
+        // host while the poll is running.
+        var settleAttempts = 0
+        var observedFieldValue = searchField.value as? String
+        let settleClock = ContinuousClock()
+        let settleDeadline = settleClock.now.advanced(by: .seconds(10))
+        while observedFieldValue != query, settleClock.now < settleDeadline {
+            settleAttempts += 1
+            Thread.sleep(forTimeInterval: 0.1)
+            observedFieldValue = searchField.value as? String
+        }
+        print("DULCET SEARCH TYPING OBSERVED settle-attempts=\(settleAttempts)"
+            + " value=\(String(describing: observedFieldValue))")
         XCTAssertEqual(
-            searchField.value as? String,
+            observedFieldValue,
             query,
-            "The query typed through the platform keyboard must reach the search field itself"
+            "The query typed through the platform keyboard must reach the search field itself;"
+                + " polled \(settleAttempts) times over 10 s"
         )
 
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
