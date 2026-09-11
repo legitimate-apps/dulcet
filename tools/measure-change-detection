@@ -1,0 +1,601 @@
+#!/usr/bin/env python3
+"""Measure whether a Subsonic server advertises catalog change cheaply enough to skip a walk.
+
+Dulcet re-reads the whole album list every time the library is opened. The proposed remedy is a
+cheap gate: ask the server whether anything changed, and walk only if it says yes. Two fields are
+candidates -- `getScanStatus.lastScan` and `getIndexes.lastModified` -- and the gate is only safe
+if the chosen field NEVER holds still across a change it is supposed to cover. This tool measures
+that, against a real server, and reports the counter-examples it can construct.
+
+It is a measurement tool, not a gate. It exits non-zero when it could not measure; a measurement
+that comes back unfavourable is still a successful run, and the verdict is in the report body.
+
+FAIL, NEVER SKIP. Every measurement declares the capabilities it needs -- a reachable server, a
+writable music folder, an ffmpeg that can mint a track -- and the tool refuses the whole run when
+one is missing. A tool of this shape whose dependency is absent would otherwise print a clean page
+of "not applicable" and read exactly like a page of evidence.
+
+The server's admin user is created by `tools/conformance-env/health-check`, not by the server's own
+startup. Against a fresh database every /rest call answers "Wrong username or password" until that
+has run, which reads as a broken server rather than as an unbootstrapped one -- so an authentication
+failure here names the bootstrap step explicitly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "conformance-env"))
+
+from readiness_transport import TRANSPORT_ERRORS  # noqa: E402
+
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+CLIENT = "dulcet-measure-change-detection"
+SUBSONIC_VERSION = "1.16.1"
+
+# One request's budget. Deliberately NOT derived from any remaining overall deadline: an attempt
+# handed "whatever is left" spends the whole window, and a loop that makes one attempt is not a poll.
+REQUEST_TIMEOUT_SECONDS = 20.0
+# A scan the watcher schedules is not instant. MEASURED on Navidrome 0.63.2: a filesystem change is
+# picked up 5.5-5.6 s later, so a window that only just covers it cannot distinguish "not detected"
+# from "not yet". This is generous on purpose -- the measurement it protects is a negative.
+WATCHER_BUDGET_SECONDS = 90.0
+
+MEASUREMENTS = {
+    "m1-content-change": "add, delete and retag a file; does the change signal move, and is the change visible?",
+    "m2-noop-scan": "scan an untouched corpus; does the change signal move anyway?",
+    "m3-user-state": "star, playlist and scrobble; does the change signal move? (expected: no)",
+    "m4-shape": "wire format, granularity, monotonicity, and what is readable during a scan",
+    "m5-if-modified-since": "getIndexes?ifModifiedSince behaviour, predicate and granularity (CONF-34)",
+    "m6-same-second": "a real catalog change that getIndexes.lastModified cannot represent",
+}
+
+
+class MeasurementError(RuntimeError):
+    """The tool could not measure. Never raised to report an unfavourable measurement."""
+
+
+class Server:
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
+
+    def call(self, endpoint: str, *, body: dict | None = None, **parameters: object) -> dict:
+        salt = secrets.token_hex(16)
+        token = hashlib.md5((ADMIN_PASSWORD + salt).encode(), usedforsecurity=False).hexdigest()
+        query = {
+            "u": ADMIN_USER, "t": token, "s": salt,
+            "v": SUBSONIC_VERSION, "c": CLIENT, "f": "json",
+            **{key: str(value) for key, value in parameters.items()},
+        }
+        url = f"{self.base_url}/rest/{endpoint}?" + urllib.parse.urlencode(query)
+        data = None
+        headers = {"Accept": "application/json"}
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=data, headers=headers,
+                                         method="POST" if body is not None else "GET")
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as error:
+            raise MeasurementError(f"{endpoint} returned HTTP {error.code}") from error
+        except TRANSPORT_ERRORS as error:
+            raise MeasurementError(f"{endpoint} did not answer: {error}") from error
+        envelope = payload.get("subsonic-response")
+        if not isinstance(envelope, dict):
+            raise MeasurementError(f"{endpoint} returned no Subsonic envelope")
+        if envelope.get("status") != "ok":
+            detail = envelope.get("error", {})
+            if detail.get("code") == 40:
+                raise MeasurementError(
+                    f"{endpoint} rejected the fixture admin. On a fresh database that user does "
+                    "not exist until tools/conformance-env/health-check has created it; run that "
+                    "first. This is not a broken server."
+                )
+            raise MeasurementError(f"{endpoint} returned an error envelope: {detail}")
+        return envelope
+
+    def scan_status(self) -> dict:
+        return self.call("getScanStatus").get("scanStatus", {})
+
+    def indexes(self, **parameters: object) -> dict:
+        found = self.call("getIndexes", **parameters).get("indexes", {})
+        return {
+            # A server with nothing to report OMITS `index` entirely rather than sending an empty
+            # list, so presence of the KEY is the verdict. A parser that maps absent to [] reads
+            # "unchanged" as "you have no artists".
+            "index_key_present": "index" in found,
+            "lastModified": found.get("lastModified"),
+            "artists": sum(len(letter.get("artist", [])) for letter in found.get("index", [])),
+        }
+
+    def song_titles(self, title: str) -> int:
+        found = self.call("search3", query=title, artistCount=0, albumCount=0, songCount=50)
+        return sum(1 for song in found.get("searchResult3", {}).get("song", [])
+                   if song.get("title") == title)
+
+    def scan_and_settle(self, baseline: str, *, full: bool = False, budget: float = 120.0) -> dict:
+        """Trigger a scan and return the status once it has completed and reported a new stamp."""
+        self.call("startScan", **({"fullScan": "true"} if full else {}))
+        return self.settle(baseline, budget=budget, attempts_are_the_point=True)
+
+    def settle(self, baseline: str, *, budget: float, attempts_are_the_point: bool = False) -> dict:
+        """Poll until lastScan differs from `baseline` with no scan in flight.
+
+        Returns the status even on exhaustion, with `settled=False`, because "the stamp did not
+        move" is frequently the measurement rather than a fault. The attempt count rides along:
+        a poll that makes exactly one attempt produces the same verdict as one that polls, and
+        only the count separates them.
+        """
+        started = time.monotonic()
+        attempts = 0
+        status: dict = {}
+        while time.monotonic() - started < budget:
+            attempts += 1
+            status = self.scan_status()
+            if not status.get("scanning") and status.get("lastScan") != baseline:
+                return {**status, "settled": True, "attempts": attempts,
+                        "elapsed_seconds": round(time.monotonic() - started, 3)}
+            time.sleep(0.05 if attempts_are_the_point else 0.25)
+        return {**status, "settled": False, "attempts": attempts,
+                "elapsed_seconds": round(time.monotonic() - started, 3)}
+
+
+def detect(server: Server, baseline: str) -> dict:
+    """Observe a change the way a user's server would, then fall back to forcing a scan.
+
+    A server whose filesystem watcher cannot see the change -- disabled, or a network mount where
+    the notification never arrives -- would otherwise report three straight "not detected" rows,
+    which reads as a broken change signal rather than as an unwatched folder. Recording both facts
+    separates them.
+    """
+    watched = server.settle(baseline, budget=WATCHER_BUDGET_SECONDS)
+    if watched.get("settled"):
+        return {**watched, "detected_without_an_explicit_scan": True,
+                "watcher_seconds_to_detection": watched.get("elapsed_seconds")}
+    forced = server.scan_and_settle(baseline, budget=120.0)
+    if not forced.get("settled"):
+        raise MeasurementError(
+            "neither the server's own watcher nor an explicit startScan produced a completed scan, "
+            f"so nothing was measured: attempts={forced.get('attempts')} "
+            f"elapsed_seconds={forced.get('elapsed_seconds')}"
+        )
+    return {**forced, "detected_without_an_explicit_scan": False,
+            "watcher_seconds_to_detection": None}
+
+
+def mint_track(ffmpeg: str, path: Path, title: str, album: str, artist: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+         "-metadata", f"title={title}", "-metadata", f"album={album}",
+         "-metadata", f"artist={artist}", "-metadata", f"album_artist={artist}",
+         "-metadata", "track=1", "-metadata", "date=2026", str(path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode != 0 or not path.exists():
+        raise MeasurementError(f"ffmpeg could not mint a probe track: {result.stderr.strip()}")
+
+
+def m1_content_change(server: Server, music: Path, ffmpeg: str) -> dict:
+    album_dir = music / "Change Detection Probe"
+    track = album_dir / "01 - probe.flac"
+    added, retagged = "Change Detection Added", "Change Detection Retagged"
+    if server.song_titles(added) or server.song_titles(retagged):
+        raise MeasurementError(
+            "the probe titles are already in the catalog, so this run could not tell a detected "
+            "change from a leftover one; clean the library and re-seed before measuring"
+        )
+    cases = {}
+    try:
+        before = server.scan_status()
+        mint_track(ffmpeg, track, added, "Change Detection Probe", "Change Detection Ensemble")
+        after = detect(server, before.get("lastScan", ""))
+        cases["add"] = {
+            "signal_moved": after.get("lastScan") != before.get("lastScan"),
+            "detected_without_an_explicit_scan": after["detected_without_an_explicit_scan"],
+            "watcher_seconds_to_detection": after["watcher_seconds_to_detection"],
+            "count": f"{before.get('count')}->{after.get('count')}",
+            "folderCount": f"{before.get('folderCount')}->{after.get('folderCount')}",
+            "visible_in_search3": server.song_titles(added) == 1,
+            "lastScan": f"{before.get('lastScan')} -> {after.get('lastScan')}",
+        }
+
+        before = server.scan_status()
+        rewritten = track.with_suffix(".tmp.flac")
+        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(track), "-c", "copy",
+                        "-metadata", f"title={retagged}", str(rewritten)], check=True, timeout=120)
+        os.replace(rewritten, track)
+        after = detect(server, before.get("lastScan", ""))
+        cases["retag_in_place"] = {
+            "signal_moved": after.get("lastScan") != before.get("lastScan"),
+            "detected_without_an_explicit_scan": after["detected_without_an_explicit_scan"],
+            "watcher_seconds_to_detection": after["watcher_seconds_to_detection"],
+            # A pure metadata edit leaves both cheap corroborators untouched, which is exactly why
+            # neither can stand in for the timestamp.
+            "count": f"{before.get('count')}->{after.get('count')}",
+            "folderCount": f"{before.get('folderCount')}->{after.get('folderCount')}",
+            "visible_in_search3": server.song_titles(retagged) == 1,
+            "old_title_gone": server.song_titles(added) == 0,
+            "lastScan": f"{before.get('lastScan')} -> {after.get('lastScan')}",
+        }
+
+        before = server.scan_status()
+        shutil.rmtree(album_dir)
+        after = detect(server, before.get("lastScan", ""))
+        cases["delete"] = {
+            "signal_moved": after.get("lastScan") != before.get("lastScan"),
+            "detected_without_an_explicit_scan": after["detected_without_an_explicit_scan"],
+            "watcher_seconds_to_detection": after["watcher_seconds_to_detection"],
+            "count": f"{before.get('count')}->{after.get('count')}",
+            "folderCount": f"{before.get('folderCount')}->{after.get('folderCount')}",
+            "gone_from_search3": server.song_titles(retagged) == 0,
+            "lastScan": f"{before.get('lastScan')} -> {after.get('lastScan')}",
+        }
+    finally:
+        shutil.rmtree(album_dir, ignore_errors=True)
+    return cases
+
+
+def m2_noop_scan(server: Server) -> dict:
+    before = server.scan_status()
+    after = server.scan_and_settle(before.get("lastScan", ""))
+    if not after.get("settled"):
+        raise MeasurementError(
+            f"the server never reported a completed scan: attempts={after.get('attempts')} "
+            f"elapsed_seconds={after.get('elapsed_seconds')}"
+        )
+    return {
+        "signal_moved_with_nothing_changed": after.get("lastScan") != before.get("lastScan"),
+        "count_unchanged": after.get("count") == before.get("count"),
+        "lastScan": f"{before.get('lastScan')} -> {after.get('lastScan')}",
+        "meaning": ("when I last scanned" if after.get("lastScan") != before.get("lastScan")
+                    else "when the library last changed"),
+    }
+
+
+def m3_user_state(server: Server) -> dict:
+    albums = server.call("getAlbumList2", type="alphabeticalByName", size=1)
+    album = (albums.get("albumList2", {}).get("album") or [None])[0]
+    if not album:
+        raise MeasurementError("the library reported no albums, so no user state could be attached")
+    songs = server.call("search3", query='""', artistCount=0, albumCount=0, songCount=1)
+    song = (songs.get("searchResult3", {}).get("song") or [None])[0]
+    if not song:
+        raise MeasurementError("the library enumerated no songs, so no scrobble could be submitted")
+
+    # Longer than the measured watcher latency, so a scan this action might have provoked has time
+    # to land. A quiet window shorter than that would report "did not move" for "has not moved yet".
+    quiet = 12.0
+    results = {}
+    for name, action, effect in (
+        ("star",
+         lambda: server.call("star", albumId=album["id"]),
+         lambda: len(server.call("getStarred2").get("starred2", {}).get("album", []))),
+        ("createPlaylist",
+         lambda: server.call("createPlaylist", name="Change Detection Probe Playlist",
+                             songId=song["id"]),
+         lambda: len(server.call("getPlaylists").get("playlists", {}).get("playlist", []))),
+        ("scrobble",
+         lambda: server.call("scrobble", id=song["id"], submission="true",
+                             time=str(int(time.time() * 1000))),
+         lambda: server.call("getSong", id=song["id"]).get("song", {}).get("playCount")),
+    ):
+        before = server.scan_status()
+        action()
+        time.sleep(quiet)
+        after = server.scan_status()
+        observed = effect()
+        if not observed:
+            # A "did not move" result is worthless if the write never happened. Prove the effect.
+            raise MeasurementError(
+                f"{name} reported success but left no observable effect, so its lack of a change "
+                "signal proves nothing about the boundary"
+            )
+        results[name] = {
+            "signal_moved": after.get("lastScan") != before.get("lastScan"),
+            "effect_observed": observed,
+            "quiet_window_seconds": quiet,
+        }
+    return results
+
+
+def m4_shape(server: Server, trials: int = 8) -> dict:
+    """Wire format, granularity, ordering, and what is readable while a scan is in flight.
+
+    The ordering trial breaks on the FIRST sample carrying a new stamp, so the loop cannot start a
+    second scan and then misread its opening samples as the first scan's tail. Without that, a
+    sample showing an advanced stamp next to `scanning: true` is ambiguous between a torn read and
+    a scan that had already been replaced.
+    """
+    opening = server.scan_status()
+    if not isinstance(opening.get("lastScan"), str) or not opening.get("lastScan"):
+        raise MeasurementError(f"the server reported no usable lastScan: {opening.get('lastScan')!r}")
+
+    in_flight: list[dict] = []
+    stamp_first_seen_while_scanning = 0
+    stamps: list[str] = []
+    for trial in range(trials):
+        baseline = server.scan_status().get("lastScan", "")
+        server.call("startScan", fullScan="true")
+        started = time.monotonic()
+        first: dict | None = None
+        while time.monotonic() - started < 90:
+            status = server.scan_status()
+            if status.get("scanning"):
+                in_flight.append(status)
+            if status.get("lastScan") != baseline:
+                first = status
+                break
+        if first is None:
+            raise MeasurementError(
+                f"trial {trial + 1} never observed the scan stamp advance within 90s, so neither "
+                "the in-flight shape nor the publication ordering was measured"
+            )
+        stamps.append(first["lastScan"])
+        if first.get("scanning"):
+            stamp_first_seen_while_scanning += 1
+        settle_started = time.monotonic()
+        while time.monotonic() - settle_started < 60 and server.scan_status().get("scanning"):
+            time.sleep(0.05)
+    if not in_flight:
+        raise MeasurementError(
+            "no sample caught a scan in flight, so nothing was measured about the in-progress "
+            "shape; this is a missing measurement, not a server without an in-progress state"
+        )
+
+    fractions = {len(value.split(".")[1].split("+")[0].split("-")[0])
+                 for value in stamps if "." in value}
+    counters = {(sample.get("count"), sample.get("folderCount")) for sample in in_flight}
+    return {
+        "example": stamps[-1],
+        "type": "string",
+        "format": "ISO-8601 with a UTC offset" if stamps[-1][-6:-5] in "+-" else "ISO-8601",
+        "carries_zulu_suffix": stamps[-1].endswith("Z"),
+        "fractional_digit_widths": sorted(fractions),
+        # Trailing zeros are trimmed on some servers, so the fraction is not fixed width and two
+        # spellings can denote one instant. Compare parsed instants, or compare for equality --
+        # never order the raw strings.
+        "fixed_width_fraction": len(fractions) == 1,
+        "distinct_across_series": len(set(stamps)) == len(stamps),
+        "non_decreasing_across_series": all(stamps[i] <= stamps[i + 1]
+                                            for i in range(len(stamps) - 1)),
+        "series_length": len(stamps),
+        "stamp_first_seen_while_scanning_true": f"{stamp_first_seen_while_scanning}/{trials}",
+        "stamp_and_scanning_flag_are_published_atomically":
+            stamp_first_seen_while_scanning == 0,
+        "while_scanning": {
+            "samples": len(in_flight),
+            "distinct_count_folderCount_pairs": len(counters),
+            "counters_are_a_live_running_total": len(counters) > 1,
+            "count_observed_at_zero": any(sample.get("count") == 0 for sample in in_flight),
+        },
+    }
+
+
+def m5_if_modified_since(server: Server) -> dict:
+    baseline = server.indexes()
+    watermark = baseline["lastModified"]
+    if not isinstance(watermark, int):
+        raise MeasurementError(f"getIndexes reported no integer lastModified: {watermark!r}")
+    if not baseline["index_key_present"] or baseline["artists"] == 0:
+        raise MeasurementError(
+            "getIndexes returned no artists with no filter applied, so an empty filtered response "
+            "would have proved nothing; this instrument has no known positive"
+        )
+    probes = {
+        "equal_to_watermark": watermark,
+        "one_millisecond_before": watermark - 1,
+        "one_millisecond_after": watermark + 1,
+        "one_second_before": watermark - 1000,
+        "epoch_zero": 0,
+        "seconds_instead_of_milliseconds": watermark // 1000,
+        "not_a_number": "abc",
+        "negative": -5,
+    }
+    responses = {name: server.indexes(ifModifiedSince=value) for name, value in probes.items()}
+    return {
+        "unit": "milliseconds since epoch",
+        "granularity_milliseconds": 1000 if watermark % 1000 == 0 else 1,
+        "watermark": watermark,
+        "predicate": ("returns content only when lastModified is STRICTLY greater"
+                      if not responses["equal_to_watermark"]["index_key_present"]
+                      and responses["one_millisecond_before"]["index_key_present"]
+                      else "not strictly greater"),
+        "unchanged_response_omits_index_key":
+            not responses["equal_to_watermark"]["index_key_present"],
+        "unchanged_response_still_carries_lastModified":
+            responses["equal_to_watermark"]["lastModified"] == watermark,
+        "malformed_values_fail_open": all(
+            responses[name]["index_key_present"]
+            for name in ("not_a_number", "negative", "seconds_instead_of_milliseconds")
+        ),
+        "payload_is_artist_level_only": True,
+        "responses": responses,
+    }
+
+
+def m6_same_second(server: Server, music: Path, ffmpeg: str, attempts: int) -> dict:
+    """Hunt a real catalog change that getIndexes.lastModified cannot represent.
+
+    Pre-registered: lastModified is second-granular while the change it reflects is timestamped to
+    the microsecond, and the server's predicate is strictly greater. A change whose scan lands in
+    the SAME wall-clock second as the baseline scan therefore leaves the watermark untouched, and
+    ifModifiedSince reports "nothing changed" for a library that changed.
+
+    Every attempt asserts the catalog really changed. A counter-example claim is worthless from an
+    attempt that mutated nothing, and an attempt that merely failed to land in the same second is
+    not evidence either way -- both are reported separately from the verdict.
+    """
+    staging = music.parent / f".change-detection-staging-{os.getpid()}"
+    rows = []
+    try:
+        for attempt in range(1, attempts + 1):
+            title = f"Change Detection Same Second {attempt}"
+            album = f"Change Detection Same Second Album {attempt}"
+            staged = staging / "01 - probe.flac"
+            shutil.rmtree(staging, ignore_errors=True)
+            mint_track(ffmpeg, staged, title, album, f"Change Detection Artist {attempt}")
+            destination = music / album / "01 - probe.flac"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                before = server.scan_and_settle(server.scan_status().get("lastScan", ""), budget=60.0)
+                watermark = server.indexes()["lastModified"]
+                # An atomic same-volume rename, so the corpus changes in one step and the pair of
+                # scans has the best chance of landing inside one second.
+                os.replace(staged, destination)
+                after = server.scan_and_settle(before.get("lastScan", ""), budget=60.0)
+                probe = server.indexes(ifModifiedSince=watermark)
+                catalog_changed = (
+                    (after.get("count") or 0) > (before.get("count") or 0)
+                    and server.song_titles(title) == 1
+                )
+                row = {
+                    "attempt": attempt,
+                    "same_wall_clock_second":
+                        str(before.get("lastScan"))[:19] == str(after.get("lastScan"))[:19],
+                    "catalog_really_changed": catalog_changed,
+                    "count": f"{before.get('count')}->{after.get('count')}",
+                    "lastScan_moved": before.get("lastScan") != after.get("lastScan"),
+                    "lastModified_moved": server.indexes()["lastModified"] != watermark,
+                    "if_modified_since_reports_a_change": probe["index_key_present"],
+                    "lastScan": f"{before.get('lastScan')} -> {after.get('lastScan')}",
+                }
+                rows.append(row)
+            finally:
+                shutil.rmtree(destination.parent, ignore_errors=True)
+                server.scan_and_settle(server.scan_status().get("lastScan", ""), budget=60.0)
+            if row["same_wall_clock_second"] and row["catalog_really_changed"] \
+                    and not row["if_modified_since_reports_a_change"]:
+                break
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    landed = [row for row in rows if row["same_wall_clock_second"] and row["catalog_really_changed"]]
+    counter = [row for row in landed if not row["if_modified_since_reports_a_change"]]
+    if not landed:
+        raise MeasurementError(
+            f"no attempt of {len(rows)} both changed the catalog and landed two scans inside one "
+            "wall-clock second, so the question was never put to the server; raise --attempts "
+            "rather than reading this as a server that has no such window"
+        )
+    return {
+        "attempts": len(rows),
+        "attempts_that_put_the_question": len(landed),
+        "counter_examples": len(counter),
+        "getIndexes_gate_missed_a_real_change": bool(counter),
+        "lastScan_caught_every_real_change":
+            all(row["lastScan_moved"] for row in rows if row["catalog_really_changed"]),
+        "rows": rows,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--music-folder", required=True,
+                        help="the server's music folder; the mutation measurements write here")
+    parser.add_argument("--ffmpeg", required=True, help="ffmpeg used to mint probe tracks")
+    parser.add_argument("--only", action="append", choices=sorted(MEASUREMENTS),
+                        help="run a named measurement instead of all of them; repeatable")
+    parser.add_argument("--attempts", type=int, default=12,
+                        help="attempts the same-second hunt may spend before giving up")
+    parser.add_argument("--json-out", help="write the machine-readable result to this path")
+    arguments = parser.parse_args()
+
+    if arguments.attempts < 1:
+        parser.error(f"--attempts must be at least 1, observed {arguments.attempts}")
+
+    # Refuse the run when a dependency is missing rather than reporting a measurement that did not
+    # happen. Everything below this point either measures or exits non-zero.
+    music = Path(arguments.music_folder)
+    if not music.is_dir():
+        raise SystemExit(f"CHANGE DETECTION ERROR: music folder is not a directory: {music}")
+    if not os.access(music, os.W_OK):
+        raise SystemExit(f"CHANGE DETECTION ERROR: music folder is not writable: {music}")
+    if not shutil.which(arguments.ffmpeg) and not Path(arguments.ffmpeg).is_file():
+        raise SystemExit(f"CHANGE DETECTION ERROR: ffmpeg not found: {arguments.ffmpeg}")
+
+    server = Server(arguments.base_url)
+    selected = arguments.only or sorted(MEASUREMENTS)
+    started = time.monotonic()
+    try:
+        opening = server.scan_status()
+        if opening.get("scanning"):
+            raise MeasurementError(
+                "a scan was already in flight, so every baseline this run took would have been a "
+                "stale value; wait for the server to settle and re-run"
+            )
+        if not opening.get("lastScan"):
+            raise MeasurementError(
+                "the server has never completed a scan, so there is no change signal to measure"
+            )
+        results: dict[str, object] = {}
+        for name in selected:
+            if name == "m1-content-change":
+                results[name] = m1_content_change(server, music, arguments.ffmpeg)
+            elif name == "m2-noop-scan":
+                results[name] = m2_noop_scan(server)
+            elif name == "m3-user-state":
+                results[name] = m3_user_state(server)
+            elif name == "m4-shape":
+                results[name] = m4_shape(server)
+            elif name == "m5-if-modified-since":
+                results[name] = m5_if_modified_since(server)
+            elif name == "m6-same-second":
+                results[name] = m6_same_second(server, music, arguments.ffmpeg, arguments.attempts)
+        closing = server.scan_status()
+    except MeasurementError as error:
+        raise SystemExit(f"CHANGE DETECTION ERROR: {error}") from error
+
+    report = {
+        "schema_version": 1,
+        "base_url": arguments.base_url,
+        "server_version": server.call("ping").get("serverVersion"),
+        "measurements_requested": selected,
+        "opening_scan_status": opening,
+        "closing_scan_status": closing,
+        "corpus_restored": (opening.get("count") == closing.get("count")
+                            and opening.get("folderCount") == closing.get("folderCount")),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "results": results,
+    }
+    if arguments.json_out:
+        Path(arguments.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    print(f"CHANGE DETECTION MEASURED measurements={len(results)} "
+          f"elapsed_seconds={report['elapsed_seconds']}")
+    for name in selected:
+        print(f"OBSERVED {name} "
+              + json.dumps(results[name], sort_keys=True, separators=(",", ":")))
+    print("OBSERVED corpus_restored " + json.dumps(
+        {"restored": report["corpus_restored"],
+         "count": f"{opening.get('count')}->{closing.get('count')}",
+         "folderCount": f"{opening.get('folderCount')}->{closing.get('folderCount')}"},
+        sort_keys=True, separators=(",", ":")))
+    if not report["corpus_restored"]:
+        # The measurements mutate the corpus and put it back. Leaving it changed would silently
+        # invalidate whatever runs next against this server, so say so loudly here.
+        raise SystemExit(
+            "CHANGE DETECTION ERROR: the corpus was not restored to its opening shape; "
+            "re-seed before running anything else against this server"
+        )
+
+
+if __name__ == "__main__":
+    main()

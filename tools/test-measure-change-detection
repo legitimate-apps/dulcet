@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Pin tools/measure-change-detection against a scripted Subsonic stub.
+
+The measurements this tool performs are mostly NEGATIVE -- "the change signal did not move" is the
+interesting answer for M3 and the whole point of M6. A negative instrument that cannot fire is
+indistinguishable from one that fired and found nothing, so most of what is pinned here is the
+tool's refusal to report a measurement it did not make: an absent dependency, a server that never
+completed a scan, an action that left no effect, and an index endpoint with no known positive.
+
+Where a control checks an outcome, it also checks the process. A tool that exits non-zero for the
+wrong reason satisfies an exit-code assertion exactly as well as one that refused for the right
+one, so these assert the stub's received request log alongside the verdict.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import urllib.parse
+
+TOOL = Path(__file__).resolve().parent / "measure-change-detection"
+
+BASELINE = "2026-09-11T10:00:00.000000-04:00"
+ADVANCED = "2026-09-11T10:00:01.000000-04:00"
+WATERMARK = 1789138800000
+
+
+class Stub:
+    """A Subsonic server whose every endpoint is scripted by the test that starts it."""
+
+    def __init__(self, routes: dict[str, object]) -> None:
+        self.routes = routes
+        self.received: list[str] = []
+        self.lock = threading.Lock()
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: object) -> None:
+                pass
+
+            def _dispatch(self) -> None:
+                path = urllib.parse.urlparse(self.path).path
+                endpoint = path.rsplit("/", 1)[-1].removesuffix(".view")
+                with stub.lock:
+                    stub.received.append(endpoint)
+                    route = stub.routes.get(endpoint)
+                    body = route(len([e for e in stub.received if e == endpoint])) \
+                        if callable(route) else route
+                if body is None:
+                    body = {"status": "ok", "version": "1.16.1"}
+                payload = json.dumps({"subsonic-response": {
+                    "status": "ok", "version": "1.16.1", "type": "navidrome",
+                    "serverVersion": "0.63.2 (stub)", **body}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            do_GET = _dispatch
+            do_POST = _dispatch
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "Stub":
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_exception: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def count(self, endpoint: str) -> int:
+        with self.lock:
+            return sum(1 for value in self.received if value == endpoint)
+
+
+def settled(last_scan: str = BASELINE, count: int = 10, folders: int = 2) -> dict:
+    return {"scanStatus": {"scanning": False, "lastScan": last_scan,
+                           "count": count, "folderCount": folders, "scanType": "quick"}}
+
+
+def run(stub: Stub, *arguments: str, music: Path, ffmpeg: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(TOOL), "--base-url", stub.base_url,
+         "--music-folder", str(music), "--ffmpeg", str(ffmpeg), *arguments],
+        capture_output=True, text=True, timeout=300,
+    )
+
+
+def fake_ffmpeg(directory: Path) -> Path:
+    """An ffmpeg that writes a file, so a measurement needing one is not blocked by codecs."""
+    path = directory / "ffmpeg"
+    # POSIX sh only: CI's /bin/sh is dash, where bash's "${@: -1}" is a Bad substitution.
+    # A bare `for` loop leaves the last positional argument in the variable.
+    path.write_text("#!/bin/sh\nfor out; do :; done\nmkdir -p \"$(dirname \"$out\")\"\n"
+                    "printf 'fLaC' > \"$out\"\n")
+    path.chmod(0o755)
+    return path
+
+
+CHECKS: list[tuple[str, object]] = []
+
+
+def check(name: str):
+    def register(function):
+        CHECKS.append((name, function))
+        return function
+    return register
+
+
+@check("a missing music folder refuses the run instead of measuring nothing")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    with Stub({"getScanStatus": settled()}) as stub:
+        result = run(stub, music=workspace / "absent", ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "music folder is not a directory" in result.stderr, result.stderr
+    # The refusal must precede any measurement, not follow a partial one.
+    assert stub.count("getScanStatus") == 0, stub.received
+
+
+@check("a missing ffmpeg refuses the run")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    with Stub({"getScanStatus": settled()}) as stub:
+        result = run(stub, music=workspace, ffmpeg=workspace / "no-such-ffmpeg")
+    assert result.returncode != 0, result.stdout
+    assert "ffmpeg not found" in result.stderr, result.stderr
+
+
+@check("an unbootstrapped server is named as such, not reported as a broken server")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    def rejected(_call: int) -> dict:
+        return {"status": "failed", "error": {"code": 40, "message": "Wrong username or password"}}
+
+    with Stub({"getScanStatus": rejected}) as stub:
+        result = run(stub, "--only", "m2-noop-scan", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "health-check" in result.stderr, result.stderr
+    assert stub.count("getScanStatus") >= 1, stub.received
+
+
+@check("a scan already in flight refuses the run rather than taking a stale baseline")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    scanning = {"scanStatus": {"scanning": True, "lastScan": BASELINE, "count": 0,
+                               "folderCount": 0, "scanType": "full"}}
+    with Stub({"getScanStatus": scanning}) as stub:
+        result = run(stub, "--only", "m2-noop-scan", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "already in flight" in result.stderr, result.stderr
+
+
+@check("a server that never completes a scan refuses instead of reporting 'did not move'")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    with Stub({"getScanStatus": settled(), "startScan": settled()}) as stub:
+        result = run(stub, "--only", "m2-noop-scan", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "never reported a completed scan" in result.stderr, result.stderr
+    # The process, not only the outcome: a refusal that polled once is a different defect from one
+    # that polled and was refused, and both produce this same message.
+    assert stub.count("getScanStatus") > 5, f"the poll made {stub.count('getScanStatus')} attempts"
+
+
+@check("m2 reports the signal moving on an untouched corpus as the measurement it is")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    def status(call: int) -> dict:
+        # Call 1 is the tool's opening settled-server check and call 2 is m2's own baseline; the
+        # stamp may only advance after that, or the measurement would start already-moved.
+        return settled(BASELINE if call <= 2 else ADVANCED)
+
+    with Stub({"getScanStatus": status, "startScan": settled()}) as stub:
+        result = run(stub, "--only", "m2-noop-scan", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode == 0, result.stderr
+    line = next(l for l in result.stdout.splitlines() if l.startswith("OBSERVED m2-noop-scan"))
+    observed = json.loads(line.split(" ", 2)[2])
+    assert observed["signal_moved_with_nothing_changed"] is True, observed
+    assert observed["meaning"] == "when I last scanned", observed
+
+
+@check("m3 refuses when the user-state write leaves no observable effect")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    routes = {
+        "getScanStatus": settled(),
+        "getAlbumList2": {"albumList2": {"album": [{"id": "album-1", "name": "A"}]}},
+        "search3": {"searchResult3": {"song": [{"id": "song-1", "title": "T"}]}},
+        "star": {},
+        "getStarred2": {"starred2": {}},          # the star produced nothing
+    }
+    with Stub(routes) as stub:
+        result = run(stub, "--only", "m3-user-state", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "left no observable effect" in result.stderr, result.stderr
+    assert stub.count("star") == 1, stub.received
+
+
+@check("m5 refuses an index endpoint with no known positive instead of reporting an empty result")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    routes = {"getScanStatus": settled(),
+              "getIndexes": {"indexes": {"lastModified": WATERMARK, "index": []}}}
+    with Stub(routes) as stub:
+        result = run(stub, "--only", "m5-if-modified-since", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "no known positive" in result.stderr, result.stderr
+    # Exactly one getIndexes call: the unfiltered known-positive probe. The filtered probes must
+    # never have been issued, or the refusal came after the tool had already drawn a conclusion.
+    assert stub.count("getIndexes") == 1, stub.received
+
+
+@check("m5 reads an omitted index key as 'unchanged', not as 'this library has no artists'")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    artists = {"index": [{"name": "A", "artist": [{"id": "ar-1", "name": "Alpha"}]}]}
+
+    def indexes(_call: int) -> dict:
+        # Anything the tool asks with a filter comes back WITHOUT an `index` key at all.
+        return {"indexes": {"lastModified": WATERMARK,
+                            **(artists if _call == 1 else {})}}
+
+    with Stub({"getScanStatus": settled(), "getIndexes": indexes}) as stub:
+        result = run(stub, "--only", "m5-if-modified-since", music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode == 0, result.stderr
+    line = next(l for l in result.stdout.splitlines() if l.startswith("OBSERVED m5-if-modified-since"))
+    observed = json.loads(line.split(" ", 2)[2])
+    assert observed["unchanged_response_omits_index_key"] is True, observed
+    assert observed["unchanged_response_still_carries_lastModified"] is True, observed
+    assert observed["responses"]["equal_to_watermark"]["index_key_present"] is False, observed
+
+
+@check("m6 refuses when no attempt ever put the question to the server")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    stamps = [f"2026-09-11T10:00:{second:02d}.000000-04:00" for second in range(1, 60)]
+
+    def status(call: int) -> dict:
+        # Every scan lands in its own wall-clock second, so the same-second window never opens.
+        return settled(stamps[min(call, len(stamps) - 1)], count=10 + call)
+
+    routes = {"getScanStatus": status, "startScan": settled(),
+              "getIndexes": {"indexes": {"lastModified": WATERMARK,
+                                         "index": [{"name": "A", "artist": [{"id": "1", "name": "A"}]}]}},
+              "search3": {"searchResult3": {"song": []}}}
+    with Stub(routes) as stub:
+        result = run(stub, "--only", "m6-same-second", "--attempts", "2",
+                     music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "never put to the server" in result.stderr, result.stderr
+    assert stub.count("startScan") >= 2, stub.received
+
+
+@check("--attempts below one is refused")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    with Stub({"getScanStatus": settled()}) as stub:
+        result = run(stub, "--only", "m6-same-second", "--attempts", "0",
+                     music=workspace, ffmpeg=ffmpeg)
+    assert result.returncode != 0, result.stdout
+    assert "--attempts must be at least 1" in result.stderr, result.stderr
+
+
+@check("the tool is executable and carries a shebang, like its conformance-env siblings")
+def _(workspace: Path, ffmpeg: Path) -> None:
+    assert os.access(TOOL, os.X_OK), f"{TOOL} is not executable"
+    assert TOOL.read_text().startswith("#!/usr/bin/env python3"), "missing shebang"
+    assert TOOL.suffix == "", f"{TOOL.name} should be extensionless"
+
+
+def main() -> None:
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as directory:
+        workspace = Path(directory)
+        ffmpeg = fake_ffmpeg(workspace)
+        for name, function in CHECKS:
+            try:
+                function(workspace, ffmpeg)
+                print(f"PASS {name}")
+            except AssertionError as error:
+                failures.append(f"{name}: {error}")
+                print(f"FAIL {name}: {error}")
+            except Exception as error:  # noqa: BLE001 - report whatever broke
+                failures.append(f"{name}: {type(error).__name__}: {error}")
+                print(f"ERROR {name}: {type(error).__name__}: {error}")
+    if failures:
+        raise SystemExit(f"MEASURE CHANGE DETECTION CONTROL FAILED checks={len(failures)}")
+    print(f"MEASURE CHANGE DETECTION CONTROL PASS checks={len(CHECKS)}")
+
+
+if __name__ == "__main__":
+    main()
