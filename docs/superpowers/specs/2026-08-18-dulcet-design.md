@@ -2101,6 +2101,84 @@ last fully scanned. Sync is never triggered by scrolling.
 
 ---
 
+### 16.7 Browse is not sync, and first paint is not a full import
+
+**OBSERVED 2026-09-10.** The interactive library read and the durable sync were the same call. The
+production `DulcetLibraryBrowsing` ran a whole §16.2 import — including the `getAlbum` per album and
+the §16.4 witness re-walk, which fetches every album again — and drew nothing until the sync
+committed. At the target scale of §16 that is thousands of requests before first paint, on every
+library open and every refresh tick. Measured against the pinned reference server, the interactive
+walk cost 11 requests for an 8-album corpus where 3 were needed.
+
+They are now two reads with two jobs:
+
+| | interactive read (`LibraryBrowser`) | sync (`LibrarySyncEngine`) |
+|---|---|---|
+| what it answers | what the album grid draws | the durable, generation-pinned library |
+| requests | `getMusicFolders` + `getArtists` + one page, then windows of `albumConcurrency` pages | §16.2, unchanged |
+| growth | **does not grow per album** | one `getAlbum` per album, plus the witness re-walk |
+| tracks | one album at a time, when that album is opened | every album |
+| visible to the user | immediately | when the generation commits |
+
+**This does not weaken §16.3.** The interactive read is not a read of the local database and is never
+presented as a committed generation; a partially completed scan is still never visible. What the
+person sees before the first commit is a complete, self-consistent read of the server's album list
+at one moment, which is exactly what `LibraryBrowser` has always been.
+
+Three properties are normative:
+
+1. **`getAlbumList2` carries `songCount`**, so an album's track count is drawn without its track
+   list. An album that has not been read is distinguishable from an album with no tracks — collapsing
+   those two into one empty list is what makes a lazy track list unsafe.
+2. **The interactive read is bounded as an OPERATION, not only per request.** Each request was
+   already bounded (30 s in `AuthenticatedEndpointClient`); a walk of N requests was not. Exceeding
+   the operation budget is a reported `Transport.Timeout`, never a short library presented as a
+   complete one.
+3. **Page windows are a round-trip optimisation only.** Pages are merged in offset order and the
+   walk still stops at the first short page, so the album order and the dedupe are identical to the
+   one-page-at-a-time walk of §16.5.2. A window that contributes no unseen album id also ends the
+   walk, because a server that keeps answering albums we already have is not offering more.
+
+**The two publications, and their order.** One library open publishes at most twice: a `preview`
+and then the authoritative `loaded`. They are distinct outcomes, not two shapes of one, because
+everything a caller does *because an open finished* — releasing the operation that can cancel the
+sync, starting the refresh cadence — is wrong to do while the authoritative read is still running.
+Two rules bind, and each is enforced at the consumer rather than assumed of the producer:
+
+- **A preview is not an ending.** It never releases the operation and never starts the cadence.
+- **An ending is final.** A preview delivered after the authoritative result is discarded. The two
+  reads run on separate HTTP clients, so their order is a race, not a guarantee.
+
+A preview *failure* is never published — only the sync can put the library into an error state —
+and a sync failure is not published once a preview has succeeded, because that preview is a live
+read of this server and the error is not about what is on screen.
+
+**Ordering belongs to the client.** `getAlbumList2?type=alphabeticalByName` uses the server's
+collation; `selectAlbumsAtGeneration` uses `ORDER BY title COLLATE NOCASE, raw_id`. Both are
+"sorted" and they are not the same sort, so a grid drawn from one and redrawn from the other
+reshuffles under the reader. The client owns the display order and applies it to both, with an
+ASCII-only case fold to match `NOCASE` exactly.
+
+🚨 **A short page does not prove the end of the list.** Revision 96 inherited §16.5.2's "page until
+a short or empty page", which is only safe while the requested size never exceeds what the server
+will serve. **OBSERVED 2026-09-11** against the pinned reference server (Navidrome 0.63.2, a
+disposable copy seeded to 1,208 albums): `size=499` returns 499, `size=500` returns 500, and
+`size=501`, `600`, `1000` and `5000` all return **500**, with `status="ok"` and no indication of
+truncation. Measured through the production client, a walk that believed a short page reported
+`Loaded` with **500 of 1,208 albums** — a truncated library presented as a complete one. So the
+walk advances by what the server **returned**, never by what was asked for, and ends only on an
+empty page or one shorter than the largest page that server has returned. The look-ahead window
+opens only after a page has come back at exactly the requested size. `size` is additionally capped
+at the documented protocol maximum of 500.
+
+**Consequence for the queue.** §14.1's "catalog absence proves only that a selection cannot resolve
+now" becomes load-bearing: right after a first paint the catalog is empty because nobody has read any
+album's tracks, so restoration must not act on it at all. The platform controller checks the
+persisted queue's own current entry against the catalog and stays silent until the catalog can speak
+about it; the library calls restoration again as each album's tracks arrive.
+
+---
+
 ## 17. Server quirks register
 
 **QUIRK-01 — `.view` suffix acceptance.** Navidrome registers both `/<path>` and `/<path>.view` for
@@ -3415,6 +3493,29 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 97 (2026-09-11)** — §16.7 corrects revision 96 on three points found by independent
+review. A short page does not prove the end of the list: the reference server silently caps `size`
+at 500, and a walk that trusted the requested size reported 500 of 1,208 albums as a complete
+library (OBSERVED through the production client). Paging now advances by what was returned and
+ends only on an empty or genuinely-short page, with `size` capped at the protocol maximum. The
+preview/committed contract is stated in both directions — a preview is not an ending, and an
+ending is final — because enforcing only the first left a late preview able to blank the library.
+And the display order is the client's, applied to both publications, because the server's
+collation and `ORDER BY title COLLATE NOCASE, raw_id` disagree and the grid reshuffled under the
+reader. CORPUS line 11 is narrowed to say what it always meant: generation pinning governs reads
+of the local database, and the interactive read is not one.
+
+**Revision 96 (2026-09-10)** — §16.7 separates the interactive library read from the sync. The
+production library browse ran a full §16.2 import, witness re-walk included, before drawing
+anything; first paint is now a constant number of round trips and track lists are read per album on
+open. `getAlbumList2`'s `songCount` is parsed so the grid draws a track count without a track list,
+and `tracksLoaded` keeps "not read yet" distinct from "no tracks". The interactive read gains an
+OPERATION-level deadline — per-request budgets were already in place and are unchanged — which
+reports `Transport.Timeout` rather than publishing a truncated library. Album paging reads look-ahead
+windows concurrently while preserving the sequential order, dedupe and short-page termination of
+§16.5.2. §16.3's commit model is unchanged: the interactive read is never presented as a committed
+generation.
 
 **Revision 95 (2026-09-08)** — §14.1 corrects revision 94's unsafe deletion policy. Catalog absence
 proves only that a selection cannot resolve now, not that its queue entry no longer exists. Recovery

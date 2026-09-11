@@ -228,6 +228,16 @@ public struct DulcetLibraryBrowseRequest: Sendable,
 }
 
 public enum DulcetLibraryBrowseOutcome: Sendable {
+    /// A fast, incomplete first paint. Albums carry no track lists, and the SAME operation will
+    /// deliver again. A preview is deliberately not a `.loaded`: everything a caller does once a
+    /// library open has finished — releasing the operation, starting the refresh cadence — is
+    /// wrong to do while the authoritative read is still in flight.
+    case preview(
+        musicFolders: [DulcetMusicFolder],
+        artists: [DulcetArtist],
+        albums: [DulcetAlbum]
+    )
+    /// The authoritative result of this open. Nothing further is delivered for it.
     case loaded(
         musicFolders: [DulcetMusicFolder],
         artists: [DulcetArtist],
@@ -247,6 +257,23 @@ public protocol DulcetLibraryBrowsing: AnyObject {
     func browse(
         _ request: DulcetLibraryBrowseRequest,
         completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation
+}
+
+public enum DulcetAlbumTracksOutcome: Sendable {
+    case loaded([DulcetTrack])
+    case failed(DulcetLibraryFailure)
+    case cancelled
+}
+
+/// Reading one album's track list. Separate from `DulcetLibraryBrowsing` because a browser that
+/// serves a committed local snapshot already has every track and never needs it.
+@MainActor
+public protocol DulcetAlbumTracksLoading: AnyObject {
+    func loadAlbumTracks(
+        _ request: DulcetLibraryBrowseRequest,
+        albumRawID: String,
+        completion: @escaping @MainActor (DulcetAlbumTracksOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation
 }
 
@@ -445,6 +472,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var libraryMusicFolders: [DulcetMusicFolder] = []
     private var libraryArtists: [DulcetArtist] = []
     private var libraryAlbums: [DulcetAlbum] = []
+    private var activeAlbumTracksOperation: (any DulcetLibraryBrowseOperation)?
+    private var albumTracksGeneration = 0
+    private var selectedAlbumTracksFailure: DulcetLibraryFailure?
+    /// Whether the library currently held was read to completion for the current connection.
+    private var libraryReadCompleted = false
 
     static let defaultSearchDebounce: Duration = .milliseconds(250)
     private static let searchPageSize = 20
@@ -546,7 +578,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
             case .library:
                 cancelSearchRequest()
-                openLibrary()
+                openLibrary(reason: .entered)
             case .search:
                 cancelLibraryBrowse()
                 openSearch()
@@ -568,17 +600,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             activateSearchResult(id)
         case let .selectAlbum(id):
             guard currentSnapshot.selectedDestination == .library,
-                  let album = currentSnapshot.albums.first(where: { $0.id == id }) else { return }
-            publish(
-                state: .albumDetailMultiDisc,
-                destination: .library,
-                form: currentSnapshot.accountForm,
-                status: currentSnapshot.accountConnection,
-                musicFolders: currentSnapshot.musicFolders,
-                artists: currentSnapshot.artists,
-                albums: currentSnapshot.albums,
-                selectedAlbum: album
-            )
+                  libraryAlbums.contains(where: { $0.id == id }) else { return }
+            presentAlbum(id, loadingTracks: true)
+        case .retryAlbumTracks:
+            guard let album = currentSnapshot.selectedAlbum else { return }
+            presentAlbum(album.id, loadingTracks: true)
         case let .playLibrary(shuffle):
             let tracks = currentSnapshot.albums.flatMap(\.tracks) + currentSnapshot.looseTracks
             guard !tracks.isEmpty else { return }
@@ -641,6 +667,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func submit(_ request: DulcetAccountConnectRequest) {
         cancelLibraryBrowse()
         cancelLibraryRefresh()
+        // Whatever is held describes the connection being replaced, so it stops being an answer
+        // even if this submission is for the same server.
+        libraryReadCompleted = false
         // Where the person was when they asked to connect. Reconnect is reachable from the library
         // surface now, and sending them to settings on success answers a request they did not make:
         // they pressed Reconnect on the library screen to see their library.
@@ -677,7 +706,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                         status: .connected(account)
                     )
                     if origin == .library {
-                        self.openLibrary()
+                        // A connection was just established, so anything held is another session's.
+                        self.openLibrary(reason: .connected)
                     }
                 } catch {
                     let failure = DulcetAccountErrorPresenter.presentation(
@@ -721,7 +751,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         selectedAlbum: DulcetAlbum? = nil,
         selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
-        nowPlaying: DulcetNowPlaying? = nil
+        nowPlaying: DulcetNowPlaying? = nil,
+        selectedAlbumTracksFailure: DulcetLibraryFailure? = nil
     ) {
         currentSnapshot = Self.snapshot(
             state: state,
@@ -735,6 +766,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedArtist: selectedArtist,
             libraryFailure: libraryFailure,
             nowPlaying: nowPlaying,
+            selectedAlbumTracksFailure: selectedAlbumTracksFailure,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,
@@ -757,6 +789,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
+        selectedAlbumTracksFailure: DulcetLibraryFailure? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -799,11 +832,53 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             accountForm: form,
             accountConnection: status,
             accountRemoval: accountRemoval,
-            libraryFailure: libraryFailure
+            libraryFailure: libraryFailure,
+            selectedAlbumTracksFailure: selectedAlbumTracksFailure
         )
     }
 
-    private func openLibrary(selecting selection: DulcetLibrarySelection? = nil) {
+    /// Why the library surface is being opened. Only one of these is a reason to contact the
+    /// server again, which is the whole point of naming them: re-entering a screen is not an
+    /// event about the library, it is an event about navigation.
+    private enum DulcetLibraryOpenReason {
+        /// The person navigated to the library, or activated a search result that lives in it.
+        /// Whatever is already held is still the answer.
+        case entered
+        /// A connection was just established. Anything held describes a different session.
+        case connected
+        /// The refresh cadence elapsed. Reading is what the cadence is for.
+        case refresh
+    }
+
+    /// The read policy, in one place because the previous behaviour was not a policy — it was the
+    /// absence of one, and it re-read the whole library on every tap of the Library button.
+    ///
+    /// A read happens when there is nothing held (first entry, or the held data was invalidated),
+    /// when the previous attempt failed (the error surface's Try Again re-enters), when a
+    /// connection is established, and when the cadence elapses. It does NOT happen because
+    /// somebody came back to the screen. Staleness is already the cadence's job; adding a second,
+    /// implicit staleness rule keyed on navigation would mean the library is re-read as often as
+    /// the person happens to tab around, which is not a property anyone chose.
+    private func openLibrary(
+        reason: DulcetLibraryOpenReason,
+        selecting selection: DulcetLibrarySelection? = nil
+    ) {
+        if reason == .entered, libraryReadCompleted, currentSnapshot.accountConnection.isConnected {
+            // Deliberately before the cancels below: the refresh cadence measures time since the
+            // last full read and must keep running across navigation, and there is no in-flight
+            // read to cancel because a completed one is what got us here.
+            //
+            // Held data answers navigation only when it can actually answer it. A search can
+            // return an album the last read did not include — the server has it and we simply
+            // have not looked since — so an unsatisfiable selection falls through and reads
+            // rather than dropping the person on the grid they did not ask for.
+            if let selection {
+                if presentLibrarySelection(selection) { return }
+            } else {
+                republishHeldLibrary()
+                return
+            }
+        }
         cancelLibraryBrowse()
         cancelLibraryRefresh()
         guard case let .connected(account) = currentSnapshot.accountConnection else {
@@ -852,6 +927,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryGeneration += 1
         let requestGeneration = libraryGeneration
         let form = currentSnapshot.accountForm
+        // A read that has started has not finished. If it is cancelled — by leaving the screen,
+        // reconnecting, or removing the account — re-entering must read again rather than redraw
+        // a half-answered library.
+        libraryReadCompleted = false
         publish(
             state: .libraryLoading,
             destination: .library,
@@ -868,9 +947,32 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             guard let self,
                   self.libraryGeneration == requestGeneration,
                   self.currentSnapshot.selectedDestination == .library else { return }
-            self.activeLibraryOperation = nil
             switch outcome {
+            case let .preview(musicFolders, artists, albums):
+                // An ending is final. `.preview` makes "a preview is not an ending"
+                // unrepresentable; this is the other half. A preview delivered after this open's
+                // authoritative result would replace a complete library with a track-less one —
+                // measured against the real data source as `areTracksLoaded` true->false,
+                // `tracks` 1->0 and restoration coverage `.wholeLibrary`->`.partial`. The
+                // producer happens not to do that today, but ordering across two HTTP clients is
+                // not something a consumer can assume, so it is enforced here.
+                guard !self.libraryReadCompleted else { return }
+                // The operation is deliberately NOT released and the refresh cadence is
+                // deliberately NOT started: the authoritative read is still running. Releasing it
+                // would leave a sync nothing can cancel, and starting the cadence here would
+                // measure from first paint rather than from the last completed read — so a sync
+                // slower than the cadence would have a refresh fired on top of it.
+                self.publishLoadedLibrary(
+                    musicFolders: musicFolders,
+                    artists: artists,
+                    albums: albums,
+                    form: form,
+                    status: self.currentSnapshot.accountConnection,
+                    selection: selection
+                )
             case let .loaded(musicFolders, artists, albums):
+                self.activeLibraryOperation = nil
+                self.libraryReadCompleted = true
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
@@ -881,6 +983,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
                 self.scheduleLibraryRefresh()
             case let .failed(failure):
+                self.activeLibraryOperation = nil
                 self.publish(
                     state: .libraryError,
                     destination: .library,
@@ -889,7 +992,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     libraryFailure: failure
                 )
             case .cancelled:
-                break
+                self.activeLibraryOperation = nil
             }
         }
         if libraryGeneration == requestGeneration,
@@ -919,9 +1022,24 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             guard let self,
                   self.libraryGeneration == requestGeneration,
                   self.currentSnapshot.selectedDestination == .library else { return }
-            self.activeLibraryOperation = nil
             switch outcome {
+            case let .preview(musicFolders, artists, albums):
+                // A committed read is answered from the local database in one step, so this
+                // cannot happen. It is handled as what `.preview` MEANS rather than folded in
+                // with `.loaded`: the operation is not released and the read is not recorded as
+                // complete. Conflating the two here was how the handle came to be released
+                // before the case that decides whether releasing it is correct.
+                self.publishLoadedLibrary(
+                    musicFolders: musicFolders,
+                    artists: artists,
+                    albums: albums,
+                    form: form,
+                    status: status,
+                    selection: selection
+                )
             case let .loaded(musicFolders, artists, albums):
+                self.activeLibraryOperation = nil
+                self.libraryReadCompleted = true
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
                     artists: artists,
@@ -931,6 +1049,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     selection: selection
                 )
             case .failed:
+                self.activeLibraryOperation = nil
                 self.publish(
                     state: .accountSavedDisconnected,
                     destination: .library,
@@ -938,7 +1057,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: status
                 )
             case .cancelled:
-                break
+                self.activeLibraryOperation = nil
             }
         }
         if libraryGeneration == requestGeneration,
@@ -958,7 +1077,15 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryMusicFolders = musicFolders
         libraryArtists = artists
         libraryAlbums = albums.map { applyingDownloadStates(to: $0) }
-        playbackController?.restorePersistedQueue(with: libraryAlbums.flatMap(\.tracks))
+        cancelAlbumTracks()
+        selectedAlbumTracksFailure = nil
+        // The catalog is whatever tracks are known right now, which after a first paint is
+        // nothing. The controller decides whether that covers the saved queue; handing it a
+        // catalog that does not is how a saved playback position gets thrown away.
+        playbackController?.restorePersistedQueue(
+            with: libraryAlbums.flatMap(\.tracks),
+            catalogCoverage: libraryCatalogCoverage
+        )
         if let selection {
             if presentLibrarySelection(selection) {
                 return
@@ -971,6 +1098,23 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 libraryFailure: DulcetLibraryFailure(kind: .protocol)
             )
             return
+        }
+        // A library open publishes more than once, and the later publication can land while the
+        // person is reading an album or an artist. Put them back where they were rather than
+        // throwing them out to the grid.
+        if selection == nil, currentSnapshot.selectedDestination == .library {
+            if currentSnapshot.state == .albumDetailMultiDisc,
+               let id = currentSnapshot.selectedAlbum?.id,
+               libraryAlbums.contains(where: { $0.id == id }) {
+                presentAlbum(id, loadingTracks: true)
+                return
+            }
+            if currentSnapshot.state == .artistDetail,
+               let id = currentSnapshot.selectedArtist?.id,
+               libraryArtists.contains(where: { $0.id == id }) {
+                _ = presentLibrarySelection(.artist(id))
+                return
+            }
         }
         publish(
             state: albums.isEmpty && artists.isEmpty
@@ -985,6 +1129,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         )
     }
 
+    /// Called only from a FINAL publication, so the cadence measures time since the library was
+    /// last read in full — never time since a preview painted the grid.
     private func scheduleLibraryRefresh() {
         guard case .connected = currentSnapshot.accountConnection else { return }
         libraryRefreshOperation = libraryRefreshScheduler.schedule(
@@ -994,7 +1140,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.libraryRefreshOperation = nil
             if self.currentSnapshot.selectedDestination == .library,
                case .connected = self.currentSnapshot.accountConnection {
-                self.openLibrary()
+                self.openLibrary(reason: .refresh)
             } else if case .connected = self.currentSnapshot.accountConnection {
                 self.scheduleLibraryRefresh()
             }
@@ -1004,17 +1150,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func presentLibrarySelection(_ selection: DulcetLibrarySelection) -> Bool {
         switch selection {
         case let .album(id):
-            guard let album = libraryAlbums.first(where: { $0.id == id }) else { return false }
-            publish(
-                state: .albumDetailMultiDisc,
-                destination: .library,
-                form: currentSnapshot.accountForm,
-                status: currentSnapshot.accountConnection,
-                musicFolders: libraryMusicFolders,
-                artists: libraryArtists,
-                albums: libraryAlbums,
-                selectedAlbum: album
-            )
+            guard libraryAlbums.contains(where: { $0.id == id }) else { return false }
+            presentAlbum(id, loadingTracks: true)
         case let .artist(id):
             guard let artist = libraryArtists.first(where: { $0.id == id }) else { return false }
             publish(
@@ -1031,11 +1168,117 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         return true
     }
 
+    /// Shows one album, and reads its track list if nobody has yet. The grid draws from the
+    /// album list alone, so an album arrives here with `areTracksLoaded == false` and an empty
+    /// `tracks` — the detail view shows its own loading row until this completes.
+    private func presentAlbum(_ id: DulcetProviderItemID, loadingTracks: Bool) {
+        cancelAlbumTracks()
+        selectedAlbumTracksFailure = nil
+        guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
+        publishAlbumDetail(album)
+        guard loadingTracks, !album.areTracksLoaded else { return }
+        guard let loader = libraryBrowser as? any DulcetAlbumTracksLoading,
+              case let .connected(account) = currentSnapshot.accountConnection else { return }
+        albumTracksGeneration += 1
+        let requestGeneration = albumTracksGeneration
+        let form = currentSnapshot.accountForm
+        let operation = loader.loadAlbumTracks(
+            DulcetLibraryBrowseRequest(
+                providerInstanceID: providerInstanceID ?? providerInstanceIDFactory(),
+                normalizedServerURL: account.normalizedServerURL,
+                username: form.username,
+                password: form.password,
+                allowLocalHTTP: form.allowLocalHTTP
+            ),
+            albumRawID: id.rawID
+        ) { [weak self] outcome in
+            guard let self, self.albumTracksGeneration == requestGeneration else { return }
+            self.activeAlbumTracksOperation = nil
+            switch outcome {
+            case let .loaded(tracks):
+                self.adoptAlbumTracks(tracks, for: id)
+            case let .failed(failure):
+                self.selectedAlbumTracksFailure = failure
+                guard let album = self.libraryAlbums.first(where: { $0.id == id }) else { return }
+                self.publishAlbumDetail(album)
+            case .cancelled:
+                break
+            }
+        }
+        if albumTracksGeneration == requestGeneration {
+            activeAlbumTracksOperation = operation
+        }
+    }
+
+    private func adoptAlbumTracks(_ tracks: [DulcetTrack], for id: DulcetProviderItemID) {
+        libraryAlbums = libraryAlbums.map { album in
+            album.id == id
+                ? applyingDownloadStates(to: album.adoptingLoadedTracks(tracks))
+                : album
+        }
+        guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
+        // A queue saved from this album can now be restored, because its tracks are known.
+        playbackController?.restorePersistedQueue(
+            with: libraryAlbums.flatMap(\.tracks),
+            catalogCoverage: libraryCatalogCoverage
+        )
+        guard currentSnapshot.state == .albumDetailMultiDisc,
+              currentSnapshot.selectedAlbum?.id == id else { return }
+        publishAlbumDetail(album)
+    }
+
+    private func publishAlbumDetail(_ album: DulcetAlbum) {
+        publish(
+            state: .albumDetailMultiDisc,
+            destination: .library,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection,
+            musicFolders: libraryMusicFolders,
+            artists: libraryArtists,
+            albums: libraryAlbums,
+            selectedAlbum: album,
+            selectedAlbumTracksFailure: selectedAlbumTracksFailure
+        )
+    }
+
+    /// A catalog assembled from albums that have not all been read cannot say an entry is gone.
+    private var libraryCatalogCoverage: DulcetLibraryCatalogCoverage {
+        libraryAlbums.allSatisfy(\.areTracksLoaded) ? .wholeLibrary : .partial
+    }
+
+    /// Redraws the library already held, without contacting the server.
+    ///
+    /// This deliberately publishes the GRID rather than restoring whichever album or artist was
+    /// last open. `selectDestination(.library)` is also the only way back out of an album on this
+    /// surface — there is no separate back action — so restoring the detail here would leave the
+    /// grid unreachable.
+    private func republishHeldLibrary() {
+        publish(
+            state: libraryAlbums.isEmpty && libraryArtists.isEmpty
+                ? .emptyLibraryConnected
+                : .libraryBrowse,
+            destination: .library,
+            form: currentSnapshot.accountForm,
+            status: currentSnapshot.accountConnection,
+            musicFolders: libraryMusicFolders,
+            artists: libraryArtists,
+            albums: libraryAlbums
+        )
+    }
+
+    private func cancelAlbumTracks() {
+        albumTracksGeneration += 1
+        let operation = activeAlbumTracksOperation
+        activeAlbumTracksOperation = nil
+        operation?.cancel()
+    }
+
     private func cancelLibraryBrowse() {
         libraryGeneration += 1
         let operation = activeLibraryOperation
         activeLibraryOperation = nil
         operation?.cancel()
+        cancelAlbumTracks()
     }
 
     private func cancelLibraryRefresh() {
@@ -1267,10 +1510,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             ))
         case .album:
             cancelSearchRequest()
-            openLibrary(selecting: .album(id))
+            // Showing one album from a search result is navigation, not a reason to re-read.
+            openLibrary(reason: .entered, selecting: .album(id))
         case .artist:
             cancelSearchRequest()
-            openLibrary(selecting: .artist(id))
+            openLibrary(reason: .entered, selecting: .artist(id))
         }
     }
 
@@ -1383,6 +1627,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryMusicFolders = []
         libraryArtists = []
         libraryAlbums = []
+        libraryReadCompleted = false
         searchQuery = ""
         searchResults = []
         searchHasMoreKinds = []

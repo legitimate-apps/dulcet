@@ -622,7 +622,35 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(firstCommitted.generation, 1)
         XCTAssertEqual(library.startedSyncCount, 1)
         XCTAssertEqual(library.displayedCommittedGenerations, [firstCommitted.generation])
+        // The fast preview is what removes the wait; asserting only the committed result would
+        // pass whether or not it ran. Within one open a preview can only arrive before the
+        // commit, so an out-of-order pair means the preview lost its race and was published on
+        // top of the committed library.
+        // Why an exact sequence and not just an invariant. Within one open a preview can only be
+        // delivered before the commit, because a late one is discarded at both ends. That the
+        // preview WINS is a race assertion, not a guarantee: it issues far fewer requests than
+        // the sync, but on a SEPARATE HTTP client, and this repository has measured a 30.3 s
+        // loopback stall — so one stalled preview request could lose to an entire sync. Keeping
+        // the assertion is deliberate: the preview losing is the feature not working, which is
+        // worth failing on rather than tolerating.
+        XCTAssertEqual(library.publicationOrder, ["preview", "committed"])
+        // Order-free invariant, so a future reordering cannot quietly retire the control above.
+        // This is a PAIRING, not a count: it rejects ["committed", "preview"] — which a count
+        // equality accepts — and it requires at least one pair, so it cannot pass vacuously.
+        XCTAssertFalse(library.publicationOrder.isEmpty)
+        XCTAssertEqual(
+            stride(from: 0, to: library.publicationOrder.count, by: 2).map {
+                Array(library.publicationOrder[$0 ..< min($0 + 2, library.publicationOrder.count)])
+            }.filter { $0 != ["preview", "committed"] },
+            []
+        )
         assertDisplayedLibrary(store.snapshot, equals: firstCommitted.library)
+        // The grid must not reshuffle when the committed publication replaces the preview. The
+        // two came from different sources with different collations and nothing compared them.
+        XCTAssertEqual(
+            library.previewAlbumOrder,
+            firstCommitted.library.albums.map(\.rawId)
+        )
         XCTAssertEqual(refreshScheduler.scheduledCount, 1)
         try await waitUntil(
             timeout: .seconds(90),
@@ -637,6 +665,20 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(secondCommitted.generation, 2)
         XCTAssertEqual(library.startedSyncCount, 2)
         XCTAssertEqual(library.displayedCommittedGenerations, [1, 2])
+        XCTAssertEqual(
+            library.publicationOrder,
+            ["preview", "committed", "preview", "committed"]
+        )
+        // Order-free invariant, so a future reordering cannot quietly retire the control above.
+        // This is a PAIRING, not a count: it rejects ["committed", "preview"] — which a count
+        // equality accepts — and it requires at least one pair, so it cannot pass vacuously.
+        XCTAssertFalse(library.publicationOrder.isEmpty)
+        XCTAssertEqual(
+            stride(from: 0, to: library.publicationOrder.count, by: 2).map {
+                Array(library.publicationOrder[$0 ..< min($0 + 2, library.publicationOrder.count)])
+            }.filter { $0 != ["preview", "committed"] },
+            []
+        )
         assertDisplayedLibrary(store.snapshot, equals: secondCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 2)
 
@@ -678,6 +720,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(reopenedLibrary.startedSyncCount, 0)
         XCTAssertEqual(reopenedLibrary.completedSyncGenerations, [])
         XCTAssertEqual(reopenedLibrary.displayedCommittedGenerations, [2])
+        // A saved-account reopen reads the committed library only: no server is contacted, so
+        // it publishes once and there is no preview at all.
+        XCTAssertEqual(reopenedLibrary.publicationOrder, ["committed"])
+        XCTAssertEqual(reopenedLibrary.deliveredPreviewCount, 0)
         assertDisplayedLibrary(reopenedStore.snapshot, equals: secondCommitted.library)
 
         print(
@@ -1138,7 +1184,10 @@ private final class SearchIntentPlaybackController: DulcetPlaybackControlling {
     }
 
     func configure(account: DulcetPlaybackAccount) {}
-    func restorePersistedQueue(with tracks: [DulcetTrack]) {}
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    ) {}
 
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
         queueReplacementCount += 1

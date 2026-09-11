@@ -124,12 +124,26 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         start(transition.startDirective)
     }
 
-    func restorePersistedQueue(with tracks: [DulcetTrack]) {
+    /// Restores the saved queue from the tracks the library can currently speak for.
+    ///
+    /// The core reads the supplied catalog as "what can resolve now" and clears the saved
+    /// selection when the current entry is missing from it, so no launch keeps trying to start
+    /// something unresolvable. That is right only when the catalog is authoritative. Track lists
+    /// are now read one album at a time, so right after a first paint the catalog is empty
+    /// because nobody has read any album — not because the queue is gone. Under
+    /// `.partial` coverage this therefore says nothing at all until the catalog can speak about
+    /// the current entry, and the library calls it again as each album's tracks arrive. Under
+    /// `.wholeLibrary` the behaviour is unchanged.
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    ) {
         guard let account else { return }
         catalog.merge(
             Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) }),
             uniquingKeysWith: { _, latest in latest }
         )
+        if catalogCoverage == .partial, !catalogCoversPersistedSelection() { return }
         let transition = queueClient.restoreCurrentPausedWithCatalog(
             providerInstanceId: account.providerInstanceId,
             availableRawIds: tracks.filter {
@@ -143,6 +157,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         // A bypass has no playback work and must not republish a live session's snapshot.
         guard let directive = transition.startDirective else { return }
         start(directive)
+    }
+
+    /// Whether the merged catalog holds the entry the saved queue is currently pointing at.
+    /// A queue with no saved selection has nothing to restore either way.
+    private func catalogCoversPersistedSelection() -> Bool {
+        guard let persisted = queueClient.snapshot().snapshot else { return false }
+        let currentIndex = Int(persisted.currentIndex)
+        guard currentIndex >= 0, currentIndex < persisted.entries.count else { return false }
+        let entry = persisted.entries[currentIndex]
+        return catalog[DulcetProviderItemID(
+            providerInstanceID: entry.providerInstanceId,
+            rawID: entry.rawId
+        )] != nil
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {

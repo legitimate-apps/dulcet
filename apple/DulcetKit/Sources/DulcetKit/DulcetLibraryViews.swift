@@ -146,7 +146,11 @@ struct DulcetLibraryErrorView: View {
         .dulcetForeground(.primaryTextOnWindow)
     }
 
-    private var message: String {
+    private var message: String { Self.message(for: failure) }
+
+    /// Shared with the album-detail track-list failure so one library failure kind cannot be
+    /// explained two different ways.
+    static func message(for failure: DulcetLibraryFailure?) -> String {
         switch failure?.kind {
         case .timeout: DulcetStrings.libraryErrorTimeout
         case .authentication: DulcetStrings.libraryErrorAuthentication
@@ -222,7 +226,9 @@ struct DulcetLibraryBrowseView: View {
     var onShuffle: () -> Void = {}
 
     private var totalTracks: Int {
-        snapshot.albums.reduce(0) { $0 + $1.tracks.count } + snapshot.looseTracks.count
+        // The album list declares each album's track count, so this is right before any track
+        // list has been read.
+        snapshot.albums.reduce(0) { $0 + $1.trackCount } + snapshot.looseTracks.count
     }
 
     var body: some View {
@@ -238,6 +244,7 @@ struct DulcetLibraryBrowseView: View {
                             albumCount: snapshot.albums.count,
                             trackCount: totalTracks
                         ),
+                        playbackEnabled: snapshot.canPlayWholeLibrary,
                         onPlayAll: onPlayAll,
                         onShuffle: onShuffle
                     )
@@ -306,6 +313,7 @@ struct DulcetLibraryBrowseView: View {
 struct DulcetLibraryHeader: View {
     let title: String
     let subtitle: String
+    var playbackEnabled = true
     var onPlayAll: () -> Void = {}
     var onShuffle: () -> Void = {}
 
@@ -325,9 +333,13 @@ struct DulcetLibraryHeader: View {
                 Button(DulcetStrings.playAll, systemImage: "play.fill", action: onPlayAll)
                     .buttonStyle(.borderedProminent)
                     .dulcetDefaultActionShortcut()
+                    .disabled(!playbackEnabled)
+                    .help(playbackEnabled ? DulcetStrings.playAll : DulcetStrings.libraryTracksLoading)
                     .accessibilityLabel(DulcetStrings.playAll)
                 Button(DulcetStrings.shuffle, systemImage: "shuffle", action: onShuffle)
                     .buttonStyle(.bordered)
+                    .disabled(!playbackEnabled)
+                    .help(playbackEnabled ? DulcetStrings.shuffle : DulcetStrings.libraryTracksLoading)
                     .accessibilityLabel(DulcetStrings.shuffle)
             }
         }
@@ -364,7 +376,7 @@ struct DulcetAlbumShelfItem: View {
                     .font(.subheadline)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                Text(DulcetStrings.trackCount(album.tracks.count))
+                Text(DulcetStrings.trackCount(album.trackCount))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
@@ -375,7 +387,7 @@ struct DulcetAlbumShelfItem: View {
         .accessibilityLabel(DulcetStrings.albumAccessibility(
             album.title,
             artists: DulcetStrings.artistNames(album.albumArtists),
-            tracks: DulcetStrings.trackCount(album.tracks.count)
+            tracks: DulcetStrings.trackCount(album.trackCount)
         ))
         .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
     }
@@ -598,15 +610,23 @@ struct DulcetTrackRow: View {
 struct DulcetAlbumDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let album: DulcetAlbum
+    var tracksFailure: DulcetLibraryFailure?
     var onPlay: () -> Void = {}
     var onShuffle: () -> Void = {}
     var onActivateTrack: (DulcetTrack) -> Void = { _ in }
     var onDownloadTrack: ((DulcetTrack) -> Void)?
+    var onRetryTracks: () -> Void = {}
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
                 albumHeader
+
+                if let tracksFailure {
+                    trackListFailure(tracksFailure)
+                } else if !album.areTracksLoaded {
+                    trackListLoading
+                }
 
                 ForEach(album.discNumbers, id: \.self) { disc in
                     VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
@@ -642,6 +662,32 @@ struct DulcetAlbumDetailView: View {
         .navigationTitle(album.title)
     }
 
+    private var trackListLoading: some View {
+        HStack(spacing: DulcetSpacing.sm) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityHidden(true)
+            Text(DulcetStrings.albumTracksLoading)
+                .dulcetForeground(.secondaryTextOnWindow)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(DulcetStrings.albumTracksLoading)
+    }
+
+    private func trackListFailure(_ failure: DulcetLibraryFailure) -> some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            Label(DulcetStrings.albumTracksErrorTitle, systemImage: "exclamationmark.triangle")
+                .font(.headline)
+            Text(DulcetLibraryErrorView.message(for: failure))
+                .dulcetForeground(.secondaryTextOnWindow)
+                .lineLimit(nil)
+            Button(DulcetStrings.albumTracksRetry, systemImage: "arrow.clockwise", action: onRetryTracks)
+                .buttonStyle(.bordered)
+                .accessibilityLabel(DulcetStrings.albumTracksRetry)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder
     private var albumHeader: some View {
         if dynamicTypeSize.isAccessibilitySize {
@@ -675,7 +721,7 @@ struct DulcetAlbumDetailView: View {
                 .lineLimit(nil)
             Text(DulcetStrings.albumMetadata(
                 year: album.year,
-                tracks: DulcetStrings.trackCount(album.tracks.count),
+                tracks: DulcetStrings.trackCount(album.trackCount),
                 duration: album.totalDuration.dulcetDuration
             ))
                 .font(.subheadline)
@@ -689,9 +735,11 @@ struct DulcetAlbumDetailView: View {
             Button(DulcetStrings.play, systemImage: "play.fill", action: onPlay)
                 .buttonStyle(.borderedProminent)
                 .dulcetDefaultActionShortcut()
+                .disabled(album.tracks.isEmpty)
                 .accessibilityLabel(DulcetStrings.play)
             Button(DulcetStrings.shuffle, systemImage: "shuffle", action: onShuffle)
                 .buttonStyle(.bordered)
+                .disabled(album.tracks.isEmpty)
                 .accessibilityLabel(DulcetStrings.shuffle)
         }
     }

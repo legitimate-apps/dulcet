@@ -447,6 +447,7 @@ private struct DulcetStateSurface: View {
             if let album = snapshot.selectedAlbum {
                 DulcetAlbumDetailView(
                     album: album,
+                    tracksFailure: snapshot.selectedAlbumTracksFailure,
                     onPlay: { store.playAlbum(album.id, shuffle: false) },
                     onShuffle: { store.playAlbum(album.id, shuffle: true) },
                     onActivateTrack: { track in
@@ -454,7 +455,8 @@ private struct DulcetStateSurface: View {
                     },
                     onDownloadTrack: store.downloadsEnabled
                         ? { track in store.downloadTrack(track.id) }
-                        : nil
+                        : nil,
+                    onRetryTracks: { store.retryAlbumTracks() }
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)

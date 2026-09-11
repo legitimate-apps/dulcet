@@ -204,6 +204,13 @@ public enum DulcetAccountConnectOutcome: Sendable, Hashable {
     case failed(DulcetAccountFailurePresentation)
 }
 
+public extension DulcetAccountConnectionStatus {
+    var isConnected: Bool {
+        if case .connected = self { return true }
+        return false
+    }
+}
+
 public enum DulcetAccountConnectionStatus: Sendable, Hashable {
     case idle
     case saved(serverName: String)
@@ -410,6 +417,11 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
     public let duration: Duration
     public let mediaSourceID: String?
     public let artwork: DulcetArtwork
+    /// What the server declares for this album. The grid draws it without a track list.
+    public let trackCount: Int
+    /// Whether this album's track list has been read. `tracks` is empty either way when it is
+    /// `false`, so without this flag "no tracks" and "not read yet" are the same value.
+    public let areTracksLoaded: Bool
     public let tracks: [DulcetTrack]
 
     public init(
@@ -420,7 +432,9 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
         duration: Duration,
         mediaSourceID: String?,
         artwork: DulcetArtwork,
-        tracks: [DulcetTrack]
+        tracks: [DulcetTrack],
+        trackCount: Int? = nil,
+        areTracksLoaded: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -429,6 +443,8 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
         self.duration = duration
         self.mediaSourceID = mediaSourceID
         self.artwork = artwork
+        self.trackCount = trackCount ?? tracks.count
+        self.areTracksLoaded = areTracksLoaded
         self.tracks = tracks
     }
 
@@ -436,8 +452,10 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
         credits.filter { $0.role == .albumArtist }.map(\.name)
     }
 
+    /// The album list carries the album's own duration, so this stays right before the track
+    /// list is read and switches to the sum once it has been.
     public var totalDuration: Duration {
-        tracks.reduce(.zero) { $0 + $1.duration }
+        areTracksLoaded ? tracks.reduce(.zero) { $0 + $1.duration } : duration
     }
 
     public var discNumbers: [Int] {
@@ -466,6 +484,8 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
 }
 
 extension DulcetAlbum {
+    /// Replaces the track list without claiming it has been read — used to restate download
+    /// state on tracks already present.
     func replacingTracks(_ tracks: [DulcetTrack]) -> Self {
         Self(
             id: id,
@@ -475,7 +495,26 @@ extension DulcetAlbum {
             duration: duration,
             mediaSourceID: mediaSourceID,
             artwork: artwork,
-            tracks: tracks
+            tracks: tracks,
+            trackCount: trackCount,
+            areTracksLoaded: areTracksLoaded
+        )
+    }
+
+    /// Records the track list the server answered with. This is the only thing that turns
+    /// `areTracksLoaded` on.
+    func adoptingLoadedTracks(_ tracks: [DulcetTrack]) -> Self {
+        Self(
+            id: id,
+            title: title,
+            credits: credits,
+            year: year,
+            duration: duration,
+            mediaSourceID: mediaSourceID,
+            artwork: artwork,
+            tracks: tracks,
+            trackCount: tracks.count,
+            areTracksLoaded: true
         )
     }
 }
@@ -730,6 +769,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let accountConnection: DulcetAccountConnectionStatus
     public let accountRemoval: DulcetAccountRemovalStatus
     public let libraryFailure: DulcetLibraryFailure?
+    /// Set when the selected album's track list could not be read. The album detail view offers
+    /// a retry; the rest of the library stays usable.
+    public let selectedAlbumTracksFailure: DulcetLibraryFailure?
 
     public init(
         state: DulcetPresentationState,
@@ -753,7 +795,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         accountForm: DulcetAccountConnectRequest = .empty,
         accountConnection: DulcetAccountConnectionStatus = .idle,
         accountRemoval: DulcetAccountRemovalStatus = .idle,
-        libraryFailure: DulcetLibraryFailure? = nil
+        libraryFailure: DulcetLibraryFailure? = nil,
+        selectedAlbumTracksFailure: DulcetLibraryFailure? = nil
     ) {
         self.state = state
         self.selectedDestination = selectedDestination
@@ -777,6 +820,17 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.accountConnection = accountConnection
         self.accountRemoval = accountRemoval
         self.libraryFailure = libraryFailure
+        self.selectedAlbumTracksFailure = selectedAlbumTracksFailure
+    }
+
+    /// Whether library-wide playback can actually build a queue right now.
+    ///
+    /// Library-wide playback needs real track identities, which only arrive with the track lists.
+    /// Before they do, the actions would silently do nothing, so they are disabled instead — and
+    /// this is the predicate that decides it, on the snapshot rather than inside the view, so it
+    /// can be asserted.
+    public var canPlayWholeLibrary: Bool {
+        albums.contains { !$0.tracks.isEmpty } || !looseTracks.isEmpty
     }
 
     public var description: String {

@@ -1,9 +1,11 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -60,6 +62,12 @@ internal data class LibraryTrack(
     val artworkKey: String?,
 )
 
+/**
+ * [trackCount] is the count the server declares for the album and is independent of [tracks]:
+ * the album grid draws it before any track list has been read. [tracksLoaded] is the only thing
+ * that separates "this album genuinely has no tracks" from "nobody has asked the server yet",
+ * which are otherwise the same empty list.
+ */
 internal data class LibraryAlbum(
     val id: ProviderItemId,
     val title: String,
@@ -69,7 +77,16 @@ internal data class LibraryAlbum(
     val mediaSourceId: String?,
     val artworkKey: String?,
     val tracks: List<LibraryTrack>,
-)
+    val trackCount: Int = tracks.size,
+    val tracksLoaded: Boolean = true,
+) {
+    init {
+        require(trackCount >= 0)
+        require(tracksLoaded || tracks.isEmpty()) {
+            "an album that has not been read cannot already carry tracks"
+        }
+    }
+}
 
 internal data class LibraryBrowseSnapshot(
     val musicFolders: List<LibraryMusicFolder>,
@@ -92,6 +109,12 @@ internal sealed interface LibraryBrowseResult {
     data class Failed(val error: DomainError) : LibraryBrowseResult
 }
 
+/** One album's track list, read only when someone opens that album. */
+internal sealed interface LibraryAlbumTracksResult {
+    data class Loaded(val album: LibraryAlbum) : LibraryAlbumTracksResult
+    data class Failed(val error: DomainError) : LibraryAlbumTracksResult
+}
+
 internal data class LibraryEndpointResponse(
     val statusCode: Int,
     val body: String,
@@ -103,109 +126,256 @@ internal fun interface LibraryEndpointTransport {
 }
 
 /**
- * One uncached, read-through library walk. Album details are fetched in fixed-size windows so a
- * large library never creates an unbounded request fan-out.
+ * One uncached, read-through library read.
+ *
+ * [browse] reads only what the album grid draws. It never issues `getAlbum`, so its request count
+ * is a small constant plus one request per album *page* — it does not grow per album. Track lists
+ * are read one album at a time by [albumTracks], when somebody opens that album.
  */
 internal class LibraryBrowser private constructor(
     private val transportFactory: (LibraryBrowseRequest) -> LibraryEndpointTransport,
     private val albumPageSize: Int,
     private val albumConcurrency: Int,
+    private val firstPaintBudget: Duration,
 ) {
     constructor(
         saltSource: SaltSource? = null,
         logSink: LogSink? = null,
         hostResolver: HostResolver = systemHostResolver(),
+        firstPaintBudget: Duration = DEFAULT_FIRST_PAINT_BUDGET,
     ) : this(
         transportFactory = { request ->
             KtorLibraryEndpointTransport(request, saltSource, logSink, hostResolver)
         },
         albumPageSize = DEFAULT_ALBUM_PAGE_SIZE,
         albumConcurrency = DEFAULT_ALBUM_CONCURRENCY,
+        firstPaintBudget = firstPaintBudget,
     )
 
     internal constructor(
         transport: LibraryEndpointTransport,
         albumPageSize: Int = DEFAULT_ALBUM_PAGE_SIZE,
         albumConcurrency: Int = DEFAULT_ALBUM_CONCURRENCY,
-    ) : this({ transport }, albumPageSize, albumConcurrency)
+        firstPaintBudget: Duration = DEFAULT_FIRST_PAINT_BUDGET,
+    ) : this({ transport }, albumPageSize, albumConcurrency, firstPaintBudget)
 
     init {
-        require(albumPageSize > 0)
+        // Subsonic documents 500 as the maximum for `getAlbumList2`'s `size`, and the reference
+        // server enforces it silently (see [readAlbumSummaries]). Asking for more buys nothing
+        // and makes the request describe something the protocol cannot deliver.
+        require(albumPageSize in 1..MAX_ALBUM_PAGE_SIZE)
         require(albumConcurrency > 0)
+        require(firstPaintBudget.isPositive() && firstPaintBudget.isFinite())
     }
 
     suspend fun browse(request: LibraryBrowseRequest): LibraryBrowseResult {
         val transport = transportFactory(request)
         return try {
-            val folders = parseMusicFolders(
-                request.providerInstanceId,
-                transport.checkedRequest("getMusicFolders"),
+            LibraryBrowseResult.Loaded(
+                withTimeout(firstPaintBudget) { readFirstPaint(request, transport) },
             )
-            val artists = parseArtists(
-                request.providerInstanceId,
-                transport.checkedRequest("getArtists"),
-            )
-            val albumSummaries = mutableListOf<AlbumSummary>()
-            val seenAlbumIds = mutableSetOf<String>()
-            var offset = 0
-            while (true) {
-                val page = parseAlbumList(
-                    request.providerInstanceId,
-                    transport.checkedRequest(
-                        "getAlbumList2",
-                        mapOf(
-                            "type" to "alphabeticalByName",
-                            "size" to albumPageSize.toString(),
-                            "offset" to offset.toString(),
-                        ),
-                    ),
-                )
-                page.forEach { album ->
-                    if (seenAlbumIds.add(album.id.rawId)) albumSummaries += album
-                }
-                if (page.size < albumPageSize) break
-                offset += albumPageSize
-            }
-
-            val albums = buildList {
-                albumSummaries.chunked(albumConcurrency).forEach { window ->
-                    addAll(
-                        coroutineScope {
-                            window.map { summary ->
-                                async {
-                                    parseAlbum(
-                                        request.providerInstanceId,
-                                        summary,
-                                        transport.checkedRequest(
-                                            "getAlbum",
-                                            mapOf("id" to summary.id.rawId),
-                                        ),
-                                    )
-                                }
-                            }.awaitAll()
-                        },
-                    )
-                }
-            }
-            LibraryBrowseResult.Loaded(LibraryBrowseSnapshot(folders, artists, albums))
-        } catch (_: CancellationException) {
-            LibraryBrowseResult.Failed(DomainError.Transport.Cancelled)
-        } catch (failure: LibraryRequestFailure) {
-            LibraryBrowseResult.Failed(failure.error)
-        } catch (failure: AuthenticatedEndpointFailure) {
-            LibraryBrowseResult.Failed(failure.error)
         } catch (failure: Throwable) {
-            LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure))
+            LibraryBrowseResult.Failed(failure.asLibraryError())
         } finally {
             (transport as? AutoCloseableLibraryTransport)?.close()
         }
     }
 
-    private companion object {
-        const val DEFAULT_ALBUM_PAGE_SIZE = 500
+    /** Reads one album's tracks. Exactly one `getAlbum` request, under the same deadline. */
+    suspend fun albumTracks(
+        request: LibraryBrowseRequest,
+        albumRawId: String,
+    ): LibraryAlbumTracksResult {
+        require(albumRawId.isNotBlank())
+        val transport = transportFactory(request)
+        return try {
+            LibraryAlbumTracksResult.Loaded(
+                withTimeout(firstPaintBudget) {
+                    parseAlbum(
+                        request.providerInstanceId,
+                        AlbumSummary(
+                            id = ProviderItemId(request.providerInstanceId, albumRawId),
+                            title = albumRawId,
+                            credits = emptyList(),
+                            year = null,
+                            duration = Duration.ZERO,
+                            mediaSourceId = null,
+                            artworkKey = null,
+                        ),
+                        transport.checkedRequest("getAlbum", mapOf("id" to albumRawId)),
+                    )
+                },
+            )
+        } catch (failure: Throwable) {
+            LibraryAlbumTracksResult.Failed(failure.asLibraryError())
+        } finally {
+            (transport as? AutoCloseableLibraryTransport)?.close()
+        }
+    }
+
+    private suspend fun readFirstPaint(
+        request: LibraryBrowseRequest,
+        transport: LibraryEndpointTransport,
+    ): LibraryBrowseSnapshot = coroutineScope {
+        val folders = async {
+            parseMusicFolders(
+                request.providerInstanceId,
+                transport.checkedRequest("getMusicFolders"),
+            )
+        }
+        val artists = async {
+            parseArtists(request.providerInstanceId, transport.checkedRequest("getArtists"))
+        }
+        LibraryBrowseSnapshot(
+            musicFolders = folders.await(),
+            artists = artists.await(),
+            albums = readAlbumSummaries(request.providerInstanceId, transport)
+                .map(AlbumSummary::asUnreadAlbum),
+        )
+    }
+
+    /**
+     * Pages `getAlbumList2` to completion, learning the server's real page size rather than
+     * assuming it honours the one we asked for.
+     *
+     * 🚨 **A server may silently return fewer albums than `size` asks for.** OBSERVED 2026-09-11
+     * against the pinned reference server (Navidrome 0.63.2, 1,208 albums): `size=499` returns
+     * 499, `size=500` returns 500, and `size=501`, `600`, `1000`, `5000` all return **500** with
+     * `status="ok"` and no indication of truncation. So "the page was shorter than I asked for"
+     * does NOT mean "that was the end" — measured through this client, a walk that believed it
+     * reported `Loaded` with 500 of 1,208 albums.
+     *
+     * Two rules make a truncated read unrepresentable, and neither trusts the requested size:
+     *
+     * 1. **The offset advances by what the server actually returned**, never by what was asked
+     *    for. Advancing by the request would have skipped albums 500..4,999 outright.
+     * 2. **A page ends the walk only when it is empty, or shorter than the largest page this
+     *    server has returned.** A cap reveals itself as a page that is short against the request
+     *    but full against the server's own behaviour.
+     *
+     * The look-ahead window only opens once a page has come back at exactly the requested size —
+     * that is the server proving it honours the request, which is what makes a computed offset
+     * safe. Against a capping server the walk is sequential and slower; it is never short.
+     *
+     * The third stop is unchanged: a whole window that contributes no album id we have not
+     * already seen. None of the three is a tolerance — each means the server has stopped offering
+     * distinct albums. A server that keeps offering new ids forever is stopped by the caller's
+     * deadline, as a reported timeout.
+     */
+    private suspend fun readAlbumSummaries(
+        providerInstanceId: String,
+        transport: LibraryEndpointTransport,
+    ): List<AlbumSummary> {
+        val summaries = mutableListOf<AlbumSummary>()
+        val seenAlbumIds = mutableSetOf<String>()
+        var offset = 0
+        var stride = albumPageSize
+        var windowSize = 1
+        var largestPage = 0
+        while (true) {
+            val pages = coroutineScope {
+                List(windowSize) { index -> offset + index * stride }
+                    .map { pageOffset ->
+                        async {
+                            parseAlbumList(
+                                providerInstanceId,
+                                transport.checkedRequest(
+                                    "getAlbumList2",
+                                    mapOf(
+                                        "type" to "alphabeticalByName",
+                                        "size" to albumPageSize.toString(),
+                                        "offset" to pageOffset.toString(),
+                                    ),
+                                ),
+                            )
+                        }
+                    }.awaitAll()
+            }
+            var addedInWindow = 0
+            var reachedEnd = false
+            for (page in pages) {
+                largestPage = maxOf(largestPage, page.size)
+                page.forEach { album ->
+                    if (seenAlbumIds.add(album.id.rawId)) {
+                        summaries += album
+                        addedInWindow += 1
+                    }
+                }
+                if (page.size < largestPage) {
+                    reachedEnd = true
+                    break
+                }
+            }
+            if (reachedEnd || addedInWindow == 0) break
+            // The advance covers the pages just FETCHED, so it is computed before the window is
+            // allowed to widen. Using the widened size here skips everything between.
+            val fetchedPages = windowSize
+            if (windowSize == 1) {
+                // The first page is the only evidence of what this server is willing to serve.
+                stride = largestPage
+                if (largestPage == albumPageSize) windowSize = albumConcurrency
+            }
+            offset += fetchedPages * stride
+        }
+        return summaries
+    }
+
+    internal companion object {
+        const val MAX_ALBUM_PAGE_SIZE = 500
+        const val DEFAULT_ALBUM_PAGE_SIZE = MAX_ALBUM_PAGE_SIZE
         const val DEFAULT_ALBUM_CONCURRENCY = 4
+
+        /**
+         * One first paint gets the same budget as one HTTP request, deliberately.
+         *
+         * A first paint is a constant number of sequential PHASES, not a request per album:
+         * `getMusicFolders` and `getArtists` together, then one `getAlbumList2` page, then
+         * look-ahead windows of [DEFAULT_ALBUM_CONCURRENCY]. At the design's target scale
+         * (spec §16, ~2,950 albums) that is 11 requests in 4 phases; at 12,000 albums, 27
+         * requests in 8.
+         *
+         * OBSERVED 2026-09-10, driven through the production client against the pinned reference
+         * server (Navidrome 0.63.2, loopback, 8 albums / 314 tracks): 4.1-7.9 ms over ten runs,
+         * 204 ms on the first run of a cold process. That is 2 phases, so it does NOT establish
+         * headroom at scale — an earlier version of this comment claimed "150x" from it, which
+         * divided a 2-phase measurement into a budget that has to cover 4 or 8.
+         *
+         * The honest arithmetic: at 4 phases this budget allows 7.5 s per phase, and at 8 phases
+         * 3.75 s. It is therefore TIGHTER than the 30 s each individual request is allowed by
+         * [AuthenticatedEndpointClient], and will usually fire before a single stalled request
+         * reaches its own deadline. That is the intent — the walk reports a stall sooner, and a
+         * stall is what this budget exists to surface. Raising it to buy room for a slow phase
+         * would be raising a timeout to hide one.
+         *
+         * Exceeding it surfaces [DomainError.Transport.Timeout], never a partial library
+         * presented as complete.
+         */
+        val DEFAULT_FIRST_PAINT_BUDGET: Duration = 30.seconds
     }
 }
+
+private fun Throwable.asLibraryError(): DomainError = when (this) {
+    // TimeoutCancellationException IS a CancellationException, so it has to be answered first or
+    // a deadline that fired reads as "the user cancelled".
+    is TimeoutCancellationException -> DomainError.Transport.Timeout
+    is CancellationException -> DomainError.Transport.Cancelled
+    is LibraryRequestFailure -> error
+    is AuthenticatedEndpointFailure -> error
+    else -> mapAccountConnectionFailure(this)
+}
+
+private fun AlbumSummary.asUnreadAlbum(): LibraryAlbum = LibraryAlbum(
+    id = id,
+    title = title,
+    credits = credits,
+    year = year,
+    duration = duration,
+    mediaSourceId = mediaSourceId,
+    artworkKey = artworkKey,
+    tracks = emptyList(),
+    trackCount = trackCount ?: 0,
+    tracksLoaded = false,
+)
 
 internal interface AutoCloseableLibraryTransport {
     fun close()
@@ -312,6 +482,7 @@ internal fun parseArtists(providerInstanceId: String, body: String): List<Librar
     }.distinctBy { it.id.rawId }
 }
 
+/** [trackCount] is the server's declared `songCount`, or null when the server omitted it. */
 internal data class AlbumSummary(
     val id: ProviderItemId,
     val title: String,
@@ -320,6 +491,7 @@ internal data class AlbumSummary(
     val duration: Duration,
     val mediaSourceId: String?,
     val artworkKey: String?,
+    val trackCount: Int? = null,
 )
 
 internal fun parseAlbumList(providerInstanceId: String, body: String): List<AlbumSummary> {
@@ -335,6 +507,9 @@ internal fun parseAlbumList(providerInstanceId: String, body: String): List<Albu
             duration = album.duration(),
             mediaSourceId = null,
             artworkKey = album.optionalOpaqueId("coverArt"),
+            // getAlbumList2 already carries the album's track count, so the grid's "N tracks"
+            // never needs the track list itself.
+            trackCount = album.int("songCount")?.takeIf { it >= 0 },
         )
     }
 }
@@ -375,6 +550,8 @@ internal fun parseAlbum(
         mediaSourceId = null,
         artworkKey = album.optionalOpaqueId("coverArt") ?: summary.artworkKey,
         tracks = tracks,
+        trackCount = tracks.size,
+        tracksLoaded = true,
     )
 }
 
