@@ -1388,7 +1388,12 @@ internal class LibrarySyncEngine(
         }
     }
 
-    private data class PagedWalk<T>(val values: List<T>, val witness: LibrarySyncWitness)
+    /** [largestPage] is the biggest page this server served during the walk, its real page size. */
+    private data class PagedWalk<T>(
+        val values: List<T>,
+        val witness: LibrarySyncWitness,
+        val largestPage: Int,
+    )
 
     /**
      * One resumable whole-library walk, written page by page, then re-walked until its witness is
@@ -1411,17 +1416,26 @@ internal class LibrarySyncEngine(
             if (checkpoint.cursor == 0L) {
                 repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
             }
+            var largestPage = 0
             if (checkpoint.cursor > 0) {
                 val prefix = walkPages(identity, fetch, pageLimit = checkpoint.witness.pageCount)
                 if (prefix.witness != checkpoint.witness) {
                     repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
                     checkpoint = checkpoint.copy(cursor = 0, witness = LibrarySyncWitness.Empty)
+                } else {
+                    // A resumed walk has to judge "short page" by the same yardstick a walk from
+                    // offset zero would, and the only evidence of that yardstick is the pages it
+                    // has actually seen. Starting the resumed half at zero makes its first page
+                    // the largest by definition, so a genuinely final short page no longer ends
+                    // the walk: it costs one extra request, the stage's page count then disagrees
+                    // with the witness walk's, and the witness reports a change that never
+                    // happened — rewriting the whole stage and spending one of its three attempts.
+                    largestPage = prefix.largestPage
                 }
             }
             var offset = checkpoint.cursor
             val ids = repository.seenIds(serverId, checkpoint.generation, checkpoint.stage).toMutableSet()
             var pages = checkpoint.witness.pageCount
-            var largestPage = 0
             while (true) {
                 val page = fetch(offset, enumerationPageSize)
                 pages += 1
@@ -1499,7 +1513,7 @@ internal class LibrarySyncEngine(
             requireTerminableWalk(pages)
             offset += page.rowCount
         }
-        return PagedWalk(values, LibrarySyncWitness(ids, pages))
+        return PagedWalk(values, LibrarySyncWitness(ids, pages), largestPage)
     }
 
     private fun requireTerminableWalk(pages: Long) {

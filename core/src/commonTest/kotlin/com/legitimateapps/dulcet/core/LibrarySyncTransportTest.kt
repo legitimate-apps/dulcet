@@ -106,23 +106,24 @@ class LibrarySyncTransportTest {
                     actual.tracks.sortedBy { it.id.rawId },
                     "tracks of ${album.id.rawId}",
                 )
-        }
-        // The album-level duration is the one field where the two transports can disagree, and
-        // only when the album row omits `duration`: `getAlbum` then falls back to summing its
-        // songs, while the walk keeps the album row's own value. The fixture exercises that case
-        // deliberately. It does not arise on the reference server — OBSERVED 2026-09-11, every
-        // album row on both a 8-album and a 2,500-album Navidrome 0.63.2 library carried a
-        // `duration`, and all 15,048 album-level field values matched `getAlbum` exactly.
-        expected.forEach { album ->
-            val actual = committed.albums.single { it.id.rawId == album.id.rawId }
-            val summary = summaries.single { it.id.rawId == album.id.rawId }
-            assertEquals(summary.duration, actual.duration, "duration of ${album.id.rawId}")
-        }
-        assertEquals(
-            fixture.artistIds.sorted(),
-            committed.artists.map { it.id.rawId }.sorted(),
-        )
-        assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
+                // The album-level duration is the one field where the two transports can disagree,
+                // and only when the album row omits `duration`: `getAlbum` then falls back to
+                // summing its songs, while the walk keeps the album row's own value. The fixture
+                // exercises that case deliberately. It does not arise on the reference server —
+                // OBSERVED 2026-09-11, every album row on both an 8-album and a 2,500-album
+                // Navidrome 0.63.2 library carried a `duration`, and all 15,048 album-level field
+                // values matched `getAlbum` exactly.
+                assertEquals(
+                    summaries.single { it.id.rawId == album.id.rawId }.duration,
+                    actual.duration,
+                    "duration of ${album.id.rawId}",
+                )
+            }
+            assertEquals(
+                fixture.artistIds.sorted(),
+                committed.artists.map { it.id.rawId }.sorted(),
+            )
+            assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
         }
     }
 
@@ -130,8 +131,8 @@ class LibrarySyncTransportTest {
     fun aServerThatSilentlyServesShorterPagesStillImportsEveryRow() = runTest {
         withRepository { repository ->
             // The reference server caps `getAlbumList2` at 500 rows without saying so (OBSERVED
-            // 2026-09-11). A walk that ended on "shorter than I asked for" would stop at the cap and
-            // commit a library missing everything past it, with no error anywhere.
+            // 2026-09-11). A walk that ended on "shorter than I asked for" would stop at the cap
+            // and commit a library missing everything past it, with no error anywhere.
             val source = CappedSource(GeneratedSource(albumCount = 250), serverPageCap = 100)
 
             assertIs<LibrarySyncResult.Completed>(
@@ -145,6 +146,47 @@ class LibrarySyncTransportTest {
                 source.observedShortPages > 0,
                 "the control proved nothing: the fake server never served a short page",
             )
+        }
+    }
+
+    @Test
+    fun aResumedWalkCostsTheSameRequestsAsAnUninterruptedOne() = runTest {
+        // Five albums at two per page: 2, 2, 1 — the last page is short and ends the walk. The
+        // interrupted run dies fetching page three, so the resumed run re-validates the two pages
+        // it already wrote and then fetches that final short page itself.
+        val uninterrupted = withRepository { repository ->
+            val source = CountingSource(GeneratedSource(albumCount = 5))
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+            source.counts.getValue("albumPage")
+        }
+        assertEquals(6, uninterrupted, "fill 2+2+1 pages, then an identical witness walk")
+
+        withRepository { repository ->
+            val failing = GeneratedSource(albumCount = 5).failingAlbumPageAt(failureOffset = 4)
+            val engine = LibrarySyncEngine(repository, enumerationPageSize = 2)
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, failing))
+
+            val resumed = CountingSource(GeneratedSource(albumCount = 5))
+            val completed = assertIs<LibrarySyncResult.Completed>(engine.synchronize(SERVER, resumed))
+
+            assertEquals(
+                LibrarySyncStability.Verified,
+                completed.stability,
+                "nothing changed on the server between the interruption and the resume",
+            )
+            // 2 to re-validate the written prefix, 1 to finish the fill, 3 for the witness walk.
+            // A resumed walk that judged "short page" only by the pages IT fetched would read the
+            // final one-row page as full, spend a request discovering the end, and then disagree
+            // with the witness walk about how many pages the library has — rewriting the stage for
+            // a change that never happened.
+            assertEquals(
+                6,
+                resumed.counts.getValue("albumPage"),
+                "the resumed walk did not cost what an uninterrupted one costs",
+            )
+            assertEquals(5, repository.readCommitted(SERVER).albumIds.size)
         }
     }
 
@@ -301,6 +343,22 @@ class LibrarySyncTransportTest {
 
         override suspend fun starred() = record("starred", delegate.starred())
         override suspend fun genres() = record("genres", delegate.genres())
+    }
+
+    /** Wraps a source so one album-page request fails, once, at a chosen offset. */
+    private fun LibrarySyncSource.failingAlbumPageAt(failureOffset: Long): LibrarySyncSource {
+        val delegate = this
+        return object : LibrarySyncSource by delegate {
+            private var armed = true
+
+            override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> {
+                if (armed && offset == failureOffset) {
+                    armed = false
+                    throw LibraryRequestFailure(DomainError.Transport.Unreachable)
+                }
+                return delegate.albumPage(offset, size)
+            }
+        }
     }
 
     /** A server that silently serves fewer rows than the page asked for. */
