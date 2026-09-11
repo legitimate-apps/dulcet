@@ -161,8 +161,25 @@ run in `apple-ci` on the pinned hosted image.
 ## Building locally
 
 CI is entirely hosted, so nothing here depends on a particular workstation. A standard Xcode and
-JDK/Gradle setup builds every target. Two Apple-toolchain failure modes are worth knowing because they
-present as something else:
+JDK/Gradle setup builds every target.
+
+**Type-check the XCUITest sources before pushing — it takes about three seconds and it is not a gate.**
+
+```sh
+tools/typecheck-xcuitest-sources --self-test
+```
+
+`DulcetiOSUITests` and `DulcetTVUITests` import only system frameworks, so they type-check with no
+Gradle build and no Xcode project. A one-character Swift mistake there otherwise costs a full
+`apple-ci` job to learn about, on a host that may be too loaded to run Xcode at all. It is
+**deliberately not an apple-ci step**: the real build already catches this class there, and the tool
+resolves XCTest's global assertion functions through a shim, so a shim that has fallen behind would
+block merges on a change the compiler accepts. That staleness is reported as `SHIM GAP` — a fault in
+the tool, never as an error in the sources — and `--self-test` proves both that gate and the
+type-check itself can fire. The other test directories need a Gradle-built `DulcetCore` framework
+first and are listed as NOT COVERED rather than silently skipped.
+
+Two Apple-toolchain failure modes are worth knowing because they present as something else:
 
 - **A wedged CoreSimulator hangs every Xcode build with no error output** — including device and
   archive builds — freezing at `CompileAssetCatalogVariant`. It looks like a corrupt asset catalog and
