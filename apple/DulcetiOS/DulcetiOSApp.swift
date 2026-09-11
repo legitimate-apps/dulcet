@@ -2,10 +2,37 @@ import DulcetKit
 import Foundation
 import SwiftUI
 
+#if DEBUG
+/// Text the UI proofs read to learn that a scrobble REACHED the server. The threshold is visible
+/// in Now Playing; delivery is not, and a proof that returns on the threshold alone lets the test
+/// runner kill the app before the request leaves (or before the accumulator, which counts from
+/// the first sampled position, has crossed at all). Enabled only by its launch argument.
+@Observable
+final class DulcetDebugScrobbleDeliveryMarker {
+    static let launchArgument = "-dulcet-debug-scrobble-delivery-marker"
+    static let accessibilityIdentifier = "dulcet.debug.scrobble-delivery"
+
+    var text = "dulcet-scrobble awaiting-report"
+
+    func record(_ report: DulcetScrobbleDeliveryReport) {
+        text = "dulcet-scrobble"
+            + " persisted=\(report.submittedPlaysPersisted)"
+            + " delivered=\(report.submittedPlaysDelivered)"
+            + " pending=\(report.submittedPlaysPending)"
+            + " failures=\(report.submittedPlayFailedAttempts)"
+            + " now-playing=\(report.nowPlayingSent)"
+            + " now-playing-dropped=\(report.nowPlayingDropped)"
+    }
+}
+#endif
+
 @main
 struct DulcetiOSApp: App {
     @State private var presentation: DulcetPresentationStore
     private let downloadController: DulcetCoreDownloadController?
+#if DEBUG
+    @State private var scrobbleDeliveryMarker: DulcetDebugScrobbleDeliveryMarker?
+#endif
 
     init() {
 #if DEBUG
@@ -21,6 +48,13 @@ struct DulcetiOSApp: App {
         let composition = DulcetAppleProduction.makeIOSComposition()
         let presentation = composition.store
         downloadController = composition.downloads
+        if arguments.contains(DulcetDebugScrobbleDeliveryMarker.launchArgument) {
+            let marker = DulcetDebugScrobbleDeliveryMarker()
+            composition.playbackController.setScrobbleDeliveryHandler { report in
+                marker.record(report)
+            }
+            _scrobbleDeliveryMarker = State(initialValue: marker)
+        }
         // 🚨 DISPOSABLE CANARY CREDENTIALS ONLY. Never point this at a real server.
         //
         // Launch arguments are not secret: xcodebuild echoes them, XCUITest records
@@ -74,6 +108,19 @@ struct DulcetiOSApp: App {
     var body: some Scene {
         WindowGroup {
             DulcetRootView(store: presentation)
+#if DEBUG
+                .overlay(alignment: .top) {
+                    if let scrobbleDeliveryMarker {
+                        Text(scrobbleDeliveryMarker.text)
+                            .font(.caption2.monospaced())
+                            .padding(.horizontal, 6)
+                            .background(.thinMaterial, in: Capsule())
+                            .accessibilityIdentifier(
+                                DulcetDebugScrobbleDeliveryMarker.accessibilityIdentifier
+                            )
+                    }
+                }
+#endif
         }
         .backgroundTask(.urlSession(
             DulcetCoreDownloadController.productionBackgroundSessionIdentifier
