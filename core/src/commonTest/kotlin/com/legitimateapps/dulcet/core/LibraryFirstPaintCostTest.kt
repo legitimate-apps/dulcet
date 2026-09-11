@@ -60,41 +60,20 @@ class LibraryFirstPaintCostTest {
     }
 
     /**
-     * The sync, at the same corpus. Every stage is read twice -- the pinned read, then the
-     * stability witness that proves it was a snapshot.
+     * The sync, at the same corpus, and the whole first-paint histogram assembled from both
+     * components against the numbers the proxy actually recorded.
      *
-     * This is where the OTHER two walks come from, and it is the reason the measured histogram is
-     * an odd multiple: 1 preview + 2 sync passes.
+     * Every stage is read twice -- the pinned read, then the stability witness that proves it was
+     * a snapshot. That is where the other two walks come from, and it is why the measured
+     * histogram is an odd multiple: 1 preview + 2 sync passes.
+     *
+     * The preview and the sync are deliberately run ONCE between them: at 2,498 albums a sync
+     * pass is 2,498 `getAlbum` reads plus their durable writes, and this also runs on
+     * Kotlin/Native inside `apple-ci`, which has no spare minutes to spend running the same
+     * measurement twice.
      */
     @Test
-    fun theSyncReadsEveryStageTwiceAndEveryAlbumTwice() = runTest {
-        val driver = createTestDriver()
-        val source = CountingSyncSource(albumCount = MEASURED_ALBUM_COUNT)
-
-        val result = LibrarySyncEngine(LibrarySyncRepository(DulcetDatabaseStore.open(driver)))
-            .synchronize(SERVER, source)
-
-        assertIs<LibrarySyncResult.Completed>(result)
-        assertEquals(2, source.reads("musicFolders"), "pinned read plus stability witness")
-        assertEquals(2, source.reads("artists"), "pinned read plus stability witness")
-        assertEquals(10, source.reads("albumPage"), "two full five-page walks")
-        assertEquals(
-            2 * MEASURED_ALBUM_COUNT,
-            source.reads("album"),
-            "exactly two getAlbum passes -- a third would be an unaccounted walk",
-        )
-        driver.close()
-    }
-
-    /**
-     * The whole first-paint histogram, assembled from the two components, against the numbers the
-     * proxy actually recorded.
-     *
-     * `getAlbum` is deliberately compared too: it is the only column that separates "one sync"
-     * from "three browses", and leaving it out is what makes 21 look like three previews.
-     */
-    @Test
-    fun theTwoComponentsTogetherReproduceTheMeasuredHistogram() = runTest {
+    fun theSyncsTwoPassesAndThePreviewReproduceTheMeasuredHistogram() = runTest {
         val previewTransport = CountingLibraryTransport(albumCount = MEASURED_ALBUM_COUNT)
         assertIs<LibraryBrowseResult.Loaded>(
             LibraryBrowser(
@@ -105,10 +84,19 @@ class LibraryFirstPaintCostTest {
         )
 
         val driver = createTestDriver()
-        val syncSource = CountingSyncSource(albumCount = MEASURED_ALBUM_COUNT)
+        val sync = CountingSyncSource(albumCount = MEASURED_ALBUM_COUNT)
         assertIs<LibrarySyncResult.Completed>(
             LibrarySyncEngine(LibrarySyncRepository(DulcetDatabaseStore.open(driver)))
-                .synchronize(SERVER, syncSource),
+                .synchronize(SERVER, sync),
+        )
+
+        assertEquals(2, sync.reads("musicFolders"), "pinned read plus stability witness")
+        assertEquals(2, sync.reads("artists"), "pinned read plus stability witness")
+        assertEquals(10, sync.reads("albumPage"), "two full five-page walks")
+        assertEquals(
+            2 * MEASURED_ALBUM_COUNT,
+            sync.reads("album"),
+            "exactly two getAlbum passes -- a third would be an unaccounted walk",
         )
 
         // The sync source counts the engine's reads. Each one is exactly one request:
@@ -116,12 +104,11 @@ class LibraryFirstPaintCostTest {
         // albumPage/album onto getMusicFolders/getArtists/getAlbumList2/getAlbum one for one.
         val combined = mapOf(
             "getMusicFolders" to previewTransport.requestsTo("getMusicFolders") +
-                syncSource.reads("musicFolders"),
-            "getArtists" to previewTransport.requestsTo("getArtists") +
-                syncSource.reads("artists"),
+                sync.reads("musicFolders"),
+            "getArtists" to previewTransport.requestsTo("getArtists") + sync.reads("artists"),
             "getAlbumList2" to previewTransport.requestsTo("getAlbumList2") +
-                syncSource.reads("albumPage"),
-            "getAlbum" to previewTransport.requestsTo("getAlbum") + syncSource.reads("album"),
+                sync.reads("albumPage"),
+            "getAlbum" to previewTransport.requestsTo("getAlbum") + sync.reads("album"),
         )
 
         assertEquals(
