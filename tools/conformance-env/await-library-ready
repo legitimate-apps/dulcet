@@ -180,15 +180,31 @@ def main() -> None:
                     timeout_seconds=arguments.request_timeout_seconds,
                     type="alphabeticalByName", size="1",
                 ).get("albumList2", {}).get("album", [])
-                if albums:
+                # The library import walks the whole library through an empty-query search3 and
+                # fails closed when that returns nothing while getAlbumList2 returns something --
+                # so readiness has to mean BOTH are answering. Waiting only on getAlbumList2 would
+                # let a suite start against a server that answers the control but not the thing
+                # under test, and the failure would read as a product defect.
+                enumerated = call(
+                    arguments.base_url, "search3",
+                    query='""', artistCount="0", albumCount="1", songCount="0",
+                ).get("searchResult3", {}).get("album", [])
+                if albums and enumerated:
                     print(
                         f"library ready: scanning=false lastScan={current_value} "
                         f"advanced_from={baseline_value} count={count} queryable_albums>=1 "
+                        f"enumerable_albums>=1 "
                         f"attempts={attempts} "
                         f"elapsed_seconds={time.monotonic() - started:.3f}"
                     )
                     return
-                last = f"scan complete (count={count}) but getAlbumList2 returned no rows"
+                if not albums:
+                    last = f"scan complete (count={count}) but getAlbumList2 returned no rows"
+                else:
+                    last = (
+                        f"scan complete (count={count}) and getAlbumList2 answered, but the "
+                        "empty-query search3 enumeration returned no rows"
+                    )
             else:
                 last = (
                     f"scanning={scanning} lastScan={current_value} "
