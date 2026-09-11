@@ -1,3 +1,4 @@
+import AVFoundation
 import DulcetCore
 import DulcetKit
 import Foundation
@@ -12,6 +13,36 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
     func testProductionCoreResourceBecomesReadyAndProgressesAgainstNavidromeRanges() async throws {
         let audio = try navidromeReferenceMP3Fixture()
         XCTAssertGreaterThan(audio.count, 7_000_000)
+        _ = try await playProductionResource(audio: audio)
+    }
+
+    func testProductionEngineRendersNonZeroPCMAndDistinguishesSilence() async throws {
+        let music = try navidromeReferenceMP3Fixture()
+        let silence = try Data(contentsOf: fixtureURL(named: "silence-reference"))
+        // These thresholds are deliberately separated for independent mutation gates.
+        let minimumMusicPeak: Float = 0.001
+        let maximumSilencePeak: Float = 0.000001
+
+        // Decode the actual source bytes without Dulcet's engine or the processing tap.
+        // Frame/sample assertions make an empty decode fail even for the silent control.
+        let sourceMusic = try independentlyDecode(music, label: "source-music")
+        XCTAssertGreaterThan(sourceMusic.peak, minimumMusicPeak, "source music must be non-silent")
+        let sourceSilence = try independentlyDecode(silence, label: "source-silence")
+        XCTAssertLessThanOrEqual(sourceSilence.peak, maximumSilencePeak, "source silence must be silent")
+
+        let musicObservation = try await playProductionResource(audio: music, observationLabel: "engine-music")
+        let renderedMusic = try XCTUnwrap(musicObservation)
+        XCTAssertGreaterThan(renderedMusic.peakAmplitude, minimumMusicPeak,
+                             "engine must deliver non-zero PCM into its processing callback")
+        let silenceObservation = try await playProductionResource(audio: silence, observationLabel: "engine-silence")
+        let renderedSilence = try XCTUnwrap(silenceObservation)
+        XCTAssertLessThanOrEqual(renderedSilence.peakAmplitude, maximumSilencePeak,
+                                "the same observer must distinguish silence from music")
+    }
+
+    private func playProductionResource(
+        audio: Data, observationLabel: String? = nil
+    ) async throws -> DulcetAudioRenderObservation.Snapshot? {
         let server = try ProductionPathLoopbackServer(audio: audio)
         defer { server.stop() }
 
@@ -54,6 +85,12 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
             .prepare(commandID: .init("production-loopback-prepare"), plan: plan)
         )
         XCTAssertEqual(prepare, .accepted(commandID: .init("production-loopback-prepare")))
+        let pcm: DulcetAudioRenderObservation?
+        if observationLabel != nil {
+            pcm = try await engine.installCurrentItemAudioRenderObserverForTesting()
+        } else {
+            pcm = nil
+        }
         let play = await execute(
             engine,
             .play(commandID: .init("production-loopback-play"))
@@ -61,6 +98,22 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         XCTAssertEqual(play, .accepted(commandID: .init("production-loopback-play")))
 
         await fulfillment(of: [ready, progressing], timeout: 8, enforceOrder: true)
+        var samples: DulcetAudioRenderObservation.Snapshot?
+        if let pcm, let observationLabel {
+            // Fixed observation window: silence must produce real buffers during playback,
+            // rather than pass because a non-zero-dependent waiter never fired.
+            try await Task.sleep(for: .seconds(2))
+            let measured = pcm.snapshot
+            samples = measured
+            print("AUDIO_RENDER platform=\(Self.platform) source=\(observationLabel) peak=\(measured.peakAmplitude) frames=\(measured.framesSeen) buffers=\(measured.bufferCount) samples=\(measured.samplesSeen) prepares=\(measured.prepareCount) errors=\(measured.sourceErrors) unsupported=\(measured.unsupportedBuffers) invalid=\(measured.nonFiniteSamples)")
+            XCTAssertGreaterThan(measured.prepareCount, 0)
+            XCTAssertGreaterThan(measured.framesSeen, 44_100)
+            XCTAssertGreaterThan(measured.bufferCount, 1)
+            XCTAssertEqual(measured.samplesSeen, measured.framesSeen * 2)
+            XCTAssertEqual(measured.sourceErrors, 0)
+            XCTAssertEqual(measured.unsupportedBuffers, 0)
+            XCTAssertEqual(measured.nonFiniteSamples, 0)
+        }
         let ranges = server.rangeHeaders
         print("PRODUCTION PLAYBACK RANGE TRACE count=\(ranges.count) ranges=\(ranges)")
         XCTAssertFalse(ranges.isEmpty)
@@ -81,6 +134,7 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         XCTAssertEqual(loaderSummary.contentInformationPublished, loaderSummary.started)
         XCTAssertEqual(loaderSummary.failed, 0)
         XCTAssertEqual(loaderSummary.active, 0)
+        return samples
     }
 
     private func resolvePlan(client: ApplePlaybackWireClient) async throws -> AppleRemotePlaybackPlanDto {
@@ -96,8 +150,8 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
             sourceContainer: .mp3,
             supportsTranscodingExtension: false,
             deviceProfile: PlaybackDeviceProfile(
-                name: "Dulcet macOS test",
-                platform: "macOS",
+                name: "Dulcet loopback test",
+                platform: Self.platform,
                 maxAudioBitrate: 1_536_000,
                 maxTranscodingAudioBitrate: 320_000,
                 directPlayProfiles: [
@@ -145,14 +199,59 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         }
     }
 
-    private func navidromeReferenceMP3Fixture() throws -> Data {
-        guard let url = Bundle(for: Self.self).url(
-            forResource: "navidrome-reference",
-            withExtension: "mp3"
-        ) else {
+    private static var platform: String {
+        #if os(macOS)
+        "macOS"
+        #elseif targetEnvironment(simulator)
+        "iOS Simulator"
+        #else
+        "iOS"
+        #endif
+    }
+
+    private func fixtureURL(named name: String) throws -> URL {
+        guard let url = Bundle(for: Self.self).url(forResource: name, withExtension: "mp3") else {
             throw ProductionPathLoopbackError.missingFixture
         }
-        return try Data(contentsOf: url, options: .mappedIfSafe)
+        return url
+    }
+
+    private func navidromeReferenceMP3Fixture() throws -> Data {
+        try Data(contentsOf: fixtureURL(named: "navidrome-reference"), options: .mappedIfSafe)
+    }
+
+    private func independentlyDecode(_ data: Data, label: String) throws -> (peak: Float, frames: Int) {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp3")
+        try data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096))
+        var peak: Float = 0
+        var frames = 0
+        var buffers = 0
+        var sampleCount = 0
+        var invalid = 0
+        while frames < 132_300 {
+            try file.read(into: buffer, frameCount: min(4096, AVAudioFrameCount(132_300 - frames)))
+            guard buffer.frameLength > 0 else { break }
+            let channels = try XCTUnwrap(buffer.floatChannelData)
+            for channel in 0..<Int(buffer.format.channelCount) {
+                for frame in 0..<Int(buffer.frameLength) {
+                    let sample = channels[channel][frame]
+                    sampleCount += 1
+                    if sample.isFinite { peak = max(peak, abs(sample)) }
+                    else { invalid += 1 }
+                }
+            }
+            frames += Int(buffer.frameLength)
+            buffers += 1
+        }
+        print("AUDIO_SOURCE platform=\(Self.platform) source=\(label) peak=\(peak) frames=\(frames) buffers=\(buffers) samples=\(sampleCount) invalid=\(invalid)")
+        XCTAssertEqual(frames, 132_300)
+        XCTAssertGreaterThan(buffers, 1)
+        XCTAssertEqual(sampleCount, frames * 2)
+        XCTAssertEqual(invalid, 0)
+        return (peak, frames)
     }
 
     private func waitUntil(

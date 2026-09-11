@@ -468,6 +468,42 @@ for missing in sorted(read - written):
         "writes",
     )
 
+# Wiring a directory in is still not sufficient: it must be written EARLIER IN THE JOB than the
+# verifier reads it. Steps run in file order, so a write appearing after the verify-parity-evidence
+# invocation cannot have happened when it runs. The iPhone and tvOS playback proofs were added as
+# steps after the Darwin conformance step, whose tail invoked the verifier -- so apple-ci failed
+# with "evidence test did not execute" naming tests that were sitting later in the same job,
+# waiting their turn. Every directory was written and every directory was read; only the order was
+# wrong, and neither existing check can see order.
+# Compared by STEP INDEX, not by character offset. An offset comparison using str.find() reads
+# only the FIRST write of a directory, and three of them are already written twice in this
+# workflow -- dulcet-mac-download-junit, dulcet-ios-download-junit and dulcet-ipados-download-junit
+# each get a CONF-51 and a CONF-52 JUnit. A later write appearing after the verifier would hide
+# behind its own earlier one and this check would report green on exactly the defect it exists to
+# catch. Indices also make the verifier's own position unambiguous: a comment mentioning the
+# literal string `tools/verify-parity-evidence` cannot anchor the comparison to the wrong place.
+apple_ci_steps = re.split(r"^ {6}- ", apple_ci, flags=re.MULTILINE) if apple_ci else []
+verifier_steps = [
+    index for index, step in enumerate(apple_ci_steps)
+    if re.search(r"^\s*python3 tools/verify-parity-evidence", step, flags=re.MULTILINE)
+]
+if len(verifier_steps) > 1:
+    errors.append(
+        ".github/workflows/apple-ci.yml: verify-parity-evidence is invoked by more than one step, "
+        "so 'after the verifier' is ambiguous; keep exactly one invocation",
+    )
+for verifier_step in verifier_steps[:1]:
+    for index, step in enumerate(apple_ci_steps):
+        if index <= verifier_step:
+            continue
+        for directory in sorted(read):
+            if f"$RUNNER_TEMP/{directory}/" in step:
+                errors.append(
+                    f".github/workflows/apple-ci.yml: {directory} is written by a step that runs "
+                    "AFTER verify-parity-evidence, so evidence citing tests in it is reported as "
+                    "not executed; move the verification after every step that writes evidence",
+                )
+
 # The directory wiring above is necessary and was not sufficient. verify-parity-evidence matches on
 # (class, method), and the macOS emissions passed the TARGET name DulcetMacTests where the evidence
 # rows cite the CLASS name DulcetMacAccountConnectAppTest. Every file was written, every directory

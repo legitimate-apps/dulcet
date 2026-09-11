@@ -187,6 +187,21 @@ present as something else:
 Concurrent simulator and Xcode builds are memory-hungry enough to trigger OOM kills on a machine doing
 anything else; serialise them rather than fanning out locally.
 
+**A Swift compile error in an XCUITest target is checkable in seconds without building anything:**
+
+```sh
+tools/typecheck-xcuitest-sources --self-test
+```
+
+Those sources import only system frameworks, so `swiftc -typecheck` reaches them with the platform SDK
+alone. Xcode compiles them *last* in `apple-ci` — after the frameworks, the app shells and the macOS
+capture legs — so without this a one-character mistake costs a full Apple job to learn about. The tool
+prints which directories it covers and reports every other one as NOT COVERED with the reason, so its
+clean result never reads as more than it is. `--self-test` injects a known-bad mutation first and
+requires the check to report it. It is deliberately **not** an `apple-ci` step: the real build already
+catches this class there, and a false positive from the tool's XCTest shim would block merges on a
+required check for a change the compiler accepts.
+
 **If you are working on a shared or managed build machine, follow that machine's own operational rules.
 They are deliberately not reproduced in this repository.**
 
@@ -372,6 +387,29 @@ They are deliberately not reproduced in this repository.**
     satisfiable by an earlier identical event. Where a control checks an outcome, add one that checks
     the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
     handler itself emits.
+
+42. **The first Swift diagnostic can hide the rest.** A run that added a helper to `DulcetiOSUITests`
+    reported exactly one error — a duplicated `@MainActor` — and fixing only that would have
+    failed a second Apple job on an unreported `#ActorIsolatedCall` error in the same file:
+    attribute checking runs early enough that later-phase isolation checking is skipped once it
+    fails. ➡️ **Never treat a compiler's error list as complete after an early-phase failure.**
+    Re-check the whole file after fixing, which is what `tools/typecheck-xcuitest-sources` is for.
+43. **Inserting a function directly above another steals its attributes.** That duplicate arrived
+    exactly that way: the new declaration landed between `@MainActor` and the `scrollIntoView` it
+    belonged to, so one function gained a second attribute and the other silently lost its only
+    one. The compiler names only the duplicate, never the theft, and the resulting isolation error
+    appears somewhere else entirely. ➡️ **After inserting between declarations, check the
+    attributes of the declaration BELOW the insertion, not just the one you wrote.**
+44. **Evidence verification must be the LAST step in the job, and nothing checks that but the new
+    ordering gate.** `verify-parity-evidence` resolves each FEATURES.yml citation against JUnit
+    written by THIS run, so a step producing cited evidence must already have run. It sat at the
+    tail of the Darwin conformance step; the iPhone and tvOS playback proofs were added as later
+    steps. apple-ci then failed at 88.6 minutes with "evidence test did not execute" naming tests
+    that were sitting later in the same job, waiting their turn. Every directory was written,
+    every directory was read, and both existing wiring checks passed — they cannot see order. ➡️
+    **A step's position is part of its contract.** `tools/verify_ci_policy.py` now fails when a
+    JUnit directory is written after the verifier reads it; it was proven red-first against the
+    exact workflow that failed.
 
 ## Review and delegation
 

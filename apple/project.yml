@@ -127,12 +127,43 @@ targets:
       - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
         group: DulcetKitTests/Fixtures
         buildPhase: resources
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/silence-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
     dependencies:
       - package: DulcetKit
       - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.playback-integration-tests
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+  DulcetiOSPlaybackIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - DulcetPlaybackIntegrationTests/DulcetPlaybackIntegrationTests.swift
+      - DulcetAppleShared/DulcetCorePlayback.swift
+      - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/silence-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.playback-integration-tests
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -157,6 +188,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
+        # Declare a launch screen so iOS uses the device's native window geometry.
+        # Without it, iPhone launches in a scaled, letterboxed 320x480 compatibility space.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
     preBuildScripts:
       - name: Compile Kotlin Framework
@@ -318,6 +351,13 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Dulcet DEV"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
+  DulcetiOSPlaybackIntegration:
+    build:
+      targets:
+        DulcetiOSPlaybackIntegrationTests: [test]
+    test:
+      targets:
+        - DulcetiOSPlaybackIntegrationTests
   DulcetPlaybackIntegration:
     build:
       targets:

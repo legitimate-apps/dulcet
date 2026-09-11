@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""Type-check the self-contained XCUITest sources without an Xcode build.
+
+An XCUITest target is compiled late in ``apple-ci`` -- after the frameworks, the app shells and
+the macOS capture legs -- so a Swift compile error in one costs a full Apple job before it is
+reported. These sources import only system frameworks, which means ``swiftc -typecheck`` can
+reach them directly with the platform SDK and no built module of ours. That turns the whole
+compile-error class into a seconds-long local check.
+
+WHAT THIS COVERS: every source in a discovered XCUITest directory whose imports are all in
+``SYSTEM_MODULES``. Coverage is per directory and is printed. A directory importing anything
+else -- ``DulcetKit``, ``DulcetCore``, an ``@testable`` module -- needs those modules built
+first and is reported NOT COVERED with that reason, never silently skipped.
+
+WHAT THIS IS NOT: it is not a build and not a substitute for ``apple-ci``. It resolves no
+module of ours, links nothing, and runs no test. A clean result means these sources type-check
+under the project's own Swift language version; it makes no claim about anything else.
+
+The XCTest assertion functions do not resolve in a standalone ``-typecheck`` invocation against
+the framework search path (measured: XCTFail and the XCTAssert overloads these sources call, and
+neither a plugin path nor a language-mode change resolves them). ``SHIM`` declares that surface --
+including the FloatingPoint ``accuracy:`` overload of ``XCTAssertEqual``, which XCTest really has
+and which these sources use -- so a real name or type error is not buried under hundreds of
+spurious ones. Add an overload here only to match a signature XCTest actually declares; a shim
+that is laxer than XCTest would turn a genuine type error into a pass. If a future toolchain resolves them
+for real, the shim collides and this tool fails loudly with an ambiguity error -- delete the
+shimmed declaration then; it never degrades into a pass.
+
+A second pass scans EVERY Swift source in ``apple/`` -- the directories the type-check cannot
+reach included -- for more than one ``@MainActor`` attached to a single declaration. Swift rejects
+that with "multiple global actor attributes", and it happens when a new declaration is inserted
+immediately above an existing one and lands between it and its attribute. A doc comment sits
+between the two attributes in that shape, so a scan for adjacent duplicate lines does not see it
+and must not be used instead; this pass treats doc comments and blank lines as part of the
+attachment. It reads only the bare ``@MainActor`` line form and claims nothing about any other
+attribute.
+
+    tools/typecheck-xcuitest-sources              # check
+    tools/typecheck-xcuitest-sources --self-test  # prove both checks fire, then check
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+
+REPO = Path(__file__).resolve().parent.parent
+APPLE = REPO / "apple"
+PROJECT = APPLE / "Dulcet.xcodeproj" / "project.pbxproj"
+VERSIONS = REPO / "gradle" / "libs.versions.toml"
+
+# Modules that ship inside the platform SDK, so a standalone -typecheck resolves them.
+SYSTEM_MODULES = {"XCTest", "Foundation", "UIKit", "AppKit", "SwiftUI", "CoreGraphics", "Security"}
+
+SWIFT_VERSION = re.compile(r"SWIFT_VERSION = ([0-9]+)(?:\.[0-9]+)*;")
+IMPORT = re.compile(r"^\s*(?:@testable\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*)", re.M)
+
+SHIM = """import Foundation
+func XCTFail(_ m: String = "", file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertTrue(_ e: @autoclosure () throws -> Bool, _ m: @autoclosure () -> String = "",
+                   file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertEqual<T: Equatable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                  _ m: @autoclosure () -> String = "",
+                                  file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertEqual<T: FloatingPoint>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                      accuracy: T, _ m: @autoclosure () -> String = "",
+                                      file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertNotEqual<T: Equatable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                     _ m: @autoclosure () -> String = "",
+                                     file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertGreaterThan<T: Comparable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                         _ m: @autoclosure () -> String = "",
+                                         file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertGreaterThanOrEqual<T: Comparable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                                _ m: @autoclosure () -> String = "",
+                                                file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertLessThan<T: Comparable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                      _ m: @autoclosure () -> String = "",
+                                      file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertLessThanOrEqual<T: Comparable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                             _ m: @autoclosure () -> String = "",
+                                             file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertFalse(_ e: @autoclosure () throws -> Bool, _ m: @autoclosure () -> String = "",
+                    file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertNil(_ e: @autoclosure () throws -> Any?, _ m: @autoclosure () -> String = "",
+                  file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertNotNil(_ e: @autoclosure () throws -> Any?, _ m: @autoclosure () -> String = "",
+                     file: StaticString = #filePath, line: UInt = #line) {}
+func XCTUnwrap<T>(_ e: @autoclosure () throws -> T?, _ m: @autoclosure () -> String = "",
+                  file: StaticString = #filePath, line: UInt = #line) throws -> T {
+    guard let value = try e() else { throw CocoaError(.coderValueNotFound) }
+    return value
+}
+"""
+
+
+@dataclass(frozen=True)
+class Platform:
+    sdk: str
+    developer_platform: str
+    triple: str
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"typecheck-xcuitest-sources: {message}")
+
+
+def swift_language_version() -> str:
+    if not PROJECT.is_file():
+        fail(f"no Xcode project at {PROJECT}")
+    declared = set(SWIFT_VERSION.findall(PROJECT.read_text()))
+    if not declared:
+        fail("the Xcode project declares no SWIFT_VERSION")
+    if len(declared) > 1:
+        fail(
+            "the Xcode project declares more than one SWIFT_VERSION "
+            f"({', '.join(sorted(declared))}); this tool would have to guess which applies"
+        )
+    return declared.pop()
+
+
+def deployment_targets() -> dict[str, str]:
+    versions = tomllib.loads(VERSIONS.read_text())["versions"]
+    return {"ios": versions["ios-deployment"], "tvos": versions["tvos-deployment"]}
+
+
+def platforms() -> dict[str, Platform]:
+    floors = deployment_targets()
+    return {
+        "DulcetiOSUITests": Platform(
+            "iphonesimulator",
+            "iPhoneSimulator",
+            f"arm64-apple-ios{floors['ios']}-simulator",
+        ),
+        "DulcetTVUITests": Platform(
+            "appletvsimulator",
+            "AppleTVSimulator",
+            f"arm64-apple-tvos{floors['tvos']}-simulator",
+        ),
+    }
+
+
+def developer_dir() -> Path:
+    result = subprocess.run(["xcode-select", "-p"], capture_output=True, text=True)
+    if result.returncode != 0:
+        fail("xcode-select -p failed; this is an environment fault, not a gate failure")
+    return Path(result.stdout.strip())
+
+
+def sdk_path(sdk: str) -> str:
+    result = subprocess.run(
+        ["xcrun", "--sdk", sdk, "--show-sdk-path"], capture_output=True, text=True
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        fail(f"no {sdk} SDK is installed; this is an environment fault, not a gate failure")
+    return result.stdout.strip()
+
+
+def typecheck(sources: list[Path], platform: Platform, language: str) -> subprocess.CompletedProcess:
+    frameworks = (
+        developer_dir()
+        / "Platforms"
+        / f"{platform.developer_platform}.platform"
+        / "Developer"
+        / "Library"
+        / "Frameworks"
+    )
+    if not frameworks.is_dir():
+        fail(f"no developer frameworks at {frameworks}; environment fault, not a gate failure")
+    with tempfile.TemporaryDirectory() as scratch:
+        shim = Path(scratch) / "XCTestAssertionShim.swift"
+        shim.write_text(SHIM)
+        return subprocess.run(
+            [
+                "xcrun", "swiftc", "-typecheck",
+                "-swift-version", language,
+                "-sdk", sdk_path(platform.sdk),
+                "-target", platform.triple,
+                "-F", str(frameworks),
+                "-I", str(frameworks),
+                str(shim),
+                *[str(item) for item in sources],
+            ],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+        )
+
+
+def errors(output: str) -> list[str]:
+    return [line for line in output.splitlines() if re.search(r"\berror: ", line)]
+
+
+ATTRIBUTE = re.compile(r"^\s*@MainActor\s*$")
+DOC_OR_BLANK = re.compile(r"^\s*(///.*)?$")
+DECLARATION = re.compile(r"\b(func|var|let|class|struct|enum|init|subscript)\b")
+
+
+def duplicate_actor_attributes(text: str) -> list[tuple[int, int, str]]:
+    """Report declarations carrying more than one bare ``@MainActor``.
+
+    Doc comments and blank lines do not break the attachment -- that is the whole point, since
+    the observed failure had a doc comment between the two attributes. Anything else does.
+    """
+    found: list[tuple[int, int, str]] = []
+    attributes = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        if ATTRIBUTE.match(line):
+            attributes += 1
+            continue
+        if DOC_OR_BLANK.match(line):
+            continue
+        if DECLARATION.search(line):
+            if attributes > 1:
+                found.append((number, attributes, line.strip()))
+            attributes = 0
+            continue
+        attributes = 0
+    return found
+
+
+def scan_all_swift() -> list[str]:
+    problems: list[str] = []
+    for source in sorted(APPLE.rglob("*.swift")):
+        for number, count, declaration in duplicate_actor_attributes(source.read_text()):
+            problems.append(
+                f"{source.relative_to(REPO)}:{number}: {count} @MainActor attributes on {declaration}"
+            )
+    return problems
+
+
+def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
+    known = platforms()
+    covered: list[tuple[str, Platform, list[Path]]] = []
+    uncovered: list[str] = []
+    directories = sorted(
+        item for item in APPLE.iterdir() if item.is_dir() and item.name.endswith("UITests")
+    )
+    if not directories:
+        fail(f"no *UITests directory under {APPLE}")
+    for directory in directories:
+        sources = sorted(directory.glob("*.swift"))
+        if not sources:
+            uncovered.append(f"{directory.name}: no Swift sources")
+            continue
+        imported: set[str] = set()
+        for source in sources:
+            imported.update(IMPORT.findall(source.read_text()))
+        foreign = sorted(imported - SYSTEM_MODULES)
+        if foreign:
+            uncovered.append(
+                f"{directory.name}: imports {', '.join(foreign)}, which must be built first"
+            )
+            continue
+        if directory.name not in known:
+            uncovered.append(f"{directory.name}: no platform mapping is declared for it")
+            continue
+        covered.append((directory.name, known[directory.name], sources))
+    return covered, uncovered
+
+
+SCAN_SELF_TEST_BAD = """final class Example {
+    @MainActor
+    /// A doc comment sits between the two attributes, which is why an adjacent-line scan
+    /// cannot see this shape and must not be used instead.
+    @MainActor
+    private func displaced() {}
+}
+"""
+SCAN_SELF_TEST_GOOD = """final class Example {
+    @MainActor
+    /// One attribute and a doc comment is the ordinary shape and must not be reported.
+    private func ordinary() {}
+}
+"""
+
+
+def scan_self_test() -> int:
+    """Prove the scan reports the observed shape and does not report the ordinary one."""
+    faults = 0
+    bad = duplicate_actor_attributes(SCAN_SELF_TEST_BAD)
+    if len(bad) != 1:
+        print("  SELF-TEST FAULT scan: the doc-comment-separated duplicate was NOT reported")
+        faults += 1
+    else:
+        print("  SELF-TEST OK    scan: doc-comment-separated duplicate reported")
+    good = duplicate_actor_attributes(SCAN_SELF_TEST_GOOD)
+    if good:
+        print(f"  SELF-TEST FAULT scan: the ordinary single-attribute shape was reported {good}")
+        faults += 1
+    else:
+        print("  SELF-TEST OK    scan: ordinary single-attribute shape not reported")
+    return faults
+
+
+def self_test(covered, language: str) -> int:
+    """Prove the check fires: inject a known-bad mutation and require it to be reported."""
+    faults = 0
+    for name, platform, sources in covered:
+        with tempfile.TemporaryDirectory() as scratch:
+            mutated: list[Path] = []
+            injected = False
+            for source in sources:
+                copy = Path(scratch) / source.name
+                text = source.read_text()
+                if not injected and "\n    @MainActor\n" in text:
+                    text = text.replace("\n    @MainActor\n", "\n    @MainActor\n    @MainActor\n", 1)
+                    injected = True
+                copy.write_text(text)
+                mutated.append(copy)
+            if not injected:
+                print(f"  SELF-TEST FAULT {name}: no @MainActor to duplicate; the check is unproven")
+                faults += 1
+                continue
+            result = typecheck(mutated, platform, language)
+            found = [line for line in errors(result.stdout + result.stderr)
+                     if "multiple global actor attributes" in line]
+            if result.returncode == 0 or not found:
+                print(f"  SELF-TEST FAULT {name}: the injected duplicate attribute was NOT reported")
+                faults += 1
+            else:
+                print(f"  SELF-TEST OK    {name}: injected duplicate attribute reported")
+    return faults
+
+
+def main() -> int:
+    arguments = sys.argv[1:]
+    unknown = [item for item in arguments if item != "--self-test"]
+    if unknown:
+        fail(f"unknown option: {unknown[0]}")
+    if shutil.which("xcrun") is None:
+        fail("xcrun is unavailable; this is an environment fault, not a gate failure")
+
+    language = swift_language_version()
+    covered, uncovered = discover()
+    print(f"swift-version {language} (from {PROJECT.relative_to(REPO)})")
+
+    faults = 0
+    if "--self-test" in arguments:
+        print("\n=== self-test: the check must report a known-bad mutation ===")
+        faults = self_test(covered, language) + scan_self_test()
+
+    print("\n=== duplicate @MainActor scan: every Swift source under apple/ ===")
+    duplicates = scan_all_swift()
+    for problem in duplicates:
+        print(f"  FAIL         {problem}")
+    if not duplicates:
+        print(f"  PASS         {len(list(APPLE.rglob('*.swift')))} source(s), no declaration carries two")
+
+    print(f"\n=== type-check: {len(covered)} covered directory(ies) ===")
+    failures: list[str] = []
+    for name, platform, sources in covered:
+        result = typecheck(sources, platform, language)
+        found = errors(result.stdout + result.stderr)
+        if result.returncode == 0 and not found:
+            print(f"  PASS         {name} ({len(sources)} source(s), {platform.triple})")
+            continue
+        failures.append(name)
+        print(f"  FAIL         {name} ({platform.triple}), {len(found)} error(s)")
+        for line in found[:10]:
+            print(f"             {line.strip()}")
+
+    if uncovered:
+        print("\nNOT COVERED (needs a real build):")
+        for reason in uncovered:
+            print(f"  {reason}")
+
+    if faults:
+        print(f"\nSELF-TEST FAILED: {faults} check(s) could not prove they fire")
+        return 1
+    if duplicates:
+        print(f"\nDUPLICATE ATTRIBUTE SCAN FAILED: {len(duplicates)} declaration(s)")
+        return 1
+    if failures:
+        print("\nTYPE-CHECK FAILED: " + ", ".join(failures))
+        return 1
+    print("\nTYPE-CHECK CLEAN for every covered directory; uncovered ones are listed above")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

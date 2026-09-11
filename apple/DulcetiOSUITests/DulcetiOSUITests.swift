@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class DulcetiOSUITests: XCTestCase {
     /// A missing launch-screen declaration opts into the legacy 320-by-480 canvas.
@@ -265,6 +266,8 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        recordWindowGeometry(app, context: "search")
+
         // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
         // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
         let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
@@ -502,6 +505,7 @@ final class DulcetiOSUITests: XCTestCase {
         // split needs a window far wider than any iPhone.
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        recordWindowGeometry(app, context: "ipad-account-layout")
         XCTAssertGreaterThan(
             window.frame.width,
             700,
@@ -651,6 +655,8 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        recordWindowGeometry(app, context: "ipad-playback")
+
         // staticTexts avoids the duplicate Image/StaticText identifier carried by sidebar Labels.
         let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
         guard library.waitForExistence(timeout: 5) else {
@@ -699,6 +705,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         guard let finalSample = waitUntilPastScrobbleThreshold(progress) else { return }
+        print("DULCET IPAD PROGRESS elapsed=\(finalSample.elapsed) duration=\(finalSample.duration)")
         let threshold = min(finalSample.duration * 0.5, 4 * 60)
         XCTAssertGreaterThanOrEqual(
             finalSample.duration,
@@ -710,6 +717,147 @@ final class DulcetiOSUITests: XCTestCase {
             threshold,
             "Observed progressing media time must move past the §15.2 scrobble threshold"
         )
+    }
+
+    /// Compact-width simulator evidence. The workflow independently asserts the disposable
+    /// server's canary count before and after; this runner never submits or reads a scrobble.
+    @MainActor
+    func testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold() {
+        guard let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"],
+              !udid.isEmpty else {
+            XCTFail("This playback proof requires an iPhone simulator UDID")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        guard let url = URLComponents(string: configuration.serverURL),
+              url.scheme == "http", url.host == "127.0.0.1", url.port == 4533,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              url.path.isEmpty else {
+            XCTFail("The iPhone automation requires the local disposable Navidrome endpoint")
+            return
+        }
+
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            XCTFail("This experiment requires iPhone hardware identity, even in a compact iPad window")
+            return
+        }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", configuration.serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        guard window.waitForExistence(timeout: 10) else {
+            XCTFail("The app window must exist")
+            return
+        }
+        // Portrait iPhone windows are compact; a full-screen iPad must fail this experiment.
+        guard window.frame.width > 0, window.frame.width < 600 else {
+            XCTFail("This proof requires a compact-width iPhone window; an iPad is invalid evidence")
+            return
+        }
+        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live account connection must succeed before playback is attempted")
+            return
+        }
+
+        recordWindowGeometry(app, context: "iphone-playback")
+        XCTAssertEqual(app.frame, window.frame,
+            "The iPhone app must use native coordinates, not a scaled compatibility space")
+        // Assert the app's own frame, never UIScreen.main. `UIScreen.main` here is evaluated in the
+        // XCUITest RUNNER's process, and the runner declares no launch screen of its own, so it
+        // stays in the compatibility space and reports 320x480 however correct the app under test
+        // is. OBSERVED 2026-09-07 on a correctly-fixed build: window 402x874, UIScreen.main.bounds
+        // 320x480 -- a comparison against it fails precisely when the product is right.
+        //
+        // 320x480 is the legacy compatibility geometry the declared launch screen exists to
+        // prevent, and is what this app reported before it had one, so these two are the
+        // assertions that actually change verdict when the fix is reverted.
+        XCTAssertGreaterThan(app.frame.width, 320,
+            "320pt wide is the legacy compatibility space, not native iPhone width")
+        XCTAssertGreaterThan(app.frame.height, 480,
+            "480pt tall is the legacy compatibility space, not native iPhone height")
+
+        print("DULCET IPHONE IDENTITY simulator=\(udid) width=\(window.frame.width) idiom=phone")
+
+        // Compact navigation starts in detail. Return to the navigation list before choosing
+        // Library, rather than assuming the iPad's simultaneously visible sidebar exists.
+        let back = app.navigationBars.buttons["Back"].firstMatch
+        guard back.waitForExistence(timeout: 5), back.isHittable else {
+            XCTFail("The compact detail must expose its back navigation control")
+            return
+        }
+        back.tap()
+        let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
+        guard library.waitForExistence(timeout: 5), library.isHittable else {
+            XCTFail("Back navigation must expose the Library destination")
+            return
+        }
+        library.tap()
+
+        let thresholdAlbum = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "Threshold Boundary")
+        ).firstMatch
+        guard waitForElementScrollingIfNeeded(thresholdAlbum, in: app, timeout: 30) else {
+            XCTFail(
+                "The Threshold Boundary album was not reachable in the iPhone library within 30s,"
+                + " including scrolling. read-play-count already resolved this fixture on this"
+                + " server, so this is a UI reachability failure, not a missing album."
+            )
+            return
+        }
+        thresholdAlbum.tap()
+
+        let thresholdTrack = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "UI Playback Canary")
+        ).firstMatch
+        guard waitForElementScrollingIfNeeded(thresholdTrack, in: app, timeout: 30) else {
+            XCTFail(
+                "The UI Playback Canary track was not reachable in the album within 30s,"
+                + " including scrolling"
+            )
+            return
+        }
+        print("DULCET IPHONE TAP track=\(thresholdTrack.frame)")
+        let tappedAt = ProcessInfo.processInfo.systemUptime
+        thresholdTrack.tap()
+
+        let progress = app.sliders["Now Playing"].firstMatch
+        guard progress.waitForExistence(timeout: 30) else {
+            // Only known playback controls are inspected: never dump account fields or URLs.
+            print("DULCET IPHONE START FAILURE nowPlaying=\(app.navigationBars["Now Playing"].exists)"
+                + " canaryTitle=\(app.staticTexts["dulcet.now-playing.title"].exists)"
+                + " nonseekableProgress=\(app.progressIndicators["Now Playing"].exists)")
+            XCTFail("Real playback must begin and expose progressing media time in Now Playing")
+            return
+        }
+        print("DULCET IPHONE PLAYBACK BEGAN secondsSinceTap=\(ProcessInfo.processInfo.systemUptime - tappedAt)"
+            + " mediaTime=\(progress.value as? String ?? "unavailable")")
+        XCTAssertEqual(app.staticTexts["dulcet.now-playing.title"].label, "UI Playback Canary",
+            "The track tap must start the dedicated canary")
+        guard let finalSample = waitUntilPastScrobbleThreshold(progress) else { return }
+        print("DULCET IPHONE PROGRESS elapsed=\(finalSample.elapsed) duration=\(finalSample.duration)")
+        let threshold = min(finalSample.duration * 0.5, 4 * 60)
+        XCTAssertGreaterThanOrEqual(
+            finalSample.duration,
+            30,
+            "The server-reported or decoded duration must be eligible for scrobbling"
+        )
+        XCTAssertGreaterThan(
+            finalSample.elapsed,
+            threshold,
+            "Observed progressing media time must move past the §15.2 scrobble threshold"
+        )
+    }
+
+    @MainActor
+    private func recordWindowGeometry(_ app: XCUIApplication, context: String) {
+        print("DULCET WINDOW GEOMETRY context=\(context) simulator=\(ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "physical")"
+            + " content=\(app.frame) window=\(app.windows.firstMatch.frame)")
     }
 
     private func livePlaybackConfiguration() -> LivePlaybackConfiguration? {
@@ -834,6 +982,30 @@ final class DulcetiOSUITests: XCTestCase {
         let frame = element.frame
         guard !frame.isEmpty, !frame.isInfinite else { return false }
         return window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) && element.isHittable
+    }
+
+    /// Waits for an element that may not be realized until the list scrolls.
+    ///
+    /// `waitForExistence` alone is wrong for a row below the fold on a compact layout: the row is
+    /// not in the accessibility tree until something scrolls it into range, so the wait expires
+    /// while the content is present and merely off-screen. Scrolling while waiting distinguishes
+    /// "absent" from "not yet realized"; only the former should fail, and it must not be reported
+    /// as a server-side absence.
+    @MainActor
+    private func waitForElementScrollingIfNeeded(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            // scrollIntoView returns true only once the element is hittable inside the window, so
+            // this cannot report success for a row that exists but sits off-screen -- which is what
+            // a bare waitForExistence would do, leaving the following tap to miss.
+            if scrollIntoView(element, in: app, probingBlockingSystemAlerts: false) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        return false
     }
 
     @MainActor

@@ -1218,31 +1218,115 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
-          python3 tools/verify-parity-evidence \
-            core-conformance/build/test-results/macosArm64Test \
-            core-conformance/build/test-results/iosSimulatorArm64Test \
-            core-conformance/build/test-results/tvosSimulatorArm64Test \
-            "$RUNNER_TEMP/dulcet-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
-            "$RUNNER_TEMP/dulcet-ios-search-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
-            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
-            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-mac-download-junit" \
-            "$RUNNER_TEMP/dulcet-ios-download-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-download-junit"
+      # Keep these independent loopback observations after all platform and Darwin conformance
+      # tests: a first-run hosted audio or simulator failure must not skip their evidence.
+      # Neither observation depends on the conformance servers, which have stopped here.
+      - name: Observe decoded PCM with music and silence controls on macos
+        # No measured maximum exists for this step yet, so this is a hang guard, not a budget:
+        # it sits well above every comparable Apple build-and-test step (the slowest of those
+        # peaks at ~11 min) so it cannot kill a healthy run, and it makes a hang name itself
+        # instead of consuming the job cap. Re-derive it from real durations once several
+        # runs exist -- a cap taken from one run has already produced six that were too low.
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetPlaybackIntegration \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetPlaybackIntegrationDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-macos-audio-render.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetPlaybackIntegrationTests/DulcetPlaybackIntegrationTests/testProductionEngineRendersNonZeroPCMAndDistinguishesSilence \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-macos-audio-render.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-macos-audio-render.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetPlaybackIntegrationTests \
+            testProductionEngineRendersNonZeroPCMAndDistinguishesSilence
+      - name: Observe decoded PCM with music and silence controls on ios
+        # No measured maximum exists for this step yet, so this is a hang guard, not a budget:
+        # it sits well above every comparable Apple build-and-test step (the slowest of those
+        # peaks at ~11 min) so it cannot kill a healthy run, and it makes a hang name itself
+        # instead of consuming the job cap. Re-derive it from real durations once several
+        # runs exist -- a cap taken from one run has already produced six that were too low.
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOSPlaybackIntegration \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSPlaybackIntegrationDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-audio-render.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSPlaybackIntegrationTests/DulcetPlaybackIntegrationTests/testProductionEngineRendersNonZeroPCMAndDistinguishesSilence \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-audio-render.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-audio-render.xcresult" \
+            DulcetiOSPlaybackIntegrationTests.DulcetPlaybackIntegrationTests \
+            testProductionEngineRendersNonZeroPCMAndDistinguishesSilence
+      - name: Prove iPhone playback and independently attributed server scrobble
+        # Hang guard, not a budget: no iPhone playback durations exist yet. This is well above
+        # the comparable ~11-minute Apple build/test maximum; re-derive from real durations.
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
+        run: |
+          set -o pipefail
+          # The preceding step stops its server on EXIT. A separate fresh database prevents
+          # the iPad's play from being credited to iPhone; never reset or reuse its annotations.
+          IPHONE_ROOT="$ROOT/iphone-playback"
+          # Fail loudly if this database already exists. A reused directory would carry another
+          # platform's annotation, and the "count was 0 before" assertion below would then be
+          # measuring a stale zero rather than a fresh one.
+          test ! -e "$IPHONE_ROOT"
+          mkdir -p "$IPHONE_ROOT/data" "$IPHONE_ROOT/cache"
+          tools/conformance-env/render-config \
+            --output "$IPHONE_ROOT/navidrome.toml" --music-folder "$ROOT/music" \
+            --data-folder "$IPHONE_ROOT/data" --cache-folder "$IPHONE_ROOT/cache" \
+            --address 127.0.0.1 \
+            --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          "$ROOT/bin/navidrome" --configfile "$IPHONE_ROOT/navidrome.toml" \
+            > "$ROOT/logs/iphone-playback-navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          trap 'kill "$navidrome_pid" 2>/dev/null || true; wait "$navidrome_pid" 2>/dev/null || true' EXIT
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          kill -0 "$navidrome_pid"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" --expect 0
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-playback.log"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" \
+            --expect 1 --await-seconds 15
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
@@ -1315,3 +1399,110 @@ jobs:
           path: core-conformance/build/test-results/tvosSimulatorArm64Test
           if-no-files-found: error
           retention-days: 14
+      - name: Prove tvOS playback and independently attributed server scrobble
+        # Hang guard, not a budget: no tvOS playback durations exist yet. This is well above
+        # the comparable ~11-minute Apple build/test maximum; re-derive from real durations.
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
+        run: |
+          set -o pipefail
+          # The preceding step stops its server on EXIT. A separate fresh database prevents
+          # the iPad's play from being credited to tvOS; never reset or reuse its annotations.
+          TVOS_ROOT="$ROOT/tvos-playback"
+          test ! -e "$TVOS_ROOT"
+          mkdir -p "$TVOS_ROOT/data" "$TVOS_ROOT/cache"
+          tools/conformance-env/render-config \
+            --output "$TVOS_ROOT/navidrome.toml" --music-folder "$ROOT/music" \
+            --data-folder "$TVOS_ROOT/data" --cache-folder "$TVOS_ROOT/cache" \
+            --address 127.0.0.1 \
+            --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          "$ROOT/bin/navidrome" --configfile "$TVOS_ROOT/navidrome.toml" \
+            > "$ROOT/logs/tvos-playback-navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          trap 'kill "$navidrome_pid" 2>/dev/null || true; wait "$navidrome_pid" 2>/dev/null || true' EXIT
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          kill -0 "$navidrome_pid"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" --expect 0
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testTVSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playback.log"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 --title "UI Playback Canary" \
+            --expect 1 --await-seconds 15
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testTVSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
+      # Every Apple test step here writes an .xcresult and discards it with the runner -- including
+      # the platform download and Keychain runs -- along with the JUnit directories
+      # `verify-parity-evidence` consumes
+      # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
+      # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
+      # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.
+      # This does not attempt to fix that flake -- two proposed causes have already been refuted.
+      #
+      # `!success()` covers BOTH failure and cancellation. A `timeout-minutes` expiry cancels the job
+      # rather than failing it (observed in the 2026-08-30 sample of 12 runs).
+      # A `failure()`-only condition would therefore miss the long-hang case, which is the one
+      # worth the most here. `concurrency.cancel-in-progress` supersessions also land in this branch,
+      # but they are killed early and so have little on disk for the globs to match.
+      #
+      # NOTE these globs are duplicated in the inventory step below. Keep the two lists in step.
+
+      # Evidence verification must be the LAST thing in this job. It resolves every FEATURES.yml
+      # citation against JUnit written by THIS run, so any step producing cited evidence has to
+      # have already run. It previously sat at the end of the Darwin conformance step, which is
+      # before the iPhone and tvOS playback proofs -- so those two citations were reported as
+      # "did not execute" while the tests they name were sitting later in the same job, waiting.
+      - name: Verify every FEATURES.yml citation executed in this job
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          python3 tools/verify-parity-evidence \
+            core-conformance/build/test-results/macosArm64Test \
+            core-conformance/build/test-results/iosSimulatorArm64Test \
+            core-conformance/build/test-results/tvosSimulatorArm64Test \
+            "$RUNNER_TEMP/dulcet-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit" \
+            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-mac-download-junit" \
+            "$RUNNER_TEMP/dulcet-ios-download-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-download-junit"

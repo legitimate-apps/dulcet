@@ -863,6 +863,10 @@ passing_cases = """\
             name="testAccountConnectUsesRegularWidthSplitLayout" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testTVSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
