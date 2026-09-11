@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import json
 import math
 import os
 from pathlib import Path
 import re
 import secrets
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -92,6 +94,14 @@ SEARCH_POLL_INTERVAL_SECONDS = 0.05
 # fact worth reading, so failed attempts back off. A STARVED attempt already costs its full
 # per-attempt timeout, which is the case this budget exists for, so the backoff barely moves it.
 SEARCH_RETRY_BACKOFF_SECONDS = (0.25, 0.5, 1.0, 2.0)
+
+# --- diagnosing a stall, AFTER it has already been reported -----------------------------------
+# `find_probe_song` now says a stall is a stall. It still cannot say WHICH layer stopped
+# answering, and "the loopback stalled" is where every previous investigation of this failure has
+# run out of instrument. This allowance is spent only on the failure path, only after the primary
+# cause has been printed and flushed, and is shared by all three layers -- so the worst case adds
+# 1.25s to a run that has already failed, and nothing to a run that has not.
+DIAGNOSIS_TIMEOUT_SECONDS = 1.25
 
 
 class StreamDeadlineExceeded(TimeoutError):
@@ -199,6 +209,121 @@ def timeout_diagnostic(error: StreamDeadlineExceeded, budget: float) -> str:
         "Navidrome returned the status line and headers, then the audio body stopped completing. "
         "This can reflect a stalled or failed transcoder, a blocked server, transport trouble, or "
         "runner load; inspect the correlated Navidrome and ffmpeg logs."
+    )
+
+
+def diagnose_loopback(base_url: str, budget: float = DIAGNOSIS_TIMEOUT_SECONDS) -> str:
+    """Separate "nothing is accepting" from "accepting but not answering" from "the DB path is stuck".
+
+    Every probe here is deliberately a DIFFERENT layer, because two probes through one stack are one
+    probe run twice. A raw socket bypasses urllib entirely; /ping is HTTP that touches no database;
+    /rest/ping.view is an authenticated query against a tiny indexed table. On a healthy server all
+    three answer in under ~15 ms, and the stall this diagnoses runs to tens of seconds, so the
+    separation is about three orders of magnitude and no threshold tuning is required.
+    """
+    class DiagnosisDeadlineExceeded(TimeoutError):
+        pass
+
+    deadline = time.monotonic() + budget
+    parsed = urllib.parse.urlparse(base_url)
+    host, port = parsed.hostname or "127.0.0.1", parsed.port or 4533
+
+    def safe(error: object) -> str:
+        """Never let a credentialed query string reach a diagnostic.
+
+        `subsonic_url` puts `u`, `t` (token) and `s` (salt) in the query string, and this function
+        prints whatever the probes raise. CANARY-TESTED: no urllib exception type reachable here
+        currently embeds the URL -- but that is an accident of their `__str__`, not a guarantee
+        anyone maintains, and one malformed-URL path elsewhere in this repo was measured carrying a
+        token-bearing path out through an uncaught traceback. Redact by construction, so the
+        property holds no matter what a future exception decides to include.
+        """
+        text = f"{type(error).__name__}: {error}" if error is not None else "None"
+        return re.sub(r"\?[^\s'\"]*", "?<redacted>", text)
+
+    def timed(call):
+        start = time.monotonic()
+        remaining = deadline - start
+        if remaining <= 0:
+            return 0.0, DiagnosisDeadlineExceeded("diagnosis wall-clock deadline exhausted")
+        previous_handler = signal.getsignal(signal.SIGALRM)
+
+        def expired(_signum, _frame):
+            raise DiagnosisDeadlineExceeded("diagnosis wall-clock deadline exhausted")
+
+        signal.signal(signal.SIGALRM, expired)
+        signal.siginterrupt(signal.SIGALRM, True)
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        try:
+            try:
+                call()
+            except Exception as error:  # noqa: BLE001 - every failure mode is a datum here
+                return time.monotonic() - start, error
+            return time.monotonic() - start, None
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+
+    def raw_connect():
+        with socket.create_connection((host, port), timeout=budget):
+            pass
+
+    def bare_ping():
+        # No auth, no database. A plain 200 with a one-byte body.
+        with urllib.request.urlopen(f"{base_url}/ping", timeout=budget) as response:
+            response.read()
+
+    def subsonic_ping():
+        # `/rest` endpoints report failure INSIDE a 200 envelope, so the status code proves nothing.
+        # The enclosing timed() owns the deadline, including body decoding. Do not nest read_json's
+        # timer here: its cleanup would cancel the shared diagnostic timer.
+        with urllib.request.urlopen(subsonic_url(base_url, "ping", {}), timeout=budget) as response:
+            document = json.load(response)
+        status = document.get("subsonic-response", {}).get("status")
+        if status != "ok":
+            raise RuntimeError(f"envelope status={status}")
+
+    # Classify on ELAPSED TIME, not on whether a call raised. A probe that fails in a millisecond
+    # has been ANSWERED -- by an endpoint that is missing, or by a reply this probe cannot parse --
+    # and answering fast is the opposite of blocked. Calling that "blocked" would repeat, inside the
+    # diagnosis, the exact conflation this tool was changed to stop making. Healthy responses here
+    # measure under 15 ms and the stall under investigation runs to tens of seconds, so the cut is
+    # not delicate.
+    STALLED = 1.0
+    connect_s, connect_error = timed(raw_connect)
+    if connect_s >= STALLED or isinstance(connect_error, (TimeoutError, socket.timeout)):
+        return (
+            f"loopback diagnosis=nothing-accepting connect_seconds={connect_s:.3f} "
+            f"connect_error={safe(connect_error)}"
+        )
+    if connect_error is not None:
+        return (
+            f"loopback diagnosis=connection-refused connect_seconds={connect_s:.3f} "
+            f"connect_error={safe(connect_error)} detail=refused immediately, so the port is not listening"
+        )
+    ping_s, ping_error = timed(bare_ping)
+    if ping_s >= STALLED or isinstance(ping_error, DiagnosisDeadlineExceeded):
+        return (
+            f"loopback diagnosis=http-blocked connect_seconds={connect_s:.3f} "
+            f"ping_seconds={ping_s:.3f} ping_error={safe(ping_error)}"
+        )
+    rest_s, rest_error = timed(subsonic_ping)
+    if rest_s >= STALLED or isinstance(rest_error, DiagnosisDeadlineExceeded):
+        return (
+            f"loopback diagnosis=database-path-blocked connect_seconds={connect_s:.3f} "
+            f"ping_seconds={ping_s:.3f} rest_ping_seconds={rest_s:.3f} rest_error={safe(rest_error)}"
+        )
+    anomalies = [f"{name}={safe(error)}" for name, error in
+                 (("ping", ping_error), ("rest_ping", rest_error)) if error is not None]
+    detail = (
+        "every layer answered promptly, so the stalled request is not explained by server "
+        "availability"
+    )
+    if anomalies:
+        detail = f"answered promptly but not as expected ({'; '.join(anomalies)})"
+    return (
+        f"loopback diagnosis=server-answering connect_seconds={connect_s:.3f} "
+        f"ping_seconds={ping_s:.3f} rest_ping_seconds={rest_s:.3f} detail={detail}"
     )
 
 
@@ -334,7 +459,16 @@ def main() -> None:
         "search3",
         {"query": "Dulcet Health Probe", "songCount": "10"},
     )
-    song, _search_attempts, _search_elapsed = find_probe_song(search_url)
+    try:
+        song, _search_attempts, _search_elapsed = find_probe_song(search_url)
+    except CacheSearchStalled as stalled:
+        # Publish the cause before optional I/O, so the primary failure survives even when the
+        # diagnosis itself fails or is cut short. Raising `CacheSearchStalled` would print its
+        # message at interpreter exit -- i.e. AFTER the diagnosis -- which reverses the order a
+        # reader needs.
+        print(stalled.code, file=sys.stderr, flush=True)
+        print(diagnose_loopback(base_url), file=sys.stderr, flush=True)
+        raise SystemExit(1) from None
 
     stream_url = subsonic_url(
         base_url,

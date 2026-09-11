@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Discriminate loopback layers, enforce the diagnosis deadline, and inject URL canaries.
+
+`find_probe_song` already says a stall is a stall. What it cannot say is WHICH layer stopped
+answering, and that is what `diagnose_loopback` adds. These controls check the classification
+itself, the shared wall-clock allowance, the order the two facts are printed in, and that no
+credentialed query string can leave through a diagnostic.
+
+Two halves, and they need different things:
+  * `branches` is pure mock injection -- no socket is bound, so it runs anywhere.
+  * the deadline cases bind 127.0.0.1:4533, because `observe-transcode-cache` refuses every other
+    base URL and that guard is what keeps automated cache observation off a real server. It is not
+    weakened here; the cost is that these cases cannot run on a machine already serving that port.
+"""
+import argparse
+from contextlib import nullcontext
+import json
+import os
+from pathlib import Path
+import runpy
+import re
+import socket
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parent
+PROBE = Path(os.environ.get("DULCET_TEST_CACHE_PROBE", ROOT / "conformance-env/observe-transcode-cache"))
+sys.path.insert(0, str(ROOT / "conformance-env"))
+module = runpy.run_path(str(PROBE))
+diagnose = module["diagnose_loopback"]
+DIAGNOSIS_BUDGET = module["DIAGNOSIS_TIMEOUT_SECONDS"]
+BASE = "http://127.0.0.1:4533"
+
+# The failure path is driven through a deliberately short search window so these controls cost
+# seconds rather than a minute. The shipped defaults (60s deadline / 10s attempt) are sized from CI
+# measurement and are not what is under test here; the poll's own budgets are proven by
+# tools/test-cache-search-readiness. What IS under test is everything that happens after the window
+# closes, and that is identical at either scale.
+SEARCH_DEADLINE = 1.5
+SEARCH_ATTEMPT = 0.5
+# 1.5s of polling with 0.5s attempts ends on the attempt that starts at 1.5 and fails at 2.0.
+PRIMARY_BY = 3.0
+# ...then at most one shared diagnosis allowance, plus interpreter and scheduling overhead.
+EXIT_BY = PRIMARY_BY + DIAGNOSIS_BUDGET + 0.5
+# The three layers SHARE one allowance. Summing the per-layer seconds the verdict reports and
+# bounding the total is what makes `remaining = budget` -- a fresh budget per layer -- a detectable
+# mutation instead of one that merely takes longer. Asserting the process, not only the verdict.
+LAYER_SUM_BY = DIAGNOSIS_BUDGET + 0.4
+
+
+def branches():
+    # Inject each layer independently. A virtual monotonic clock distinguishes slow success from
+    # fast failure without making scheduler load part of the classification test.
+    cases = [
+        ("connect", ConnectionRefusedError("refused"), 0, "connection-refused"),
+        ("healthy", None, 0, "server-answering"),
+        ("connect", TimeoutError("timed out"), 0, "nothing-accepting"),
+        ("connect", None, 1.01, "nothing-accepting"),
+        ("ping", None, 1.01, "http-blocked"),
+        ("rest", None, 1.01, "database-path-blocked"),
+        ("ping", RuntimeError("HTTP failure"), 0, "server-answering"),
+        ("rest", RuntimeError("auth failure"), 0, "server-answering"),
+        ("ping", TimeoutError("immediate timeout reply"), 0, "server-answering"),
+        ("rest", TimeoutError("immediate timeout reply"), 0, "server-answering"),
+        ("failed-envelope", None, 0, "server-answering"),
+        ("malformed-json", None, 0, "server-answering"),
+    ]
+    for layer, error, delay, verdict in cases:
+        clock = [100.0]
+        calls = []
+
+        def invoke(name):
+            calls.append(name)
+            if name == layer:
+                clock[0] += delay
+                if error:
+                    raise error
+
+        class Response:
+            def __init__(self, name):
+                self.name = name
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def read(self, *args):
+                invoke(self.name)
+                if self.name == "rest" and layer == "failed-envelope":
+                    return b'{"subsonic-response":{"status":"failed"}}'
+                if self.name == "rest" and layer == "malformed-json":
+                    return b'not json'
+                return b'{"subsonic-response":{"status":"ok"}}'
+
+        def connect(*args, **kwargs):
+            invoke("connect")
+            return nullcontext()
+
+        def urlopen(url, **kwargs):
+            assert url.startswith(BASE + "/"), url
+            if "/rest/" in url:
+                query = module["urllib"].parse.parse_qs(module["urllib"].parse.urlsplit(url).query)
+                assert all(query.get(key) for key in ("u", "t", "s")), query
+            return Response("rest" if "/rest/" in url else "ping")
+
+        with patch("socket.create_connection", connect), patch("urllib.request.urlopen", urlopen), patch("time.monotonic", lambda: clock[0]):
+            result = diagnose(BASE)
+        assert re.search(r"diagnosis=" + verdict + r"(?:\s|$)", result), f"{layer} delay={delay}: {result}"
+        expected = ["connect"] if verdict in ("nothing-accepting", "connection-refused") else ["connect", "ping"] if verdict == "http-blocked" else ["connect", "ping", "rest"]
+        assert calls == expected, f"{layer}: probes {calls}, expected {expected}"
+        if error and layer in ("ping", "rest"):
+            assert "answered promptly but not as expected" in result and str(error) in result, result
+        if layer in ("failed-envelope", "malformed-json"):
+            assert "answered promptly but not as expected" in result, result
+            assert ("envelope status=failed" if layer == "failed-envelope" else "JSONDecodeError") in result, result
+        print(f"PASS layer={layer} delay={delay} verdict={verdict}")
+
+    # Assert exact URL redaction, not global credential replacement: 'ping' must survive as a route
+    # word but disappear as a query value. Separators and encoded punctuation are intentional.
+    for canary in ("-leading-canary", "a&b=c;d/e?f", "%2Dencoded%26secret%3Dvalue", "ping"):
+        for layer in ("connect", "ping", "rest"):
+            url = BASE + "/rest/ping.view?u=" + canary + "&t=-token&s=%26salt"
+            error = RuntimeError("request '" + url + "' failed")
+            def connect(*args, **kwargs):
+                if layer == "connect":
+                    raise error
+                return nullcontext()
+            def urlopen(target, **kwargs):
+                name = "rest" if "/rest/" in target else "ping"
+                if name == layer:
+                    raise error
+                return nullcontext(type("Response", (), {"read": lambda self, *args: b'{"subsonic-response":{"status":"ok"}}'})())
+            with patch("socket.create_connection", connect), patch("urllib.request.urlopen", urlopen):
+                result = diagnose(BASE)
+            expected = "RuntimeError: request '" + BASE + "/rest/ping.view?<redacted>' failed"
+            assert expected in result and url not in result, f"redaction {layer} {canary!r}: {result}"
+        print(f"PASS credential exception canary={canary!r} layers=connect,ping,rest")
+
+
+def layer_seconds(line):
+    """Sum the per-layer durations the verdict reports, so the SHARED allowance is checkable."""
+    fields = dict(re.findall(r"(connect_seconds|ping_seconds|rest_ping_seconds)=([0-9.]+)", line))
+    assert "connect_seconds" in fields, f"verdict reports no layer timings: {line}"
+    return sum(float(value) for value in fields.values()), fields
+
+
+def deadline(mode):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def do_GET(self):
+            if self.path.startswith("/rest/search3") or (mode == "ping-stall" and self.path == "/ping") or (mode == "shared-rest-stall" and self.path.startswith("/rest/ping")):
+                time.sleep(15)
+                return
+            drip = (mode == "ping-drip" and self.path == "/ping") or (mode in ("rest-drip", "shared-rest-drip", "shared-rest-stall") and self.path.startswith("/rest/ping"))
+            body = b'{"subsonic-response":{"status":"ok"}}' if self.path.startswith("/rest/") else b"1"
+            if mode in ("shared-rest-drip", "shared-rest-stall") and self.path == "/ping":
+                time.sleep(0.75)
+            self.send_response(200)
+            self.send_header("Content-Length", "1000" if drip else str(len(body)))
+            self.end_headers()
+            try:
+                if drip:
+                    for _ in range(150):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.1)
+                else:
+                    self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+    with TemporaryDirectory() as tmp:
+        log = Path(tmp) / "server.log"
+        log.write_text("")
+        with ThreadingHTTPServer(("127.0.0.1", 4533), Handler) as server:
+            server.daemon_threads = True
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+            started = time.monotonic()
+            lines = []
+            env = {
+                **os.environ,
+                "DULCET_CONFORMANCE_DISPOSABLE": "true",
+                "DULCET_CONFORMANCE_BASE_URL": BASE,
+                "DULCET_TRANSCODE_SEARCH_DEADLINE_SECONDS": str(SEARCH_DEADLINE),
+                "DULCET_TRANSCODE_SEARCH_ATTEMPT_SECONDS": str(SEARCH_ATTEMPT),
+            }
+            process = subprocess.Popen([sys.executable, str(PROBE), "--log-file", str(log)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            def collect():
+                for line in process.stderr:
+                    lines.append((time.monotonic() - started, line))
+            reader = threading.Thread(target=collect)
+            reader.start()
+            try:
+                try:
+                    process.wait(timeout=EXIT_BY + 4)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    reader.join()
+                    raise AssertionError(f"{mode}: failure path exceeded {EXIT_BY + 4:.1f}s; primary_seen={any('cache search never received an answer' in line for _, line in lines)}")
+                reader.join()
+                elapsed = time.monotonic() - started
+                primary = [(at, line) for at, line in lines if "cache search never received an answer" in line]
+                assert primary and primary[0][0] < PRIMARY_BY, f"{mode}: primary failure delayed: {primary}"
+                # The window must have POLLED before it gave up. Every outcome-only assertion here
+                # passes with attempts=1, which is the shape that made this failure unreadable.
+                attempts = re.search(r"\battempts=(\d+)\b", primary[0][1])
+                assert attempts and int(attempts.group(1)) >= 2, f"{mode}: search made {attempts and attempts.group(1)} attempt(s): {primary}"
+                diagnostic = [(at, line) for at, line in lines if "loopback diagnosis=" in line]
+                verdict = "database-path-blocked" if mode in ("rest-drip", "shared-rest-drip", "shared-rest-stall") else "http-blocked"
+                assert diagnostic and f"diagnosis={verdict}" in diagnostic[0][1], lines
+                assert primary[0][0] <= diagnostic[0][0], lines
+                total, fields = layer_seconds(diagnostic[0][1])
+                assert total <= LAYER_SUM_BY, f"{mode}: layers consumed {total:.3f}s against a shared {DIAGNOSIS_BUDGET}s allowance: {fields}"
+                assert process.returncode == 1 and elapsed < EXIT_BY, (process.returncode, elapsed, lines)
+                print(f"PASS {mode} primary_seconds={primary[0][0]:.3f} exit_seconds={elapsed:.3f} verdict={verdict} layer_seconds_total={total:.3f}")
+            finally:
+                process.stdout.close()
+                process.stderr.close()
+                server.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case", choices=("branches", "ping-stall", "ping-drip", "rest-drip", "shared-rest-drip", "shared-rest-stall"))
+    args = parser.parse_args()
+    if args.case in (None, "branches"):
+        branches()
+    for mode in ("ping-stall", "ping-drip", "rest-drip", "shared-rest-drip", "shared-rest-stall"):
+        if args.case in (None, mode):
+            deadline(mode)
