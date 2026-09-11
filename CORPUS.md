@@ -87,7 +87,11 @@ Binding. A violation is a stop-work, not a style note.
    `ProviderItemId(providerInstanceId, rawId)`.
 10. **Three playback identities, never one:** `QueueEntryId`, `PlaybackSessionId`, `AttemptId`. Collapse
     them and the scrobble accounting races.
-11. **Reads are pinned to a committed sync generation.** A partially completed scan is never visible.
+11. **Reads of the local library are pinned to a committed sync generation.** A partially completed
+    scan is never visible. The interactive library read is a separate thing and is **not** a read of
+    the local database: it is an uncached read-through of the server, complete and self-consistent
+    at one moment, and it is never presented as a committed generation. It paints first and the
+    committed snapshot replaces it — never the other way round, and never with less (spec §16.7).
 12. **Identity separation.** Repo under `legitimate-apps` (`github-legit`), commits authored as
     `legitimate-apps` **per-command, never global config**, Apple team 3LTL47SJ8C (Legitimate LLC). The
     maintainer's legal name, home address and system username appear nowhere — not in code, commits,

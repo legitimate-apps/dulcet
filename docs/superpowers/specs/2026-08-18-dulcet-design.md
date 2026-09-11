@@ -2139,6 +2139,38 @@ Three properties are normative:
    one-page-at-a-time walk of §16.5.2. A window that contributes no unseen album id also ends the
    walk, because a server that keeps answering albums we already have is not offering more.
 
+**The two publications, and their order.** One library open publishes at most twice: a `preview`
+and then the authoritative `loaded`. They are distinct outcomes, not two shapes of one, because
+everything a caller does *because an open finished* — releasing the operation that can cancel the
+sync, starting the refresh cadence — is wrong to do while the authoritative read is still running.
+Two rules bind, and each is enforced at the consumer rather than assumed of the producer:
+
+- **A preview is not an ending.** It never releases the operation and never starts the cadence.
+- **An ending is final.** A preview delivered after the authoritative result is discarded. The two
+  reads run on separate HTTP clients, so their order is a race, not a guarantee.
+
+A preview *failure* is never published — only the sync can put the library into an error state —
+and a sync failure is not published once a preview has succeeded, because that preview is a live
+read of this server and the error is not about what is on screen.
+
+**Ordering belongs to the client.** `getAlbumList2?type=alphabeticalByName` uses the server's
+collation; `selectAlbumsAtGeneration` uses `ORDER BY title COLLATE NOCASE, raw_id`. Both are
+"sorted" and they are not the same sort, so a grid drawn from one and redrawn from the other
+reshuffles under the reader. The client owns the display order and applies it to both, with an
+ASCII-only case fold to match `NOCASE` exactly.
+
+🚨 **A short page does not prove the end of the list.** Revision 96 inherited §16.5.2's "page until
+a short or empty page", which is only safe while the requested size never exceeds what the server
+will serve. **OBSERVED 2026-09-11** against the pinned reference server (Navidrome 0.63.2, a
+disposable copy seeded to 1,208 albums): `size=499` returns 499, `size=500` returns 500, and
+`size=501`, `600`, `1000` and `5000` all return **500**, with `status="ok"` and no indication of
+truncation. Measured through the production client, a walk that believed a short page reported
+`Loaded` with **500 of 1,208 albums** — a truncated library presented as a complete one. So the
+walk advances by what the server **returned**, never by what was asked for, and ends only on an
+empty page or one shorter than the largest page that server has returned. The look-ahead window
+opens only after a page has come back at exactly the requested size. `size` is additionally capped
+at the documented protocol maximum of 500.
+
 **Consequence for the queue.** §14.1's "catalog absence proves only that a selection cannot resolve
 now" becomes load-bearing: right after a first paint the catalog is empty because nobody has read any
 album's tracks, so restoration must not act on it at all. The platform controller checks the
@@ -3461,6 +3493,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 97 (2026-09-11)** — §16.7 corrects revision 96 on three points found by independent
+review. A short page does not prove the end of the list: the reference server silently caps `size`
+at 500, and a walk that trusted the requested size reported 500 of 1,208 albums as a complete
+library (OBSERVED through the production client). Paging now advances by what was returned and
+ends only on an empty or genuinely-short page, with `size` capped at the protocol maximum. The
+preview/committed contract is stated in both directions — a preview is not an ending, and an
+ending is final — because enforcing only the first left a late preview able to blank the library.
+And the display order is the client's, applied to both publications, because the server's
+collation and `ORDER BY title COLLATE NOCASE, raw_id` disagree and the grid reshuffled under the
+reader. CORPUS line 11 is narrowed to say what it always meant: generation pinning governs reads
+of the local database, and the interactive read is not one.
 
 **Revision 96 (2026-09-10)** — §16.7 separates the interactive library read from the sync. The
 production library browse ran a full §16.2 import, witness re-walk included, before drawing

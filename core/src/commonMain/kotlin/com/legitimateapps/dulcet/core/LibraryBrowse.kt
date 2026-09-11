@@ -326,24 +326,29 @@ internal class LibraryBrowser private constructor(
         const val DEFAULT_ALBUM_CONCURRENCY = 4
 
         /**
-         * One first paint gets the same budget as one HTTP request, and for the same reason.
+         * One first paint gets the same budget as one HTTP request, deliberately.
          *
-         * A first paint is now a constant number of round trips — `getMusicFolders` and
-         * `getArtists` together, then one `getAlbumList2` page, then windows of
-         * [DEFAULT_ALBUM_CONCURRENCY] pages — so its wall time is a few server responses, not a
-         * response per album, and the budget does not have to grow with the library.
+         * A first paint is a constant number of sequential PHASES, not a request per album:
+         * `getMusicFolders` and `getArtists` together, then one `getAlbumList2` page, then
+         * look-ahead windows of [DEFAULT_ALBUM_CONCURRENCY]. At the design's target scale
+         * (spec §16, ~2,950 albums) that is 11 requests in 4 phases; at 12,000 albums, 27
+         * requests in 8.
          *
-         * OBSERVED 2026-09-10, this walk driven through the production client against the pinned
-         * reference server (Navidrome 0.63.2, loopback, 8 albums / 314 tracks): 3 requests,
-         * 4.1-7.9 ms over ten runs, and 204 ms on the first run of a cold process. The walk it
-         * replaced measured 11 requests and 34.1-49.7 ms warm on the same server and the same
-         * corpus. This budget is therefore roughly 150x the cold measurement and ~4,000x the warm
-         * one — headroom for a slow remote server, not room for a stall to hide in.
+         * OBSERVED 2026-09-10, driven through the production client against the pinned reference
+         * server (Navidrome 0.63.2, loopback, 8 albums / 314 tracks): 4.1-7.9 ms over ten runs,
+         * 204 ms on the first run of a cold process. That is 2 phases, so it does NOT establish
+         * headroom at scale — an earlier version of this comment claimed "150x" from it, which
+         * divided a 2-phase measurement into a budget that has to cover 4 or 8.
          *
-         * The per-request budget in [AuthenticatedEndpointClient] is unchanged, so a single hung
-         * request still fails on its own deadline. This one bounds the walk as a whole, and it is
-         * a reporting deadline: exceeding it surfaces [DomainError.Transport.Timeout], never a
-         * partial library presented as complete.
+         * The honest arithmetic: at 4 phases this budget allows 7.5 s per phase, and at 8 phases
+         * 3.75 s. It is therefore TIGHTER than the 30 s each individual request is allowed by
+         * [AuthenticatedEndpointClient], and will usually fire before a single stalled request
+         * reaches its own deadline. That is the intent — the walk reports a stall sooner, and a
+         * stall is what this budget exists to surface. Raising it to buy room for a slow phase
+         * would be raising a timeout to hide one.
+         *
+         * Exceeding it surfaces [DomainError.Transport.Timeout], never a partial library
+         * presented as complete.
          */
         val DEFAULT_FIRST_PAINT_BUDGET: Duration = 30.seconds
     }
