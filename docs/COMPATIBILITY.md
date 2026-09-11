@@ -24,6 +24,38 @@ targets. Protocol claims become evidence-backed in Phase 1.
   to 2. Navidrome 0.63.2 therefore does **not** deduplicate that at-least-once retry shape. This is a
   reference-server observation, not a claim about every Subsonic-compatible server.
 
+## Navidrome library enumeration and paging
+
+**OBSERVED 2026-09-11 against Navidrome 0.63.2**, on two disposable local instances: the CI fixture
+corpus (8 albums / 314 tracks / 4 artists) and a generated one (2,500 albums / 5,000 tracks / 100
+artists). These are reference-server observations, not claims about every Subsonic-compatible server.
+
+- **`getAlbumList2` silently clamps `size` to 500.** `size=499` returned 499, `size=500` returned
+  500, and `size=501`, `1000` and `5000` each returned exactly **500** rows with `status="ok"` and
+  nothing in the response marking the truncation. A pager that ends on "fewer rows than I asked for"
+  is therefore correct only while it asks for exactly 500.
+- **`search3` does not clamp its counts.** `albumCount=501` returned 501, `1000` returned 1,000, and
+  `5000` returned the whole 2,500-album library. 500 remains the ceiling Dulcet asks for, because it
+  is the documented Subsonic maximum and other servers do clamp there.
+- **An empty query enumerates the whole library**, and the four spellings `""` (two literal quote
+  characters), the bare empty value, `" "` and `"*"` all behaved identically. A zero count suppresses
+  that entity entirely: `artistCount=0&songCount=0` returned a response with no `artist` or `song`
+  key at all, so a one-entity page costs one query rather than three.
+- **`search3` rows carry everything `getAlbum` carries.** Comparing the two transports over the whole
+  of both corpora — 60,000 track field values and 15,048 album field values, parsed by the same
+  rules — produced **zero differences**, and every song carried an `albumId` that resolved to a known
+  album. Album rows always carried a `duration`, so the sum-of-songs fallback never fired.
+- **Ordering under mutation.** Paging the album list at 100 and mutating after page 5, with each run
+  asserting the mutation actually happened: under `type=alphabeticalByName` an insertion that sorts
+  first produced **one duplicate**, and a deletion before the cursor produced **one skipped album**
+  that existed both before and after and was returned by no page. Under empty-query `search3` the
+  same insertion produced **zero duplicates and zero skips** — its enumeration is in rowid order, so
+  a new row appends — while a deletion before the cursor still skipped one row.
+- **`X-Total-Count` is returned as an HTTP header on `getAlbumList2`** (`8` and `2498` against the two
+  libraries) and is absent from the response body and from `search3`.
+- **The `coverArt` id carries a version suffix**, `al-<album id>_<hex>`, whose hex decodes to a recent
+  unix timestamp.
+
 ## Apple custom-scheme resource loading
 
 **OBSERVED 2026-08-21:** on the standard GitHub-hosted `macos-26` runner with Xcode 26.4.1, the
