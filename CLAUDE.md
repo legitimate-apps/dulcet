@@ -384,9 +384,11 @@ They are deliberately not reproduced in this repository.**
     shellPath, dependency flags or input/output files — the build-order guard covers attachment and
     ordering, and the rest needs regeneration plus review of the generated diff.
 43. **Eight Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
-    targets in parallel**, so two Gradle invocations start together — and Gradle does not queue behind
-    its own locks: it waits about 60 s and then FAILS the build. Two different locks have lost that
-    race on `main`: the checkout-scoped **configuration cache** (`.gradle/configuration-cache`, run
+    targets in parallel**, so two Gradle invocations start together. Gradle does queue behind its own
+    locks, but only for about 60 s: if the owner has not yielded by then it FAILS the build. Most
+    pairs finish inside that window (a tvOS pair on green run 34596556005 ran concurrently for over
+    four minutes and both succeeded); the failure is the long tail. Two different locks have lost
+    that race on `main`: the checkout-scoped **configuration cache** (`.gradle/configuration-cache`, run
     34635969077, `Timeout waiting to lock Configuration Cache`) and the user-home-scoped **journal**
     (`caches/journal-1`, run 34127121022), both with `DulcetiOS` and `DulcetKitIOSTests` building
     together. It reads as a red required check on a product-unrelated commit. Every phase goes

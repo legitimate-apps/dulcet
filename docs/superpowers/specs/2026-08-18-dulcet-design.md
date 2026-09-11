@@ -493,7 +493,9 @@ androidTarget(); jvm()   // jvm exists only for the conformance suite (S20)
   both, so this is free in CI; it is a stated contributor prerequisite in `CLAUDE.md`.
 - **Every Run Script phase invokes Gradle through `tools/run-gradle-exclusive`, never a bare
   `./gradlew`.** OBSERVED: eight targets own the phase, Xcode builds independent targets in parallel,
-  and Gradle does not queue behind its own locks — it waits about 60 s and fails the build. Run
+  and Gradle queues behind its own locks for only about 60 s before failing the build if the owner
+  has not yielded — most pairs fit inside that window (green run 34596556005 ran a tvOS pair
+  concurrently for over four minutes), and the failure is the long tail. Run
   34635969077 (2026-09-11) lost the checkout-scoped configuration-cache lock and run 34127121022
   (2026-09-07) the user-home-scoped journal lock, both with `DulcetiOS` and `DulcetKitIOSTests`
   building together. The runner holds one flock beside each resource for the whole invocation, in a
