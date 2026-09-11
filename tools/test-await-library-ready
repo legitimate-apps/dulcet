@@ -31,13 +31,19 @@ class State:
 
 
 def run_tool(
-    statuses: list[dict], *arguments: str, observed: dict | None = None
+    statuses: list[dict],
+    *arguments: str,
+    observed: dict | None = None,
+    enumerates: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     """Run the tool against a stub and, via `observed`, report what the SERVER received.
 
     The request count has to come from the server end. A poll that quietly stops polling produces
     the same exit code and the same message as one that polls, so no assertion about the tool's own
     output can tell them apart.
+
+    `enumerates` controls whether the stub's search3 answers with an album, which is what the
+    import actually walks -- a scan that has completed is not the same as an endpoint that enumerates.
     """
 
     state = State(statuses)
@@ -58,6 +64,12 @@ def run_tool(
                 response = observed.get("envelope", {"scanStatus": observed})
             elif self.path.startswith("/rest/getAlbumList2"):
                 response = {"albumList2": {"album": [{"id": "album"}]}}
+            elif self.path.startswith("/rest/search3"):
+                # A server that does not implement empty-query enumeration answers exactly as an
+                # empty library does: status ok, no rows. That is the case `enumerates=False`
+                # models, and it is why readiness cannot be decided by getAlbumList2 alone.
+                album = [{"id": "album"}] if enumerates else []
+                response = {"searchResult3": {"album": album}}
             else:
                 self.send_error(404)
                 return
@@ -275,7 +287,32 @@ advanced = run_tool(
 )
 require(advanced.returncode == 0, advanced.stdout + advanced.stderr)
 require(f"lastScan={ADVANCED}" in advanced.stdout, advanced.stdout)
+require("enumerable_albums>=1" in advanced.stdout, advanced.stdout)
 print("POSITIVE CONTROL PASS advanced_lastScan_accepted=true")
+
+unenumerable = run_tool(
+    [
+        status(scanning=True, last_scan=BASELINE),
+        status(scanning=False, last_scan=ADVANCED),
+    ],
+    "--after-last-scan",
+    BASELINE,
+    "--timeout-seconds",
+    "1",
+    "--poll-interval-seconds",
+    "0.01",
+    # Smaller than the overall deadline, or the incoherence guard refuses the invocation. This
+    # case predates that guard; the guard is right and the case simply had to say what it meant.
+    "--request-timeout-seconds",
+    "0.2",
+    enumerates=False,
+)
+require(
+    unenumerable.returncode != 0,
+    "a server answering getAlbumList2 but enumerating nothing was declared ready",
+)
+require("empty-query search3 enumeration returned no rows" in unenumerable.stderr, unenumerable.stderr)
+print("NEGATIVE CONTROL PASS enumeration_unavailable_rejected=true")
 
 errored = run_tool(
     [status(scanning=False, last_scan=ADVANCED, error="scanner exploded")],

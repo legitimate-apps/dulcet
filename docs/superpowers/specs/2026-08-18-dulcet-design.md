@@ -2016,26 +2016,122 @@ artist-level and cannot detect a changed track under an unchanged artist.
 
 **The honest statement revision 1 was missing:** offset pagination over a collection that mutates
 during the pass **cannot** be made snapshot-consistent by deduplication. Dedupe removes repeats; it
-cannot recover an item that shifted past the cursor and was never returned. `alphabeticalByName` is not
-a stable cursor either, because duplicate album names are ordinary and the API exposes no tie-break.
+cannot recover an item that shifted past the cursor and was never returned.
+
+**OBSERVED 2026-09-11** — reproduced on a disposable Navidrome 0.63.2 holding 2,500 albums, paging at
+100, mutating after page 5, with every run asserting that the mutation actually happened:
+
+| enumeration | insert before the cursor | delete before the cursor |
+|---|---|---|
+| `getAlbumList2?type=alphabeticalByName` | **1 duplicate** | **1 skip** |
+| empty-query `search3` (rowid order) | **0 duplicates, 0 skips** | **1 skip** |
+
+The skipped row existed before *and* after the mutation and was returned by no page of a complete
+walk. No error, no warning, no short page.
+
+**The asymmetry is the useful part.** `search3` with an empty query enumerates in `album.rowid`
+order, so an insertion gets a higher rowid and appends at the *end* of the enumeration — it cannot
+shift a row the walk has already passed. Alphabetical order has no such property: an album named
+"AAA…" inserts at position 0 and shifts the entire list. Deletions compact the sequence under either
+order and still skip. A library scan predominantly *adds*, so this removes the common case and leaves
+the rare one. **§16.2's walks therefore use `search3`, not `getAlbumList2`** — and the second reason
+is exposure: a pass that takes seconds is exposed to a mid-pass edit for seconds.
+
+**A softened claim.** Revision 2 said `alphabeticalByName` "is not a stable cursor either, because
+duplicate album names are ordinary and the API exposes no tie-break". That is not what the reference
+server does. Its secondary key is `order_album_artist_name`, and album identity is derived from
+`(albumartist, album, version, releasedate)`, so two albums that tie on *both* sort keys are by
+construction the same album. Measured over four independent full passes at page size 7 across 40
+albums sharing one name, the order was identical every time with zero duplicates and zero skips.
+State it as: **not a *guaranteed* stable cursor, observably stable on the reference server, and a
+client must not depend on that** — nothing here transfers to gonic, LMS or Airsonic.
 
 So the design does not claim snapshot consistency from the paging. It gets consistency from the
 **commit model** (§16.3) and detects the paging problem with a **stability witness** (§16.4).
 
 ### 16.2 Shape of a full import
 
-| stage | endpoint | approx. calls at target scale |
+Artists, albums and tracks are **three independent whole-library walks** — one entity per request,
+the other two counts zeroed — and each album's track list is reconstructed from each song's
+`albumId`. Every stage below except playlists costs a number of requests set by the library's *page*
+count; **no stage costs a request per album.**
+
+| stage | endpoint | calls at target scale |
 |---|---|---|
+| enumeration probe | `getAlbumList2?size=1` + `search3` with `albumCount=1` | 2 |
 | folders | `getMusicFolders` | 1 |
-| artists | `getArtists` | 1 |
-| albums | `getAlbumList2?type=alphabeticalByName&size=500&offset=N` | ~6 |
-| tracks | `getAlbum?id=` per album | **~2,950** |
+| artists | `search3?query=""&artistCount=500&artistOffset=N` (others 0) | ~2 |
+| albums | `search3?query=""&albumCount=500&albumOffset=N` (others 0) | ~7 |
+| tracks | `search3?query=""&songCount=500&songOffset=N` (others 0) | ~65 |
 | playlists | `getPlaylists` + `getPlaylist?id=` per playlist | 1 + P |
 | starred | `getStarred2` | 1 |
 | genres | `getGenres` | 1 |
 
-The track stage dominates. At bounded concurrency 4 it is a few thousand small requests — fine on a LAN
-or a healthy remote server, and rude if issued unbounded.
+Each walk is performed twice — the fill pass and one stable witness (§16.4) — so the ~2,950-album
+target scale costs roughly **150 requests**, against **5,917 to 11,829** for the revision-2 shape
+(`getAlbum` once per album, plus one to three further full passes over every album for the witness).
+
+**OBSERVED 2026-09-11**, one full import of a disposable Navidrome 0.63.2 holding 2,500 albums /
+5,000 tracks / 100 artists, counted from the server's own request log, over loopback:
+
+| transport | requests | wall time | committed |
+|---|---|---|---|
+| `getAlbum` per album | **5,022** (5,000 of them `getAlbum`) | 9.20 s | 2,500 / 5,000 / 100 |
+| three `search3` walks | **48** | 1.97 s | 2,500 / 5,000 / 100 |
+
+The two committed libraries are **byte-identical** — the same production engine, parsers and database,
+dumped field by field over every album, every track and every artist, on that 2,500-album library and
+on the CI fixture corpus. Loopback hides latency, which is the whole point: the request count is what
+a real link charges for. ASSUMED, as arithmetic rather than measurement — at 100 ms round trip and
+concurrency 4, 5,022 requests is about 125 s behind a spinner and 48 sequential requests is about 5 s.
+
+**Three rules the walks obey, each because the alternative fails silently:**
+
+1. **Never ask for more than 500 rows, and never infer end-of-list from a short page.** OBSERVED
+   2026-09-11: `getAlbumList2` silently caps `size` at 500 — `size=501` and `size=1000` both return
+   exactly 500 rows, `status="ok"`, nothing marking the truncation. 500 is also the documented
+   maximum: *"The number of albums to return. Max 500."* (OBSERVED 2026-09-11,
+   subsonic.org/pages/api.jsp). `search3`'s counts document no maximum and the reference server does
+   not clamp them — `albumCount=5000` returned all 2,500 — but 500 stays the ceiling, because other
+   servers are reported to clamp and a clamp is invisible. A walk advances its offset by **what the
+   server returned**, and **only an empty page ends it**: a short page has two possible meanings —
+   the list ended, or the server served fewer rows than asked — and the response does not say which,
+   so it is a candidate end, corroborated by one more request. Reading it as the end truncates the
+   library at the first short page; the corroborating request is the price, and a walk whose row
+   count is an exact multiple of the page size has always paid it.
+2. **A page that contributes no new id does not end the walk.** That is what an insertion during the
+   pass looks like, and the walk *becomes* the library. A server that will not let a walk terminate
+   fails the import instead.
+3. **An empty enumeration is not an empty library until a known positive says so — and that is
+   needed twice.** Empty-query enumeration is required by OpenSubsonic but layered on a base API
+   where `query` is mandatory, and servers are *reported* to disagree — gonic having needed a shim,
+   Airsonic-Advanced having no such path — which this project has not measured and does not need to:
+   a server without it returns exactly what an empty library returns, and that is enough reason to
+   check.
+   - **Before any stage runs**, the import probes `search3` with `albumCount=1` against
+     `getAlbumList2?size=1` and fails with `CapabilityUnsupported(LibrarySync)` if the positive
+     control finds an album and the empty query finds none — rather than committing an empty
+     generation over a full one and reporting success.
+   - **After the songs walk**, the same question is asked of the walk that carries every track, and
+     the album set already in hand is its known positive: a Subsonic album exists because songs
+     exist, so albums present with zero songs enumerated is the server failing, not an empty
+     library. Without this the first probe guards the albums walk alone, and a songs walk that
+     returns nothing closes every track row and commits a library of empty albums as `verified` —
+     the same failure one level down. The check is per album, because the invariant is: every album
+     trackless fails, some albums trackless marks the generation `unverified` (§16.5 rule 11). (A
+     song the walk returned but this generation's albums cannot account for is a different thing:
+     rule 10, dropped and `unverified`.)
+     🚨 **A completeness gate must run before the checkpoint write that advances its stage.**
+     `advance` writes a checkpoint naming the *next* stage; a gate that throws after that write is
+     never reached again, because the retry resumes past the stage it guards — so the second press
+     of "sync" commits exactly what the first press refused. The rejection must also leave the stage
+     re-walkable: keeping the attempt count a rejected walk spent makes the stage unfillable even
+     against a healthy server, and no shipping caller passes `restart = true`.
+
+The query sent is the literal two characters `""`. OBSERVED 2026-09-11: the reference server
+enumerates identically for `""`, the bare empty value, `" "` and `"*"`, so the choice costs nothing
+here; the quoted form is chosen because it is the spelling other servers are *reported* to accept —
+a claim about them that this project has not measured.
 
 ### 16.3 Commit model: row versioning, reads pinned to a committed generation
 
@@ -2062,8 +2158,11 @@ snapshot. Those contradict: in-place updates make a partially completed pass vis
 ### 16.4 Stability witness and repeat-until-stable
 
 Because paging is not a snapshot, each list stage records a **witness**: the complete set of ids
-returned and the number of pages consumed. After the stage completes, the index is re-walked (cheap —
-about 6 calls for albums) and the witness recomputed.
+returned and the number of pages consumed. After the stage completes, the index is re-walked and the
+witness recomputed. **The witness is a re-walk of the same pages** — about 7 calls for albums and 65
+for tracks at target scale, each walk's pages plus the empty page that ends it. Revision 2's track witness re-read *every album individually*, one to
+three more times, which is where most of that shape's 5,917–11,829 requests went; it proved only that
+a set of track ids was stable, never that content was fresh.
 
 - Witness identical: the stage is **stable**.
 - Witness differs: the delta is fetched and merged and the witness recomputed. Up to **3** attempts.
@@ -2073,18 +2172,58 @@ about 6 calls for albums) and the witness recomputed.
 
 ### 16.5 Other required properties
 
-1. Deterministic ordering where offered (`alphabeticalByName` over `random`).
-2. Page until a **short or empty** page; never trust a total count.
+1. Deterministic ordering where offered. For the *view* that is `alphabeticalByName` over `random`;
+   for the *import walks* it is the empty-query `search3` enumeration, whose rowid order is a total
+   order and is the one that cannot be shifted by an insertion mid-pass (§16.1). The import does not
+   need a human-meaningful order — the local store is sorted at read time.
+2. Page until an **empty** page. A short page is a candidate end, corroborated by the next request,
+   never trusted (§16.2 rule 1); the offset advances by rows returned; no request asks for more than
+   500 rows. Never trust a total count. `X-Total-Count` *is* returned by the reference server on
+   `getAlbumList2` — as an HTTP header, absent from the body and from `search3` — so it may be used
+   opportunistically for progress, never as the termination signal.
+   ⚠️ **The read-through browse path does not yet obey this** — it asks for exactly 500 and ends on
+   a short page, which is correct only while 500 equals the server's silent cap. That is a known
+   gap in a path this section does not govern, not an exemption from the rule.
 3. Dedupe by opaque server id within a pass.
 4. Deletion reconciliation: a closed row that has a downloaded file or a queue entry produces a
    user-visible reconciliation ("12 tracks are no longer on the server"), never a silent disappearance.
+   ⚠️ The reference server derives ids from content, so editing an album's title or artist **changes
+   its id** and cascades to its track ids. A vanished id may be a rename; reconciliation must not
+   present it as a deletion without checking.
 5. Server-instance namespacing (§11.2).
 6. **Bounded concurrency** — configurable, default 4 in-flight per server, with a global ceiling. This
    is politeness to the server, not a performance knob, and is not raised to improve a benchmark.
+   Since §16.2 the walks are sequential (each offset depends on the rows the previous page returned),
+   so the only stage that still fans out is playlists, one `getPlaylist` per playlist. The bound
+   remains the contract for anything that does fan out, artwork included (≤2).
 7. Explicit user-triggered full rescan, resetting checkpoints and incrementing the generation.
 8. Tested against mutations during pagination (**CONF-33**).
 9. **First sync** has no committed generation, so the UI is explicitly in a "first sync" state with
    progress. Progressive population is allowed only where the UI says so.
+10. A track the songs walk returns for an album the albums walk did not see is **dropped, and the
+    generation is committed `unverified`** — the existing "the library changed during the scan"
+    result. Storing it would leave a track pointing at no album; dropping it silently would make an
+    incomplete import look complete.
+11. **An album the songs walk cannot account for marks the generation `unverified`.** Two lists read
+    at two instants disagree in both directions, and the songs walk cannot tell "this album was
+    deleted a moment ago" from "this album has no songs". A small count is legitimate and must not
+    fail the import; **all** of them trackless is the impossibility rule 3 rejects outright. The
+    committed library can therefore hold a phantom album — one that no longer exists on the server,
+    with no tracks — and it says so by committing `unverified` rather than `verified`.
+    OBSERVED 2026-09-11: zero trackless albums on either live corpus, so this is silent in practice
+    on the reference server.
+12. **A resume does not re-validate a completed stage.** The tracks stage reads the album set its own
+    generation already wrote, and the albums stage is not re-walked, so albums deleted while the
+    import was interrupted are committed as phantoms — detected by rule 11, `unverified`, not
+    corrected. Re-walking a completed stage on every resume would cost the resume its point; the
+    limit is declared rather than hidden.
+13. **There is no `getAlbum` fallback.** The fill transport is empty-query `search3` and nothing
+    else, so a server that does not implement whole-library enumeration cannot sync a library at
+    all — where the revision-2 transport would have synced it through `getAlbumList2` + `getAlbum`,
+    both Subsonic 1.16.1 baseline endpoints. That is a deliberate product decision and not an
+    oversight: a fallback path is a second transport to keep correct, exercised by nobody, on a
+    server class this project does not test against. It is stated here because CORPUS §1 promises a
+    1.16.1 baseline, and this is the one place the import steps outside it.
 
 ### 16.6 Freshness pass — a heuristic, not incremental sync
 
@@ -2094,8 +2233,28 @@ changed.
 
 **Call it what it is: a freshness heuristic.** It cannot detect a title or tag change preserving count
 and duration, a track swap of equal length, a credit change, artwork changes, a removal offset by an
-addition, a reordering, or per-track changes such as replay gain. **Maximum staleness is therefore
-bounded only by the next full pass**, which runs on user request, on capability change, and on a
+addition, a reordering, or per-track changes such as replay gain.
+
+**Two mechanisms found on 2026-09-11 that would change this, neither built and neither required by
+§16.2's transport:**
+
+- **`X-Total-Count` on `getAlbumList2`** (an HTTP header; the Subsonic body carries no total, and the
+  header is absent on `search3`). OBSERVED 2026-09-11 on two independent instances: `8` against the
+  CI fixture corpus and `2498` against the 2,500-album one, each matching that library. It is a real progress denominator — the import currently reports stages, not rows — and
+  it is non-spec, so it must be probed and degraded from, never depended on.
+- **The `coverArt` id encodes the album's modification time**: `al-<id>_<hex(updatedAt)>`. OBSERVED
+  2026-09-11 — every album row carries that shape, and the hex suffix decodes to a plausible recent
+  unix timestamp. Every list page therefore already carries a per-album change token at zero extra
+  cost, which is a materially
+  better fingerprint than `songCount` + `duration`. ⚠️ It tracks file mtime, so it is a *weak*
+  validator: it can move without a user-visible change, and a metadata-only edit that preserves mtime
+  would not move it. It narrows the freshness pass; it does not turn it into incremental sync.
+
+Both are separable from §16.2: that transport is complete and measured without either, they change
+*what a later pass can skip* rather than how a full import reads, and each needs its own capability
+probe. They are listed here so nobody re-derives them, not scheduled.
+
+**Maximum staleness is therefore bounded only by the next full pass**, which runs on user request, on capability change, and on a
 cadence measured in days. Every library screen exposes a manual refresh and states when the library was
 last fully scanned. Sync is never triggered by scrolling.
 
@@ -2186,6 +2345,19 @@ every endpoint, so §10.1's "always append `.view`" is safe there. Whether every
 server does the same is unsourced. Handling: keep appending `.view`; if a server 404s every endpoint at
 login, retry the `ping` probe without the suffix before reporting `NotASubsonicServer`. Pinned by
 CONF-03.
+
+**QUIRK-02 — whole-library enumeration through empty-query `search3`.** Observed on Navidrome 0.63.2
+(2026-09-11). `search3` with `query=""` enumerates the entire library; its counts are not clamped; a
+zero count omits that entity from the response rather than returning an empty array; and every `song`
+row carries `albumId`. §16.2's fill transport relies on two of those: the enumeration itself, which
+OpenSubsonic mandates for offline sync but which is layered on a base API where `query` is required,
+and `albumId` on every song, which the schema makes optional. **Handling:** every import probes the
+empty query against a known positive (`getAlbumList2?size=1`) and fails
+`CapabilityUnsupported(LibrarySync)` rather than committing an empty library over a full one; a song
+without `albumId` fails the import with `MalformedEnvelope` rather than being silently dropped.
+**Pinned by CONF-31, CONF-32 and CONF-33**, which drive the production import against the live
+reference server — if either behaviour stops being true, the import fails and so do they. Recorded in
+`docs/COMPATIBILITY.md`.
 
 Anything we rely on that is not plainly in the specification is a named quirk with an id (`QUIRK-nn`),
 the server and version observed on, the behavior, our handling, a conformance test that fails when the
@@ -3493,6 +3665,55 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
+once per album plus a track witness that re-read every album one to three further times: 5,917 to
+11,829 requests for one import at target scale. It is now three empty-query `search3` walks —
+artists, albums, songs, one entity per request with the other two counts zeroed — with each album's
+track list reconstructed from each song's `albumId`.
+
+1. **Measured, not modelled.** OBSERVED 2026-09-11 against a disposable Navidrome 0.63.2 holding
+   2,500 albums / 5,000 tracks / 100 artists, counted from the server's own request log: **5,022
+   requests / 9.20 s before, 48 requests / 1.97 s after**, and the two committed libraries are
+   byte-identical field for field over every album, track and artist — on that library and on the CI
+   fixture corpus. `getAlbum` returns the same album object `getAlbumList2` does; the only thing it
+   adds is `song[]`, which is needed when an album is *opened*, not when the library is *listed*.
+2. **The former transport was correct only by coincidence.** Both walks ended on
+   "the page was shorter than the size I requested", and `getAlbumList2` silently caps `size` at 500
+   (OBSERVED: `size=501` and `size=1000` both return exactly 500 rows, `status="ok"`). Raising that
+   constant would have truncated the library with no error. The walks now advance by rows *returned*
+   and **only an empty page ends one** — a short page is a candidate end, corroborated by one more
+   request (§16.2 rule 1, §16.5 rule 2). An earlier revision of this item described the walk as also
+   ending on "a page shorter than the largest page that server has returned"; that rule existed
+   briefly and was removed, because it defends against a consistently capping server and not against
+   a single short page, which truncates the library silently. Recorded here rather than deleted: the
+   revision record exists to stop the next reader re-proposing what was already tried.
+3. **It is also a correctness improvement.** OBSERVED 2026-09-11, reproduced with the mutation
+   asserted to have fired: under `alphabeticalByName` an insert before the cursor duplicates a row
+   and a delete before it silently **skips** one; under empty-query `search3` the same insert produces
+   zero duplicates and zero skips, because rowid order appends. Deletes still skip under both. §16.1
+   carries the table, and softens revision 2's claim that `alphabeticalByName` "is not a stable
+   cursor" — on the reference server it observably is, for a reason (content-derived album identity)
+   that does not transfer to other servers.
+4. **An empty result is no longer read as an empty library, at two granularities.** Empty-query
+   enumeration is required by OpenSubsonic but not universally implemented, and a server without it
+   answers exactly as an empty library does. Every import probes it against a known positive before
+   any stage runs, and the songs walk is checked again against the album set it must account for
+   (§16.2 rule 3), failing with `CapabilityUnsupported(LibrarySync)` rather than committing an empty
+   generation over a full one. **A completeness gate runs before the checkpoint write that advances
+   its stage, and a rejected stage is rolled back so a later attempt can re-walk it** — a gate that
+   throws after the stage has advanced is skipped by the very next retry, which turns a loud failure
+   into a silent success, and a rejection that keeps the spent attempt count leaves the stage
+   unfillable even against a healthy server.
+6. **The transport's known limits are declared rather than discovered** (§16.5 rules 10–12): albums
+   the songs walk cannot account for mark the generation `unverified`; so does a resume whose album
+   set went stale; and a server that stops enumerating mid-walk truncates the import, which is why
+   the per-album check exists to catch it. Rule 13 states the product consequence of having deleted
+   the `getAlbum` fallback.
+5. §16.4's witness is now a re-walk of the same pages rather than a re-read of every album; §16.5
+   rules 1, 2, 4 and a new rule 10 are amended accordingly, and §16.6 records two mechanisms found
+   the same day and deliberately **not** built — `X-Total-Count` as a progress denominator, and the
+   `coverArt` id as a per-album change token.
 
 **Revision 97 (2026-09-11)** — §16.7 corrects revision 96 on three points found by independent
 review. A short page does not prove the end of the list: the reference server silently caps `size`

@@ -467,6 +467,16 @@ WHERE server_id = :server_id AND valid_to_generation IS NULL
       AND sync_seen.stage = :stage AND sync_seen.raw_id = genre.name
   );
 
+-- Albums that at least one track in this generation names. Counted from the track side, and
+-- covered by track_generation: the album side would need a NOT EXISTS per album, which is
+-- albums x tracks and measurably costs a second on a 2,500-album library.
+countAlbumsWithTracksAtGeneration:
+SELECT count(DISTINCT album_raw_id) FROM track
+WHERE server_id = :server_id
+  AND album_raw_id IS NOT NULL
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation);
+
 selectAlbumIdsAtGeneration:
 SELECT raw_id FROM album
 WHERE server_id = :server_id
