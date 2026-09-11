@@ -623,9 +623,16 @@ class LibrarySyncTransportTest {
     /**
      * One library rendered in both wire shapes from one set of facts.
      *
-     * The variety is deliberate: a multi-disc release, a release with several album artists, a
-     * track with no artist credit, a track with no artwork, a missing duration, a missing year and
-     * four container suffixes. A comparison over fields that are null on both sides proves nothing.
+     * The variety is deliberate: a multi-disc release, a track with no artist credit, a track with
+     * no artwork, a missing duration, a missing year and four container suffixes. A comparison over
+     * fields that are null on both sides proves nothing.
+     *
+     * What it does NOT cover, and cannot: several album artists. `al-2` carries the reference
+     * server's rendering of one — a single `artist` string joining them — and neither parser splits
+     * it, nor does either read OpenSubsonic's `artists[]`/`albumArtists[]` arrays. So both
+     * transports produce exactly one credit from one field, which is why they agree here; it is not
+     * evidence that multi-artist releases are handled. The live corpus does hold such a release,
+     * and the two transports produced identical rows for it — identically single-credit.
      */
     private class LibraryFixture(private val albums: List<JsonObject>) {
         val artistIds: List<String> = albums.mapNotNull { album ->
