@@ -2225,3 +2225,53 @@ func activatingASearchResultAbsentFromTheHeldLibraryReadsAgain() async throws {
     #expect(libraryBrowser.requests.count == 2)
     #expect(store.snapshot.state == .libraryLoading)
 }
+
+/// `.preview` makes "a preview is not an ending" unrepresentable. This is the other half: an
+/// ending is final. A preview arriving after the authoritative result would blank the library —
+/// tracks back to zero, restoration coverage back to partial — and ordering across two HTTP
+/// clients is not something the consumer can assume.
+@Test @MainActor
+func aPreviewArrivingAfterTheAuthoritativeResultIsIgnored() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+
+    let complete = fixtureLibraryAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [fixtureUnreadAlbum()]))
+    libraryBrowser.completeAgain(.loaded(musicFolders: [], artists: [], albums: [complete]))
+    #expect(store.snapshot.albums.first?.areTracksLoaded == true)
+    #expect(store.snapshot.albums.first?.tracks.count == 1)
+    #expect(playback.restoredCoverages.last == .wholeLibrary)
+
+    // A preview for the same open, delivered late.
+    libraryBrowser.completeAgain(.preview(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureUnreadAlbum()]
+    ))
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums.first?.areTracksLoaded == true)
+    #expect(store.snapshot.albums.first?.tracks.count == 1)
+    #expect(store.snapshot.albums.map(\.id) == [complete.id])
+    #expect(playback.restoredCoverages.last == .wholeLibrary)
+}

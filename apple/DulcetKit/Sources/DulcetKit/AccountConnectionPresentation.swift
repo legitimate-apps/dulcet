@@ -949,6 +949,14 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                   self.currentSnapshot.selectedDestination == .library else { return }
             switch outcome {
             case let .preview(musicFolders, artists, albums):
+                // An ending is final. `.preview` makes "a preview is not an ending"
+                // unrepresentable; this is the other half. A preview delivered after this open's
+                // authoritative result would replace a complete library with a track-less one —
+                // measured against the real data source as `areTracksLoaded` true->false,
+                // `tracks` 1->0 and restoration coverage `.wholeLibrary`->`.partial`. The
+                // producer happens not to do that today, but ordering across two HTTP clients is
+                // not something a consumer can assume, so it is enforced here.
+                guard !self.libraryReadCompleted else { return }
                 // The operation is deliberately NOT released and the refresh cadence is
                 // deliberately NOT started: the authoritative read is still running. Releasing it
                 // would leave a sync nothing can cancel, and starting the cadence here would
