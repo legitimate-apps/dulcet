@@ -2011,7 +2011,7 @@ Target scale — the design is sized against a large real-world library of **~31
 
 Subsonic has no delta-sync contract. Do not assume any list endpoint gives a reliable total count, a
 stable cursor, or a change token. `getIndexes` accepts `ifModifiedSince`, but whether the reference
-server honors it and at what granularity is **CONF-31**, not an assumption — and even honored it is
+server honors it and at what granularity is **CONF-34**, not an assumption — and even honored it is
 artist-level and cannot detect a changed track under an unchanged artist.
 
 **The honest statement revision 1 was missing:** offset pagination over a collection that mutates
@@ -3665,6 +3665,32 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 99 (2026-09-11)** — two corrections where a sentence promised a check the code or the
+registry did not make.
+
+1. **§16.1 cited the wrong conformance id.** The `getIndexes?ifModifiedSince` question is
+   **CONF-34**, not CONF-31. Revision 86 renumbered it into the registry's id space and updated the
+   registry table in §27, but this prose cross-reference kept the pre-renumbering id — which that
+   same renumbering had already reassigned to *generation-pinned reads*. So the one sentence in the
+   design that tells a reader where the change-token question is answered pointed at an unrelated,
+   already-shipped contract.
+
+   ⚠️ **`tools/parity_gate.py` cannot catch this class.** It fails when either document names an id
+   the other does not; both documents contain both ids, so a prose reference aimed at the wrong one
+   is invisible to it. Rev 86 closed the id-space drift; it did not close prose drift, and this is
+   the first instance found since.
+
+2. **The tvOS app-field poll omitted one of its two process checks.** `DulcetTVUITests` polls the
+   search field twice: once while the keyboard is open (which certifies the keyboard) and once after
+   it is dismissed (which certifies the app). The second poll's comment says "it is the same poll",
+   and it was not — it carried the prefix check and not the non-shrinking one, so a value going
+   *backwards* between samples read as "still settling".
+
+   That is exactly inverted from where the check earns its keep. A keyboard buffer reporting a
+   shorter value is a widget mid-edit; the **app's committed state** going backwards is the app
+   dropping text it already held, which is a product defect. `"Thresho"` then `"Thresh"` are both
+   prefixes of the query, so the prefix check alone passes both. Both polls now carry both checks.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

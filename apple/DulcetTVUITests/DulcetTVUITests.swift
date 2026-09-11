@@ -194,9 +194,14 @@ final class DulcetTVUITests: XCTestCase {
         // tvOS keyboard is open, the field's reported value follows the keyboard, so a check
         // taken there certifies the keyboard, not the app.
         //
-        // Polled for the same reason as the check above, and it is the same poll: the app's own
-        // state settles after the keyboard hands the text over, so a single sample here would
-        // conflate "the app never got it" with "the sample was early".
+        // Polled for the same reason as the check above, and it is the same poll -- including the
+        // same two process checks: the app's own state settles after the keyboard hands the text
+        // over, so a single sample here would conflate "the app never got it" with "the sample was
+        // early". The non-shrinking check matters MORE here than it does above. A keyboard buffer
+        // that reports a shorter value is a transcription artefact of a widget mid-edit; the app's
+        // committed state going backwards is the app dropping text it already held, and that is a
+        // product defect, not settling. Without this check the poll absorbs it: "Thresho" followed
+        // by "Thresh" are both prefixes of the query, so the prefix check alone passes both.
         var appSamples: [String] = []
         var appFieldValue = field.value as? String ?? ""
         appSamples.append(appFieldValue)
@@ -215,6 +220,14 @@ final class DulcetTVUITests: XCTestCase {
                 "App-field sample \(index) was \(sample.debugDescription), which is not a prefix of"
                     + " the typed query"
             )
+            if index > 0 {
+                XCTAssertGreaterThanOrEqual(
+                    sample.count,
+                    appSamples[index - 1].count,
+                    "The app's own field value went backwards between samples \(index - 1) and"
+                        + " \(index): the app is losing text it already held"
+                )
+            }
         }
         XCTAssertEqual(
             appFieldValue,
