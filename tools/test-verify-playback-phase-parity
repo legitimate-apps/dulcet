@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Prove verify-playback-phase-parity fails on every shape it exists to reject.
+
+A parity gate's healthy state and its dead state are both silence, so it is worth nothing until
+it has been made to speak. Each case below mutates a COPY of the three real files into a scratch
+tree laid out exactly as the repository is, runs the real tool there, and requires a non-zero
+exit whose message names the actual cause -- not merely a failure.
+
+The last case is the strongest control available: `origin/main`'s own pre-fix controller, which
+matched four phases and sent the rest to one `else`. If the gate cannot reject the code that
+motivated it, it rejects nothing.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+REPO = Path(__file__).resolve().parent.parent
+TOOL = REPO / "tools/verify-playback-phase-parity"
+FILES = {
+    "kotlin_enum": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/PlaybackCoreStateMachine.kt",
+    "kotlin_facade": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/ApplePlaybackQueueFacade.kt",
+    "swift": "apple/DulcetAppleShared/DulcetCorePlaybackController.swift",
+}
+
+failures: list[str] = []
+
+
+def stage(directory: Path) -> dict[str, Path]:
+    """Lay out a scratch tree the tool resolves exactly as it resolves the repository."""
+    staged: dict[str, Path] = {}
+    for key, relative in FILES.items():
+        target = directory / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO / relative, target)
+        staged[key] = target
+    tool = directory / "tools/verify-playback-phase-parity"
+    tool.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(TOOL, tool)
+    tool.chmod(0o755)
+    return staged
+
+
+def run(directory: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(directory / "tools/verify-playback-phase-parity")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def expect_rejection(label: str, mutate, expected: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-phase-parity-") as scratch:
+        directory = Path(scratch)
+        staged = stage(directory)
+        if not mutate(staged):
+            failures.append(f"{label}: the mutation did not apply, so nothing was tested")
+            return
+        result = run(directory)
+        output = result.stdout + result.stderr
+        if result.returncode == 0:
+            failures.append(f"{label}: ACCEPTED, exit 0 -- {output.strip()[:160]}")
+        elif expected not in output:
+            failures.append(f"{label}: rejected for the wrong reason -- {output.strip()[:200]}")
+        else:
+            print(f"  CONTROL PASS  {label}")
+
+
+def replace(path: Path, old: str, new: str) -> bool:
+    text = path.read_text()
+    if text.count(old) != 1:
+        return False
+    path.write_text(text.replace(old, new, 1))
+    return True
+
+
+expect_rejection(
+    "a phase removed from the Swift switch is unhandled",
+    lambda staged: replace(staged["swift"], 'case "Stopped", "TornDown":', 'case "TornDown":'),
+    "does not name every playback phase",
+)
+
+expect_rejection(
+    "a Swift branch for a phase the core cannot send is dead",
+    lambda staged: replace(
+        staged["kotlin_enum"], "    Stopped,\n    Failed,", "    Failed,"
+    ),
+    "matches a phase the core cannot send",
+)
+
+expect_rejection(
+    "the same phase named twice leaves one branch unreachable",
+    lambda staged: replace(
+        staged["swift"],
+        'case "Ready", "Progressing", "Buffering", "Paused":',
+        'case "Ready", "Progressing", "Buffering", "Paused", "Stopped":',
+    ),
+    "names the same phase more than once",
+)
+
+expect_rejection(
+    "the wire value no longer derives from the enum's own name",
+    lambda staged: replace(
+        staged["kotlin_facade"],
+        "phase = session.currentAttempt.phase.name,",
+        "phase = session.currentAttempt.phase.toString(),",
+    ),
+    "no longer sets the DTO's phase",
+)
+
+# The historical shape, verbatim. This is the code that motivated the gate: four names in an
+# allow-list and one `else` publishing `.preparing`, which is how `Stopped` came to be a spinner
+# that could never resolve. A gate that cannot reject the defect it was written for rejects
+# nothing, so this substitutes the real prior text rather than an approximation of it.
+PRE_FIX_CONTROLLER = '''        if session.phase == "Failed" {
+            publishFailure()
+            return
+        }
+        guard ["Ready", "Progressing", "Buffering", "Paused"].contains(session.phase) else {
+            publishPreparing()
+            return
+        }
+'''
+
+
+def install_pre_fix_shape(staged) -> bool:
+    text = staged["swift"].read_text()
+    match = re.search(r"^[ \t]*switch session\.phase \{.*?\n[ \t]*\}\n", text, re.S | re.M)
+    if match is None:
+        return False
+    staged["swift"].write_text(text[: match.start()] + PRE_FIX_CONTROLLER + text[match.end():])
+    return True
+
+
+expect_rejection(
+    "the pre-fix allow-list shape this gate was written for",
+    install_pre_fix_shape,
+    "no longer contains `switch session.phase {`",
+)
+
+# The positive control. Without it every case above is satisfied by a tool that always fails.
+with tempfile.TemporaryDirectory(prefix="dulcet-phase-parity-") as scratch:
+    directory = Path(scratch)
+    stage(directory)
+    result = run(directory)
+    if result.returncode != 0:
+        failures.append(
+            f"POSITIVE CONTROL: the unmutated tree was rejected -- "
+            f"{(result.stdout + result.stderr).strip()[:200]}"
+        )
+    else:
+        print(f"  CONTROL PASS  the unmutated tree is accepted: {result.stdout.strip()}")
+
+if failures:
+    for failure in failures:
+        print(f"FAIL {failure}", file=sys.stderr)
+    raise SystemExit(1)
+
+print(f"playback phase parity controls passed: {6}/6 cases")
