@@ -112,8 +112,20 @@ project diff is exactly the eight `shellScript` assignments.
 `test-required-checks`, `test-pr-workflow-secret-boundary`, `test-project-spec-paths`,
 `verify_project_spec_paths.py` — all exit 0. `git diff --check` clean.
 
+## Expected effect on run time, ASSUMED until a CI run
+
+The reviewer's estimate from the same 40-run sample: about **−1 to −2 minutes per run**, because
+each avoided second daemon start (four per job across the concurrent pairs) is roughly 15–30 s of
+JVM start plus configuration that the loser used to spend before failing or waiting; **worst case
+about +40 s** when a pair that would have overlapped harmlessly now runs back-to-back. Neither
+figure is measured; the first CI run of this branch against the duration trajectory is the
+measurement.
+
 ## Not exercised
 
 No `xcodebuild`, simulator, or CI run of this branch. That the serialised phases pass the
 iPadOS step on a hosted runner is the claim CI makes when this branch is checked; it is not
-made here.
+made here. `tools/test-run-gradle-exclusive` runs in `parity-gate` on `ubuntu-latest` only, so
+CI observes the runner's `flock` behaviour on Linux; its behaviour on macOS, where the script
+phases actually run, is OBSERVED only on the Mac that produced this note. The lock timeout
+itself was not reproduced locally (five attempts above).
