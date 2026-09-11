@@ -17,9 +17,12 @@ module of ours, links nothing, and runs no test. A clean result means these sour
 under the project's own Swift language version; it makes no claim about anything else.
 
 The XCTest assertion functions do not resolve in a standalone ``-typecheck`` invocation against
-the framework search path (measured: XCTFail and seven XCTAssert overloads, and neither a plugin
-path nor a language-mode change resolves them). ``SHIM`` declares exactly those, so a real name
-or type error is not buried under hundreds of spurious ones. If a future toolchain resolves them
+the framework search path (measured: XCTFail and the XCTAssert overloads these sources call, and
+neither a plugin path nor a language-mode change resolves them). ``SHIM`` declares that surface --
+including the FloatingPoint ``accuracy:`` overload of ``XCTAssertEqual``, which XCTest really has
+and which these sources use -- so a real name or type error is not buried under hundreds of
+spurious ones. Add an overload here only to match a signature XCTest actually declares; a shim
+that is laxer than XCTest would turn a genuine type error into a pass. If a future toolchain resolves them
 for real, the shim collides and this tool fails loudly with an ambiguity error -- delete the
 shimmed declaration then; it never degrades into a pass.
 
@@ -65,6 +68,9 @@ func XCTAssertTrue(_ e: @autoclosure () throws -> Bool, _ m: @autoclosure () -> 
 func XCTAssertEqual<T: Equatable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
                                   _ m: @autoclosure () -> String = "",
                                   file: StaticString = #filePath, line: UInt = #line) {}
+func XCTAssertEqual<T: FloatingPoint>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
+                                      accuracy: T, _ m: @autoclosure () -> String = "",
+                                      file: StaticString = #filePath, line: UInt = #line) {}
 func XCTAssertNotEqual<T: Equatable>(_ a: @autoclosure () throws -> T, _ b: @autoclosure () throws -> T,
                                      _ m: @autoclosure () -> String = "",
                                      file: StaticString = #filePath, line: UInt = #line) {}
