@@ -110,6 +110,9 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
     /// `"preview"` / `"committed"`, in delivery order. A test that only checks the committed
     /// result passes whether or not the preview ever ran, which is the whole point of it.
     private(set) var publicationOrder: [String] = []
+    /// The album order the preview published, so a proof can require it to match the committed
+    /// order rather than leaving the two free to disagree unobserved.
+    private(set) var previewAlbumOrder: [String] = []
 
     init(databaseName: String = "dulcet.db") {
         client = AppleLibrarySyncClient(
@@ -162,7 +165,11 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             previewDelivered = true
             self.deliveredPreviewCount += 1
             self.publicationOrder.append("preview")
-            completion(Self.previewOutcome(snapshot))
+            let outcome = Self.previewOutcome(snapshot)
+            if case let .preview(_, _, albums) = outcome {
+                self.previewAlbumOrder = albums.map(\.id.rawID)
+            }
+            completion(outcome)
         }
         let coreRequest = AppleLibrarySyncRequest(
             providerInstanceId: request.providerInstanceID,
@@ -260,7 +267,35 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         guard case let .loaded(musicFolders, artists, albums) = copyCommitted(snapshot) else {
             preconditionFailure("copyCommitted always produces a loaded outcome")
         }
-        return .preview(musicFolders: musicFolders, artists: artists, albums: albums)
+        // The grid's order is the CLIENT's, not whichever source answered. The server returns
+        // `alphabeticalByName` using its own collation; the committed read returns
+        // `ORDER BY title COLLATE NOCASE, raw_id` (Library.sq). Left alone the two disagree, and
+        // the grid visibly reshuffles under the reader seconds-to-minutes after it paints —
+        // OBSERVED, and invisible until something compared them. The preview adopts the
+        // committed order so the later publication cannot move anything.
+        return .preview(
+            musicFolders: musicFolders,
+            artists: artists,
+            albums: albums.sorted(by: Self.precedesInLibraryOrder)
+        )
+    }
+
+    /// `title COLLATE NOCASE, raw_id`, which is what `Library.sq` orders the committed read by.
+    /// SQLite's NOCASE folds ASCII only, so the fold here is ASCII-only too — a Unicode-aware
+    /// fold would silently disagree on exactly the titles that make ordering visible.
+    private static func precedesInLibraryOrder(_ left: DulcetAlbum, _ right: DulcetAlbum) -> Bool {
+        let leftTitle = asciiCaseFolded(left.title)
+        let rightTitle = asciiCaseFolded(right.title)
+        if leftTitle != rightTitle { return leftTitle < rightTitle }
+        return left.id.rawID < right.id.rawID
+    }
+
+    private static func asciiCaseFolded(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar in
+            scalar.value >= 65 && scalar.value <= 90
+                ? Character(Unicode.Scalar(scalar.value + 32)!)
+                : Character(scalar)
+        })
     }
 
     private static func copyCommitted(

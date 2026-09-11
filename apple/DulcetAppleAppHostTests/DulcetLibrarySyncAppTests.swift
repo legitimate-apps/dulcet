@@ -110,6 +110,12 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
             []
         )
         assertDisplayedLibrary(store.snapshot, equals: firstCommitted.library)
+        // The grid must not reshuffle when the committed publication replaces the preview. The
+        // two came from different sources with different collations and nothing compared them.
+        XCTAssertEqual(
+            library.previewAlbumOrder,
+            firstCommitted.library.albums.map(\.rawId)
+        )
         XCTAssertEqual(refreshScheduler.scheduledCount, 1)
         XCTAssertFalse(firstCommitted.library.albums.isEmpty)
         XCTAssertFalse(firstCommitted.library.albums.flatMap(\.tracks).isEmpty)
