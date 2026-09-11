@@ -742,9 +742,16 @@ internal class LibrarySyncRepository(
     fun albumIds(serverId: String, generation: Long): List<String> =
         queries.selectAlbumIdsAtGeneration(serverId, generation).executeAsList()
 
-    /** Albums this generation holds that no track in this generation names. */
-    fun albumsWithoutTracks(serverId: String, generation: Long): Long =
-        queries.countAlbumsWithoutTracksAtGeneration(serverId, generation).executeAsOne()
+    /**
+     * Albums this generation holds that no track in this generation names.
+     *
+     * [albumCount] is passed in rather than queried because the caller already has it, and because
+     * counting from the track side keeps this O(tracks): every stored track's album is one of those
+     * albums by construction, so the albums with tracks are exactly the distinct album ids the
+     * track table carries at this generation.
+     */
+    fun albumsWithoutTracks(serverId: String, generation: Long, albumCount: Long): Long =
+        albumCount - queries.countAlbumsWithTracksAtGeneration(serverId, generation).executeAsOne()
 
     fun seenIds(serverId: String, generation: Long, stage: LibrarySyncStage): Set<String> =
         queries.selectSeenIds(serverId, generation, stage.wireName).executeAsList().toSet()
@@ -1617,7 +1624,9 @@ internal class LibrarySyncEngine(
             repository::putTracks,
             unverifiedAfterWalk = { droppedRows > 0L || tracklessAlbums > 0L },
             requireWalkComplete = {
-                tracklessAlbums = repository.albumsWithoutTracks(serverId, original.generation)
+                tracklessAlbums = repository.albumsWithoutTracks(
+                    serverId, original.generation, albumIds.size.toLong(),
+                )
                 requireEnumeratedTracks(albumIds.size.toLong(), tracklessAlbums, droppedRows)
             },
         ) { offset, size ->
