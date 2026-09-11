@@ -2156,6 +2156,79 @@ func reconnectingReadsTheLibraryAgainEvenWhenOneIsHeld() throws {
     #expect(libraryBrowser.requests.count == 2)
 }
 
+/// 🚨 The window this protects is everything between the preview painting and the sync
+/// committing — about ten seconds at the corpus the proxy measurement was taken against.
+///
+/// `selectDestination(.library)` is this surface's ONLY way back out of an album detail; there is
+/// no separate back action, which `republishHeldLibrary` says in so many words. During that window
+/// `libraryReadCompleted` is still false, so backing out fell straight through the held-data guard,
+/// cancelled the whole in-flight pair, and started a second one — replacing the grid the person was
+/// looking at with a loading spinner and re-reading the entire library.
+///
+/// Asserting that the grid is shown passes identically before and after the fix, so this asserts
+/// the REQUEST COUNT, and also that the live operation was never cancelled: the outcome and the
+/// process, because the outcome alone is satisfied by a cancel-and-restart that lands on the same
+/// albums.
+@Test @MainActor
+func backingOutOfAnAlbumWhileTheFirstReadRunsDoesNotStartASecondWalk() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    let album = fixtureUnreadAlbum()
+
+    // The preview paints. The sync behind it has not finished, so the operation is still live and
+    // `libraryReadCompleted` is still false — this is the whole window under test.
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [album])
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+
+    // The read that was left alone still finishes, and still replaces the preview with the
+    // committed library. Guarding initiation must not cost the answer.
+    libraryBrowser.completeAgain(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [fixtureLibraryAlbum()])
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(refreshScheduler.scheduledCount == 1)
+}
+
+/// Nothing has been drawn yet, so there is no grid to redraw — but there is also nothing to
+/// restart. Re-entering during the blank part of the window must keep showing the loading surface
+/// rather than publishing an empty library over a read that is still running.
+@Test @MainActor
+func reEnteringBeforeThePreviewArrivesKeepsLoadingRatherThanRereading() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+}
+
 /// A read that failed is not a library, so the error surface's Try Again — which re-enters the
 /// destination — must reach the server.
 @Test @MainActor

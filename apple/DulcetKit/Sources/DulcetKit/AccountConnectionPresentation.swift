@@ -856,27 +856,58 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// A read happens when there is nothing held (first entry, or the held data was invalidated),
     /// when the previous attempt failed (the error surface's Try Again re-enters), when a
     /// connection is established, and when the cadence elapses. It does NOT happen because
-    /// somebody came back to the screen. Staleness is already the cadence's job; adding a second,
+    /// somebody came back to the screen, and it does not happen because somebody re-entered a
+    /// screen that is *already reading*. Staleness is already the cadence's job; adding a second,
     /// implicit staleness rule keyed on navigation would mean the library is re-read as often as
     /// the person happens to tab around, which is not a property anyone chose.
+    ///
+    /// 🚨 **Initiation is guarded here, not just publication.** `libraryGeneration` stops a
+    /// superseded read from *publishing*, which is a different question from whether a second read
+    /// should have *started*. One open already costs a preview walk plus a two-pass sync — measured
+    /// 2026-09-11 at 21 requests before first paint and 4,996 `getAlbum` after it, against a
+    /// 2,498-album server — so starting another one is not a rounding error.
     private func openLibrary(
         reason: DulcetLibraryOpenReason,
         selecting selection: DulcetLibrarySelection? = nil
     ) {
-        if reason == .entered, libraryReadCompleted, currentSnapshot.accountConnection.isConnected {
+        if reason == .entered, currentSnapshot.accountConnection.isConnected {
             // Deliberately before the cancels below: the refresh cadence measures time since the
-            // last full read and must keep running across navigation, and there is no in-flight
-            // read to cancel because a completed one is what got us here.
+            // last full read and must keep running across navigation, and a read that is still
+            // running must not be cancelled by the act of arriving at the screen it is reading for.
             //
             // Held data answers navigation only when it can actually answer it. A search can
             // return an album the last read did not include — the server has it and we simply
             // have not looked since — so an unsatisfiable selection falls through and reads
             // rather than dropping the person on the grid they did not ask for.
-            if let selection {
-                if presentLibrarySelection(selection) { return }
-            } else {
-                republishHeldLibrary()
-                return
+            if libraryReadCompleted {
+                if let selection {
+                    if presentLibrarySelection(selection) { return }
+                } else {
+                    republishHeldLibrary()
+                    return
+                }
+            } else if activeLibraryOperation != nil,
+                      currentSnapshot.selectedDestination == .library {
+                // A read is already running, on the screen the person is already on — so this is
+                // not a navigation event at all, and the read it would start is the one already in
+                // flight. The window is real and it is long: the preview paints in well under a
+                // second and the sync behind it commits about ten seconds later, and
+                // `selectDestination(.library)` is this surface's ONLY way back out of an album
+                // (see `republishHeldLibrary`). Falling through here cancelled that read and began
+                // another, which replaced the grid the person was looking at with a spinner.
+                //
+                // A *selection* is still a real request: it names something the in-flight read was
+                // not asked to select and may not carry, so an unsatisfiable one reads, exactly as
+                // it does once a read has completed.
+                if let selection {
+                    if presentLibrarySelection(selection) { return }
+                } else {
+                    // Leaving an album detail ends interest in its track list, which is what the
+                    // cancel below would otherwise have done.
+                    cancelAlbumTracks()
+                    republishHeldLibrary(whenEmpty: .libraryLoading)
+                    return
+                }
             }
         }
         cancelLibraryBrowse()
@@ -1252,10 +1283,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// last open. `selectDestination(.library)` is also the only way back out of an album on this
     /// surface — there is no separate back action — so restoring the detail here would leave the
     /// grid unreachable.
-    private func republishHeldLibrary() {
+    ///
+    /// [emptyState] is what "nothing held" means to the caller. After a completed read it means
+    /// the server has no library; while a read is still running it means nothing has arrived yet,
+    /// and publishing an empty library over a read in progress would be a false answer.
+    private func republishHeldLibrary(
+        whenEmpty emptyState: DulcetPresentationState = .emptyLibraryConnected
+    ) {
         publish(
             state: libraryAlbums.isEmpty && libraryArtists.isEmpty
-                ? .emptyLibraryConnected
+                ? emptyState
                 : .libraryBrowse,
             destination: .library,
             form: currentSnapshot.accountForm,
