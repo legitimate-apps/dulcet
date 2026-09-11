@@ -55,6 +55,10 @@ class LibrarySyncConformanceTest {
         )
 
         assertEquals(1, observed.generation)
+        // `Unverified` alone stopped isolating the bounded-attempt property once the tracks stage
+        // learned to report a library that changed under the pass: the mutating album source skips
+        // rows, so songs for the skipped albums are dropped and that marks the generation too. The
+        // walk COUNT is what pins the bound, and it is the assertion below.
         assertEquals(LibrarySyncCompletionStability.Unverified, observed.stability)
         assertEquals(
             1 + LibrarySyncContract.maximumStabilityAttempts,

@@ -63,6 +63,13 @@ every Subsonic-compatible server.
 - **The `coverArt` id carries a version suffix**, `al-<album id>_<hex>`, whose hex decodes to a recent
   unix timestamp.
 
+**Consequence for servers without this behaviour.** The library import has no `getAlbum` fallback: a
+server that does not implement empty-query `search3` enumeration fails with
+`CapabilityUnsupported` and cannot sync a library at all, rather than syncing more slowly. That is a
+deliberate decision recorded in spec §16.5 rule 13, not an oversight — but it is the one place the
+client requires behaviour outside the Subsonic 1.16.1 baseline, so it is stated here where server
+compatibility is documented.
+
 ## Apple custom-scheme resource loading
 
 **OBSERVED 2026-08-21:** on the standard GitHub-hosted `macos-26` runner with Xcode 26.4.1, the
