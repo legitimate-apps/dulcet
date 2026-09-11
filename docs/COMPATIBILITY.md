@@ -36,11 +36,12 @@ artists). These are reference-server observations, not claims about every Subson
   is therefore correct only while it asks for exactly 500.
 - **`search3` does not clamp its counts.** `albumCount=501` returned 501, `1000` returned 1,000, and
   `5000` returned the whole 2,500-album library. 500 remains the ceiling Dulcet asks for, because it
-  is the documented Subsonic maximum and other servers do clamp there.
+  is the documented Subsonic maximum for `getAlbumList2` (*"The number of albums to return. Max
+  500."*) and other servers are reported to clamp there — the latter unmeasured here.
 - **An empty query enumerates the whole library**, and the four spellings `""` (two literal quote
-  characters), the bare empty value, `" "` and `"*"` all behaved identically. A zero count suppresses
-  that entity entirely: `artistCount=0&songCount=0` returned a response with no `artist` or `song`
-  key at all, so a one-entity page costs one query rather than three.
+  characters), the bare empty value, `" "` and `"*"` all behaved identically. A zero count removes
+  that entity from the response entirely rather than returning an empty array: a page asking only
+  for albums came back with `searchResult3` holding exactly one key, `album`.
 - **`search3` rows carry everything `getAlbum` carries.** Comparing the two transports over the whole
   of both corpora — 60,000 track field values and 15,048 album field values, parsed by the same
   rules — produced **zero differences**, and every song carried an `albumId` that resolved to a known
