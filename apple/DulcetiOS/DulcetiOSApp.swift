@@ -115,6 +115,9 @@ struct DulcetiOSApp: App {
                             .font(.caption2.monospaced())
                             .padding(.horizontal, 6)
                             .background(.thinMaterial, in: Capsule())
+                            // Read-only evidence: it must never swallow a tap the proof
+                            // aims at whatever sits under the top edge.
+                            .allowsHitTesting(false)
                             .accessibilityIdentifier(
                                 DulcetDebugScrobbleDeliveryMarker.accessibilityIdentifier
                             )
