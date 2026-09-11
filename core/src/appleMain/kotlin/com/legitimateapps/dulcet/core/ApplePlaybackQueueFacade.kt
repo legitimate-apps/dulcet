@@ -1,7 +1,10 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -88,11 +91,29 @@ public class ApplePlaybackDeliveryConfigurationOutcomeDto internal constructor(
 )
 
 /**
+ * What this process has done with scrobble effects since the client was created. Counts are per
+ * process, not per session: a pending row from an earlier launch is delivered and counted here too.
+ *
+ * `submittedPlaysDelivered` moves only when the server acknowledged a `submission=true` call with an
+ * `ok` envelope. Handing a play to the durable outbox (`submittedPlaysPersisted`) is not delivery,
+ * and a shell that reports "played" on the persisted count alone is reporting the wrong event.
+ */
+public class ApplePlaybackDeliveryReportDto internal constructor(
+    public val submittedPlaysPersisted: Long,
+    public val submittedPlaysDelivered: Long,
+    public val submittedPlaysPending: Long,
+    public val submittedPlayFailedAttempts: Long,
+    public val nowPlayingSent: Long,
+    public val nowPlayingDropped: Long,
+)
+
+/**
  * Objective-C-compatible queue facade. Its owner serializes calls; every public operation closes
  * failures into [ApplePlaybackQueueTransitionDto] instead of allowing a Kotlin exception to cross.
  */
 public class ApplePlaybackQueueClient private constructor(
     compositionResult: ApplePlaybackQueueCompositionResult,
+    deliveryDispatcher: CoroutineDispatcher,
 ) {
     private val databaseStore: DulcetDatabaseStore?
     private val database: com.legitimateapps.dulcet.database.DulcetDatabase?
@@ -100,9 +121,11 @@ public class ApplePlaybackQueueClient private constructor(
     private val resumePositions: ResumePositionStore?
     private val initializationErrorKind: String?
     private val pendingEffects = ArrayDeque<PlaybackCoreEffect>()
-    private val deliveryScope = MainScope()
+    private val deliveryScope = CoroutineScope(SupervisorJob() + deliveryDispatcher)
     private val deliveryEvents = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
     private var delivery: ApplePlaybackDeliveryComposition? = null
+    private var deliveryCounts = ApplePlaybackDeliveryCounts()
+    private var deliveryReportObserver: ((ApplePlaybackDeliveryReportDto) -> Unit)? = null
 
     init {
         databaseStore = compositionResult.composition?.databaseStore
@@ -115,19 +138,24 @@ public class ApplePlaybackQueueClient private constructor(
         }
     }
 
-    public constructor(databaseName: String) : this(openApplePlaybackQueue(databaseName))
+    public constructor(databaseName: String) : this(
+        openApplePlaybackQueue(databaseName),
+        Dispatchers.Main,
+    )
 
     internal constructor(controller: PlaybackQueueController) : this(
         ApplePlaybackQueueCompositionResult(
             composition = ApplePlaybackQueueComposition(null, null, controller, null),
             errorKind = null,
         ),
+        Dispatchers.Main,
     )
 
     internal constructor(
         database: com.legitimateapps.dulcet.database.DulcetDatabase,
         controller: PlaybackQueueController,
         resumePositions: ResumePositionStore,
+        deliveryDispatcher: CoroutineDispatcher = Dispatchers.Main,
     ) : this(
         ApplePlaybackQueueCompositionResult(
             composition = ApplePlaybackQueueComposition(
@@ -138,6 +166,7 @@ public class ApplePlaybackQueueClient private constructor(
             ),
             errorKind = null,
         ),
+        deliveryDispatcher,
     )
 
     public fun configureDelivery(
@@ -146,29 +175,61 @@ public class ApplePlaybackQueueClient private constructor(
         val database = database
             ?: return ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
         return try {
-            delivery?.sender?.close()
-            val sender = ScrobbleEndpointSender(account)
-            val outbox = PersistentScrobbleOutbox(database, ApplePlaybackWallClock)
-            val monotonicOrigin = TimeSource.Monotonic.markNow()
-            val worker = ScrobbleOutboxDeliveryWorker(
+            installDelivery(
                 serverId = ServerId(account.providerInstanceId),
-                outbox = outbox,
-                sender = sender,
-                wallClock = ApplePlaybackWallClock,
-                monotonicClock = OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
-                diagnosticSink = ScrobbleOutboxDiagnosticSink { },
+                sender = ScrobbleEndpointSender(account),
+                outbox = PersistentScrobbleOutbox(database, ApplePlaybackWallClock),
             )
-            delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker)
-            val waiting = pendingEffects.toList()
-            pendingEffects.clear()
-            captureEffects(waiting)
-            deliveryScope.launch { worker.onForeground() }
             ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
         } catch (_: IllegalArgumentException) {
             ApplePlaybackDeliveryConfigurationOutcomeDto(false, "input")
         } catch (_: Throwable) {
             ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
         }
+    }
+
+    /**
+     * Receives every change to the delivery report, on the delivery dispatcher (the main thread in
+     * production). The observer is the only way a shell can learn that a submitted play reached the
+     * server: the ingestion calls return once the play is persisted, which is earlier.
+     */
+    public fun setDeliveryReportObserver(
+        observer: ((ApplePlaybackDeliveryReportDto) -> Unit)?,
+    ) {
+        deliveryReportObserver = observer
+        observer?.invoke(deliveryReport())
+    }
+
+    public fun deliveryReport(): ApplePlaybackDeliveryReportDto = deliveryCounts.toDto(
+        pending = delivery?.outbox?.count() ?: 0,
+    )
+
+    internal fun installDelivery(
+        serverId: ServerId,
+        sender: ScrobbleEndpointSender,
+        outbox: PersistentScrobbleOutbox,
+    ) {
+        delivery?.sender?.close()
+        val monotonicOrigin = TimeSource.Monotonic.markNow()
+        val worker = ScrobbleOutboxDeliveryWorker(
+            serverId = serverId,
+            outbox = outbox,
+            sender = sender,
+            wallClock = ApplePlaybackWallClock,
+            monotonicClock = OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
+            diagnosticSink = ScrobbleOutboxDiagnosticSink { event ->
+                if (event is ScrobbleOutboxDiagnosticEvent.DeliveryFailed) {
+                    updateDeliveryReport {
+                        copy(submittedPlayFailedAttempts = submittedPlayFailedAttempts + 1)
+                    }
+                }
+            },
+        )
+        delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker)
+        val waiting = pendingEffects.toList()
+        pendingEffects.clear()
+        captureEffects(waiting)
+        deliveryScope.launch { drainOutbox(worker) }
     }
 
     public fun replaceAndStart(
@@ -515,6 +576,7 @@ public class ApplePlaybackQueueClient private constructor(
 
     public fun close() {
         try {
+            deliveryReportObserver = null
             deliveryEvents.close()
             deliveryScope.cancel()
             delivery?.sender?.close()
@@ -570,6 +632,9 @@ public class ApplePlaybackQueueClient private constructor(
                     } else {
                         if (effect.event is RecordedPlaybackEvent.SubmittedPlay) {
                             activeDelivery.outbox.persistSynchronously(effect.event)
+                            updateDeliveryReport {
+                                copy(submittedPlaysPersisted = submittedPlaysPersisted + 1)
+                            }
                         }
                         check(deliveryEvents.trySend(effect.event).isSuccess)
                     }
@@ -596,13 +661,57 @@ public class ApplePlaybackQueueClient private constructor(
         }
         when (event) {
             is RecordedPlaybackEvent.NowPlaying -> {
-                activeDelivery.sender?.send(ScrobbleEndpointRequest(event))
+                when (activeDelivery.sender?.send(ScrobbleEndpointRequest(event))) {
+                    is ScrobbleSendResult.Sent -> updateDeliveryReport {
+                        copy(nowPlayingSent = nowPlayingSent + 1)
+                    }
+                    is ScrobbleSendResult.Failed -> updateDeliveryReport {
+                        copy(nowPlayingDropped = nowPlayingDropped + 1)
+                    }
+                    null -> Unit
+                }
             }
             is RecordedPlaybackEvent.SubmittedPlay -> {
-                activeDelivery.worker?.onForeground()
+                activeDelivery.worker?.let { drainOutbox(it) }
             }
         }
     }
+
+    /**
+     * Every outbox drain reports through here so `submittedPlaysDelivered` counts server
+     * acknowledgements and nothing else: a drain that found no pending row, or whose send failed,
+     * reports the same delivered count it started with.
+     */
+    private suspend fun drainOutbox(worker: ScrobbleOutboxDeliveryWorker) {
+        val result = worker.onForeground()
+        updateDeliveryReport {
+            copy(submittedPlaysDelivered = submittedPlaysDelivered + result.deliveredCount)
+        }
+    }
+
+    private fun updateDeliveryReport(
+        change: ApplePlaybackDeliveryCounts.() -> ApplePlaybackDeliveryCounts,
+    ) {
+        deliveryCounts = deliveryCounts.change()
+        deliveryReportObserver?.invoke(deliveryReport())
+    }
+}
+
+private data class ApplePlaybackDeliveryCounts(
+    val submittedPlaysPersisted: Long = 0,
+    val submittedPlaysDelivered: Long = 0,
+    val submittedPlayFailedAttempts: Long = 0,
+    val nowPlayingSent: Long = 0,
+    val nowPlayingDropped: Long = 0,
+) {
+    fun toDto(pending: Long): ApplePlaybackDeliveryReportDto = ApplePlaybackDeliveryReportDto(
+        submittedPlaysPersisted = submittedPlaysPersisted,
+        submittedPlaysDelivered = submittedPlaysDelivered,
+        submittedPlaysPending = pending,
+        submittedPlayFailedAttempts = submittedPlayFailedAttempts,
+        nowPlayingSent = nowPlayingSent,
+        nowPlayingDropped = nowPlayingDropped,
+    )
 }
 
 private data class ApplePlaybackQueueComposition(

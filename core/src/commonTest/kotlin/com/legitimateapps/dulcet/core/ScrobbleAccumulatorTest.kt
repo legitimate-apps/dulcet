@@ -102,6 +102,41 @@ class ScrobbleAccumulatorTest {
     }
 
     @Test
+    fun aDisplayedPositionPastTheThresholdDoesNotImplySubmissionWhenProgressBeganLate() {
+        // The 31 s UI Playback Canary: threshold 15.5 s. The iPad proof used to return as soon as the
+        // DISPLAYED position read "0:16", i.e. >= 16.0 s. The accumulator counts media time from the
+        // FIRST sampled position, so with progress observed to begin at 1.0 s it holds 15.0 s when
+        // the display reads 16.0 s and has not submitted. That gap is the whole mechanism behind a
+        // passing UI test and a server play count that never moved (apple-ci, 2026-09-06 and
+        // 2026-09-11): the app was killed before its next sample.
+        var reduction = started(duration = 31.seconds, position = 1_000.milliseconds)
+        var position = 1_000.milliseconds
+        var monotonic = 0.milliseconds
+        while (position < 16.seconds) {
+            position += 500.milliseconds
+            monotonic += 500.milliseconds
+            reduction = reduce(
+                reduction.state,
+                ScrobbleAccumulatorEvent.PositionChanged(position, PlaybackMonotonicTime(monotonic)),
+            )
+        }
+        assertEquals(16.seconds, reduction.state.lastPosition)
+        assertEquals(15.seconds, reduction.state.accruedMediaTime)
+        assertFalse(reduction.state.submitted)
+        assertTrue(reduction.effects.none { it is ScrobbleAccumulatorEffect.SubmittedPlay })
+
+        val nextSample = reduce(
+            reduction.state,
+            ScrobbleAccumulatorEvent.PositionChanged(
+                16_500.milliseconds,
+                PlaybackMonotonicTime(monotonic + 500.milliseconds),
+            ),
+        )
+        assertTrue(nextSample.state.submitted)
+        assertIs<ScrobbleAccumulatorEffect.SubmittedPlay>(nextSample.effects.single())
+    }
+
+    @Test
     fun durationChangingDownwardCanSubmitAndChangingUpwardAfterSubmissionNeverRetracts() {
         val beforeChange = eligibleState(duration = 60.seconds, accrued = 16.seconds)
         val downward = reduce(
