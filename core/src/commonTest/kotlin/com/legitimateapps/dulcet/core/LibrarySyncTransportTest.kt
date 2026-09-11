@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -234,13 +235,132 @@ class LibrarySyncTransportTest {
             val noSongs = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
                 override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
             }
-            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, noSongs))
 
-            // The damaging shape is the second sync, not the first: a library of empty albums
-            // committed over a full one, reported as a success, with every track row closed.
+            // The damaging shape is the RETRY, not the first rejection, and a rejection that only
+            // holds once is worse than none: it converts a loud failure into a silent success at
+            // the second press of the button. Loop it.
+            repeat(4) { attempt ->
+                assertIs<LibrarySyncResult.Failed>(
+                    engine.synchronize(SERVER, noSongs),
+                    "sync ${attempt + 1} against a server enumerating no songs",
+                )
+                val committed = repository.readCommitted(SERVER)
+                assertEquals(1, committed.generation, "generation moved on retry ${attempt + 1}")
+                assertEquals(4, committed.trackIds.size, "tracks lost on retry ${attempt + 1}")
+            }
+
+            // Rejecting forever is only half the contract: a rejection that leaves the stage
+            // unrepeatable would make even a healthy server unable to refill it, and no shipping
+            // caller can pass restart = true to clear that.
+            val recovered = assertIs<LibrarySyncResult.Completed>(
+                engine.synchronize(SERVER, GeneratedSource(albumCount = 4)),
+            )
+            assertEquals(LibrarySyncStability.Verified, recovered.stability)
+            assertEquals(2, repository.readCommitted(SERVER).generation)
+            assertEquals(4, repository.readCommitted(SERVER).trackIds.size)
+        }
+    }
+
+    @Test
+    fun aSpuriousEmptyPageMidWalkCannotCommitAsVerified() = runTest {
+        withRepository { repository ->
+            // An empty page is the only thing that ends a walk, so a server that emits one in the
+            // middle of a list truncates the import and the re-walk agrees with it deterministically
+            // — the witness cannot see it. What catches it is the per-album invariant: albums left
+            // with no tracks at all.
+            val source = EmptyPageSource(GeneratedSource(albumCount = 10), emptyAtOffset = 4)
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+
+            assertTrue(source.servedEmptyPage, "the control proved nothing: no empty page was served")
+            assertEquals(
+                LibrarySyncStability.Unverified,
+                completed.stability,
+                "six albums committed with no tracks at all cannot be reported as verified",
+            )
             val committed = repository.readCommitted(SERVER)
-            assertEquals(1, committed.generation)
+            assertEquals(10, committed.albumIds.size)
             assertEquals(4, committed.trackIds.size)
+        }
+    }
+
+    @Test
+    fun anAlbumDeletedBetweenTheTwoWalksIsNotCommittedAsVerified() = runTest {
+        withRepository { repository ->
+            // The songs walk cannot tell "this album was deleted a moment ago" from "this album has
+            // no songs", and the album row is already written. One phantom album is a small, real
+            // consequence of walking two lists at two instants; committing it as verified is not.
+            val source = MissingSongsForAlbumSource(GeneratedSource(albumCount = 4), "album-1")
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+
+            assertEquals(LibrarySyncStability.Unverified, completed.stability)
+            assertEquals(4, repository.readCommitted(SERVER).albumIds.size)
+            assertEquals(3, repository.readCommitted(SERVER).trackIds.size)
+            assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
+        }
+    }
+
+    @Test
+    fun aResumeWhoseAlbumSetWentStaleIsNotCommittedAsVerified() = runTest {
+        withRepository { repository ->
+            val engine = LibrarySyncEngine(repository, enumerationPageSize = 4)
+            val dying = object : LibrarySyncSource by GeneratedSource(albumCount = 10) {
+                override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+                    throw LibraryRequestFailure(DomainError.Transport.Unreachable)
+            }
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, dying))
+            assertEquals(LibrarySyncStage.Tracks, assertNotNull(repository.checkpoint(SERVER)).stage)
+
+            // The albums stage has completed, so the resume does not re-walk it: the tracks stage
+            // reads the album set this generation already wrote. If the server lost albums in
+            // between, that set is stale and nothing re-validates it — a known limit of walking two
+            // lists at two instants (spec 16.5). What must not happen is committing the phantoms as
+            // a verified library.
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                engine.synchronize(SERVER, GeneratedSource(albumCount = 5)),
+            )
+
+            assertEquals(LibrarySyncStability.Unverified, completed.stability)
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(10, committed.albumIds.size, "the stale album set is what got committed")
+            assertEquals(5, committed.trackIds.size)
+            assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
+        }
+    }
+
+    @Test
+    fun aResumedWitnessCostsOneWalk() = runTest {
+        withRepository { repository ->
+            val engine = LibrarySyncEngine(repository, enumerationPageSize = 2)
+            val interrupted = CountingSource(
+                GeneratedSource(albumCount = 5).failingAlbumPageAt(failureOffset = 0, afterCalls = 4),
+            )
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, interrupted))
+            val checkpoint = assertNotNull(repository.checkpoint(SERVER))
+            assertEquals(LibrarySyncStage.Albums, checkpoint.stage)
+            assertEquals(
+                1,
+                checkpoint.attempt,
+                "the interruption must land on the witness walk, not the fill",
+            )
+
+            val resumed = CountingSource(GeneratedSource(albumCount = 5))
+            val completed = assertIs<LibrarySyncResult.Completed>(engine.synchronize(SERVER, resumed))
+
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            // One clean witness walk: 2, 2, 1, 0. A resumed witness comparing against the fill's
+            // own page count instead of the baseline it produced cannot match a walk that has not
+            // changed, and pays two walks proving it while spending one of three attempts.
+            assertEquals(
+                4,
+                resumed.counts.getValue("albumPage"),
+                "the resumed witness did not cost exactly one walk",
+            )
         }
     }
 
@@ -466,14 +586,23 @@ class LibrarySyncTransportTest {
         override suspend fun genres() = record("genres", delegate.genres())
     }
 
-    /** Wraps a source so one album-page request fails, once, at a chosen offset. */
-    private fun LibrarySyncSource.failingAlbumPageAt(failureOffset: Long): LibrarySyncSource {
+    /**
+     * Wraps a source so one album-page request fails, once, at a chosen offset — optionally only
+     * after [afterCalls] earlier album pages, which is how an interruption is aimed at the witness
+     * walk rather than the fill.
+     */
+    private fun LibrarySyncSource.failingAlbumPageAt(
+        failureOffset: Long,
+        afterCalls: Int = 0,
+    ): LibrarySyncSource {
         val delegate = this
         return object : LibrarySyncSource by delegate {
             private var armed = true
+            private var calls = 0
 
             override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> {
-                if (armed && offset == failureOffset) {
+                calls += 1
+                if (armed && offset == failureOffset && calls > afterCalls) {
                     armed = false
                     throw LibraryRequestFailure(DomainError.Transport.Unreachable)
                 }
@@ -514,6 +643,30 @@ class LibrarySyncTransportTest {
             servedShortPage = true
             return delegate.trackPage(offset, maxOf(1, size - 1))
         }
+    }
+
+    /** A server that serves one spurious EMPTY page in the middle of an otherwise healthy walk. */
+    private class EmptyPageSource(
+        private val delegate: LibrarySyncSource,
+        private val emptyAtOffset: Long,
+    ) : LibrarySyncSource by delegate {
+        var servedEmptyPage = false
+            private set
+
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> {
+            if (offset != emptyAtOffset) return delegate.trackPage(offset, size)
+            servedEmptyPage = true
+            return emptyList()
+        }
+    }
+
+    /** A server whose songs walk has lost one album's songs since the albums walk ran. */
+    private class MissingSongsForAlbumSource(
+        private val delegate: LibrarySyncSource,
+        private val albumRawId: String,
+    ) : LibrarySyncSource by delegate {
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            delegate.trackPage(offset, size).filterNot { it.albumRawId == albumRawId }
     }
 
     /** A server whose pages ignore the offset, so the walk can never reach the end. */

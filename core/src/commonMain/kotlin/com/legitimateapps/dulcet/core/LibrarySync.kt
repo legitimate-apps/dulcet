@@ -741,6 +741,10 @@ internal class LibrarySyncRepository(
     fun albumIds(serverId: String, generation: Long): List<String> =
         queries.selectAlbumIdsAtGeneration(serverId, generation).executeAsList()
 
+    /** Albums this generation holds that no track in this generation names. */
+    fun albumsWithoutTracks(serverId: String, generation: Long): Long =
+        queries.countAlbumsWithoutTracksAtGeneration(serverId, generation).executeAsOne()
+
     fun seenIds(serverId: String, generation: Long, stage: LibrarySyncStage): Set<String> =
         queries.selectSeenIds(serverId, generation, stage.wireName).executeAsList().toSet()
 
@@ -1355,7 +1359,12 @@ internal class LibrarySyncEngine(
         var unverified = checkpoint.unverified
         while (attempt < MAX_STABILITY_ATTEMPTS) {
             attempt += 1
-            checkpoint = checkpoint.copy(attempt = attempt)
+            // The witness written here is the COMPLETE baseline, including the empty page that
+            // ended the fill walk — the checkpoints written during the fill deliberately count only
+            // the pages that advanced the offset. A resumed witness compares against whatever this
+            // row says, so storing the fill's undercount makes the first resumed attempt unable to
+            // match a walk that has not changed, and spends one of three attempts proving it.
+            checkpoint = checkpoint.copy(attempt = attempt, witness = baseline)
                 .also { repository.saveCheckpoint(serverId, it) }
             val values = fetch()
             val current = LibrarySyncWitness(values.syncIds(), 1)
@@ -1417,6 +1426,13 @@ internal class LibrarySyncEngine(
         // afterwards it would be a second, separate write, and a process death between the two
         // would lose it and commit the generation as verified.
         unverifiedAfterWalk: () -> Boolean = { false },
+        // 🚨 A stage's completeness gate must run BEFORE the stage advances, for the same reason
+        // and with sharper consequences. [advance] durably writes a checkpoint naming the NEXT
+        // stage; a gate that throws after that write leaves a checkpoint which resumes past its own
+        // stage, so the next `synchronize` never enters it and the gate never runs again. A gate
+        // disarmed by retrying is worse than no gate: it turns a loud failure into a silent
+        // success on the second press of the button.
+        requireWalkComplete: () -> Unit = {},
         fetch: suspend (Long, Int) -> SourcePage<T>,
     ): LibrarySyncCheckpoint {
         var checkpoint = original
@@ -1458,11 +1474,18 @@ internal class LibrarySyncEngine(
         var attempt = checkpoint.attempt
         while (attempt < MAX_STABILITY_ATTEMPTS) {
             attempt += 1
-            checkpoint = checkpoint.copy(attempt = attempt)
+            // The witness written here is the COMPLETE baseline, including the empty page that
+            // ended the fill walk — the checkpoints written during the fill deliberately count only
+            // the pages that advanced the offset. A resumed witness compares against whatever this
+            // row says, so storing the fill's undercount makes the first resumed attempt unable to
+            // match a walk that has not changed, and spends one of three attempts proving it.
+            checkpoint = checkpoint.copy(attempt = attempt, witness = baseline)
                 .also { repository.saveCheckpoint(serverId, it) }
             val current = walkPages(identity, fetch)
             if (current.witness == baseline) {
-                return advance(serverId, checkpoint.markUnverified(unverifiedAfterWalk))
+                return advanceCompleteStage(
+                    serverId, checkpoint, requireWalkComplete, unverifiedAfterWalk,
+                )
             }
             baseline = current.witness
             checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
@@ -1473,7 +1496,47 @@ internal class LibrarySyncEngine(
                 repository.saveCheckpoint(serverId, checkpoint)
             }
         }
-        return advance(serverId, checkpoint.copy(unverified = true))
+        return advanceCompleteStage(
+            serverId, checkpoint.copy(unverified = true), requireWalkComplete, unverifiedAfterWalk,
+        )
+    }
+
+    /**
+     * Runs the stage's completeness gate, then advances — in that order, and never the reverse.
+     *
+     * A rejected stage is rolled back to a state a later attempt can re-walk from scratch, in one
+     * transaction, before the failure propagates. Rejecting without the rollback is not enough: the
+     * durable checkpoint would keep the attempt count the rejected walk spent, and once that
+     * reaches the bound the stage can never be re-filled — not even against a healthy server —
+     * because the fill only runs at `attempt == 0`. No shipping caller passes `restart = true`, so
+     * "the user can force a full rescan" is not an answer available to them.
+     */
+    private fun advanceCompleteStage(
+        serverId: String,
+        checkpoint: LibrarySyncCheckpoint,
+        requireWalkComplete: () -> Unit,
+        unverifiedAfterWalk: () -> Boolean,
+    ): LibrarySyncCheckpoint {
+        try {
+            requireWalkComplete()
+        } catch (rejection: LibraryRequestFailure) {
+            repository.writeAtomically {
+                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
+                repository.saveCheckpoint(
+                    serverId,
+                    LibrarySyncCheckpoint(
+                        generation = checkpoint.generation,
+                        stage = checkpoint.stage,
+                        cursor = 0,
+                        attempt = 0,
+                        witness = LibrarySyncWitness.Empty,
+                        unverified = checkpoint.unverified,
+                    ),
+                )
+            }
+            throw rejection
+        }
+        return advance(serverId, checkpoint.markUnverified(unverifiedAfterWalk))
     }
 
     private fun LibrarySyncCheckpoint.markUnverified(decide: () -> Boolean): LibrarySyncCheckpoint =
@@ -1544,20 +1607,23 @@ internal class LibrarySyncEngine(
     ): LibrarySyncCheckpoint {
         val albumIds = repository.albumIds(serverId, original.generation).toSet()
         var droppedRows = 0L
-        val finished = runPagedStage(
+        var tracklessAlbums = 0L
+        return runPagedStage(
             serverId,
             original,
             { row: LibraryTrackRow -> row.track.id.rawId },
             repository::putTracks,
-            unverifiedAfterWalk = { droppedRows > 0L },
+            unverifiedAfterWalk = { droppedRows > 0L || tracklessAlbums > 0L },
+            requireWalkComplete = {
+                tracklessAlbums = repository.albumsWithoutTracks(serverId, original.generation)
+                requireEnumeratedTracks(albumIds.size.toLong(), tracklessAlbums, droppedRows)
+            },
         ) { offset, size ->
             val page = source.trackPage(offset, size)
             val kept = page.filter { it.albumRawId in albumIds }
             droppedRows += (page.size - kept.size).toLong()
             SourcePage(kept, rowCount = page.size)
         }
-        requireEnumeratedTracks(serverId, original.generation, albumIds, droppedRows)
-        return finished
     }
 
     /**
@@ -1574,18 +1640,27 @@ internal class LibrarySyncEngine(
      * returned (this failure) versus everything returned filed under albums this generation has not
      * seen (a mid-pass mutation, already marked `unverified`).
      *
+     * **It is applied at two granularities because the invariant has two granularities.** Every
+     * album trackless is impossible, and fails. *Some* albums trackless is the same impossibility
+     * in miniature, but it is also what a legitimate race produces — an album deleted between the
+     * two walks, or one whose songs arrived after the songs walk passed them — so it marks the
+     * generation `unverified` rather than failing. Hard-failing there would reject a correct import
+     * over one concurrent deletion; accepting it silently is how one spurious empty page mid-walk
+     * committed six of ten albums with no tracks at all and called the result verified.
+     * OBSERVED 2026-09-11: zero trackless albums on either live corpus, so this is silent in
+     * practice on the reference server.
+     *
      * Artists get no equivalent check on purpose. An album with no album-artist tag is ordinary, and
      * whether a server then emits an artist row for it is server-specific, so "albums but no
      * artists" is not impossible the way "albums but no songs" is.
      */
     private fun requireEnumeratedTracks(
-        serverId: String,
-        generation: Long,
-        albumIds: Set<String>,
+        albumCount: Long,
+        tracklessAlbums: Long,
         droppedRows: Long,
     ) {
-        if (albumIds.isEmpty() || droppedRows > 0L) return
-        if (repository.seenIds(serverId, generation, LibrarySyncStage.Tracks).isNotEmpty()) return
+        if (albumCount == 0L || droppedRows > 0L) return
+        if (tracklessAlbums < albumCount) return
         throw LibraryRequestFailure(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync))
     }
 
@@ -1637,7 +1712,12 @@ internal class LibrarySyncEngine(
         var attempt = checkpoint.attempt
         while (attempt < MAX_STABILITY_ATTEMPTS) {
             attempt += 1
-            checkpoint = checkpoint.copy(attempt = attempt)
+            // The witness written here is the COMPLETE baseline, including the empty page that
+            // ended the fill walk — the checkpoints written during the fill deliberately count only
+            // the pages that advanced the offset. A resumed witness compares against whatever this
+            // row says, so storing the fill's undercount makes the first resumed attempt unable to
+            // match a walk that has not changed, and spends one of three attempts proving it.
+            checkpoint = checkpoint.copy(attempt = attempt, witness = baseline)
                 .also { repository.saveCheckpoint(serverId, it) }
             val currentSummaries = source.playlists().distinctBy { it.id.rawId }
             val currentPlaylists = fetchPlaylists(source, currentSummaries)

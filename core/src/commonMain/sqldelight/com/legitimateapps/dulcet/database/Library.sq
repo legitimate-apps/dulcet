@@ -467,6 +467,19 @@ WHERE server_id = :server_id AND valid_to_generation IS NULL
       AND sync_seen.stage = :stage AND sync_seen.raw_id = genre.name
   );
 
+countAlbumsWithoutTracksAtGeneration:
+SELECT count(*) FROM album
+WHERE server_id = :server_id
+  AND valid_from_generation <= :generation
+  AND (valid_to_generation IS NULL OR :generation < valid_to_generation)
+  AND NOT EXISTS (
+    SELECT 1 FROM track
+    WHERE track.server_id = album.server_id
+      AND track.album_raw_id = album.raw_id
+      AND track.valid_from_generation <= :generation
+      AND (track.valid_to_generation IS NULL OR :generation < track.valid_to_generation)
+  );
+
 selectAlbumIdsAtGeneration:
 SELECT raw_id FROM album
 WHERE server_id = :server_id
