@@ -535,12 +535,34 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             presentationHandler?(currentPresentation)
             return
         }
-        if session.phase == "Failed" {
+        // Every PlaybackAttemptPhase is named here, and tools/verify-playback-phase-parity fails
+        // when the Kotlin enum carries a case this switch does not name. This was a four-name
+        // allow-list with an `else` that published `.preparing`, which put FOUR phases behind one
+        // presentation -- and three of them are not "preparing" in any sense a person would
+        // recognise. `Stopped` and `TornDown` mean nothing is playing and nothing is coming, so
+        // the spinner they produced could never resolve.
+        switch session.phase {
+        case "Failed":
             publishFailure()
             return
-        }
-        guard ["Ready", "Progressing", "Buffering", "Paused"].contains(session.phase) else {
+        case "Created", "Preparing":
             publishPreparing()
+            return
+        case "Stopped", "TornDown":
+            // Reached on every stop, including the one `disconnect()` issues itself. The engine
+            // emits `.skipped` from its stop implementation and the event listener delivers it
+            // through `Task { @MainActor }`, so it lands AFTER `disconnect()` has published
+            // `.unavailable` and overwrites it. Mapping the phase correctly removes the harm
+            // rather than ordering around it: both paths now publish the same thing.
+            publishUnavailable()
+            return
+        case "Ready", "Progressing", "Buffering", "Paused":
+            break
+        default:
+            // A phase this shell does not know, which the parity gate exists to make impossible.
+            // `.preparing` is the worst available guess: it is the one presentation that never
+            // resolves on its own, so an unknown phase would strand the person on a spinner.
+            publishUnavailable()
             return
         }
         guard let current = catalog[DulcetProviderItemID(
@@ -603,6 +625,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             ),
             for: DulcetPlaybackSessionID(session.playbackSessionId)
         )
+    }
+
+    private func publishUnavailable() {
+        currentPresentation = .unavailable
+        presentationHandler?(currentPresentation)
     }
 
     private func publishPreparing() {
