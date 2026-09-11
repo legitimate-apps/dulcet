@@ -1173,6 +1173,36 @@ its test vectors (§15.2) are exhaustive. Ordering is preserved per attempt. An 
 attempt the core has never seen is dropped and counted — that is an adapter bug, not a race to
 tolerate.
 
+**Every attempt phase maps to a presentation explicitly, and a shell may not have a default branch.**
+The phase reaches a platform shell as the Kotlin enum's own case **name**, so the compiler checks
+nothing across that boundary. A shell that recognises some phases and sends the rest to one fallback
+is therefore claiming a mapping it has not made, and the claim is invisible until a person is looking
+at the wrong screen.
+
+🚨 **OBSERVED 2026-09-11 on `main`.** The Apple shell matched four phases —
+`Ready`, `Progressing`, `Buffering`, `Paused` — and published **`preparing`** for everything else.
+That put four phases behind one presentation, and for two of them a spinner is not merely imprecise,
+it is **unresolvable**: `Stopped` and `TornDown` mean nothing is playing and nothing is coming, so
+nothing will ever arrive to replace it. The reachable instance is `disconnect()`, which issues its
+own `stop`: the engine emits `Skipped`, the core maps it to `Stopped` by **copying** the current
+session rather than retiring it, and the shell delivers engine events asynchronously — so the stop's
+own event lands *after* `disconnect()` has published `unavailable` and replaced it with a spinner
+belonging to an account that no longer exists.
+
+Three rules, each because the alternative fails silently:
+
+1. **The mapping is total.** Every case of the phase enum is named. `Stopped` and `TornDown` present
+   as **unavailable**; `Created` and `Preparing` present as **preparing**; `Failed` presents as
+   **failed**; the four playing phases present the now-playing surface.
+2. **An unrecognised phase presents as `unavailable`, never as `preparing`.** Among the available
+   presentations, `preparing` is the only one that never resolves on its own, which makes it the
+   worst possible guess about a state nobody anticipated.
+3. **A source gate enforces rule 1**, because nothing else can: `tools/verify-playback-phase-parity`
+   fails when either side names a phase the other does not, and asserts that the wire value is still
+   derived from the enum's own name — a list comparison that has quietly stopped comparing anything
+   is worse than no gate. It is Apple-only today because Android has no phase-to-presentation mapping
+   on `main` at all; the Media3 work must extend it rather than repeat this.
+
 ### 12.3 Position cadence
 
 Two numbers, named because §15.2 depends on both: **`cadenceTarget = 0.5 s`** (the nominal 2 Hz
@@ -3666,6 +3696,30 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 100 (2026-09-11)** — §12.2 gains the attempt-phase presentation contract, which did not
+exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a
+shell handled every case, and the Apple shell handled four of nine.
+
+`Stopped` and `TornDown` were presented as **preparing** — the one presentation that cannot resolve
+by itself. Reachable through `disconnect()`, which issues its own `stop`: the engine emits `Skipped`,
+the core maps it to `Stopped` by copying the current session rather than retiring it, and engine
+events are delivered asynchronously, so the stop's event overwrites the `unavailable` that
+`disconnect()` had just published. The result is a spinner for an account that no longer exists.
+
+This is the third instance of one shape in this project: the sidebar wired to nothing, failed
+playback presenting as preparing (`docs/verification/failed-playback-presentation.md`), and now this.
+Each time the correct state existed, was computed, and never reached the screen. Each time the defect
+lived in a **fallback branch** that looked like defensive coding.
+
+It was also already written down. That same verification document says `Stopped` is *"deliberately
+unchanged here and separately suspect"* and traces the mechanism correctly. A correct diagnosis sat
+in the repository for two days with nothing scheduled to act on it, which is the argument for the
+gate rather than for a second correct note.
+
+The mapping is now total, an unrecognised phase presents as `unavailable`, and
+`tools/verify-playback-phase-parity` fails the build when either side names a phase the other does
+not. The gate also asserts that the DTO still derives the wire value from the enum's `name`, because
+a list comparison whose two lists have stopped describing the same thing passes forever.
 **Revision 99 (2026-09-11)** — two corrections where a sentence promised a check the code or the
 registry did not make.
 

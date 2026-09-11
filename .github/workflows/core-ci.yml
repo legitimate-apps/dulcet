@@ -37,6 +37,8 @@ jobs:
         run: python3 tools/verify_os_floors.py --configuration-only
       - name: Verify protected-data migration semantics
         run: python3 tools/migration_gate.py
+      - name: Verify Apple presents every playback phase the core can send
+        run: python3 tools/verify-playback-phase-parity
       - name: Build, test, and audit dependency licences
         run: >-
           ./gradlew --no-daemon
@@ -119,6 +121,8 @@ jobs:
         run: python3 tools/test-cache-loopback-mutations
       - name: Prove the health request policy preserves an error envelope's message
         run: python3 tools/test-health-request-policy
+      - name: Prove the playback phase parity gate rejects an unhandled phase
+        run: python3 tools/test-verify-playback-phase-parity
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
