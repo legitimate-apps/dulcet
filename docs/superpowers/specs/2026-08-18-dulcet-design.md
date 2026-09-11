@@ -2303,6 +2303,19 @@ server does the same is unsourced. Handling: keep appending `.view`; if a server
 login, retry the `ping` probe without the suffix before reporting `NotASubsonicServer`. Pinned by
 CONF-03.
 
+**QUIRK-02 — whole-library enumeration through empty-query `search3`.** Observed on Navidrome 0.63.2
+(2026-09-11). `search3` with `query=""` enumerates the entire library; its counts are not clamped; a
+zero count omits that entity from the response rather than returning an empty array; and every `song`
+row carries `albumId`. §16.2's fill transport relies on two of those: the enumeration itself, which
+OpenSubsonic mandates for offline sync but which is layered on a base API where `query` is required,
+and `albumId` on every song, which the schema makes optional. **Handling:** every import probes the
+empty query against a known positive (`getAlbumList2?size=1`) and fails
+`CapabilityUnsupported(LibrarySync)` rather than committing an empty library over a full one; a song
+without `albumId` fails the import with `MalformedEnvelope` rather than being silently dropped.
+**Pinned by CONF-31, CONF-32 and CONF-33**, which drive the production import against the live
+reference server — if either behaviour stops being true, the import fails and so do they. Recorded in
+`docs/COMPATIBILITY.md`.
+
 Anything we rely on that is not plainly in the specification is a named quirk with an id (`QUIRK-nn`),
 the server and version observed on, the behavior, our handling, a conformance test that fails when the
 quirk stops being true, and an entry in `docs/COMPATIBILITY.md`. A quirk without a test is a rumour,

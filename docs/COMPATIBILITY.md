@@ -24,7 +24,7 @@ targets. Protocol claims become evidence-backed in Phase 1.
   to 2. Navidrome 0.63.2 therefore does **not** deduplicate that at-least-once retry shape. This is a
   reference-server observation, not a claim about every Subsonic-compatible server.
 
-## Navidrome library enumeration and paging
+## Navidrome library enumeration and paging (QUIRK-02)
 
 **OBSERVED 2026-09-11 against Navidrome 0.63.2**, on two disposable local instances: the CI fixture
 corpus (8 albums / 314 tracks / 4 artists) and a generated one (2,500 albums / 5,000 tracks / 100
