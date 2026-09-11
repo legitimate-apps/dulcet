@@ -124,7 +124,56 @@ final class DulcetTVUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         field.typeText(query)
-        XCTAssertEqual(field.value as? String, query, "Typed text must reach the app's own field")
+        // The value settles asynchronously, and on tvOS the characters cross from the system
+        // keyboard's own scene into the app, so `typeText` returning is not a guarantee that they
+        // have arrived. One apple-ci run read `""` here -- run 34589816662, 1 of 39 executions in
+        // the job-log corpus. That run had already asserted the field existed, had remote focus,
+        // and that the keyboard was on screen, so "never reached" is excluded by its own upstream
+        // assertions; and TRACED against the app's text binding on an Apple TV 4K simulator, the
+        // app commits one character at a time and receives all of them in order, so a read landing
+        // mid-sequence legitimately sees a prefix -- the empty one included.
+        //
+        // NOT OBSERVED: the failing population settling. 15 local runs, including per-keystroke
+        // app cost induced at 200 and 500 ms and a 57-character query, all had the value complete
+        // at the first sample, so the event is rarer than anything this could force. The poll is
+        // safe under either reading -- text that never arrives still fails it -- and it records
+        // which population the run saw, which nothing else can: `continueAfterFailure` is false
+        // here, so no later assertion survives to answer the question.
+        //
+        // The samples carry their own process check. An incremental commit produces non-shrinking
+        // prefixes of the query; a sample that is not a prefix, or one that goes backwards, is a
+        // different defect and says so rather than being counted as "still settling".
+        var settleSamples: [String] = []
+        var observedFieldValue = field.value as? String ?? ""
+        settleSamples.append(observedFieldValue)
+        let settleClock = ContinuousClock()
+        let settleDeadline = settleClock.now.advanced(by: .seconds(10))
+        while observedFieldValue != query, settleClock.now < settleDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            observedFieldValue = field.value as? String ?? ""
+            settleSamples.append(observedFieldValue)
+        }
+        print("DULCET TV KEYBOARD-BUFFER OBSERVED settle-attempts=\(settleSamples.count - 1)"
+            + " first=\(settleSamples[0].debugDescription) final=\(observedFieldValue.debugDescription)")
+        for (index, sample) in settleSamples.enumerated() {
+            XCTAssertTrue(
+                query.hasPrefix(sample),
+                "Sample \(index) was \(sample.debugDescription), which is not a prefix of the typed"
+                    + " query: the field is not receiving this text one character at a time"
+            )
+            if index > 0 {
+                XCTAssertGreaterThanOrEqual(
+                    sample.count,
+                    settleSamples[index - 1].count,
+                    "The field's value went backwards between samples \(index - 1) and \(index)"
+                )
+            }
+        }
+        XCTAssertEqual(
+            observedFieldValue,
+            query,
+            "The tvOS keyboard must accept the typed text; polled \(settleSamples.count - 1) times over 10 s"
+        )
         print("DULCET TV QUERY value=\(field.value as? String ?? "missing") input=typeText")
 
         // Navigate the system keyboard by remote, including its Done control. Re-check focus
@@ -138,7 +187,41 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(done.hasFocus, "Keyboard Done must have remote focus: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        XCTAssertEqual(field.value as? String, query)
+        // This is the assertion that proves the APP received the text, and the one above the
+        // keyboard does not. MEASURED: with the search field's binding replaced by a constant
+        // empty string -- so the app can never hold the query -- the in-keyboard check above
+        // still reported "Threshold" and passed, and only this one failed with "". While the
+        // tvOS keyboard is open, the field's reported value follows the keyboard, so a check
+        // taken there certifies the keyboard, not the app.
+        //
+        // Polled for the same reason as the check above, and it is the same poll: the app's own
+        // state settles after the keyboard hands the text over, so a single sample here would
+        // conflate "the app never got it" with "the sample was early".
+        var appSamples: [String] = []
+        var appFieldValue = field.value as? String ?? ""
+        appSamples.append(appFieldValue)
+        let appClock = ContinuousClock()
+        let appDeadline = appClock.now.advanced(by: .seconds(10))
+        while appFieldValue != query, appClock.now < appDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            appFieldValue = field.value as? String ?? ""
+            appSamples.append(appFieldValue)
+        }
+        print("DULCET TV APP-FIELD OBSERVED settle-attempts=\(appSamples.count - 1)"
+            + " first=\(appSamples[0].debugDescription) final=\(appFieldValue.debugDescription)")
+        for (index, sample) in appSamples.enumerated() {
+            XCTAssertTrue(
+                query.hasPrefix(sample),
+                "App-field sample \(index) was \(sample.debugDescription), which is not a prefix of"
+                    + " the typed query"
+            )
+        }
+        XCTAssertEqual(
+            appFieldValue,
+            query,
+            "Typed text must reach the app's own field once the keyboard is dismissed;"
+                + " polled \(appSamples.count - 1) times over 10 s"
+        )
 
         // Every rank is addressed by its own identifier and checked against the row that belongs
         // there. A view that stamped one constant identifier on every row would satisfy rank zero

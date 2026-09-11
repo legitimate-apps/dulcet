@@ -323,32 +323,63 @@ final class DulcetiOSUITests: XCTestCase {
         //
         // This polls the same assertion instead of sampling it. A field that genuinely drops
         // characters still fails, because the poll requires the full query and has an end; what it
-        // no longer does is fail for being late. `settleAttempts` is printed rather than asserted:
-        // one attempt is the normal outcome, and a run that needed many is a responsiveness signal
-        // worth seeing in the log rather than a reason to fail.
+        // no longer does is fail for being late. The attempt count is printed rather than
+        // asserted: zero is the normal outcome, and a run that needed many is a responsiveness
+        // signal worth seeing in the log rather than a reason to fail.
+        //
         // Monotonic, per this repository's clock rule: a wall-clock deadline can be moved by the
         // host while the poll is running.
-        var settleAttempts = 0
-        var observedFieldValue = searchField.value as? String
+        //
+        // The samples carry their own process check, matching the tvOS control in
+        // DulcetTVUITests: an incremental commit produces non-shrinking prefixes of the query, so
+        // a sample that is not a prefix, or one that goes backwards, is a different defect and
+        // says so rather than being counted as "still settling".
+        var settleSamples: [String] = []
+        var observedFieldValue = searchField.value as? String ?? ""
+        settleSamples.append(observedFieldValue)
         let settleClock = ContinuousClock()
         let settleDeadline = settleClock.now.advanced(by: .seconds(10))
         while observedFieldValue != query, settleClock.now < settleDeadline {
-            settleAttempts += 1
             Thread.sleep(forTimeInterval: 0.1)
-            observedFieldValue = searchField.value as? String
+            observedFieldValue = searchField.value as? String ?? ""
+            settleSamples.append(observedFieldValue)
         }
-        print("DULCET SEARCH TYPING OBSERVED settle-attempts=\(settleAttempts)"
-            + " value=\(String(describing: observedFieldValue))")
+        print("DULCET SEARCH TYPING OBSERVED settle-attempts=\(settleSamples.count - 1)"
+            + " first=\(settleSamples[0].debugDescription) final=\(observedFieldValue.debugDescription)")
+        for (index, sample) in settleSamples.enumerated() {
+            XCTAssertTrue(
+                query.hasPrefix(sample),
+                "Sample \(index) was \(sample.debugDescription), which is not a prefix of the typed"
+                    + " query: the field is not receiving this text one character at a time"
+            )
+            if index > 0 {
+                XCTAssertGreaterThanOrEqual(
+                    sample.count,
+                    settleSamples[index - 1].count,
+                    "The field's value went backwards between samples \(index - 1) and \(index)"
+                )
+            }
+        }
         XCTAssertEqual(
             observedFieldValue,
             query,
-            "The query typed through the platform keyboard must reach the search field itself;"
-                + " polled \(settleAttempts) times over 10 s"
+            "The typed text must reach the search field's own value;"
+                + " polled \(settleSamples.count - 1) times over 10 s"
         )
 
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
+        // The check above reads the text field, and MEASURED: with the field's binding replaced
+        // by a constant empty string -- so the app can never hold the query -- it still reported
+        // "Threshold" and passed, and this wait is where the run failed instead. A text field
+        // being edited reports what is on screen, not what the app's state received, so this is
+        // the first assertion that depends on the query having actually reached the app. Its
+        // message must therefore not blame the server for a query that never arrived.
         guard firstResult.waitForExistence(timeout: 30) else {
-            XCTFail("The disposable server must return ranked results for this query")
+            XCTFail(
+                "No ranked results for the typed query. Either the query never reached the app's"
+                    + " state -- the field's own value is not proof that it did -- or the"
+                    + " disposable server did not answer: " + app.debugDescription
+            )
             return
         }
         // A person dismisses the software keyboard before activating a result; the test must do
