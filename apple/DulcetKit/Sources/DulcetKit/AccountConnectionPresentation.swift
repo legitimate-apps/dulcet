@@ -1022,12 +1022,23 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             guard let self,
                   self.libraryGeneration == requestGeneration,
                   self.currentSnapshot.selectedDestination == .library else { return }
-            self.activeLibraryOperation = nil
             switch outcome {
-            case let .preview(musicFolders, artists, albums),
-                 let .loaded(musicFolders, artists, albums):
-                // A committed read is answered from the local database and has no preview stage,
-                // so both shapes mean the same thing here.
+            case let .preview(musicFolders, artists, albums):
+                // A committed read is answered from the local database in one step, so this
+                // cannot happen. It is handled as what `.preview` MEANS rather than folded in
+                // with `.loaded`: the operation is not released and the read is not recorded as
+                // complete. Conflating the two here was how the handle came to be released
+                // before the case that decides whether releasing it is correct.
+                self.publishLoadedLibrary(
+                    musicFolders: musicFolders,
+                    artists: artists,
+                    albums: albums,
+                    form: form,
+                    status: status,
+                    selection: selection
+                )
+            case let .loaded(musicFolders, artists, albums):
+                self.activeLibraryOperation = nil
                 self.libraryReadCompleted = true
                 self.publishLoadedLibrary(
                     musicFolders: musicFolders,
@@ -1038,6 +1049,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     selection: selection
                 )
             case .failed:
+                self.activeLibraryOperation = nil
                 self.publish(
                     state: .accountSavedDisconnected,
                     destination: .library,
@@ -1045,7 +1057,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: status
                 )
             case .cancelled:
-                break
+                self.activeLibraryOperation = nil
             }
         }
         if libraryGeneration == requestGeneration,

@@ -91,13 +91,13 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
         XCTAssertEqual(firstCommitted.generation, 1)
         XCTAssertEqual(library.startedSyncCount, 1)
         XCTAssertEqual(library.displayedCommittedGenerations, [firstCommitted.generation])
-        // Why an exact sequence and not just an invariant: within one open a preview can only be
-        // delivered before the commit — a preview arriving after the sync has finished is
-        // suppressed — and the preview issues a strict SUBSET of the sync's own first three
-        // requests while the sync additionally reads every album, the playlists, the starred set,
-        // the genres and a stability re-walk before it commits. So the preview losing this race
-        // would mean its three requests took longer than all of that, which is a result worth
-        // failing on rather than tolerating.
+        // Why an exact sequence and not just an invariant. Within one open a preview can only be
+        // delivered before the commit, because a late one is discarded at both ends. That the
+        // preview WINS is a race assertion, not a guarantee: it issues far fewer requests than
+        // the sync, but on a SEPARATE HTTP client, and this repository has measured a 30.3 s
+        // loopback stall — so one stalled preview request could lose to an entire sync. Keeping
+        // the assertion is deliberate: the preview losing is the feature not working, which is
+        // worth failing on rather than tolerating.
         XCTAssertEqual(library.publicationOrder, ["preview", "committed"])
         // Order-free invariant, so a future reordering cannot quietly retire the control above.
         // This is a PAIRING, not a count: it rejects ["committed", "preview"] — which a count
