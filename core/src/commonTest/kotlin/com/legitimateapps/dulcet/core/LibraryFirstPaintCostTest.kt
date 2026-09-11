@@ -82,77 +82,83 @@ class LibraryFirstPaintCostTest {
             ).browse(fixtureRequest()),
         )
 
+        // Closed in `finally`: an assertion below throws before any trailing `close()` would
+        // run, and a driver leaked on the failure path is exactly how one failure becomes many.
         val driver = createTestDriver()
         val sync = CountingSyncSource(
             artistCount = STATED_ARTIST_COUNT,
             albumCount = MEASURED_ALBUM_COUNT,
             trackCount = MEASURED_TRACK_COUNT,
         )
-        assertIs<LibrarySyncResult.Completed>(
-            LibrarySyncEngine(LibrarySyncRepository(DulcetDatabaseStore.open(driver)))
-                .synchronize(SERVER, sync),
-        )
+        try {
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(LibrarySyncRepository(DulcetDatabaseStore.open(driver)))
+                    .synchronize(SERVER, sync),
+            )
 
-        // 🚨 THE DISCRIMINATOR. Each paged stage is begun from offset 0 exactly twice: the fill
-        // that writes the generation, and the one stability witness that proves it was a snapshot.
-        // A third start is an unaccounted walk, and this says so without reference to any corpus.
-        assertEquals(
-            mapOf("artistPage" to 2, "albumPage" to 2, "trackPage" to 2),
-            sync.walkStarts,
-            "the pinned read plus the witness, and nothing else",
-        )
-        // The unpaged stages are the same shape: read, then re-read and compare.
-        assertEquals(2, sync.reads("musicFolders"), "pinned read plus stability witness")
-        assertEquals(2, sync.reads("starred"), "pinned read plus stability witness")
-        assertEquals(2, sync.reads("genres"), "pinned read plus stability witness")
-        // The enumeration probe runs once per sync, before any stage.
-        assertEquals(1, sync.reads("probeEnumeration"))
-        assertEquals(2, sync.reads("playlists"), "pinned read plus stability witness")
+            // 🚨 THE DISCRIMINATOR. Each paged stage is begun from offset 0 exactly twice: the fill
+            // that writes the generation, and the one stability witness that proves it was a snapshot.
+            // A third start is an unaccounted walk, and this says so without reference to any corpus.
+            assertEquals(
+                mapOf("artistPage" to 2, "albumPage" to 2, "trackPage" to 2),
+                sync.walkStarts,
+                "the pinned read plus the witness, and nothing else",
+            )
+            // The unpaged stages are the same shape: read, then re-read and compare.
+            assertEquals(2, sync.reads("musicFolders"), "pinned read plus stability witness")
+            assertEquals(2, sync.reads("starred"), "pinned read plus stability witness")
+            assertEquals(2, sync.reads("genres"), "pinned read plus stability witness")
+            // The enumeration probe runs once per sync, before any stage.
+            assertEquals(1, sync.reads("probeEnumeration"))
+            assertEquals(2, sync.reads("playlists"), "pinned read plus stability witness")
 
-        // Pages per walk. These walks end on an EMPTY page, so a corpus that is an exact multiple
-        // of the page size costs one more request than its rows alone suggest.
-        assertEquals(2 * 3, sync.reads("artistPage"), "1,000 artists: 2 data pages + the empty one")
-        assertEquals(2 * 6, sync.reads("albumPage"), "2,498 albums: 5 data pages + the empty one")
-        assertEquals(2 * 11, sync.reads("trackPage"), "4,996 tracks: 10 data pages + the empty one")
+            // Pages per walk. These walks end on an EMPTY page, so a corpus that is an exact multiple
+            // of the page size costs one more request than its rows alone suggest.
+            assertEquals(2 * 3, sync.reads("artistPage"), "1,000 artists: 2 data pages + the empty one")
+            assertEquals(2 * 6, sync.reads("albumPage"), "2,498 albums: 5 data pages + the empty one")
+            assertEquals(2 * 11, sync.reads("trackPage"), "4,996 tracks: 10 data pages + the empty one")
 
-        // One request per source read, mapped through `HttpLibrarySyncSource` (LibrarySync.kt,
-        // ref 4004969): musicFolders -> getMusicFolders; probeEnumeration -> getAlbumList2 AND
-        // search3, because it asks a known positive before believing an enumeration; artistPage,
-        // albumPage and trackPage -> search3; playlists/starred/genres -> getPlaylists/
-        // getStarred2/getGenres.
-        val combined = mapOf(
-            "getMusicFolders" to previewTransport.requestsTo("getMusicFolders") +
-                sync.reads("musicFolders"),
-            "getArtists" to previewTransport.requestsTo("getArtists"),
-            "getAlbumList2" to previewTransport.requestsTo("getAlbumList2") +
-                sync.reads("probeEnumeration"),
-            "search3" to sync.reads("probeEnumeration") +
-                sync.reads("artistPage") + sync.reads("albumPage") + sync.reads("trackPage"),
-            "getPlaylists" to sync.reads("playlists"),
-            "getStarred2" to sync.reads("starred"),
-            "getGenres" to sync.reads("genres"),
-            "getAlbum" to previewTransport.requestsTo("getAlbum"),
-        )
+            // One request per source read, mapped through `HttpLibrarySyncSource` (LibrarySync.kt,
+            // ref 4004969): musicFolders -> getMusicFolders; probeEnumeration -> getAlbumList2 AND
+            // search3, because it asks a known positive before believing an enumeration; artistPage,
+            // albumPage and trackPage -> search3; playlists/starred/genres -> getPlaylists/
+            // getStarred2/getGenres.
+            val combined = mapOf(
+                "getMusicFolders" to previewTransport.requestsTo("getMusicFolders") +
+                    sync.reads("musicFolders"),
+                "getArtists" to previewTransport.requestsTo("getArtists"),
+                "getAlbumList2" to previewTransport.requestsTo("getAlbumList2") +
+                    sync.reads("probeEnumeration"),
+                "search3" to sync.reads("probeEnumeration") +
+                    sync.reads("artistPage") + sync.reads("albumPage") + sync.reads("trackPage"),
+                "getPlaylists" to sync.reads("playlists"),
+                "getStarred2" to sync.reads("starred"),
+                "getGenres" to sync.reads("genres"),
+                "getAlbum" to previewTransport.requestsTo("getAlbum"),
+            )
 
-        assertEquals(
-            mapOf(
-                "getMusicFolders" to 3,
-                "getArtists" to 1,
-                "getAlbumList2" to 6,
-                "search3" to 41,
-                "getPlaylists" to 2,
-                "getStarred2" to 2,
-                "getGenres" to 2,
-                // 🚨 Zero, and that is the headline of #125. The previous transport read every
-                // album individually, twice: 4,996 requests against this corpus.
-                "getAlbum" to 0,
-            ),
-            combined,
-        )
-        // One whole library open, both components, at the measured corpus. Stated as a derived
-        // consequence of the map above -- never as the thing being checked, because a total is
-        // exactly what cannot tell one mechanism from another.
-        assertEquals(57, combined.values.sum(), "one open, preview and sync together")
+            assertEquals(
+                mapOf(
+                    "getMusicFolders" to 3,
+                    "getArtists" to 1,
+                    "getAlbumList2" to 6,
+                    "search3" to 41,
+                    "getPlaylists" to 2,
+                    "getStarred2" to 2,
+                    "getGenres" to 2,
+                    // 🚨 Zero, and that is the headline of #125. The previous transport read every
+                    // album individually, twice: 4,996 requests against this corpus.
+                    "getAlbum" to 0,
+                ),
+                combined,
+            )
+            // One whole library open, both components, at the measured corpus. Stated as a derived
+            // consequence of the map above -- never as the thing being checked, because a total is
+            // exactly what cannot tell one mechanism from another.
+            assertEquals(57, combined.values.sum(), "one open, preview and sync together")
+        } finally {
+            driver.close()
+        }
     }
 
     /**

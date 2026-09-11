@@ -87,10 +87,22 @@ measured — several CONF tests exist precisely to do that promotion.
 # stdlib call in commonTest falls straight through the gap -- `toSortedMap` did, and cost a full
 # apple-ci cycle to discover. This is seconds locally.
 ./gradlew :core:compileTestKotlinIosSimulatorArm64
+# ...and COMPILING for native is not RUNNING on native -- the other half of the same gap, and the
+# one that bites harder. commonTest runs against a different SQLite driver there, where an
+# in-memory database is shared process-wide *by name*, so isolation that holds on the JVM can be
+# absent on native. One missing `driver.close()` failed 26 tests across six unrelated classes in
+# `apple-ci` while every command above stayed green. Seconds locally; a full cycle otherwise.
+./gradlew :core:macosArm64Test
 python3 tools/parity_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
 ```
+
+🚨 **`BUILD SUCCESSFUL` is not evidence that tests ran.** An up-to-date Gradle test task prints it in
+seconds having executed nothing, so "I ran it and it passed" and "I ran nothing" look identical. Read
+the **count** out of `core/build/test-results/<task>/*.xml`, and pass `--rerun-tasks` when the point
+of the run is that the tests actually execute. A `--tests` filter that matches nothing is the same
+trap wearing a different hat.
 
 **Xcode builds are not hermetic.** They invoke Gradle through a Run Script phase, so the pinned JDK
 and Gradle wrapper must be present on any build machine. Apple compilation and binary floor evidence
