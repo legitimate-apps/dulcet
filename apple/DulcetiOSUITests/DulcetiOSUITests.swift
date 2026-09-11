@@ -658,10 +658,15 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Negative control, before any playback: the marker must be live and must read zero
-        // delivered AND zero persisted. A leftover row from an earlier launch on a reused
-        // simulator would be delivered by this launch and credited to a playback that never
-        // crossed the threshold, so the baseline is asserted, not assumed.
+        // Negative control, before any playback: the marker must be live and read three zeros,
+        // each excluding a different way a later "delivered=1" could be credited to the wrong
+        // event. The counts are per process; only `pending` reads the durable outbox.
+        //   delivered=0  this launch has not yet delivered anything (a leftover row drained on
+        //                configureDelivery would already show here);
+        //   pending=0    no row survives from an earlier launch on a reused simulator, so a
+        //                drain that has not happened yet cannot supply the 1 either;
+        //   persisted=0  this launch has not itself persisted a play (a crossing before the
+        //                account settled, or a restored session, would show here).
         let deliveryMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
         guard deliveryMarker.waitForExistence(timeout: 10) else {
             XCTFail("The app's scrobble delivery marker must exist when its launch argument is passed")
@@ -676,8 +681,11 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertEqual(baseline["delivered"], 0, "No play may be delivered before playback starts")
-        XCTAssertEqual(baseline["persisted"], 0, "No play may be pending from an earlier launch")
-        guard baseline["delivered"] == 0, baseline["persisted"] == 0 else { return }
+        XCTAssertEqual(baseline["pending"], 0, "No play may be waiting in the outbox from an earlier launch")
+        XCTAssertEqual(baseline["persisted"], 0, "No play may be persisted by this launch before playback")
+        guard baseline["delivered"] == 0, baseline["pending"] == 0, baseline["persisted"] == 0 else {
+            return
+        }
 
         // staticTexts avoids the duplicate Image/StaticText identifier carried by sidebar Labels.
         let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
