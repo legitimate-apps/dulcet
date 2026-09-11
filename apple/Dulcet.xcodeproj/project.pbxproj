@@ -870,7 +870,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		0B1768A6011E8E877E925CF7 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -889,7 +889,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		0D0CE879221B6146E9F3B588 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -908,7 +908,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		228A4780425D9C613826E604 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -927,7 +927,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		806940B958CE99915F933C06 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -946,7 +946,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		A8844F5E969FF889D604B5EE /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -965,7 +965,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		B506F6613DDBD66109ABDB46 /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -984,7 +984,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 		D9C0C6599E935022D35A32CC /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1003,7 +1003,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null\n";
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\n# Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare\n# Gradle invocations race for the configuration-cache and journal locks and one fails.\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
