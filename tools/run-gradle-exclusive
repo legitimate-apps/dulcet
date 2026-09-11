@@ -3,9 +3,11 @@
 
 Eight Apple targets each own a `Compile Kotlin Framework` build phase running
 `:core:embedAndSignAppleFrameworkForXcode`, and Xcode builds independent targets in parallel. Two of
-those phases therefore start together, and Gradle does not queue behind its own locks: it waits about
-60 seconds and then FAILS the build. Two different locks have lost that race on `main`, with
-`DulcetiOS` and `DulcetKitIOSTests` building together both times:
+those phases therefore start together. Gradle does queue behind its own locks, but only for about
+60 seconds: if the owner has not yielded by then it FAILS the build rather than keep waiting. Two
+different locks have lost that race on `main`, with `DulcetiOS` and `DulcetKitIOSTests` building
+together both times (a tvOS pair on green run 34596556005 ran concurrently for over four minutes
+and both succeeded, so the hold is usually short enough; the failure is the long tail):
 
   OBSERVED run 34635969077 (2026-09-11), "Launch iPadOS shell and prove layout" step:
     Timeout waiting to lock Configuration Cache (<checkout>/.gradle/configuration-cache).
@@ -22,8 +24,10 @@ on the checkout alone would let two checkouts sharing a user home race for the j
 
 Both locks are held by the Gradle invocation itself: Python execs gradlew with inheritable lock
 descriptors, so killing the holder kills that invocation rather than orphaning an unlocked child, and
-descendants that inherit the descriptors keep exclusion until they close them or exit. A lock file
-left on disk is not a stale lock. This does not terminate an independently running Gradle daemon,
+descendants that inherit the descriptors keep exclusion until they close them or exit. The holder
+writes its pid into the lock file after acquiring, so a waiter names it, and a waiter prints a
+heartbeat every `RUN_GRADLE_EXCLUSIVE_HEARTBEAT_SECONDS` (default 30). The wait itself is unbounded;
+the CI step cap is the backstop. A lock file left on disk, pid or not, is not a stale lock. This does not terminate an independently running Gradle daemon,
 and it cannot serialise a build that bypasses it with a bare `./gradlew`.
 """
 
@@ -51,19 +55,57 @@ def lock_paths(checkout: pathlib.Path) -> list[pathlib.Path]:
     return [gradle_user_home() / LOCK_BASENAME, checkout / ".gradle" / LOCK_BASENAME]
 
 
+def heartbeat_seconds() -> float:
+    configured = os.environ.get("RUN_GRADLE_EXCLUSIVE_HEARTBEAT_SECONDS")
+    return float(configured) if configured else 30.0
+
+
+def holder_pid(handle: IO[str]) -> str:
+    handle.seek(0)
+    content = handle.read().strip()
+    return content or "unknown"
+
+
 def acquire(path: pathlib.Path) -> IO[str]:
+    """Take the flock at `path`, then record our pid in it so the next waiter can name us.
+
+    The wait is unbounded on purpose: a bound would have to exceed the longest legitimate hold
+    (a cold tvOS pair has held for over four minutes on a hosted runner) and the CI step cap
+    already backstops a hang. A heartbeat names the holder instead, so a long wait is visible.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(path, "w")
+    handle = open(path, "a+")
     waited_from = time.monotonic()
+    interval = heartbeat_seconds()
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         print(
-            f"run-gradle-exclusive: another Gradle build phase holds {path}; waiting",
+            f"run-gradle-exclusive: another Gradle build phase (pid {holder_pid(handle)}) "
+            f"holds {path}; waiting",
             file=sys.stderr,
         )
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        next_beat = waited_from + interval
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                pass
+            now = time.monotonic()
+            if now >= next_beat:
+                print(
+                    f"run-gradle-exclusive: still waiting {now - waited_from:.0f}s for {path} "
+                    f"(held by pid {holder_pid(handle)})",
+                    file=sys.stderr,
+                )
+                next_beat = now + interval
+            time.sleep(0.2)
     waited = time.monotonic() - waited_from
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
     print(f"run-gradle-exclusive: acquired {path} after {waited:.1f}s", file=sys.stderr)
     os.set_inheritable(handle.fileno(), True)
     return handle
@@ -95,6 +137,7 @@ def main(argv: list[str]) -> int:
     # stdin is closed so a Gradle prompt can never block a headless build phase.
     with open(os.devnull, "rb") as devnull:
         os.dup2(devnull.fileno(), 0)
+    sys.stderr.flush()
     os.execv(str(wrapper), [str(wrapper), *argv])
 
 
