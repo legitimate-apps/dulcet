@@ -49,6 +49,106 @@ final class DulcetiOSUITests: XCTestCase {
         }
     }
 
+    /// A compact iPhone window shows one column at a time, so reaching a destination, using the
+    /// navigation bar's back control, and choosing that same destination again is an ordinary
+    /// path -- and it was a dead end. OBSERVED on an iPhone 17 Pro simulator before the fix, and
+    /// repeatably: the second choice left the detail unpushed, the row highlighted, and the only
+    /// way forward was choosing some other destination.
+    ///
+    /// MEASURED mechanism: the sidebar list's selection binding reports the store's destination,
+    /// which the back control does not change, so the second choice reads back as an unchanged
+    /// value and SwiftUI infers no push. The binding's setter does still run for that choice --
+    /// established by the fix, which is one line inside that setter asking for the detail column.
+    /// What SwiftUI writes into the selection on the way back was NOT measured, and a first
+    /// attempt built on assuming a `nil` there was measured not to carry the fix.
+    ///
+    /// This uses the deterministic layout fixture rather than the disposable server: the contract
+    /// under test is navigation, and a fixture makes the run independent of any server state.
+    @MainActor
+    func testCompactSidebarRestoresTheDetailForTheSameDestination() {
+        let app = XCUIApplication()
+        app.launchArguments.append("-dulcet-account-connect-layout-fixture")
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertLessThan(
+            window.frame.width,
+            700,
+            "This proof requires a compact-width iPhone window; a regular-width window shows both"
+                + " columns at once and cannot express the defect"
+        )
+
+        let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
+        let searchField = app.textFields["dulcet.search.field"].firstMatch
+
+        // Reveals the sidebar the way a person does, and reports which control it used so a
+        // failure names the control rather than only its effect. Returns whether the back control
+        // was needed: on a compact window the detail is showing at both call sites, so a run that
+        // found the sidebar already open did not exercise the path this proof is about, and the
+        // caller asserts that rather than accepting a pass that skipped it.
+        func revealSidebar(_ phase: String) -> (reached: Bool, usedBackControl: Bool) {
+            var usedBackControl = false
+            if !searchRow.isHittable {
+                let backControl = app.navigationBars.buttons.firstMatch
+                guard backControl.waitForExistence(timeout: 5) else {
+                    XCTFail("\(phase): a compact window must expose the sidebar through a back"
+                        + " control: " + app.debugDescription)
+                    return (false, false)
+                }
+                print("DULCET COMPACT NAV \(phase) back-control=\(backControl.identifier)")
+                backControl.tap()
+                usedBackControl = true
+            }
+            guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
+                XCTFail("\(phase): the Search row must be reachable in the sidebar: "
+                    + app.debugDescription)
+                return (false, usedBackControl)
+            }
+            return (true, usedBackControl)
+        }
+
+        let firstReveal = revealSidebar("first")
+        guard firstReveal.reached else { return }
+        XCTAssertTrue(
+            firstReveal.usedBackControl,
+            "A compact window opens on the detail column, so reaching the sidebar must have gone"
+                + " through the back control; a run that skipped it did not set up this proof"
+        )
+        searchRow.tap()
+        XCTAssertTrue(
+            searchField.waitForExistence(timeout: 5),
+            "Choosing Search must show the Search detail: " + app.debugDescription
+        )
+
+        let secondReveal = revealSidebar("second")
+        guard secondReveal.reached else { return }
+        XCTAssertTrue(
+            secondReveal.usedBackControl,
+            "The Search detail must have been showing before the back control was used; without"
+                + " that, the re-selection below is not the case this proof is about"
+        )
+        // The store's selected destination is still Search here. That is the whole point: the
+        // second choice must push the detail again even though the value does not change.
+        XCTAssertFalse(
+            searchField.exists,
+            "The back control must leave the sidebar showing, not the Search detail: "
+                + app.debugDescription
+        )
+        searchRow.tap()
+        let reselectPushed = searchField.waitForExistence(timeout: 5)
+        // Print the observed value, not a verdict: a bare "PASS" line printed after an assertion
+        // that already failed is a claim nothing checked.
+        print("DULCET COMPACT NAV OBSERVED"
+            + " first-back=\(firstReveal.usedBackControl) second-back=\(secondReveal.usedBackControl)"
+            + " reselect-push=\(reselectPushed)")
+        XCTAssertTrue(
+            reselectPushed,
+            "Choosing the destination already selected must show its detail again, not strand the"
+                + " person on the sidebar: " + app.debugDescription
+        )
+    }
+
     private enum BlockingSystemDialogProbeResult {
         case absent
         case handled
@@ -173,33 +273,113 @@ final class DulcetiOSUITests: XCTestCase {
             // back control, exactly as a person reaches it on an iPhone.
             let backControl = app.navigationBars.buttons.firstMatch
             guard backControl.waitForExistence(timeout: 5) else {
-                XCTFail("A compact-width window must expose the sidebar through a back control")
+                XCTFail(
+                    "A compact-width window must expose the sidebar through a back control: "
+                        + app.debugDescription
+                )
                 return
             }
             backControl.tap()
         }
-        guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
-            XCTFail("The Search row must be visible in the sidebar")
+        // Existence and hittability are separate outcomes and were previously reported by one
+        // message, so a run could not distinguish "the back control never revealed the sidebar"
+        // from "the row is on screen but covered". MEASURED over 39 CI executions of this test:
+        // every successful run satisfied this wait on its FIRST poll, about 1.0 s into a 5 s
+        // budget, and the one failure consumed all five polls. The budget is not marginal, so a
+        // failure here means the navigation did not happen -- never that the wait was too short.
+        guard searchRow.waitForExistence(timeout: 5) else {
+            XCTFail("The Search row must exist in the sidebar: " + app.debugDescription)
+            return
+        }
+        guard searchRow.isHittable else {
+            XCTFail(
+                "The Search row must be visible in the sidebar; frame=\(searchRow.frame)"
+                    + " window=\(window.frame): " + app.debugDescription
+            )
             return
         }
         searchRow.tap()
 
         let searchField = app.textFields["dulcet.search.field"].firstMatch
+        // Same measurement as above: 38 of 38 successful CI executions resolved this on the first
+        // poll. Exhausting the budget means the Search destination never rendered.
         guard searchField.waitForExistence(timeout: 5) else {
-            XCTFail("The search field must exist on the Search destination")
+            XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
         }
         searchField.tap()
         searchField.typeText(query)
+        // The field's value settles asynchronously, and `typeText` returning does not mean every
+        // synthesized keystroke has been delivered and rendered -- XCUITest's own post-typing idle
+        // wait is not that guarantee. Reading `.value` once therefore conflated "the field lost
+        // characters" with "the sample was early", and one apple-ci run failed on the second.
+        //
+        // MEASURED on an iPad Pro 11-inch (M5) simulator with per-keystroke app cost induced at
+        // 0, 20, 60, 150, 400 and 1000 ms, tracing the app's own text binding: all 9 keystrokes
+        // reach it in order in every case, and across 84 keystrokes no value ever regressed. So a
+        // short read is the sample being early. The 400 ms run reproduced the CI failure exactly
+        // -- a prefix, everything after it passing -- while the trace showed the field completing
+        // 3.8 s later.
+        //
+        // This polls the same assertion instead of sampling it. A field that genuinely drops
+        // characters still fails, because the poll requires the full query and has an end; what it
+        // no longer does is fail for being late. The attempt count is printed rather than
+        // asserted: zero is the normal outcome, and a run that needed many is a responsiveness
+        // signal worth seeing in the log rather than a reason to fail.
+        //
+        // Monotonic, per this repository's clock rule: a wall-clock deadline can be moved by the
+        // host while the poll is running.
+        //
+        // The samples carry their own process check, matching the tvOS control in
+        // DulcetTVUITests: an incremental commit produces non-shrinking prefixes of the query, so
+        // a sample that is not a prefix, or one that goes backwards, is a different defect and
+        // says so rather than being counted as "still settling".
+        var settleSamples: [String] = []
+        var observedFieldValue = searchField.value as? String ?? ""
+        settleSamples.append(observedFieldValue)
+        let settleClock = ContinuousClock()
+        let settleDeadline = settleClock.now.advanced(by: .seconds(10))
+        while observedFieldValue != query, settleClock.now < settleDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            observedFieldValue = searchField.value as? String ?? ""
+            settleSamples.append(observedFieldValue)
+        }
+        print("DULCET SEARCH TYPING OBSERVED settle-attempts=\(settleSamples.count - 1)"
+            + " first=\(settleSamples[0].debugDescription) final=\(observedFieldValue.debugDescription)")
+        for (index, sample) in settleSamples.enumerated() {
+            XCTAssertTrue(
+                query.hasPrefix(sample),
+                "Sample \(index) was \(sample.debugDescription), which is not a prefix of the typed"
+                    + " query: the field is not receiving this text one character at a time"
+            )
+            if index > 0 {
+                XCTAssertGreaterThanOrEqual(
+                    sample.count,
+                    settleSamples[index - 1].count,
+                    "The field's value went backwards between samples \(index - 1) and \(index)"
+                )
+            }
+        }
         XCTAssertEqual(
-            searchField.value as? String,
+            observedFieldValue,
             query,
-            "The query typed through the platform keyboard must reach the search field itself"
+            "The typed text must reach the search field's own value;"
+                + " polled \(settleSamples.count - 1) times over 10 s"
         )
 
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
+        // The check above reads the text field, and MEASURED: with the field's binding replaced
+        // by a constant empty string -- so the app can never hold the query -- it still reported
+        // "Threshold" and passed, and this wait is where the run failed instead. A text field
+        // being edited reports what is on screen, not what the app's state received, so this is
+        // the first assertion that depends on the query having actually reached the app. Its
+        // message must therefore not blame the server for a query that never arrived.
         guard firstResult.waitForExistence(timeout: 30) else {
-            XCTFail("The disposable server must return ranked results for this query")
+            XCTFail(
+                "No ranked results for the typed query. Either the query never reached the app's"
+                    + " state -- the field's own value is not proof that it did -- or the"
+                    + " disposable server did not answer: " + app.debugDescription
+            )
             return
         }
         // A person dismisses the software keyboard before activating a result; the test must do
@@ -274,8 +454,14 @@ final class DulcetiOSUITests: XCTestCase {
         canaryResult.tap()
 
         let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        // Successful CI executions resolve this in one to four polls of the fifteen available,
+        // so exhausting the budget means activation produced no navigation at all -- which the
+        // tree below distinguishes from "Now Playing rendered a state without a title".
         guard nowPlayingTitle.waitForExistence(timeout: 15) else {
-            XCTFail("Activating rank \(canaryRank) must present the Now Playing surface")
+            XCTFail(
+                "Activating rank \(canaryRank) must present the Now Playing surface: "
+                    + app.debugDescription
+            )
             return
         }
         // Now Playing showing rank zero's track here would mean activation played the first

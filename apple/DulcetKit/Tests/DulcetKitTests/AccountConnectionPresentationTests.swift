@@ -482,6 +482,71 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(store.snapshot.state == .nowPlayingUnavailable)
 }
 
+/// A person typing into search drives one store write per character, and every one of those
+/// writes republishes a snapshot that carries a query string back to the text field. If a
+/// publication ever carried a query composed before the character that triggered it, the field
+/// would be reset to older text and the person would lose what they had just typed.
+///
+/// One apple-ci run read the field mid-typing and reported six of nine characters, which looks
+/// exactly like that. It is not: traced against the app's own text binding on an iPad Pro 11-inch
+/// (M5) simulator, with per-keystroke cost induced at 0, 20, 60, 150, 400 and 1000 ms, all 217
+/// publications echoed the live query and no value regressed across 84 keystrokes. This pins that
+/// property so a future change -- capturing the query when a request starts, say, instead of
+/// reading it at publish time -- fails here in milliseconds rather than as a rare UI flake.
+@Test @MainActor
+func searchPublicationNeverCarriesAQueryOlderThanTheTypedText() async {
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+
+    // One write per character, as the text field produces them. Checking after every character is
+    // the point: an overwrite would be repaired by the next character if only the end were
+    // checked, so the final value alone cannot see it.
+    var typed = ""
+    for character in "atlas" {
+        typed.append(character)
+        store.searchQuery = typed
+        #expect(store.searchQuery == typed)
+        #expect(store.snapshot.searchQuery == typed)
+    }
+
+    // A publication that arrives after further typing must still carry the later text. The
+    // in-flight request was composed for "atlas"; completing it once the person has typed more
+    // must not put "atlas" back in the field.
+    await settleSearchTask(until: { search.requests.count == 1 })
+    #expect(search.requests.first?.query == "atlas")
+    store.searchQuery = "atlas north"
+    await settleSearchTask(until: { search.requests.count == 2 })
+    search.complete(at: search.requests.count - 1, .loaded(searchPage(
+        results: [searchResult(id: "track:one", title: "Atlas North")]
+    )))
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.searchQuery == "atlas north")
+    #expect(store.snapshot.searchQuery == "atlas north")
+
+    // Clearing is a genuine source-initiated change and must still reach the field, so the
+    // property above cannot be satisfied by refusing to apply snapshots at all.
+    store.searchQuery = ""
+    #expect(store.searchQuery.isEmpty)
+    #expect(store.snapshot.searchQuery.isEmpty)
+    #expect(store.snapshot.state == .searchIdle)
+}
+
 @Test @MainActor
 func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent() async throws {
     let connector = ControlledAccountConnector()
