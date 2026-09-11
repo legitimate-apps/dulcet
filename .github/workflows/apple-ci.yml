@@ -520,7 +520,18 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit/TEST-DulcetKeychainTVOSTests.xml" \
             DulcetKeychainTVOSTests
       - name: Verify compact sidebar re-selection restores the detail
-        timeout-minutes: 5
+        # 12, not 5, and this is INHERITED rather than measured -- the step is new, so there is no
+        # CI duration history for it yet. It was first written at 5 because the control takes ~21s
+        # locally; CI simulator launch-and-test is a different regime, and 5 was already known to be
+        # below the working range of its nearest peer. OBSERVED on run 34562626457: this step was
+        # killed at 5 minutes with a 4-byte log, i.e. during launch, before the test produced
+        # anything at all.
+        #
+        # 12 matches `Verify iPhone uses the full display`, whose 165-290s range was measured over
+        # seven runs, because this step does the same work: launch the iOS simulator app and run one
+        # XCUITest. ⚠️ Re-measure once this step has its own history; an inherited budget is a
+        # starting point, not evidence about this step.
+        timeout-minutes: 12
         run: |
           set -o pipefail
           # Placed after every platform UI and Keychain proof on purpose. This job is one
