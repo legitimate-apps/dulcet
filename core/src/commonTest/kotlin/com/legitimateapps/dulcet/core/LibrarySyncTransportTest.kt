@@ -83,31 +83,29 @@ class LibrarySyncTransportTest {
             parseAlbum(SERVER, summary, fixture.albumResponse(summary.id.rawId))
         }
 
-        val driver = createTestDriver()
-        val store = DulcetDatabaseStore.open(driver)
-        val repository = LibrarySyncRepository(store)
-        assertIs<LibrarySyncResult.Completed>(
-            LibrarySyncEngine(repository, enumerationPageSize = 3)
-                .synchronize(SERVER, WalkSource(fixture)),
-        )
-        val committed = repository.readCommittedLibrary(SERVER).library
-
-        assertEquals(
-            expected.map { it.id.rawId }.sorted(),
-            committed.albums.map { it.id.rawId }.sorted(),
-        )
-        expected.forEach { album ->
-            val actual = committed.albums.single { it.id.rawId == album.id.rawId }
-            assertEquals(album.title, actual.title, "title of ${album.id.rawId}")
-            assertEquals(album.credits, actual.credits, "credits of ${album.id.rawId}")
-            assertEquals(album.year, actual.year, "year of ${album.id.rawId}")
-            assertEquals(album.artworkKey, actual.artworkKey, "artwork of ${album.id.rawId}")
-            assertEquals(album.mediaSourceId, actual.mediaSourceId, "source of ${album.id.rawId}")
-            assertEquals(
-                album.tracks.sortedBy { it.id.rawId },
-                actual.tracks.sortedBy { it.id.rawId },
-                "tracks of ${album.id.rawId}",
+        withRepository { repository ->
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 3)
+                    .synchronize(SERVER, WalkSource(fixture)),
             )
+            val committed = repository.readCommittedLibrary(SERVER).library
+
+            assertEquals(
+                expected.map { it.id.rawId }.sorted(),
+                committed.albums.map { it.id.rawId }.sorted(),
+            )
+            expected.forEach { album ->
+                val actual = committed.albums.single { it.id.rawId == album.id.rawId }
+                assertEquals(album.title, actual.title, "title of ${album.id.rawId}")
+                assertEquals(album.credits, actual.credits, "credits of ${album.id.rawId}")
+                assertEquals(album.year, actual.year, "year of ${album.id.rawId}")
+                assertEquals(album.artworkKey, actual.artworkKey, "artwork of ${album.id.rawId}")
+                assertEquals(album.mediaSourceId, actual.mediaSourceId, "source of ${album.id.rawId}")
+                assertEquals(
+                    album.tracks.sortedBy { it.id.rawId },
+                    actual.tracks.sortedBy { it.id.rawId },
+                    "tracks of ${album.id.rawId}",
+                )
         }
         // The album-level duration is the one field where the two transports can disagree, and
         // only when the album row omits `duration`: `getAlbum` then falls back to summing its
@@ -125,41 +123,40 @@ class LibrarySyncTransportTest {
             committed.artists.map { it.id.rawId }.sorted(),
         )
         assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
-        driver.close()
+        }
     }
 
     @Test
     fun aServerThatSilentlyServesShorterPagesStillImportsEveryRow() = runTest {
-        val driver = createTestDriver()
-        val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
-        // The reference server caps `getAlbumList2` at 500 rows without saying so (OBSERVED
-        // 2026-09-11). A walk that ended on "shorter than I asked for" would stop at the cap and
-        // commit a library missing everything past it, with no error anywhere.
-        val source = CappedSource(GeneratedSource(albumCount = 250), serverPageCap = 100)
+        withRepository { repository ->
+            // The reference server caps `getAlbumList2` at 500 rows without saying so (OBSERVED
+            // 2026-09-11). A walk that ended on "shorter than I asked for" would stop at the cap and
+            // commit a library missing everything past it, with no error anywhere.
+            val source = CappedSource(GeneratedSource(albumCount = 250), serverPageCap = 100)
 
-        assertIs<LibrarySyncResult.Completed>(
-            LibrarySyncEngine(repository, enumerationPageSize = 500).synchronize(SERVER, source),
-        )
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 500).synchronize(SERVER, source),
+            )
 
-        val committed = repository.readCommitted(SERVER)
-        assertEquals(250, committed.albumIds.size, "the walk stopped at the server's silent cap")
-        assertEquals(250, committed.trackIds.size)
-        assertTrue(
-            source.observedShortPages > 0,
-            "the control proved nothing: the fake server never served a short page",
-        )
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(250, committed.albumIds.size, "the walk stopped at the server's silent cap")
+            assertEquals(250, committed.trackIds.size)
+            assertTrue(
+                source.observedShortPages > 0,
+                "the control proved nothing: the fake server never served a short page",
+            )
+        }
     }
 
     @Test
     fun anEmptyEnumerationIsRejectedUnlessTheLibraryIsAlsoEmptyToAKnownPositive() = runTest {
-        val driver = createTestDriver()
-        val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
-        val cannotEnumerate = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
-            override suspend fun probeEnumeration() =
-                LibraryEnumerationProbe(knownPositiveAlbumCount = 1, enumeratedAlbumCount = 0)
+        withRepository { repository ->
+            val cannotEnumerate = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
+                override suspend fun probeEnumeration() =
+                    LibraryEnumerationProbe(knownPositiveAlbumCount = 1, enumeratedAlbumCount = 0)
 
-            override suspend fun albumPage(offset: Long, size: Int) = emptyList<AlbumSummary>()
-            override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
+                override suspend fun albumPage(offset: Long, size: Int) = emptyList<AlbumSummary>()
+                override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
         }
 
         val failed = assertIs<LibrarySyncResult.Failed>(
@@ -175,21 +172,19 @@ class LibrarySyncTransportTest {
             repository.committedGeneration(),
             "a server that cannot enumerate must not commit an empty library over a full one",
         )
-        driver.close()
+        }
     }
 
     @Test
     fun anEmptyLibraryEnumeratesToAnEmptyLibraryWithoutFailing() = runTest {
-        val driver = createTestDriver()
-        val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
+        withRepository { repository ->
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository).synchronize(SERVER, GeneratedSource(albumCount = 0)),
+            )
 
-        val completed = assertIs<LibrarySyncResult.Completed>(
-            LibrarySyncEngine(repository).synchronize(SERVER, GeneratedSource(albumCount = 0)),
-        )
-
-        assertEquals(LibrarySyncStability.Verified, completed.stability)
-        assertEquals(emptyList(), repository.readCommitted(SERVER).albumIds)
-        driver.close()
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            assertEquals(emptyList(), repository.readCommitted(SERVER).albumIds)
+        }
     }
 
     @Test
@@ -235,18 +230,34 @@ class LibrarySyncTransportTest {
         assertEquals(DomainError.Protocol.MalformedEnvelope, failure.error)
     }
 
-    private suspend fun syncCallCounts(albumCount: Int): SyncCallCounts {
+    private suspend fun syncCallCounts(albumCount: Int): SyncCallCounts =
+        withRepository { repository ->
+                val source = CountingSource(GeneratedSource(albumCount = albumCount))
+
+                assertIs<LibrarySyncResult.Completed>(
+                    LibrarySyncEngine(repository, enumerationPageSize = 500).synchronize(SERVER, source),
+                )
+
+                val committed = repository.readCommitted(SERVER)
+                SyncCallCounts(source.counts.toMap(), committed.albumIds, committed.trackIds)
+        }
+
+    /**
+     * Opens a database for one test and always closes it.
+     *
+     * 🚨 Not tidiness. On Kotlin/Native the test driver opens an in-memory database **by name**, so
+     * every test in the binary shares one database for as long as any connection to it is open. A
+     * single test that leaks its driver leaves its committed generation visible to every test that
+     * runs after it: OBSERVED 2026-09-11, one missing `close()` here turned 11 unrelated tests red
+     * on macosArm64 while the whole suite stayed green on the JVM.
+     */
+    private suspend fun <T> withRepository(body: suspend (LibrarySyncRepository) -> T): T {
         val driver = createTestDriver()
-        val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
-        val source = CountingSource(GeneratedSource(albumCount = albumCount))
-
-        assertIs<LibrarySyncResult.Completed>(
-            LibrarySyncEngine(repository, enumerationPageSize = 500).synchronize(SERVER, source),
-        )
-
-        val committed = repository.readCommitted(SERVER)
-        driver.close()
-        return SyncCallCounts(source.counts.toMap(), committed.albumIds, committed.trackIds)
+        return try {
+            body(LibrarySyncRepository(DulcetDatabaseStore.open(driver)))
+        } finally {
+            driver.close()
+        }
     }
 
     private class SyncCallCounts(
