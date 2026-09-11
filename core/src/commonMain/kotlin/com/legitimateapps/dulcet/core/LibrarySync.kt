@@ -1367,11 +1367,11 @@ internal class LibrarySyncEngine(
         var unverified = checkpoint.unverified
         while (attempt < MAX_STABILITY_ATTEMPTS) {
             attempt += 1
-            // The witness written here is the COMPLETE baseline, including the empty page that
-            // ended the fill walk — the checkpoints written during the fill deliberately count only
-            // the pages that advanced the offset. A resumed witness compares against whatever this
-            // row says, so storing the fill's undercount makes the first resumed attempt unable to
-            // match a walk that has not changed, and spends one of three attempts proving it.
+            // Persist the baseline before the attempt, so a resume compares against the same
+            // witness this attempt is about to test. ⚠️ This stage has no pages: the paged version
+            // of this comment in `runPagedStage` explains an empty page ending a fill walk, and
+            // that reasoning does NOT apply here. It was copy-pasted; the line's purpose is the
+            // one above.
             checkpoint = checkpoint.copy(attempt = attempt, witness = baseline)
                 .also { repository.saveCheckpoint(serverId, it) }
             val values = fetch()
@@ -1723,11 +1723,15 @@ internal class LibrarySyncEngine(
         var attempt = checkpoint.attempt
         while (attempt < MAX_STABILITY_ATTEMPTS) {
             attempt += 1
-            // The witness written here is the COMPLETE baseline, including the empty page that
-            // ended the fill walk — the checkpoints written during the fill deliberately count only
-            // the pages that advanced the offset. A resumed witness compares against whatever this
-            // row says, so storing the fill's undercount makes the first resumed attempt unable to
-            // match a walk that has not changed, and spends one of three attempts proving it.
+            // Persist the baseline before the attempt, so a resume compares against the same
+            // witness this attempt is about to test.
+            //
+            // 🚨 NOT dead code, despite having no pages to count. A playlist stage that finds no
+            // playlists still needs its baseline written, or the first resumed attempt cannot match
+            // an unchanged walk and burns one of three attempts proving it. An earlier version of
+            // this comment was copy-pasted from `runPagedStage` and described an empty page ending a
+            // fill walk, which does not happen here — a reader who deleted the line as inert on the
+            // strength of that wrong explanation would reintroduce the attempt-burn.
             checkpoint = checkpoint.copy(attempt = attempt, witness = baseline)
                 .also { repository.saveCheckpoint(serverId, it) }
             val currentSummaries = source.playlists().distinctBy { it.id.rawId }
