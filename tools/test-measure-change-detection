@@ -102,7 +102,9 @@ def run(stub: Stub, *arguments: str, music: Path, ffmpeg: Path) -> subprocess.Co
 def fake_ffmpeg(directory: Path) -> Path:
     """An ffmpeg that writes a file, so a measurement needing one is not blocked by codecs."""
     path = directory / "ffmpeg"
-    path.write_text("#!/bin/sh\nout=\"${@: -1}\"\nmkdir -p \"$(dirname \"$out\")\"\n"
+    # POSIX sh only: CI's /bin/sh is dash, where bash's "${@: -1}" is a Bad substitution.
+    # A bare `for` loop leaves the last positional argument in the variable.
+    path.write_text("#!/bin/sh\nfor out; do :; done\nmkdir -p \"$(dirname \"$out\")\"\n"
                     "printf 'fLaC' > \"$out\"\n")
     path.chmod(0o755)
     return path
