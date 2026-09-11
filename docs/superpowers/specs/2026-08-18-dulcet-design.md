@@ -2061,7 +2061,7 @@ count; **no stage costs a request per album.**
 | enumeration probe | `getAlbumList2?size=1` + `search3` with `albumCount=1` | 2 |
 | folders | `getMusicFolders` | 1 |
 | artists | `search3?query=""&artistCount=500&artistOffset=N` (others 0) | ~2 |
-| albums | `search3?query=""&albumCount=500&albumOffset=N` (others 0) | ~7 |
+| albums | `search3?query=""&albumCount=500&albumOffset=N` (others 0) | ~6 |
 | tracks | `search3?query=""&songCount=500&songOffset=N` (others 0) | ~64 |
 | playlists | `getPlaylists` + `getPlaylist?id=` per playlist | 1 + P |
 | starred | `getStarred2` | 1 |
@@ -2138,7 +2138,7 @@ snapshot. Those contradict: in-place updates make a partially completed pass vis
 
 Because paging is not a snapshot, each list stage records a **witness**: the complete set of ids
 returned and the number of pages consumed. After the stage completes, the index is re-walked and the
-witness recomputed. **The witness is a re-walk of the same pages** — about 7 calls for albums and 64
+witness recomputed. **The witness is a re-walk of the same pages** — about 6 calls for albums and 64
 for tracks at target scale. Revision 2's track witness re-read *every album individually*, one to
 three more times, which is where most of that shape's 5,917–11,829 requests went; it proved only that
 a set of track ids was stable, never that content was fresh.
