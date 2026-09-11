@@ -2081,9 +2081,9 @@ target scale costs roughly **150 requests**, against **5,917 to 11,829** for the
 
 The two committed libraries are **byte-identical** — the same production engine, parsers and database,
 dumped field by field over every album, every track and every artist, on that 2,500-album library and
-on the CI fixture corpus. Loopback hides latency, which is the whole point: on a 100 ms link the
-request count *is* the wall time, and 5,022 requests at concurrency 4 is over two minutes behind a
-spinner.
+on the CI fixture corpus. Loopback hides latency, which is the whole point: the request count is what
+a real link charges for. ASSUMED, as arithmetic rather than measurement — at 100 ms round trip and
+concurrency 4, 5,022 requests is about 125 s behind a spinner and 48 sequential requests is about 5 s.
 
 **Three rules the walks obey, each because the alternative fails silently:**
 
@@ -2101,8 +2101,9 @@ spinner.
    fails the import instead.
 3. **An empty enumeration is not an empty library until a known positive says so.** Empty-query
    enumeration is required by OpenSubsonic but layered on a base API where `query` is mandatory, and
-   servers disagree; gonic needed a shim, Airsonic-Advanced has no such path. A server without it
-   returns exactly what an empty library returns. Every import therefore probes
+   servers are *reported* to disagree — gonic having needed a shim, Airsonic-Advanced having no such
+   path — which this project has not measured and does not need to: a server without it returns
+   exactly what an empty library returns, and that is enough reason to check. Every import therefore probes
    `search3` with `albumCount=1` against `getAlbumList2?size=1`, and fails with
    `CapabilityUnsupported(LibrarySync)` if the positive control finds an album and the empty query
    finds none — rather than committing an empty generation over a full one and reporting success.
