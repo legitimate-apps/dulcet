@@ -16,6 +16,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 internal enum class LibrarySyncStage(val wireName: String) {
     Folders("folders"),
@@ -190,11 +191,112 @@ internal data class LibraryGenre(
     val albumCount: Long,
 )
 
+/**
+ * One track exactly as the songs walk returns it.
+ *
+ * The walk enumerates songs, not albums, so the album a track belongs to arrives as a field on the
+ * row — `Child.albumId` — instead of being implied by the request that produced it.
+ */
+internal data class LibraryTrackRow(
+    val albumRawId: String,
+    val track: LibraryTrack,
+)
+
+/** The three entity walks a full import is made of. One request asks for exactly one of them. */
+internal enum class LibraryEnumerationKind(
+    val countParameter: String,
+    val offsetParameter: String,
+    val arrayName: String,
+) {
+    Artist("artistCount", "artistOffset", "artist"),
+    Album("albumCount", "albumOffset", "album"),
+    Song("songCount", "songOffset", "song"),
+}
+
+/**
+ * What one whole-library enumeration probe measured.
+ *
+ * [enumeratedAlbumCount] cannot answer the question on its own: an empty library and a server that
+ * does not implement empty-query enumeration both return zero rows with `status="ok"`.
+ * [knownPositiveAlbumCount] comes from `getAlbumList2`, which every Subsonic server implements, and
+ * is the only thing that separates the two.
+ */
+internal data class LibraryEnumerationProbe(
+    val knownPositiveAlbumCount: Int,
+    val enumeratedAlbumCount: Int,
+) {
+    init {
+        require(knownPositiveAlbumCount >= 0 && enumeratedAlbumCount >= 0)
+    }
+
+    /**
+     * False only when the server demonstrably has albums and enumerates none of them. Importing in
+     * that state would replace a full library with an empty one and report success.
+     */
+    val enumeratesWholeLibrary: Boolean
+        get() = knownPositiveAlbumCount == 0 || enumeratedAlbumCount > 0
+}
+
+/**
+ * The largest page any whole-library walk asks for.
+ *
+ * **OBSERVED 2026-09-11, Navidrome 0.63.2, 2,500-album library:** `search3` does *not* clamp its
+ * counts — `albumCount=501` returns 501, `1000` returns 1,000, `5000` returns the whole 2,500.
+ * `getAlbumList2` does, silently: `size=501` and `size=1000` both return exactly 500 rows with
+ * `status="ok"` and nothing marking the truncation. 500 is the value the original Subsonic
+ * documentation gives as the maximum, other servers clamp there too, and a walk must never depend
+ * on being able to ask for more than the protocol promises.
+ */
+internal const val MAX_LIBRARY_ENUMERATION_PAGE_SIZE: Int = 500
+
+/**
+ * The literal two characters `""`.
+ *
+ * OpenSubsonic requires a server to enumerate everything for an empty query, but it layers that on
+ * a base specification where `query` is mandatory, so servers disagree about which spelling of
+ * "empty" they accept. The quoted form is the one the widest set of servers treats as "all", and
+ * **OBSERVED 2026-09-11** it enumerates on the reference server exactly like the bare empty value.
+ */
+internal const val WHOLE_LIBRARY_QUERY: String = "\"\""
+
+/**
+ * `search3` parameters for one page of one whole-library walk.
+ *
+ * The other two counts are zeroed deliberately. **OBSERVED 2026-09-11, Navidrome 0.63.2:** a zero
+ * count makes the server skip that entity's query entirely — the response carries no `artist` or
+ * `song` key at all — so one page costs one query instead of three.
+ */
+internal fun libraryEnumerationParameters(
+    kind: LibraryEnumerationKind,
+    offset: Long,
+    size: Int,
+): Map<String, String> {
+    require(offset >= 0) { "A whole-library walk never reads backwards" }
+    require(size in 1..MAX_LIBRARY_ENUMERATION_PAGE_SIZE)
+    return buildMap {
+        put("query", WHOLE_LIBRARY_QUERY)
+        LibraryEnumerationKind.entries.forEach { entry ->
+            put(entry.countParameter, if (entry == kind) size.toString() else "0")
+        }
+        put(kind.offsetParameter, offset.toString())
+    }
+}
+
+/**
+ * The fill transport for a durable import.
+ *
+ * Artists, albums and tracks are read as three independent whole-library walks — one entity per
+ * request — and never one request per album. `getAlbum` is not in this interface at all: an album's
+ * track list is read when somebody opens that album, which is a browse concern, not a sync one.
+ */
 internal interface LibrarySyncSource {
     suspend fun musicFolders(): List<LibraryMusicFolder>
-    suspend fun artists(): List<LibraryArtist>
+
+    /** Reads whether this server can enumerate its whole library, against a known positive. */
+    suspend fun probeEnumeration(): LibraryEnumerationProbe
+    suspend fun artistPage(offset: Long, size: Int): List<LibraryArtist>
     suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary>
-    suspend fun album(rawId: String): LibraryAlbum
+    suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow>
     suspend fun playlists(): List<LibraryPlaylistSummary>
     suspend fun playlist(summary: LibraryPlaylistSummary): LibraryPlaylist
     suspend fun starred(): List<LibraryStarredItem>
@@ -212,38 +314,55 @@ internal class HttpLibrarySyncSource(
     override suspend fun musicFolders(): List<LibraryMusicFolder> =
         parseMusicFolders(request.providerInstanceId, transport.checkedRequest("getMusicFolders"))
 
-    override suspend fun artists(): List<LibraryArtist> =
-        parseArtists(request.providerInstanceId, transport.checkedRequest("getArtists"))
-
-    override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> =
-        parseAlbumList(
+    /**
+     * Asks the known positive first, so a server that answers neither is reported as unreachable or
+     * unauthenticated by that request, rather than as a missing capability.
+     */
+    override suspend fun probeEnumeration(): LibraryEnumerationProbe {
+        val knownPositive = parseAlbumList(
             request.providerInstanceId,
             transport.checkedRequest(
                 "getAlbumList2",
-                mapOf(
-                    "type" to "alphabeticalByName",
-                    "size" to size.toString(),
-                    "offset" to offset.toString(),
-                ),
+                mapOf("type" to "alphabeticalByName", "size" to "1", "offset" to "0"),
+            ),
+        )
+        val enumerated = enumeratedAlbums(
+            transport.checkedRequest(
+                "search3",
+                libraryEnumerationParameters(LibraryEnumerationKind.Album, offset = 0, size = 1),
+            ),
+        )
+        return LibraryEnumerationProbe(knownPositive.size, enumerated.size)
+    }
+
+    override suspend fun artistPage(offset: Long, size: Int): List<LibraryArtist> =
+        parseEnumeratedArtists(
+            request.providerInstanceId,
+            transport.checkedRequest(
+                "search3",
+                libraryEnumerationParameters(LibraryEnumerationKind.Artist, offset, size),
             ),
         )
 
-    override suspend fun album(rawId: String): LibraryAlbum {
-        val summary = AlbumSummary(
-            id = ProviderItemId(request.providerInstanceId, rawId),
-            title = rawId,
-            credits = emptyList(),
-            year = null,
-            duration = kotlin.time.Duration.ZERO,
-            mediaSourceId = null,
-            artworkKey = null,
+    override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> =
+        enumeratedAlbums(
+            transport.checkedRequest(
+                "search3",
+                libraryEnumerationParameters(LibraryEnumerationKind.Album, offset, size),
+            ),
         )
-        return parseAlbum(
+
+    override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+        parseEnumeratedTracks(
             request.providerInstanceId,
-            summary,
-            transport.checkedRequest("getAlbum", mapOf("id" to rawId)),
+            transport.checkedRequest(
+                "search3",
+                libraryEnumerationParameters(LibraryEnumerationKind.Song, offset, size),
+            ),
         )
-    }
+
+    private fun enumeratedAlbums(body: String): List<AlbumSummary> =
+        parseEnumeratedAlbums(request.providerInstanceId, body)
 
     override suspend fun playlists(): List<LibraryPlaylistSummary> {
         val payload = syncPayload(transport.checkedRequest("getPlaylists"))
@@ -336,6 +455,129 @@ private fun JsonObject.syncNonNegativeLong(name: String): Long {
 
 private fun syncMalformed(): Nothing =
     throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+
+private fun String.searchResultContainer(): JsonObject =
+    syncPayload(this)["searchResult3"] as? JsonObject ?: syncMalformed()
+
+private fun String.enumeratedRows(kind: LibraryEnumerationKind): List<JsonObject> =
+    searchResultContainer().syncArray(kind.arrayName).map { it as? JsonObject ?: syncMalformed() }
+
+/**
+ * Artists from one page of the artists walk.
+ *
+ * The fields are the two `getArtists` supplies through [parseArtists] — a stable opaque id and a
+ * name. `search3` pages artists; `getArtists` cannot page at all, and returns every artist in one
+ * indivisible response.
+ */
+internal fun parseEnumeratedArtists(
+    providerInstanceId: String,
+    body: String,
+): List<LibraryArtist> = body.enumeratedRows(LibraryEnumerationKind.Artist).map { artist ->
+    LibraryArtist(
+        id = ProviderItemId(providerInstanceId, artist.syncOpaqueId("id")),
+        name = artist.syncRequiredString("name"),
+        mediaSourceId = null,
+    )
+}.distinctBy { it.id.rawId }
+
+/**
+ * Albums from one page of the albums walk.
+ *
+ * Every field is read by the same rule [parseAlbumList] applies to a `getAlbumList2` row, because
+ * both endpoints build the same `AlbumID3` object on the reference server. Equivalence is not left
+ * as an assumption: `LibrarySyncTransportTest` parses one album through both functions and requires
+ * the results to be equal.
+ */
+internal fun parseEnumeratedAlbums(
+    providerInstanceId: String,
+    body: String,
+): List<AlbumSummary> = body.enumeratedRows(LibraryEnumerationKind.Album).map { album ->
+    AlbumSummary(
+        id = ProviderItemId(providerInstanceId, album.syncOpaqueId("id")),
+        title = album.syncRequiredString("name"),
+        credits = album.syncCredit(providerInstanceId, CreditRole.AlbumArtist),
+        year = album.syncInt("year"),
+        duration = album.syncDuration(),
+        mediaSourceId = null,
+        artworkKey = album.syncOptionalOpaqueId("coverArt"),
+    )
+}
+
+/**
+ * Tracks from one page of the songs walk, each carrying the album it belongs to.
+ *
+ * A song without an `albumId` is rejected rather than dropped. Dropping it would silently shrink
+ * the library by exactly the rows this transport cannot file, which is the failure this whole
+ * change exists to make impossible; rejecting it fails the import with a named protocol error.
+ */
+internal fun parseEnumeratedTracks(
+    providerInstanceId: String,
+    body: String,
+): List<LibraryTrackRow> = body.enumeratedRows(LibraryEnumerationKind.Song).map { track ->
+    LibraryTrackRow(
+        albumRawId = track.syncOpaqueId("albumId"),
+        track = LibraryTrack(
+            id = ProviderItemId(providerInstanceId, track.syncOpaqueId("id")),
+            title = track.syncRequiredString("title"),
+            credits = track.syncCredit(providerInstanceId, CreditRole.Artist),
+            albumTitle = track.syncString("album"),
+            discNumber = track.syncInt("discNumber"),
+            trackNumber = track.syncInt("track"),
+            duration = track.syncDuration(),
+            sourceContainer = track.syncAudioContainer(),
+            mediaSourceId = null,
+            artworkKey = track.syncOptionalOpaqueId("coverArt"),
+        ),
+    )
+}
+
+private fun JsonObject.syncOptionalOpaqueId(name: String): String? {
+    val value = get(name) ?: return null
+    val primitive = value as? JsonPrimitive ?: syncMalformed()
+    return primitive.contentOrNull?.takeIf(String::isNotBlank) ?: syncMalformed()
+}
+
+private fun JsonObject.syncInt(name: String): Int? =
+    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
+
+private fun JsonObject.syncDuration(): kotlin.time.Duration = when (val seconds = syncInt("duration")) {
+    null -> kotlin.time.Duration.ZERO
+    in 0..Int.MAX_VALUE -> seconds.seconds
+    else -> syncMalformed()
+}
+
+private fun JsonObject.syncCredit(providerInstanceId: String, role: CreditRole): List<Credit> {
+    val name = syncString("artist")?.takeIf(String::isNotBlank) ?: return emptyList()
+    return listOf(
+        Credit(
+            role = role,
+            name = name,
+            id = syncOptionalOpaqueId("artistId")?.let { ProviderItemId(providerInstanceId, it) },
+        ),
+    )
+}
+
+private fun JsonObject.syncAudioContainer(): AudioContainer? {
+    syncString("suffix")?.lowercase()?.let { suffix ->
+        when (suffix) {
+            "mp3" -> return AudioContainer.Mp3
+            "mp4", "m4a" -> return AudioContainer.Mp4
+            "wav", "wave" -> return AudioContainer.Wav
+            "flac" -> return AudioContainer.Flac
+            "ogg", "oga", "opus" -> return AudioContainer.Ogg
+            "aac", "adts" -> return AudioContainer.AdtsAac
+        }
+    }
+    return when (syncString("contentType")?.substringBefore(';')?.trim()?.lowercase()) {
+        "audio/mpeg", "audio/mp3" -> AudioContainer.Mp3
+        "audio/mp4", "audio/x-m4a", "audio/m4a" -> AudioContainer.Mp4
+        "audio/wav", "audio/wave", "audio/x-wav" -> AudioContainer.Wav
+        "audio/flac", "audio/x-flac" -> AudioContainer.Flac
+        "audio/ogg", "application/ogg" -> AudioContainer.Ogg
+        "audio/aac", "audio/aacp" -> AudioContainer.AdtsAac
+        else -> null
+    }
+}
 
 internal data class LibrarySyncCheckpoint(
     val generation: Long,
@@ -551,17 +793,13 @@ internal class LibrarySyncRepository(
         }
     }
 
-    fun putTracks(serverId: String, generation: Long, albums: List<LibraryAlbum>) =
+    fun putTracks(serverId: String, generation: Long, rows: List<LibraryTrackRow>) =
         database.transaction {
-        albums.forEach { album ->
-            requireProvider(serverId, album.id)
-            album.tracks.forEach { track ->
-                requireProvider(serverId, track.id)
-                track.credits.mapNotNull(Credit::id).forEach { requireProvider(serverId, it) }
-            }
+        rows.forEach { row ->
+            requireProvider(serverId, row.track.id)
+            row.track.credits.mapNotNull(Credit::id).forEach { requireProvider(serverId, it) }
         }
-        albums.flatMap { album -> album.tracks.map { album.id.rawId to it } }
-            .distinctBy { it.second.id.rawId }
+        rows.distinctBy { it.track.id.rawId }
             .forEach { (albumRawId, value) ->
                 val credit = value.credits.firstOrNull()
                 val duration = value.duration.inWholeMilliseconds
@@ -966,9 +1204,19 @@ internal sealed interface LibrarySyncResult {
     data class Failed(val error: DomainError) : LibrarySyncResult
 }
 
+/**
+ * A durable, generation-pinned import.
+ *
+ * The fill transport is three whole-library walks — artists, then albums, then songs — and the
+ * request count is therefore a function of the library's *page* count, never of its album count.
+ * Reconstructing each album's track list from the songs walk replaces one `getAlbum` per album:
+ * **OBSERVED 2026-09-11** against Navidrome 0.63.2 holding 2,500 albums / 5,000 songs, one full
+ * pass costs 19 requests through the walks against 2,506 through `getAlbum`, and the two produce
+ * byte-identical libraries (60,000 field values compared over all 2,500 albums, zero differences).
+ */
 internal class LibrarySyncEngine(
     private val repository: LibrarySyncRepository,
-    private val albumPageSize: Int = 500,
+    private val enumerationPageSize: Int = MAX_LIBRARY_ENUMERATION_PAGE_SIZE,
     private val maxInFlight: Int = 4,
     private val saltSource: SaltSource? = null,
     private val logSink: LogSink? = null,
@@ -976,7 +1224,7 @@ internal class LibrarySyncEngine(
     private val syncMutex: Mutex = LibrarySyncCoordinator.syncMutex,
 ) {
     init {
-        require(albumPageSize > 0)
+        require(enumerationPageSize in 1..MAX_LIBRARY_ENUMERATION_PAGE_SIZE)
         require(maxInFlight in 1..MAX_IN_FLIGHT_PER_SERVER)
     }
 
@@ -1003,6 +1251,7 @@ internal class LibrarySyncEngine(
             require(serverId.isNotBlank())
             val isFirstSync = repository.committedGeneration() == 0L
             var checkpoint = repository.prepareCheckpoint(serverId, restart)
+            requireWholeLibraryEnumeration(source)
 
             var completed: LibrarySyncResult.Completed? = null
             while (completed == null) {
@@ -1019,11 +1268,14 @@ internal class LibrarySyncEngine(
                         serverId, checkpoint, source::musicFolders,
                         repository::putFolders,
                     )
-                    LibrarySyncStage.Artists -> checkpoint = runSingleStage(
-                        serverId, checkpoint, source::artists,
+                    LibrarySyncStage.Artists -> checkpoint = runPagedStage(
+                        serverId, checkpoint, { artist: LibraryArtist -> artist.id.rawId },
                         repository::putArtists,
-                    )
-                    LibrarySyncStage.Albums -> checkpoint = runAlbumStage(serverId, checkpoint, source)
+                    ) { offset, size -> SourcePage(source.artistPage(offset, size)) }
+                    LibrarySyncStage.Albums -> checkpoint = runPagedStage(
+                        serverId, checkpoint, { album: AlbumSummary -> album.id.rawId },
+                        repository::putAlbums,
+                    ) { offset, size -> SourcePage(source.albumPage(offset, size)) }
                     LibrarySyncStage.Tracks -> checkpoint = runTrackStage(serverId, checkpoint, source)
                     LibrarySyncStage.Playlists -> checkpoint = runPlaylistStage(serverId, checkpoint, source)
                     LibrarySyncStage.Starred -> checkpoint = runSingleStage(
@@ -1112,10 +1364,46 @@ internal class LibrarySyncEngine(
         return advance(serverId, checkpoint.copy(unverified = unverified))
     }
 
-    private suspend fun runAlbumStage(
+    /**
+     * Fails the import when the server demonstrably has albums and enumerates none of them.
+     *
+     * Two requests per import buy the one thing a walk cannot tell on its own: zero rows from the
+     * empty query means "this library is empty" on a server that implements whole-library
+     * enumeration and "I do not implement it" on a server that does not. Without the known positive
+     * the second case commits an empty generation over a full one, closes every row, reports
+     * success — and reads, in every instrument anyone would look at, exactly like an empty library.
+     */
+    private suspend fun requireWholeLibraryEnumeration(source: LibrarySyncSource) {
+        if (!source.probeEnumeration().enumeratesWholeLibrary) {
+            throw LibraryRequestFailure(
+                DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync),
+            )
+        }
+    }
+
+    /** One page as the server returned it: [rowCount] is its size, whatever we chose to keep. */
+    private data class SourcePage<T>(val values: List<T>, val rowCount: Int = values.size) {
+        init {
+            require(rowCount >= values.size)
+        }
+    }
+
+    private data class PagedWalk<T>(val values: List<T>, val witness: LibrarySyncWitness)
+
+    /**
+     * One resumable whole-library walk, written page by page, then re-walked until its witness is
+     * stable (§16.4).
+     *
+     * The re-walk is what makes the witness affordable: it is one more pass over the same pages —
+     * six requests for albums at the design's target scale — where the previous transport re-read
+     * every album individually, two to four times over.
+     */
+    private suspend fun <T> runPagedStage(
         serverId: String,
         original: LibrarySyncCheckpoint,
-        source: LibrarySyncSource,
+        identity: (T) -> String,
+        put: (String, Long, List<T>) -> Unit,
+        fetch: suspend (Long, Int) -> SourcePage<T>,
     ): LibrarySyncCheckpoint {
         var checkpoint = original
         var baseline: LibrarySyncWitness
@@ -1124,7 +1412,7 @@ internal class LibrarySyncEngine(
                 repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
             }
             if (checkpoint.cursor > 0) {
-                val prefix = walkAlbumPages(source, checkpoint.witness.pageCount)
+                val prefix = walkPages(identity, fetch, pageLimit = checkpoint.witness.pageCount)
                 if (prefix.witness != checkpoint.witness) {
                     repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
                     checkpoint = checkpoint.copy(cursor = 0, witness = LibrarySyncWitness.Empty)
@@ -1133,13 +1421,16 @@ internal class LibrarySyncEngine(
             var offset = checkpoint.cursor
             val ids = repository.seenIds(serverId, checkpoint.generation, checkpoint.stage).toMutableSet()
             var pages = checkpoint.witness.pageCount
+            var largestPage = 0
             while (true) {
-                val page = source.albumPage(offset, albumPageSize)
+                val page = fetch(offset, enumerationPageSize)
                 pages += 1
-                repository.putAlbums(serverId, checkpoint.generation, page)
-                ids.addAll(page.map { it.id.rawId })
-                if (page.size < albumPageSize) break
-                offset += albumPageSize
+                largestPage = maxOf(largestPage, page.rowCount)
+                put(serverId, checkpoint.generation, page.values)
+                ids.addAll(page.values.map(identity))
+                if (page.rowCount == 0 || page.rowCount < largestPage) break
+                requireTerminableWalk(pages)
+                offset += page.rowCount
                 checkpoint = checkpoint.copy(
                     cursor = offset,
                     witness = LibrarySyncWitness(ids, pages),
@@ -1157,13 +1448,13 @@ internal class LibrarySyncEngine(
             attempt += 1
             checkpoint = checkpoint.copy(attempt = attempt)
                 .also { repository.saveCheckpoint(serverId, it) }
-            val current = walkAlbumPages(source)
+            val current = walkPages(identity, fetch)
             if (current.witness == baseline) return advance(serverId, checkpoint)
             baseline = current.witness
             checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
             repository.writeAtomically {
                 repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-                repository.putAlbums(serverId, checkpoint.generation, current.albums)
+                put(serverId, checkpoint.generation, current.values)
                 repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
                 repository.saveCheckpoint(serverId, checkpoint)
             }
@@ -1171,101 +1462,82 @@ internal class LibrarySyncEngine(
         return advance(serverId, checkpoint.copy(unverified = true))
     }
 
-    private data class AlbumWalk(val albums: List<AlbumSummary>, val witness: LibrarySyncWitness)
-
-    private suspend fun walkAlbumPages(
-        source: LibrarySyncSource,
+    /**
+     * Walks every page of one entity from offset zero, obeying two rules that never trust the size
+     * the request asked for.
+     *
+     * 1. **The offset advances by the number of rows the server returned**, never by the number
+     *    requested. A server may serve fewer rows than asked: OBSERVED 2026-09-11 against the
+     *    reference server, `getAlbumList2` silently caps `size` at 500, answering `status="ok"`
+     *    with no marker of the truncation.
+     * 2. **A page ends the walk only when it is empty, or shorter than the largest page this
+     *    server has returned.** A cap reveals itself as a page that is short against the request
+     *    and full against the server's own behaviour, and only the second comparison is sound.
+     *
+     * There is deliberately no third rule ending the walk on a page that contributes no new id.
+     * The read-through browse path has one, and it is right there: a stale view costs a refresh.
+     * Here the walk *becomes the library*, and a page of ids we have already seen is what an
+     * insertion during the pass looks like — stopping on it would commit a short library. A walk
+     * the server will not let terminate is a failure instead (see [requireTerminableWalk]).
+     */
+    private suspend fun <T> walkPages(
+        identity: (T) -> String,
+        fetch: suspend (Long, Int) -> SourcePage<T>,
         pageLimit: Long? = null,
-    ): AlbumWalk {
-        val albums = mutableListOf<AlbumSummary>()
+    ): PagedWalk<T> {
+        val values = mutableListOf<T>()
         val ids = mutableSetOf<String>()
         var offset = 0L
         var pages = 0L
+        var largestPage = 0
         while (pageLimit == null || pages < pageLimit) {
-            val page = source.albumPage(offset, albumPageSize)
+            val page = fetch(offset, enumerationPageSize)
             pages += 1
-            page.forEach { if (ids.add(it.id.rawId)) albums += it }
-            if (page.size < albumPageSize) break
-            offset += albumPageSize
+            largestPage = maxOf(largestPage, page.rowCount)
+            page.values.forEach { if (ids.add(identity(it))) values += it }
+            if (page.rowCount == 0 || page.rowCount < largestPage) break
+            requireTerminableWalk(pages)
+            offset += page.rowCount
         }
-        return AlbumWalk(albums, LibrarySyncWitness(ids, pages))
+        return PagedWalk(values, LibrarySyncWitness(ids, pages))
     }
 
+    private fun requireTerminableWalk(pages: Long) {
+        if (pages < MAX_ENUMERATION_PAGES) return
+        throw LibraryRequestFailure(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync))
+    }
+
+    /**
+     * The songs walk, filed under the albums this generation already holds.
+     *
+     * A song whose `albumId` is not in this generation's album set is a row the albums walk never
+     * saw — the library gained an album between the two walks. Storing it would leave a track
+     * pointing at no album, which §16.5's reconciliation rules count as a dangling reference;
+     * dropping it quietly would make an incomplete import look complete. It is dropped **and** the
+     * generation is marked `unverified`, which is the existing "the library changed during the
+     * scan, here is a rescan" result rather than a new one.
+     */
     private suspend fun runTrackStage(
         serverId: String,
         original: LibrarySyncCheckpoint,
         source: LibrarySyncSource,
     ): LibrarySyncCheckpoint {
-        var checkpoint = original
-        val albumIds = repository.albumIds(serverId, checkpoint.generation)
-        var baseline: LibrarySyncWitness
-        if (checkpoint.attempt == 0) {
-            if (checkpoint.cursor == 0L) {
-                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-            }
-            if (checkpoint.cursor > 0) {
-                val prefix = fetchAlbums(source, albumIds.take(checkpoint.cursor.toInt()))
-                val prefixWitness = trackWitness(prefix, checkpoint.cursor)
-                if (prefixWitness != checkpoint.witness) {
-                    repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-                    checkpoint = checkpoint.copy(cursor = 0, witness = LibrarySyncWitness.Empty)
-                }
-            }
-            var cursor = checkpoint.cursor.toInt()
-            val ids = repository.seenIds(serverId, checkpoint.generation, checkpoint.stage).toMutableSet()
-            while (cursor < albumIds.size) {
-                val chunkIds = albumIds.drop(cursor).take(maxInFlight)
-                val albums = fetchAlbums(source, chunkIds)
-                repository.putTracks(serverId, checkpoint.generation, albums)
-                ids.addAll(albums.flatMap { it.tracks }.map { it.id.rawId })
-                cursor += chunkIds.size
-                checkpoint = checkpoint.copy(
-                    cursor = cursor.toLong(),
-                    witness = LibrarySyncWitness(ids, cursor.toLong()),
-                ).also { repository.saveCheckpoint(serverId, it) }
-            }
-            repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
-            baseline = LibrarySyncWitness(ids, albumIds.size.toLong())
-        } else {
-            baseline = checkpoint.witness
+        val albumIds = repository.albumIds(serverId, original.generation).toSet()
+        var droppedRows = 0L
+        val finished = runPagedStage(
+            serverId,
+            original,
+            { row: LibraryTrackRow -> row.track.id.rawId },
+            repository::putTracks,
+        ) { offset, size ->
+            val page = source.trackPage(offset, size)
+            val kept = page.filter { it.albumRawId in albumIds }
+            droppedRows += (page.size - kept.size).toLong()
+            SourcePage(kept, rowCount = page.size)
         }
-        var attempt = checkpoint.attempt
-        while (attempt < MAX_STABILITY_ATTEMPTS) {
-            attempt += 1
-            checkpoint = checkpoint.copy(attempt = attempt)
-                .also { repository.saveCheckpoint(serverId, it) }
-            val currentAlbums = fetchAlbums(source, albumIds)
-            val current = trackWitness(currentAlbums, albumIds.size.toLong())
-            if (current == baseline) return advance(serverId, checkpoint)
-            baseline = current
-            checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
-            repository.writeAtomically {
-                repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
-                repository.putTracks(serverId, checkpoint.generation, currentAlbums)
-                repository.completeStage(serverId, checkpoint.generation, checkpoint.stage)
-                repository.saveCheckpoint(serverId, checkpoint)
-            }
-        }
-        return advance(serverId, checkpoint.copy(unverified = true))
+        if (droppedRows == 0L) return finished
+        return finished.copy(unverified = true).also { repository.saveCheckpoint(serverId, it) }
     }
-
-    private suspend fun fetchAlbums(source: LibrarySyncSource, ids: List<String>): List<LibraryAlbum> =
-        buildList {
-            ids.chunked(maxInFlight).forEach { chunk ->
-                addAll(
-                    coroutineScope {
-                        chunk.map { id ->
-                            async {
-                                LibrarySyncCoordinator.requestPermits.withPermit { source.album(id) }
-                            }
-                        }.awaitAll()
-                    },
-                )
-            }
-        }
-
-    private fun trackWitness(albums: List<LibraryAlbum>, pages: Long): LibrarySyncWitness =
-        LibrarySyncWitness(albums.flatMap { it.tracks }.map { it.id.rawId }.toSet(), pages)
 
     private suspend fun runPlaylistStage(
         serverId: String,
@@ -1388,6 +1660,13 @@ internal class LibrarySyncEngine(
     private companion object {
         const val MAX_IN_FLIGHT_PER_SERVER = 4
         const val MAX_STABILITY_ATTEMPTS = 3
+
+        /**
+         * A ceiling on pages per walk, not a tolerance: at the largest page the protocol promises
+         * it admits five million rows, roughly 160 times the design's target scale. It exists so a
+         * server that answers full pages forever fails the import instead of walking without end.
+         */
+        const val MAX_ENUMERATION_PAGES = 10_000L
     }
 }
 
@@ -1509,7 +1788,7 @@ public object LibrarySyncContract {
     ): LibrarySyncControlResult = runControl(request) { database, source, _, _ ->
         val mutatingSource = AlternatingAlbumPaginationSource(source)
         val repository = LibrarySyncRepository(database.primary)
-        val completed = LibrarySyncEngine(repository, albumPageSize = 1)
+        val completed = LibrarySyncEngine(repository, enumerationPageSize = 1)
             .synchronize(request.providerInstanceId, mutatingSource)
             .requireControlCompletion()
         val committed = repository.readCommitted(request.providerInstanceId)
