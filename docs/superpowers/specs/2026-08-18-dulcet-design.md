@@ -491,6 +491,16 @@ androidTarget(); jvm()   // jvm exists only for the conformance suite (S20)
   with a confusing error message. **Consequence, stated out loud:** Xcode builds are not hermetic —
   they require a JDK and the Gradle wrapper on the build machine. GitHub's macOS runner images ship
   both, so this is free in CI; it is a stated contributor prerequisite in `CLAUDE.md`.
+- **Every Run Script phase invokes Gradle through `tools/run-gradle-exclusive`, never a bare
+  `./gradlew`.** OBSERVED: eight targets own the phase, Xcode builds independent targets in parallel,
+  and Gradle does not queue behind its own locks — it waits about 60 s and fails the build. Run
+  34635969077 (2026-09-11) lost the checkout-scoped configuration-cache lock and run 34127121022
+  (2026-09-07) the user-home-scoped journal lock, both with `DulcetiOS` and `DulcetKitIOSTests`
+  building together. The runner holds one flock beside each resource for the whole invocation, in a
+  fixed order, inherited by the exec'd Gradle process so a killed holder releases both.
+  `tools/verify_xcode_script_phases.py` (parity-gate) keeps the committed project's script bodies
+  equal to `apple/project.yml`'s, because nothing regenerates the project during a build and the
+  build-order guard reads only the committed project.
 - **`assembleXCFramework` is not part of the app build** and is not run in app CI. It exists only to
   produce a distributable artifact if we ever publish the core separately, and until we do, the task
   is not wired into any workflow. (Revision 1 listed it in `apple-ci.yml`; that was redundant build
@@ -3665,6 +3675,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 99 (2026-09-11)** — §4.3 records that every Xcode Run Script phase invokes Gradle through
+`tools/run-gradle-exclusive`. No design change: the same task runs with the same inputs, serialised.
+OBSERVED on `main`: run 34635969077 failed a required check with `Timeout waiting to lock
+Configuration Cache` when `DulcetiOS` and `DulcetKitIOSTests` built concurrently, each running the
+`Compile Kotlin Framework` phase; run 34127121022 had lost the journal lock the same way on
+2026-09-07. Measured over the 40 most recent `apple-ci` runs: 1 of 40 carries the string in its
+failed-step logs (6 cancelled runs expose no failed-step log to that instrument). Reproduced locally
+without Xcode by starting two `:core:embedAndSignAppleFrameworkForXcode` invocations together, with
+and without the runner — `docs/verification/serialised-kotlin-script-phases.md`. The committed
+project is regenerated with the pinned XcodeGen, and `tools/verify_xcode_script_phases.py` now
+fails the parity gate when `apple/project.yml`'s script bodies and the committed project disagree.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

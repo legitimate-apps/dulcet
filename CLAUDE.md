@@ -372,6 +372,27 @@ They are deliberately not reproduced in this repository.**
     satisfiable by an earlier identical event. Where a control checks an outcome, add one that checks
     the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
     handler itself emits.
+42. 🚨 **`apple/project.yml` is the SOURCE; `apple/Dulcet.xcodeproj` is generated from it by the
+    pinned XcodeGen and committed. Nothing regenerates it during a build.** Editing project.yml alone
+    changes what the repository documents and NOT what Xcode runs — and
+    `tools/verify_dulcet_core_build_order.py` reads the **pbxproj**, so it keeps reporting PASS about
+    the old script. Regenerate with `cd apple && xcodegen generate` (version pinned in
+    `docs/TOOLCHAIN.md`; 2.46.0 reproduces the committed project byte-for-byte), and note that a
+    rebase may textually merge the pbxproj into something XcodeGen would not produce.
+    `tools/verify_xcode_script_phases.py` (parity-gate, stdlib-only, no Xcode) compares multisets of
+    literal script bodies including duplicate counts; it does not verify target attachment, ordering,
+    shellPath, dependency flags or input/output files — the build-order guard covers attachment and
+    ordering, and the rest needs regeneration plus review of the generated diff.
+43. **Eight Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
+    targets in parallel**, so two Gradle invocations start together — and Gradle does not queue behind
+    its own locks: it waits about 60 s and then FAILS the build. Two different locks have lost that
+    race on `main`: the checkout-scoped **configuration cache** (`.gradle/configuration-cache`, run
+    34635969077, `Timeout waiting to lock Configuration Cache`) and the user-home-scoped **journal**
+    (`caches/journal-1`, run 34127121022), both with `DulcetiOS` and `DulcetKitIOSTests` building
+    together. It reads as a red required check on a product-unrelated commit. Every phase goes
+    through `tools/run-gradle-exclusive`, which holds one flock beside each resource for the whole
+    invocation; do not reintroduce a bare `./gradlew` there, and do not key a replacement lock on
+    only one of the two resources.
 
 ## Review and delegation
 
