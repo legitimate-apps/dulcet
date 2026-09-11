@@ -132,7 +132,10 @@ class LibraryBrowseTest {
             transport.totalRequests
         }
 
-        assertEquals(expected.toSortedMap().toMap(), observed)
+        // `toSortedMap` is a JVM-only stdlib extension. This file is commonTest, so it compiles for
+        // Kotlin/Native too, where the reference does not resolve -- and `:core:jvmTest` passes
+        // regardless, which is exactly why the break reached CI. Sort the keys explicitly instead.
+        assertEquals(expected.entries.sortedBy { it.key }.associate { it.key to it.value }, observed)
         // 12,000 albums cost 27 requests. The walk this replaced cost 12,000 of them plus the
         // same paging.
         assertTrue(observed.getValue(12_000) < 30)
