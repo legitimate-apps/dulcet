@@ -416,19 +416,66 @@ jobs:
           # proving nothing.
           IPAD_DESTINATION="platform=iOS Simulator,id=$IPAD_UDID"
           echo "iPadOS destination: $IPAD_DESTINATION"
-          set +e
-          xcodebuild test \
-            -project apple/Dulcet.xcodeproj \
-            -scheme DulcetiOS \
-            -configuration Debug \
-            -destination "$IPAD_DESTINATION" \
-            -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
-            -parallel-testing-enabled NO \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
-          tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
-          xcode_status=${PIPESTATUS[0]}
-          set -e
+          # Xcode's destination enumeration goes transiently empty. resolve-ipad-destination
+          # succeeds moments earlier -- observed `candidates=18 simctl_ipads=18 query_attempts=1`
+          # -- and this invocation is then told "no available devices matched", listing ONLY
+          # dvtdevice placeholders. Measured in 2 of 20 runs that reached this step.
+          #
+          # #112 taught the RESOLVER to retry that condition; the race simply moved downstream to
+          # here, which had no retry at all.
+          #
+          # The predicate lives in a tested tool rather than in greps here, because the transcript
+          # states the request and the answer in the same syntax:
+          #
+          #   xcodebuild: error: Unable to find a device matching ...:
+          #           { platform:iOS Simulator, id:D2D29ECE-... }        <- the REQUEST
+          #       Available destinations for the "DulcetiOS" scheme:
+          #           { platform:iOS Simulator, id:dvtdevice-...  }      <- the ANSWER
+          #
+          # No whole-transcript grep can tell those two lines apart. classify-ipad-destination-failure
+          # reads the available-destinations SECTION, through the same field-wise reader the resolver
+          # uses -- so it is indifferent to `arch:` and to spacing -- and it treats a section it
+          # cannot parse as a reason to stop rather than to try again.
+          #
+          # It retries only when all four hold: device-not-found is present, nothing indicates the
+          # build, launch or tests ever ran, the section parses, and it names no concrete simulator.
+          # What that buys, exactly: every failure shape recorded in this repository -- test failure,
+          # launch failure, build failure, gradle lock, browse timeout, proxy timeout, conformance
+          # stall, and device-not-found while concrete simulators ARE listed -- is refused a retry by
+          # a named control in test-ipad-destination-failure-classifier. That is a measured claim
+          # about known shapes, not a proof that no unknown shape could satisfy all four at once.
+          #
+          # Every attempt announces itself before it runs and every failed attempt prints why it was
+          # or was not retried, so an interrupted sequence is still readable and a run that retried
+          # is never silently identical to a clean one.
+          ipados_attempts=0
+          while true; do
+            ipados_attempts=$((ipados_attempts + 1))
+            echo "IPADOS TEST ATTEMPT BEGIN attempt=$ipados_attempts"
+            set +e
+            xcodebuild test \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
+            xcode_status=${PIPESTATUS[0]}
+            set -e
+            [[ "$xcode_status" -eq 0 ]] && break
+            # Classified before the attempt cap is consulted, so the transcript records a reason for
+            # every failed attempt including the last one.
+            python3 tools/classify-ipad-destination-failure \
+              "$RUNNER_TEMP/dulcet-ipados-ui-testing.log" || break
+            [[ "$ipados_attempts" -ge 3 ]] && break
+            # `|| true`: neither of these may fail the step ahead of the attempt summary below.
+            sleep 10 || true
+            rm -rf "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" || true
+          done
+          echo "IPADOS TEST ATTEMPTS attempts=$ipados_attempts status=$xcode_status"
           if [[ "$xcode_status" -ne 0 ]]; then
             if grep -Fq \
               "DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true" \
