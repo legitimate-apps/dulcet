@@ -823,6 +823,16 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.selectedAlbumTracksFailure = selectedAlbumTracksFailure
     }
 
+    /// Whether library-wide playback can actually build a queue right now.
+    ///
+    /// Library-wide playback needs real track identities, which only arrive with the track lists.
+    /// Before they do, the actions would silently do nothing, so they are disabled instead — and
+    /// this is the predicate that decides it, on the snapshot rather than inside the view, so it
+    /// can be asserted.
+    public var canPlayWholeLibrary: Bool {
+        albums.contains { !$0.tracks.isEmpty } || !looseTracks.isEmpty
+    }
+
     public var description: String {
         "DulcetSnapshot(state=\(state.rawValue), accountConnected=\(accountConnected), "
             + "accountForm=<redacted>)"

@@ -231,12 +231,6 @@ struct DulcetLibraryBrowseView: View {
         snapshot.albums.reduce(0) { $0 + $1.trackCount } + snapshot.looseTracks.count
     }
 
-    /// Library-wide playback needs actual track identities, which only arrive with the track
-    /// lists. Disabling the actions says so instead of letting the buttons do nothing.
-    private var canPlayWholeLibrary: Bool {
-        snapshot.albums.contains { !$0.tracks.isEmpty } || !snapshot.looseTracks.isEmpty
-    }
-
     var body: some View {
         // Consume the screen's proposed width outside the ScrollView. Window resizing
         // remains responsive without feeding a measured child size back into view
@@ -250,7 +244,7 @@ struct DulcetLibraryBrowseView: View {
                             albumCount: snapshot.albums.count,
                             trackCount: totalTracks
                         ),
-                        playbackEnabled: canPlayWholeLibrary,
+                        playbackEnabled: snapshot.canPlayWholeLibrary,
                         onPlayAll: onPlayAll,
                         onShuffle: onShuffle
                     )

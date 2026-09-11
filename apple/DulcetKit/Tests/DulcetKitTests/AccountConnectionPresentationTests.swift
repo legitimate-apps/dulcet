@@ -2275,3 +2275,65 @@ func aPreviewArrivingAfterTheAuthoritativeResultIsIgnored() throws {
     #expect(store.snapshot.albums.map(\.id) == [complete.id])
     #expect(playback.restoredCoverages.last == .wholeLibrary)
 }
+
+// MARK: - Library-wide playback before track lists exist
+
+/// The predicate behind the Play All / Shuffle enablement. The review found that removing all
+/// four `.disabled(...)` modifiers still passed the whole suite, because nothing asserted either
+/// the decision or what it protects. This asserts the decision.
+@Test @MainActor
+func wholeLibraryPlaybackIsOnlyPossibleOnceSomeTrackListExists() {
+    func snapshot(albums: [DulcetAlbum], looseTracks: [DulcetTrack] = []) -> DulcetSnapshot {
+        DulcetSnapshot(
+            state: .libraryBrowse,
+            selectedDestination: .library,
+            accountConnected: true,
+            connectivity: .online(serverName: "Music"),
+            albums: albums,
+            looseTracks: looseTracks,
+            recentlyAddedTracks: [],
+            captureDate: Date(timeIntervalSince1970: 0)
+        )
+    }
+    let unread = fixtureUnreadAlbum()
+    let complete = fixtureLibraryAlbum()
+
+    #expect(!snapshot(albums: []).canPlayWholeLibrary)
+    #expect(!snapshot(albums: [unread]).canPlayWholeLibrary)
+    #expect(!snapshot(albums: [unread, unread]).canPlayWholeLibrary)
+    #expect(snapshot(albums: [complete]).canPlayWholeLibrary)
+    #expect(snapshot(albums: [unread, complete]).canPlayWholeLibrary)
+    #expect(snapshot(albums: [unread], looseTracks: complete.tracks).canPlayWholeLibrary)
+}
+
+/// And this asserts what it protects: with no track list anywhere, the action reaches the
+/// playback boundary as nothing at all rather than as an empty queue.
+@Test @MainActor
+func playingTheWholeLibraryBeforeTrackListsExistQueuesNothing() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(!store.snapshot.canPlayWholeLibrary)
+
+    store.playLibrary(shuffle: false)
+    store.playLibrary(shuffle: true)
+    store.playAlbum(album.id, shuffle: false)
+    #expect(playback.queueIntents.isEmpty)
+
+    // The instrument is not blind: once the tracks arrive the same actions do build a queue.
+    libraryBrowser.completeAgain(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(store.snapshot.canPlayWholeLibrary)
+    store.playLibrary(shuffle: false)
+    #expect(playback.queueIntents.count == 1)
+}

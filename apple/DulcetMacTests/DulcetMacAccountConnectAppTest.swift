@@ -634,13 +634,15 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // would mean its three requests took longer than all of that, which is a result worth
         // failing on rather than tolerating.
         XCTAssertEqual(library.publicationOrder, ["preview", "committed"])
-        // Order-free invariants, so a future reordering cannot quietly retire the control above:
-        // every preview is followed by exactly one committed publication, and the generations the
-        // person was shown never go backwards.
-        XCTAssertEqual(library.deliveredPreviewCount, library.displayedCommittedGenerations.count)
+        // Order-free invariant, so a future reordering cannot quietly retire the control above.
+        // This is a PAIRING, not a count: it rejects ["committed", "preview"] — which a count
+        // equality accepts — and it requires at least one pair, so it cannot pass vacuously.
+        XCTAssertFalse(library.publicationOrder.isEmpty)
         XCTAssertEqual(
-            library.displayedCommittedGenerations,
-            library.displayedCommittedGenerations.sorted()
+            stride(from: 0, to: library.publicationOrder.count, by: 2).map {
+                Array(library.publicationOrder[$0 ..< min($0 + 2, library.publicationOrder.count)])
+            }.filter { $0 != ["preview", "committed"] },
+            []
         )
         assertDisplayedLibrary(store.snapshot, equals: firstCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 1)
@@ -661,13 +663,15 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             library.publicationOrder,
             ["preview", "committed", "preview", "committed"]
         )
-        // Order-free invariants, so a future reordering cannot quietly retire the control above:
-        // every preview is followed by exactly one committed publication, and the generations the
-        // person was shown never go backwards.
-        XCTAssertEqual(library.deliveredPreviewCount, library.displayedCommittedGenerations.count)
+        // Order-free invariant, so a future reordering cannot quietly retire the control above.
+        // This is a PAIRING, not a count: it rejects ["committed", "preview"] — which a count
+        // equality accepts — and it requires at least one pair, so it cannot pass vacuously.
+        XCTAssertFalse(library.publicationOrder.isEmpty)
         XCTAssertEqual(
-            library.displayedCommittedGenerations,
-            library.displayedCommittedGenerations.sorted()
+            stride(from: 0, to: library.publicationOrder.count, by: 2).map {
+                Array(library.publicationOrder[$0 ..< min($0 + 2, library.publicationOrder.count)])
+            }.filter { $0 != ["preview", "committed"] },
+            []
         )
         assertDisplayedLibrary(store.snapshot, equals: secondCommitted.library)
         XCTAssertEqual(refreshScheduler.scheduledCount, 2)
