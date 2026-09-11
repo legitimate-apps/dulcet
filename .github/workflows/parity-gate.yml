@@ -58,6 +58,8 @@ jobs:
         run: python3 tools/test-capture-soak-summary
       - name: Prove the local gate runner reports incomplete workflow coverage
         run: python3 tools/test-run-local-gates
+      - name: Prove the change-detection measurement refuses to report what it did not measure
+        run: python3 tools/test-measure-change-detection
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
       - name: Prove self-hosted runners require workflow_dispatch isolation
