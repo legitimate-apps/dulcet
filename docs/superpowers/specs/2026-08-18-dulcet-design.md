@@ -2061,8 +2061,8 @@ count; **no stage costs a request per album.**
 | enumeration probe | `getAlbumList2?size=1` + `search3` with `albumCount=1` | 2 |
 | folders | `getMusicFolders` | 1 |
 | artists | `search3?query=""&artistCount=500&artistOffset=N` (others 0) | ~2 |
-| albums | `search3?query=""&albumCount=500&albumOffset=N` (others 0) | ~6 |
-| tracks | `search3?query=""&songCount=500&songOffset=N` (others 0) | ~64 |
+| albums | `search3?query=""&albumCount=500&albumOffset=N` (others 0) | ~7 |
+| tracks | `search3?query=""&songCount=500&songOffset=N` (others 0) | ~65 |
 | playlists | `getPlaylists` + `getPlaylist?id=` per playlist | 1 + P |
 | starred | `getStarred2` | 1 |
 | genres | `getGenres` | 1 |
@@ -2087,26 +2087,38 @@ concurrency 4, 5,022 requests is about 125 s behind a spinner and 48 sequential 
 
 **Three rules the walks obey, each because the alternative fails silently:**
 
-1. **Never ask for more than 500 rows, and never infer end-of-list from "shorter than I asked for".**
-   OBSERVED 2026-09-11: `getAlbumList2` silently caps `size` at 500 — `size=501` and `size=1000` both
-   return exactly 500 rows, `status="ok"`, nothing marking the truncation. 500 is also the documented
+1. **Never ask for more than 500 rows, and never infer end-of-list from a short page.** OBSERVED
+   2026-09-11: `getAlbumList2` silently caps `size` at 500 — `size=501` and `size=1000` both return
+   exactly 500 rows, `status="ok"`, nothing marking the truncation. 500 is also the documented
    maximum: *"The number of albums to return. Max 500."* (OBSERVED 2026-09-11,
    subsonic.org/pages/api.jsp). `search3`'s counts document no maximum and the reference server does
    not clamp them — `albumCount=5000` returned all 2,500 — but 500 stays the ceiling, because other
    servers are reported to clamp and a clamp is invisible. A walk advances its offset by **what the
-   server returned** and ends only on an empty page or one shorter than the largest page that server
-   has returned.
+   server returned**, and **only an empty page ends it**: a short page has two possible meanings —
+   the list ended, or the server served fewer rows than asked — and the response does not say which,
+   so it is a candidate end, corroborated by one more request. Reading it as the end truncates the
+   library at the first short page; the corroborating request is the price, and a walk whose row
+   count is an exact multiple of the page size has always paid it.
 2. **A page that contributes no new id does not end the walk.** That is what an insertion during the
    pass looks like, and the walk *becomes* the library. A server that will not let a walk terminate
    fails the import instead.
-3. **An empty enumeration is not an empty library until a known positive says so.** Empty-query
-   enumeration is required by OpenSubsonic but layered on a base API where `query` is mandatory, and
-   servers are *reported* to disagree — gonic having needed a shim, Airsonic-Advanced having no such
-   path — which this project has not measured and does not need to: a server without it returns
-   exactly what an empty library returns, and that is enough reason to check. Every import therefore probes
-   `search3` with `albumCount=1` against `getAlbumList2?size=1`, and fails with
-   `CapabilityUnsupported(LibrarySync)` if the positive control finds an album and the empty query
-   finds none — rather than committing an empty generation over a full one and reporting success.
+3. **An empty enumeration is not an empty library until a known positive says so — and that is
+   needed twice.** Empty-query enumeration is required by OpenSubsonic but layered on a base API
+   where `query` is mandatory, and servers are *reported* to disagree — gonic having needed a shim,
+   Airsonic-Advanced having no such path — which this project has not measured and does not need to:
+   a server without it returns exactly what an empty library returns, and that is enough reason to
+   check.
+   - **Before any stage runs**, the import probes `search3` with `albumCount=1` against
+     `getAlbumList2?size=1` and fails with `CapabilityUnsupported(LibrarySync)` if the positive
+     control finds an album and the empty query finds none — rather than committing an empty
+     generation over a full one and reporting success.
+   - **After the songs walk**, the same question is asked of the walk that carries every track, and
+     the album set already in hand is its known positive: a Subsonic album exists because songs
+     exist, so albums present with zero songs enumerated is the server failing, not an empty
+     library. Without this the first probe guards the albums walk alone, and a songs walk that
+     returns nothing closes every track row and commits a library of empty albums as `verified` —
+     the same failure one level down. (A song the walk returned but this generation's albums cannot
+     account for is a different thing: rule 10, dropped and `unverified`.)
 
 The query sent is the literal two characters `""`. OBSERVED 2026-09-11: the reference server
 enumerates identically for `""`, the bare empty value, `" "` and `"*"`, so the choice costs nothing
@@ -2139,8 +2151,8 @@ snapshot. Those contradict: in-place updates make a partially completed pass vis
 
 Because paging is not a snapshot, each list stage records a **witness**: the complete set of ids
 returned and the number of pages consumed. After the stage completes, the index is re-walked and the
-witness recomputed. **The witness is a re-walk of the same pages** — about 6 calls for albums and 64
-for tracks at target scale. Revision 2's track witness re-read *every album individually*, one to
+witness recomputed. **The witness is a re-walk of the same pages** — about 7 calls for albums and 65
+for tracks at target scale, each walk's pages plus the empty page that ends it. Revision 2's track witness re-read *every album individually*, one to
 three more times, which is where most of that shape's 5,917–11,829 requests went; it proved only that
 a set of track ids was stable, never that content was fresh.
 
@@ -2156,11 +2168,14 @@ a set of track ids was stable, never that content was fresh.
    for the *import walks* it is the empty-query `search3` enumeration, whose rowid order is a total
    order and is the one that cannot be shifted by an insertion mid-pass (§16.1). The import does not
    need a human-meaningful order — the local store is sorted at read time.
-2. Page until a **short or empty** page, where "short" means **shorter than the largest page this
-   server has returned**, never shorter than the size requested (§16.2 rule 1), and never more than
-   500 rows per request. Never trust a total count. `X-Total-Count` *is* returned by the reference
-   server on `getAlbumList2` — as an HTTP header, absent from the body and from `search3` — so it may
-   be used opportunistically for progress, never as the termination signal.
+2. Page until an **empty** page. A short page is a candidate end, corroborated by the next request,
+   never trusted (§16.2 rule 1); the offset advances by rows returned; no request asks for more than
+   500 rows. Never trust a total count. `X-Total-Count` *is* returned by the reference server on
+   `getAlbumList2` — as an HTTP header, absent from the body and from `search3` — so it may be used
+   opportunistically for progress, never as the termination signal.
+   ⚠️ **The read-through browse path does not yet obey this** — it asks for exactly 500 and ends on
+   a short page, which is correct only while 500 equals the server's silent cap. That is a known
+   gap in a path this section does not govern, not an exemption from the rule.
 3. Dedupe by opaque server id within a pass.
 4. Deletion reconciliation: a closed row that has a downloaded file or a queue entry produces a
    user-visible reconciliation ("12 tracks are no longer on the server"), never a silent disappearance.

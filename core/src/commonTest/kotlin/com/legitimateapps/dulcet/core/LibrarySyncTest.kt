@@ -353,8 +353,6 @@ class LibrarySyncTest {
         var failPlaylistIdOnce: String? = null
         var mutateStarredAfterEveryRead = false
         var starredReadCount = 0
-        var trackPageReads = 0
-            private set
         private var starred = false
         private var activePlaylistRequests = 0
         var maximumActivePlaylistRequests = 0
@@ -375,10 +373,8 @@ class LibrarySyncTest {
         override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> =
             albums.drop(offset.toInt()).take(size).map { summary(it) }
 
-        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> {
-            trackPageReads += 1
-            return trackRows.drop(offset.toInt()).take(size)
-        }
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            trackRows.drop(offset.toInt()).take(size)
 
         override suspend fun playlists(): List<LibraryPlaylistSummary> = playlistSummaries
 

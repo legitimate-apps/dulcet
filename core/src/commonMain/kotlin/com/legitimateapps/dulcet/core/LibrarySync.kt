@@ -490,8 +490,9 @@ internal fun parseEnumeratedArtists(
  *
  * Every field is read by the same rule [parseAlbumList] applies to a `getAlbumList2` row, because
  * both endpoints build the same `AlbumID3` object on the reference server. Equivalence is not left
- * as an assumption: `LibrarySyncTransportTest` parses one album through both functions and requires
- * the results to be equal.
+ * as an assumption: `LibrarySyncTransportTest.bothParsersReadOneServerRowToTheSameValues` runs one
+ * server row through both functions and requires the whole objects to be equal, so a field added to
+ * one parser and not the other fails at the moment it is introduced.
  */
 internal fun parseEnumeratedAlbums(
     providerInstanceId: String,
@@ -1215,14 +1216,16 @@ internal sealed interface LibrarySyncResult {
  * The fill transport is three whole-library walks — artists, then albums, then songs — and the
  * request count is therefore a function of the library's *page* count, never of its album count.
  * Reconstructing each album's track list from the songs walk replaces one `getAlbum` per album:
- * **OBSERVED 2026-09-11** against Navidrome 0.63.2 holding 2,500 albums / 5,000 songs, one full
- * pass costs 19 requests through the walks against 2,506 through `getAlbum`, and the two produce
- * byte-identical libraries (60,000 field values compared over all 2,500 albums, zero differences).
+ * **OBSERVED 2026-09-11** against Navidrome 0.63.2 holding 2,500 albums / 5,000 songs: one full
+ * import costs 48 requests through the walks against 5,022 through `getAlbum`, 1.97 s against
+ * 9.20 s on loopback, and the two commit byte-identical libraries — every stored field of every
+ * album, track and artist, on that library and on the conformance fixture corpus.
  */
 internal class LibrarySyncEngine(
     private val repository: LibrarySyncRepository,
     private val enumerationPageSize: Int = MAX_LIBRARY_ENUMERATION_PAGE_SIZE,
     private val maxInFlight: Int = 4,
+    private val maxEnumerationPages: Long = DEFAULT_MAX_ENUMERATION_PAGES,
     private val saltSource: SaltSource? = null,
     private val logSink: LogSink? = null,
     private val hostResolver: HostResolver = systemHostResolver(),
@@ -1231,6 +1234,7 @@ internal class LibrarySyncEngine(
     init {
         require(enumerationPageSize in 1..MAX_LIBRARY_ENUMERATION_PAGE_SIZE)
         require(maxInFlight in 1..MAX_IN_FLIGHT_PER_SERVER)
+        require(maxEnumerationPages >= 1)
     }
 
     suspend fun synchronize(
@@ -1393,12 +1397,7 @@ internal class LibrarySyncEngine(
         }
     }
 
-    /** [largestPage] is the biggest page this server served during the walk, its real page size. */
-    private data class PagedWalk<T>(
-        val values: List<T>,
-        val witness: LibrarySyncWitness,
-        val largestPage: Int,
-    )
+    private data class PagedWalk<T>(val values: List<T>, val witness: LibrarySyncWitness)
 
     /**
      * One resumable whole-library walk, written page by page, then re-walked until its witness is
@@ -1413,6 +1412,11 @@ internal class LibrarySyncEngine(
         original: LibrarySyncCheckpoint,
         identity: (T) -> String,
         put: (String, Long, List<T>) -> Unit,
+        // Evaluated once, immediately before the stage advances, so a stage that learned something
+        // during its walk records it in the SAME checkpoint write that moves the stage on. Written
+        // afterwards it would be a second, separate write, and a process death between the two
+        // would lose it and commit the generation as verified.
+        unverifiedAfterWalk: () -> Boolean = { false },
         fetch: suspend (Long, Int) -> SourcePage<T>,
     ): LibrarySyncCheckpoint {
         var checkpoint = original
@@ -1421,21 +1425,11 @@ internal class LibrarySyncEngine(
             if (checkpoint.cursor == 0L) {
                 repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
             }
-            var largestPage = 0
             if (checkpoint.cursor > 0) {
                 val prefix = walkPages(identity, fetch, pageLimit = checkpoint.witness.pageCount)
                 if (prefix.witness != checkpoint.witness) {
                     repository.resetStage(serverId, checkpoint.generation, checkpoint.stage)
                     checkpoint = checkpoint.copy(cursor = 0, witness = LibrarySyncWitness.Empty)
-                } else {
-                    // A resumed walk has to judge "short page" by the same yardstick a walk from
-                    // offset zero would, and the only evidence of that yardstick is the pages it
-                    // has actually seen. Starting the resumed half at zero makes its first page
-                    // the largest by definition, so a genuinely final short page no longer ends
-                    // the walk: it costs one extra request, the stage's page count then disagrees
-                    // with the witness walk's, and the witness reports a change that never
-                    // happened — rewriting the whole stage and spending one of its three attempts.
-                    largestPage = prefix.largestPage
                 }
             }
             var offset = checkpoint.cursor
@@ -1444,10 +1438,9 @@ internal class LibrarySyncEngine(
             while (true) {
                 val page = fetch(offset, enumerationPageSize)
                 pages += 1
-                largestPage = maxOf(largestPage, page.rowCount)
                 put(serverId, checkpoint.generation, page.values)
                 ids.addAll(page.values.map(identity))
-                if (page.rowCount == 0 || page.rowCount < largestPage) break
+                if (page.rowCount == 0) break
                 requireTerminableWalk(pages)
                 offset += page.rowCount
                 checkpoint = checkpoint.copy(
@@ -1468,7 +1461,9 @@ internal class LibrarySyncEngine(
             checkpoint = checkpoint.copy(attempt = attempt)
                 .also { repository.saveCheckpoint(serverId, it) }
             val current = walkPages(identity, fetch)
-            if (current.witness == baseline) return advance(serverId, checkpoint)
+            if (current.witness == baseline) {
+                return advance(serverId, checkpoint.markUnverified(unverifiedAfterWalk))
+            }
             baseline = current.witness
             checkpoint = checkpoint.copy(cursor = 0, witness = baseline)
             repository.writeAtomically {
@@ -1481,6 +1476,9 @@ internal class LibrarySyncEngine(
         return advance(serverId, checkpoint.copy(unverified = true))
     }
 
+    private fun LibrarySyncCheckpoint.markUnverified(decide: () -> Boolean): LibrarySyncCheckpoint =
+        if (unverified || !decide()) this else copy(unverified = true)
+
     /**
      * Walks every page of one entity from offset zero, obeying two rules that never trust the size
      * the request asked for.
@@ -1489,15 +1487,20 @@ internal class LibrarySyncEngine(
      *    requested. A server may serve fewer rows than asked: OBSERVED 2026-09-11 against the
      *    reference server, `getAlbumList2` silently caps `size` at 500, answering `status="ok"`
      *    with no marker of the truncation.
-     * 2. **A page ends the walk only when it is empty, or shorter than the largest page this
-     *    server has returned.** A cap reveals itself as a page that is short against the request
-     *    and full against the server's own behaviour, and only the second comparison is sound.
+     * 2. **Only an empty page ends the walk.** A short page is a *candidate* end and is corroborated
+     *    by one more request, because a page can be short for two unrelated reasons — the list
+     *    ended, or the server served fewer rows than asked — and nothing in the response
+     *    distinguishes them. Trusting the first reading truncates the library on the second: a
+     *    single short page anywhere in the walk would silently drop every row after it, and the
+     *    walk *becomes the library*.
      *
-     * There is deliberately no third rule ending the walk on a page that contributes no new id.
-     * The read-through browse path has one, and it is right there: a stale view costs a refresh.
-     * Here the walk *becomes the library*, and a page of ids we have already seen is what an
-     * insertion during the pass looks like — stopping on it would commit a short library. A walk
-     * the server will not let terminate is a failure instead (see [requireTerminableWalk]).
+     * The corroborating request is not new cost in the common case — a walk whose row count is an
+     * exact multiple of the page size has always paid it — and one extra request per walk is
+     * nothing against the thing it makes impossible.
+     *
+     * There is deliberately no rule ending the walk on a page that contributes no new id, either:
+     * a page of ids already seen is what an insertion during the pass looks like. A walk the server
+     * will not let terminate fails instead (see [requireTerminableWalk]).
      */
     private suspend fun <T> walkPages(
         identity: (T) -> String,
@@ -1508,21 +1511,19 @@ internal class LibrarySyncEngine(
         val ids = mutableSetOf<String>()
         var offset = 0L
         var pages = 0L
-        var largestPage = 0
         while (pageLimit == null || pages < pageLimit) {
             val page = fetch(offset, enumerationPageSize)
             pages += 1
-            largestPage = maxOf(largestPage, page.rowCount)
             page.values.forEach { if (ids.add(identity(it))) values += it }
-            if (page.rowCount == 0 || page.rowCount < largestPage) break
+            if (page.rowCount == 0) break
             requireTerminableWalk(pages)
             offset += page.rowCount
         }
-        return PagedWalk(values, LibrarySyncWitness(ids, pages), largestPage)
+        return PagedWalk(values, LibrarySyncWitness(ids, pages))
     }
 
     private fun requireTerminableWalk(pages: Long) {
-        if (pages < MAX_ENUMERATION_PAGES) return
+        if (pages < maxEnumerationPages) return
         throw LibraryRequestFailure(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync))
     }
 
@@ -1548,14 +1549,44 @@ internal class LibrarySyncEngine(
             original,
             { row: LibraryTrackRow -> row.track.id.rawId },
             repository::putTracks,
+            unverifiedAfterWalk = { droppedRows > 0L },
         ) { offset, size ->
             val page = source.trackPage(offset, size)
             val kept = page.filter { it.albumRawId in albumIds }
             droppedRows += (page.size - kept.size).toLong()
             SourcePage(kept, rowCount = page.size)
         }
-        if (droppedRows == 0L) return finished
-        return finished.copy(unverified = true).also { repository.saveCheckpoint(serverId, it) }
+        requireEnumeratedTracks(serverId, original.generation, albumIds, droppedRows)
+        return finished
+    }
+
+    /**
+     * The songs walk's known positive, and it costs nothing: the album set is already in hand.
+     *
+     * 🚨 The import-level probe validates the *albums* walk only. Without this, a server that
+     * enumerates albums and returns nothing for songs closes every track row and commits the result
+     * `Verified` — a library of empty albums, reported as a success, which is the same failure the
+     * probe exists to prevent applied to the walk that carries every track.
+     *
+     * The invariant is exact rather than heuristic: a Subsonic album exists because songs exist, so
+     * "this server has albums" and "this server enumerates no songs" cannot both be true of a real
+     * library. `droppedRows` distinguishes the two ways to reach an empty track stage — nothing
+     * returned (this failure) versus everything returned filed under albums this generation has not
+     * seen (a mid-pass mutation, already marked `unverified`).
+     *
+     * Artists get no equivalent check on purpose. An album with no album-artist tag is ordinary, and
+     * whether a server then emits an artist row for it is server-specific, so "albums but no
+     * artists" is not impossible the way "albums but no songs" is.
+     */
+    private fun requireEnumeratedTracks(
+        serverId: String,
+        generation: Long,
+        albumIds: Set<String>,
+        droppedRows: Long,
+    ) {
+        if (albumIds.isEmpty() || droppedRows > 0L) return
+        if (repository.seenIds(serverId, generation, LibrarySyncStage.Tracks).isNotEmpty()) return
+        throw LibraryRequestFailure(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync))
     }
 
     private suspend fun runPlaylistStage(
@@ -1684,8 +1715,13 @@ internal class LibrarySyncEngine(
          * A ceiling on pages per walk, not a tolerance: at the largest page the protocol promises
          * it admits five million rows, roughly 160 times the design's target scale. It exists so a
          * server that answers full pages forever fails the import instead of walking without end.
+         *
+         * It is deliberately high, and the cost of that is explicit: a server that ignores `offset`
+         * is charged this many sequential requests before the import gives up. A lower ceiling
+         * would be politer to a broken server and would truncate a genuinely enormous real one,
+         * which is the failure this transport exists to make unrepresentable.
          */
-        const val MAX_ENUMERATION_PAGES = 10_000L
+        const val DEFAULT_MAX_ENUMERATION_PAGES = 10_000L
     }
 }
 
@@ -1919,6 +1955,16 @@ private class LibrarySyncMutationTransport(request: LibraryBrowseRequest) {
 private class AlternatingAlbumPaginationSource(
     private val delegate: LibrarySyncSource,
 ) : LibrarySyncSource by delegate {
+    /**
+     * The control mutates the ALBUM walk, and needs single-row album pages to force the offset to
+     * move. The engine has one page size, so without this the songs walk would also run one row per
+     * request — 314 requests per pass against the conformance corpus instead of three. The walk
+     * advances by the rows it is given, never by the rows it asked for, so a larger page here is
+     * simply a server answering more generously than the request.
+     */
+    override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+        delegate.trackPage(offset, maxOf(size, TRACK_PAGE_SIZE))
+
     var completedWalks: Int = 0
         private set
     var paginationMutations: Int = 0
@@ -1946,6 +1992,10 @@ private class AlternatingAlbumPaginationSource(
             currentIds.clear()
         }
         return page
+    }
+
+    private companion object {
+        const val TRACK_PAGE_SIZE = 200
     }
 }
 

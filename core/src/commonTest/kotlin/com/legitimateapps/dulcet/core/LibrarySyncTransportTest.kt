@@ -42,13 +42,11 @@ class LibrarySyncTransportTest {
                 // validated against.
                 "probeEnumeration" to 1,
                 "musicFolders" to 2,
-                // Two walks each — one fill pass, one stable witness — and two requests per walk.
-                // The second request is not waste: both libraries here fit inside one page, and a
-                // first page that is short against the request is exactly what a silently capping
-                // server also returns. Asking once more is the only way to tell those apart, and
-                // it is why the walk in `aServerThatSilentlyServesShorterPagesStillImportsEveryRow`
-                // cannot be fooled. A library larger than one page pays it only when its size is
-                // an exact multiple of the page size.
+                // Two walks each — one fill pass, one stable witness — and two requests per walk:
+                // the page, and the empty page that ends it. The second is the corroboration a
+                // short page needs, because a short page and a capped page are the same response
+                // (see `aSingleShortPageMidWalkDoesNotEndIt`). One extra request per walk is the
+                // whole price, and it does not grow with the library.
                 "artistPage" to 4,
                 "albumPage" to 4,
                 "trackPage" to 4,
@@ -142,18 +140,19 @@ class LibrarySyncTransportTest {
             val committed = repository.readCommitted(SERVER)
             assertEquals(250, committed.albumIds.size, "the walk stopped at the server's silent cap")
             assertEquals(250, committed.trackIds.size)
-            assertTrue(
-                source.observedShortPages > 0,
-                "the control proved nothing: the fake server never served a short page",
+            assertEquals(
+                100,
+                source.largestPageServed,
+                "the control proved nothing: the fake server never actually capped a page",
             )
         }
     }
 
     @Test
     fun aResumedWalkCostsTheSameRequestsAsAnUninterruptedOne() = runTest {
-        // Five albums at two per page: 2, 2, 1 — the last page is short and ends the walk. The
+        // Five albums at two per page: 2, 2, 1, then the empty page that ends the walk. The
         // interrupted run dies fetching page three, so the resumed run re-validates the two pages
-        // it already wrote and then fetches that final short page itself.
+        // it already wrote and then finishes the walk itself.
         val uninterrupted = withRepository { repository ->
             val source = CountingSource(GeneratedSource(albumCount = 5))
             assertIs<LibrarySyncResult.Completed>(
@@ -161,7 +160,7 @@ class LibrarySyncTransportTest {
             )
             source.counts.getValue("albumPage")
         }
-        assertEquals(6, uninterrupted, "fill 2+2+1 pages, then an identical witness walk")
+        assertEquals(8, uninterrupted, "fill 2+2+1+0 pages, then an identical witness walk")
 
         withRepository { repository ->
             val failing = GeneratedSource(albumCount = 5).failingAlbumPageAt(failureOffset = 4)
@@ -176,18 +175,140 @@ class LibrarySyncTransportTest {
                 completed.stability,
                 "nothing changed on the server between the interruption and the resume",
             )
-            // 2 to re-validate the written prefix, 1 to finish the fill, 3 for the witness walk.
-            // A resumed walk that judged "short page" only by the pages IT fetched would read the
-            // final one-row page as full, spend a request discovering the end, and then disagree
-            // with the witness walk about how many pages the library has — rewriting the stage for
-            // a change that never happened.
+            // 2 to re-validate the written prefix, 2 to finish the fill, 4 for the witness walk.
+            // A resumed walk has to reach the same page count as a fresh one, or its witness
+            // reports a change that never happened and the stage is rewritten for nothing.
             assertEquals(
-                6,
+                8,
                 resumed.counts.getValue("albumPage"),
                 "the resumed walk did not cost what an uninterrupted one costs",
             )
             assertEquals(5, repository.readCommitted(SERVER).albumIds.size)
         }
+    }
+
+    @Test
+    fun aSingleShortPageMidWalkDoesNotEndIt() = runTest {
+        withRepository { repository ->
+            // A page can be short for two unrelated reasons — the list ended, or the server served
+            // fewer rows than asked — and the response does not say which. Reading the first as the
+            // end drops every row after it, silently, and (before the songs walk gained its own
+            // known positive) reported the result as verified.
+            val source = OneShortPageSource(GeneratedSource(albumCount = 10), shortAtOffset = 4)
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 4).synchronize(SERVER, source),
+            )
+
+            assertTrue(source.servedShortPage, "the control proved nothing: no short page was served")
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            assertEquals(10, repository.readCommitted(SERVER).trackIds.size)
+        }
+    }
+
+    @Test
+    fun anAlbumsWalkThatFindsAlbumsAndASongsWalkThatFindsNothingIsRejected() = runTest {
+        withRepository { repository ->
+            val noSongs = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
+                override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
+            }
+
+            val failed = assertIs<LibrarySyncResult.Failed>(
+                LibrarySyncEngine(repository).synchronize(SERVER, noSongs),
+            )
+
+            assertEquals(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync), failed.error)
+            assertEquals(0, repository.committedGeneration())
+        }
+    }
+
+    @Test
+    fun asongsWalkThatGoesEmptyCannotEmptyAnAlreadyCommittedLibrary() = runTest {
+        withRepository { repository ->
+            val engine = LibrarySyncEngine(repository)
+            assertIs<LibrarySyncResult.Completed>(
+                engine.synchronize(SERVER, GeneratedSource(albumCount = 4)),
+            )
+            assertEquals(4, repository.readCommitted(SERVER).trackIds.size)
+
+            val noSongs = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
+                override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
+            }
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, noSongs))
+
+            // The damaging shape is the second sync, not the first: a library of empty albums
+            // committed over a full one, reported as a success, with every track row closed.
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(1, committed.generation)
+            assertEquals(4, committed.trackIds.size)
+        }
+    }
+
+    @Test
+    fun aWalkTheServerWillNotLetTerminateFailsInsteadOfRunningForever() = runTest {
+        withRepository { repository ->
+            val source = OffsetIgnoringSource(GeneratedSource(albumCount = 4))
+
+            val failed = assertIs<LibrarySyncResult.Failed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2, maxEnumerationPages = 8)
+                    .synchronize(SERVER, source),
+            )
+
+            assertEquals(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync), failed.error)
+            assertEquals(0, repository.committedGeneration())
+            // Assert the COUNT, not just the outcome. Without it the control passes for any bound
+            // at all, including one high enough to be indistinguishable from no bound; without the
+            // bound the suite does not fail, it hangs, because nothing in the walk suspends.
+            assertEquals(8, source.albumPageCalls, "the walk did not stop at its declared ceiling")
+        }
+    }
+
+    @Test
+    fun aSongNamingAnAlbumThisGenerationNeverSawIsDroppedAndReportedUnverified() = runTest {
+        withRepository { repository ->
+            val source = ForeignAlbumSongSource(GeneratedSource(albumCount = 4))
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+
+            assertEquals(
+                LibrarySyncCompletionStability.Unverified,
+                when (completed.stability) {
+                    LibrarySyncStability.Verified -> LibrarySyncCompletionStability.Verified
+                    LibrarySyncStability.Unverified -> LibrarySyncCompletionStability.Unverified
+                },
+                "a dropped song is a library that changed under the pass, and must say so",
+            )
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(4, committed.albumIds.size)
+            assertEquals(3, committed.trackIds.size, "the song naming an unseen album was dropped")
+            assertEquals(
+                0,
+                repository.visibleDanglingReferenceCount(SERVER),
+                "storing it instead would leave a track pointing at no album",
+            )
+        }
+    }
+
+    @Test
+    fun bothParsersReadOneServerRowToTheSameValues() {
+        val fixture = libraryFixture()
+        val listShape = parseAlbumList(SERVER, fixture.albumListResponse())
+        val walkShape = parseEnumeratedAlbums(SERVER, fixture.albumPageResponse(0, 100))
+
+        // Whole-object equality on purpose: a field added to one parser and not the other is a
+        // divergence between what the browse view shows and what the mirror stores, and this is
+        // the assertion that says so at the moment it is introduced.
+        assertEquals(listShape, walkShape)
+
+        val album = fixture.albumResponse(listShape.first().id.rawId)
+        val detailTracks = parseAlbum(SERVER, listShape.first(), album).tracks
+        val walkTracks = parseEnumeratedTracks(SERVER, fixture.songPageResponse(0, 100))
+            .filter { it.albumRawId == listShape.first().id.rawId }
+            .map(LibraryTrackRow::track)
+        assertEquals(detailTracks, walkTracks)
+        assertTrue(detailTracks.isNotEmpty(), "the fixture album must actually carry tracks")
     }
 
     @Test
@@ -361,21 +482,61 @@ class LibrarySyncTransportTest {
         }
     }
 
-    /** A server that silently serves fewer rows than the page asked for. */
+    /** A server that silently serves fewer rows than the page asked for, every page. */
     private class CappedSource(
         private val delegate: LibrarySyncSource,
         private val serverPageCap: Int,
     ) : LibrarySyncSource by delegate {
-        var observedShortPages = 0
+        var largestPageServed = 0
             private set
 
         override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> =
-            delegate.albumPage(offset, minOf(size, serverPageCap))
-                .also { if (it.size < size) observedShortPages += 1 }
+            delegate.albumPage(offset, minOf(size, serverPageCap)).also(::record)
 
         override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
-            delegate.trackPage(offset, minOf(size, serverPageCap))
-                .also { if (it.size < size) observedShortPages += 1 }
+            delegate.trackPage(offset, minOf(size, serverPageCap)).also(::record)
+
+        private fun record(page: List<*>) {
+            largestPageServed = maxOf(largestPageServed, page.size)
+        }
+    }
+
+    /** A server that serves one short page in the middle of an otherwise healthy walk. */
+    private class OneShortPageSource(
+        private val delegate: LibrarySyncSource,
+        private val shortAtOffset: Long,
+    ) : LibrarySyncSource by delegate {
+        var servedShortPage = false
+            private set
+
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> {
+            if (offset != shortAtOffset) return delegate.trackPage(offset, size)
+            servedShortPage = true
+            return delegate.trackPage(offset, maxOf(1, size - 1))
+        }
+    }
+
+    /** A server whose pages ignore the offset, so the walk can never reach the end. */
+    private class OffsetIgnoringSource(
+        private val delegate: LibrarySyncSource,
+    ) : LibrarySyncSource by delegate {
+        var albumPageCalls = 0
+            private set
+
+        override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> {
+            albumPageCalls += 1
+            return delegate.albumPage(0, size)
+        }
+    }
+
+    /** A server whose songs name an album the albums walk never returned. */
+    private class ForeignAlbumSongSource(
+        private val delegate: LibrarySyncSource,
+    ) : LibrarySyncSource by delegate {
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            delegate.trackPage(offset, size).mapIndexed { index, row ->
+                if (index == 0 && offset == 0L) row.copy(albumRawId = "album-added-mid-pass") else row
+            }
     }
 
     /** A library of [albumCount] albums with one track each, served as three walks. */
