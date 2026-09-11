@@ -116,6 +116,11 @@ duplicate = test_case()
 duplicate_case = dict(duplicate["testNodes"][0]["children"][0]["children"][0])
 duplicate["testNodes"][0]["children"][0]["children"].append(duplicate_case)
 
+two_distinct = test_case()
+two_distinct["testNodes"][0]["children"][0]["children"].append(
+    test_case(method="accountInputFailureCrossesProductionConnectorIntoStore")["testNodes"][0]["children"][0]["children"][0]
+)
+
 for label, document, expected in (
     (
         "run-summary-only",
@@ -129,6 +134,7 @@ for label, document, expected in (
     ("failed-test", test_case(result="Failed"), "terminated as Failed"),
     ("missing-result", test_case(result=None), "must carry a non-empty result"),
     ("duplicate-test", duplicate, "duplicate test identities"),
+    ("two-distinct-tests", two_distinct, "expected exactly one individual test result"),
 ):
     result = invoke(document)
     if result.returncode == 0 or expected not in result.stdout:

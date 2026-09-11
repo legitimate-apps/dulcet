@@ -65,3 +65,171 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-51 | live exact and cold-estimated bodies validate before atomic promotion; exact mismatch never reaches destination and duplicate delivery is idempotent |
 | CONF-52 | a live item promoted locally yields a `LocalPlaybackPlan` and identical bytes after all conformance network clients close |
 | CONF-61 | unknown response fields are preserved and ignored |
+
+## Apple account-connect evidence boundary
+
+CONF-09b remains unevidenced on all four Apple cells. The shared
+`accountPresentationTransitionsGivenConnectorOutcomes` test observes real presentation-store
+snapshots, but injects completed connector outcomes. It proves conditional presentation behavior,
+including credential saving, saved-account reconstruction and save-error handling. It does not prove
+that production can originate each outcome or forward it through the Apple adapter. In particular,
+`capabilityUnsupported` is injected and must not be called a live account-connect state.
+
+The former production-reachability claim is withdrawn. The earlier persistence-publication and
+security-family mutations detect presentation regressions only; they do not validate the production
+connector boundary. The four cells retain this useful conditional coverage as explicitly bounded
+`observes` entries, with matching declarations for all three target classnames in
+`tools/test-parity-gate`. No cell status changes.
+
+`unevidenced_conformance` is an explicit map from a declared CONF id to a nonblank gap reason.
+Evidence and named gaps must partition the declared contracts, with no overlap. A cell with a gap
+cannot be `shipped`. This preserves the universal CONF-09b requirement instead of moving it into an
+Android-only requirement or using a narrower test as apparent full evidence. Conditional transition
+coverage and the bounded production-origin input-error control contribute to investigation of
+CONF-09b, but neither closes the complete contract.
+
+## CapabilityUnsupported verdict
+
+**OBSERVED from repository source: dead/reserved error vocabulary, not a missing account-connect
+mapping.** `core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt` declares
+`DomainError.CapabilityUnsupported` and the `CapabilityFeature` enum. Constructor searches across
+Kotlin sources find executable constructions only in
+`AccountConnectAndroidConformanceTest.kt` and `AccountConnectConformanceTest.kt`; production uses
+are type matches in diagnostics and Apple facade mappings. The conditional Swift test similarly
+injects `DulcetAccountFailureKind.capabilityUnsupported`.
+
+The relevant production decisions are in `AccountConnector.connectNormalized`:
+
+- Extension HTTP 404 or a non-envelope result records `extensionListUnavailable`; successful
+  authenticated ping permits connection with an empty extension map and `legacySubsonic = true`.
+- Malformed successful extension metadata is `Protocol.MalformedEnvelope`; an incompatible ping
+  version is `Protocol.Incompatible`; permission roles populate `CapabilitySet` with false defaults.
+- Parsed server errors go through `mapEnvelopeError`/`AccountConnectionContract.mapSubsonicError`,
+  producing authentication, protocol or server errors, never capability-unsupported errors.
+
+These choices agree with spec §10.3: absent discovery must not fail baseline login. §10.4 separates
+advertised support, user/device/policy gates and operational health; it does not prescribe an
+account-connect failure when an optional capability is absent. No implementation of that section's
+three-failure session circuit breaker was found in production commonMain sources. That is a separate
+unimplemented capability-health mechanism, not a reason to manufacture an account-connect error.
+
+The general error vocabulary is specified in §18.12, but a declared/mapped type is not a reachable
+behavior. The unused account-specific capability error branch is dead code and a candidate for
+removal, not a missing server-error mapping. This evidence repair leaves the exported error types
+and their exhaustive mappings intact rather than expanding into cross-platform API removal. No
+constructor or new login failure is invented. Capability-error production reachability remains an
+explicit gap; retaining the type does not count as evidence for it.
+
+## Production failure forwarding control
+
+`DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore` runs inside
+the macOS app host and verifies its bundle identity. It starts with the production
+`DulcetCoreAccountConnector`, submits `https://`, observes connecting, and waits for an input-error
+snapshot with `invalidServerURL` and no credential save. The production origin is
+`AccountConnector.connect` URL normalization, before network setup. The call traverses
+`AppleAccountConnectionClient` and `DulcetCoreAccountConnector`'s failure completion. No completed
+connector outcome is injected. This control covers idle, connecting and input-error only; it does
+not claim every domain-error family or a network failure. CI selects it and checks its individual
+execution before exporting the macOS JUnit report.
+
+| State coverage | Production-origin evidence and remaining gap |
+|---|---|
+| Idle, connecting, input error | New macOS app-host test executes the full production connector/facade/forwarding path |
+| Credential-persistence error | Existing `connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState` drives the disposable server and production save failure; its citation remains separately bounded, and it was not rerun in this revision |
+| Connected and saved/disconnected | Conditional store transitions and persistence/reconstruction are tested; this revision does not establish a successful production-connector plus OS-credential-store path |
+| Transport, security, protocol, server, authentication errors | Conditional presentation tests remain useful; this revision does not execute each family through the real Swift failure-forwarding path |
+| Capability error | No production origin exists; dead/reserved vocabulary, not a live-state proof |
+
+The iPhone/iPad/tvOS runs below execute conditional presentation tests. They do not borrow the new
+macOS app-host result as production-connector evidence for those platforms.
+
+
+## Naming-gate audit retained from the initial investigation
+
+Baseline `0e7e3ea` had 165 conformance citations. Matching the CONF id after case/hyphen normalization
+against the test identifier flagged 33 citations / 26 unique `(CONF id, test identifier)` pairs:
+26 legitimate descriptive-name citations, four false CONF-09b citations, and three incomplete
+CONF-51 citations. The legitimate groups were CONF-09a/09c/10a/10b (16), CONF-10c (4), CONF-10e (3),
+and CONF-52 (3). CONF-51 controls observe successful promotion and stored size but do not independently
+exercise cold estimates, exact mismatch or duplicate delivery. That finding remains open.
+
+The initial proposed renamed CONF-09b tests would have passed the naming rule while still injecting
+unoriginated outcomes. This review supplies a concrete counterexample to the rule's usefulness.
+The recommendation remains against it: exempting the legitimate flagged citations alone requires
+19 exact pairs (11 after removing target-classname distinctions), and naming does not establish
+semantic coverage. No naming gate or naming-exemption list is added.
+
+## Verification after the connector-boundary review
+
+The reviewer mutation replaced the production failure-completion call in
+`DulcetAppleProduction.swift` with `return`. `xcodebuild test` compiled that file in the `DulcetMac`
+app target and executed `accountInputFailureCrossesProductionConnectorIntoStore` in its test host.
+The mutation run exited 65; the restored run exited 0. Actual failure output included:
+
+```text
+failed - Production failure forwarding did not leave connecting: accountConnecting
+XCTAssertEqual failed: ("accountConnecting") is not equal to ("accountErrorInput")
+failed - The production connector did not deliver its input failure
+Executed 1 test, with 3 failures (0 unexpected) in 5.113 (5.114) seconds
+** TEST FAILED **
+```
+
+After restoring the production completion and rebuilding the same app target:
+
+```text
+Executed 1 test, with 0 failures (0 unexpected) in 0.054 (0.054) seconds
+** TEST SUCCEEDED **
+```
+
+The individual execution guard reported
+`DulcetMacTests.DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore`
+as `terminal=Passed individual-results=1`. JUnit export contains
+`classname="DulcetMacAccountConnectAppTest" name="accountInputFailureCrossesProductionConnectorIntoStore"`.
+The mutation is not committed; production Swift source is unchanged.
+
+- macOS package: 86 tests passed, including the renamed conditional presentation test.
+- iPhone: 77 tests passed; iPad: 77 tests passed; tvOS: 78 tests passed. Their JUnit exports contain
+  the renamed conditional test under `DulcetKitIOSTests` or `DulcetKitTVOSTests` as appropriate.
+- Core command (`:core:allMetadataJar :core:jvmTest :core:testAndroidHostTest
+  :core:bundleAndroidMainAar :core:licensee`) passed: 44 tasks, 1 executed and 43 up-to-date.
+  Test execution was reused, not rerun: reports contain 184 JVM and 180 Android host tests,
+  zero failures/errors/skips.
+- `python3 tools/parity_gate.py`: valid, 6 feature rows.
+- `python3 tools/test-parity-gate`: mutation and executed-evidence tests pass, including six new
+  gap controls and matching testcase declarations for each new citation's target classname.
+- CI policy: valid across 6 workflows. OS-floor configuration: macOS 14.0, iOS/tvOS 17.0 agree.
+- All 36 statuses match base `de69354`; all six account-connect cells remain `partial`.
+
+## Independent app-host result bundles
+
+The production input-error proof now uses its own `xcodebuild test-without-building` invocation,
+`dulcet-mac-account-input-test.xcresult`, log and JUnit directory. The existing live-connection
+persistence-failure proof retains `dulcet-mac-app-test.xcresult`. The new JUnit directory is included
+in the parity evidence collector; the existing artifact globs retain both bundles, logs and reports.
+`verify-xcode-test-execution` and its exactly-one-result contract are unchanged.
+
+The two invocation blocks were extracted from `apple-ci` and executed sequentially with the same
+built app, signing settings and serial-testing flag, using a fresh checksum-verified Navidrome
+0.63.2 instance and fixed disposable credentials. Only local result/DerivedData paths were substituted;
+DerivedData was resolved to an internal-disk directory. Each JUnit report contains one testcase.
+Actual guard output (both exit 0):
+
+```text
+xcode test execution valid: test=DulcetMacTests.DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState terminal=Passed individual-results=1
+xcode test execution valid: test=DulcetMacTests.DulcetMacAccountConnectAppTest/accountInputFailureCrossesProductionConnectorIntoStore terminal=Passed individual-results=1
+```
+
+A third `test-without-building` invocation selected
+`DulcetMacTests/DulcetMacAccountConnectAppTest/nonexistentConf09bWiringControl` into a fresh result
+bundle. Xcode exited 0; the guard targeting that method exited 1:
+
+```text
+xcode test execution invalid: xcresult contains no individual Test Case results
+ZERO-EXECUTION xcodebuild_exit=0 guard_exit=1
+```
+
+`tools/test-xcode-test-execution-guard` passes its positive control and all nine rejection controls:
+summary-only, zero tests, wrong method, wrong class, skipped, failed, missing result, duplicate
+identity, and the newly added two-distinct-passing-tests case that reproduces this wiring defect.
+`verify_ci_policy.py`, `parity_gate.py`, and `test-parity-gate` all pass. No evidence claim, test
+implementation, cell status, or production connector behavior changes in this wiring repair.
