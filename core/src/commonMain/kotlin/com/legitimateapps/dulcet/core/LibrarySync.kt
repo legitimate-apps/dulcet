@@ -240,8 +240,9 @@ internal data class LibraryEnumerationProbe(
 /**
  * The largest page any whole-library walk asks for.
  *
- * **OBSERVED 2026-09-11, Navidrome 0.63.2, 2,500-album library:** `search3` does *not* clamp its
- * counts — `albumCount=501` returns 501, `1000` returns 1,000, `5000` returns the whole 2,500.
+ * **OBSERVED 2026-09-11, Navidrome 0.63.2, a 2,500-album library:** `search3` does *not* clamp its
+ * counts — `albumCount=501` returns 501, `1000` returns 1,000, and `5000` returns every album the
+ * library held.
  * `getAlbumList2` does, silently: `size=501` and `size=1000` both return exactly 500 rows with
  * `status="ok"` and nothing marking the truncation.
  *
@@ -1413,8 +1414,9 @@ internal class LibrarySyncEngine(
      * stable (§16.4).
      *
      * The re-walk is what makes the witness affordable: it is one more pass over the same pages —
-     * six requests for albums at the design's target scale — where the previous transport re-read
-     * every album individually, two to four times over.
+     * seven requests for albums at the design's target scale, six data pages and the empty page
+     * that ends the walk — where the previous transport re-read every album individually, two to
+     * four times over.
      */
     private suspend fun <T> runPagedStage(
         serverId: String,
@@ -2038,7 +2040,7 @@ private class AlternatingAlbumPaginationSource(
     /**
      * The control mutates the ALBUM walk, and needs single-row album pages to force the offset to
      * move. The engine has one page size, so without this the songs walk would also run one row per
-     * request — 314 requests per pass against the conformance corpus instead of three. The walk
+     * request — 315 requests per pass against the conformance corpus instead of three. The walk
      * advances by the rows it is given, never by the rows it asked for, so a larger page here is
      * simply a server answering more generously than the request.
      */

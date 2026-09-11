@@ -2117,8 +2117,16 @@ concurrency 4, 5,022 requests is about 125 s behind a spinner and 48 sequential 
      exist, so albums present with zero songs enumerated is the server failing, not an empty
      library. Without this the first probe guards the albums walk alone, and a songs walk that
      returns nothing closes every track row and commits a library of empty albums as `verified` —
-     the same failure one level down. (A song the walk returned but this generation's albums cannot
-     account for is a different thing: rule 10, dropped and `unverified`.)
+     the same failure one level down. The check is per album, because the invariant is: every album
+     trackless fails, some albums trackless marks the generation `unverified` (§16.5 rule 11). (A
+     song the walk returned but this generation's albums cannot account for is a different thing:
+     rule 10, dropped and `unverified`.)
+     🚨 **A completeness gate must run before the checkpoint write that advances its stage.**
+     `advance` writes a checkpoint naming the *next* stage; a gate that throws after that write is
+     never reached again, because the retry resumes past the stage it guards — so the second press
+     of "sync" commits exactly what the first press refused. The rejection must also leave the stage
+     re-walkable: keeping the attempt count a rejected walk spent makes the stage unfillable even
+     against a healthy server, and no shipping caller passes `restart = true`.
 
 The query sent is the literal two characters `""`. OBSERVED 2026-09-11: the reference server
 enumerates identically for `""`, the bare empty value, `" "` and `"*"`, so the choice costs nothing
@@ -2196,6 +2204,26 @@ a set of track ids was stable, never that content was fresh.
     generation is committed `unverified`** — the existing "the library changed during the scan"
     result. Storing it would leave a track pointing at no album; dropping it silently would make an
     incomplete import look complete.
+11. **An album the songs walk cannot account for marks the generation `unverified`.** Two lists read
+    at two instants disagree in both directions, and the songs walk cannot tell "this album was
+    deleted a moment ago" from "this album has no songs". A small count is legitimate and must not
+    fail the import; **all** of them trackless is the impossibility rule 3 rejects outright. The
+    committed library can therefore hold a phantom album — one that no longer exists on the server,
+    with no tracks — and it says so by committing `unverified` rather than `verified`.
+    OBSERVED 2026-09-11: zero trackless albums on either live corpus, so this is silent in practice
+    on the reference server.
+12. **A resume does not re-validate a completed stage.** The tracks stage reads the album set its own
+    generation already wrote, and the albums stage is not re-walked, so albums deleted while the
+    import was interrupted are committed as phantoms — detected by rule 11, `unverified`, not
+    corrected. Re-walking a completed stage on every resume would cost the resume its point; the
+    limit is declared rather than hidden.
+13. **There is no `getAlbum` fallback.** The fill transport is empty-query `search3` and nothing
+    else, so a server that does not implement whole-library enumeration cannot sync a library at
+    all — where the revision-2 transport would have synced it through `getAlbumList2` + `getAlbum`,
+    both Subsonic 1.16.1 baseline endpoints. That is a deliberate product decision and not an
+    oversight: a fallback path is a second transport to keep correct, exercised by nobody, on a
+    server class this project does not test against. It is stated here because CORPUS §1 promises a
+    1.16.1 baseline, and this is the one place the import steps outside it.
 
 ### 16.6 Freshness pass — a heuristic, not incremental sync
 
@@ -3654,7 +3682,12 @@ track list reconstructed from each song's `albumId`.
    "the page was shorter than the size I requested", and `getAlbumList2` silently caps `size` at 500
    (OBSERVED: `size=501` and `size=1000` both return exactly 500 rows, `status="ok"`). Raising that
    constant would have truncated the library with no error. The walks now advance by rows *returned*
-   and end only on an empty page or one shorter than the largest page that server has returned.
+   and **only an empty page ends one** — a short page is a candidate end, corroborated by one more
+   request (§16.2 rule 1, §16.5 rule 2). An earlier revision of this item described the walk as also
+   ending on "a page shorter than the largest page that server has returned"; that rule existed
+   briefly and was removed, because it defends against a consistently capping server and not against
+   a single short page, which truncates the library silently. Recorded here rather than deleted: the
+   revision record exists to stop the next reader re-proposing what was already tried.
 3. **It is also a correctness improvement.** OBSERVED 2026-09-11, reproduced with the mutation
    asserted to have fired: under `alphabeticalByName` an insert before the cursor duplicates a row
    and a delete before it silently **skips** one; under empty-query `search3` the same insert produces
@@ -3662,10 +3695,21 @@ track list reconstructed from each song's `albumId`.
    carries the table, and softens revision 2's claim that `alphabeticalByName` "is not a stable
    cursor" — on the reference server it observably is, for a reason (content-derived album identity)
    that does not transfer to other servers.
-4. **An empty result is no longer read as an empty library.** Empty-query enumeration is required by
-   OpenSubsonic but not universally implemented, and a server without it answers exactly as an empty
-   library does. Every import now probes it against a known positive and fails with
-   `CapabilityUnsupported(LibrarySync)` rather than committing an empty generation over a full one.
+4. **An empty result is no longer read as an empty library, at two granularities.** Empty-query
+   enumeration is required by OpenSubsonic but not universally implemented, and a server without it
+   answers exactly as an empty library does. Every import probes it against a known positive before
+   any stage runs, and the songs walk is checked again against the album set it must account for
+   (§16.2 rule 3), failing with `CapabilityUnsupported(LibrarySync)` rather than committing an empty
+   generation over a full one. **A completeness gate runs before the checkpoint write that advances
+   its stage, and a rejected stage is rolled back so a later attempt can re-walk it** — a gate that
+   throws after the stage has advanced is skipped by the very next retry, which turns a loud failure
+   into a silent success, and a rejection that keeps the spent attempt count leaves the stage
+   unfillable even against a healthy server.
+6. **The transport's known limits are declared rather than discovered** (§16.5 rules 10–12): albums
+   the songs walk cannot account for mark the generation `unverified`; so does a resume whose album
+   set went stale; and a server that stops enumerating mid-walk truncates the import, which is why
+   the per-album check exists to catch it. Rule 13 states the product consequence of having deleted
+   the `getAlbum` fallback.
 5. §16.4's witness is now a re-walk of the same pages rather than a re-read of every album; §16.5
    rules 1, 2, 4 and a new rule 10 are amended accordingly, and §16.6 records two mechanisms found
    the same day and deliberately **not** built — `X-Total-Count` as a progress denominator, and the
