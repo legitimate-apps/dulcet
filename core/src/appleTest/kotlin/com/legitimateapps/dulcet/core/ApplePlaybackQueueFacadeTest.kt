@@ -244,6 +244,37 @@ class ApplePlaybackQueueFacadeTest {
         }
     }
 
+    @Test
+    fun deliveryReportSurvivesAClosedDatabaseAndAClosedClient() {
+        val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), failedEnvelope())))
+        val delivery = deliveryFixture(transport)
+        val client = delivery.client
+        client.replaceAndStart(queueRequest())
+        client.recordReady("attempt:2", 30_000, "seekable")
+        client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+        client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+        client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+        client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+        client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+        val live = client.deliveryReport()
+        assertEquals(1, live.submittedPlaysPending)
+
+        // The pending count is a SQLite read. With the database gone it must not throw across
+        // the Objective-C boundary; it reports the last count it managed to read.
+        delivery.closeDriver()
+        val afterDatabase = client.deliveryReport()
+        assertEquals(1, afterDatabase.submittedPlaysPersisted)
+        assertEquals(1, afterDatabase.submittedPlaysPending)
+        assertEquals(0, afterDatabase.submittedPlaysDelivered)
+
+        client.close()
+        val afterClose = client.deliveryReport()
+        assertEquals(1, afterClose.submittedPlaysPersisted)
+        assertEquals(1, afterClose.submittedPlaysPending)
+        client.setDeliveryReportObserver { }
+        client.setDeliveryReportObserver(null)
+    }
+
     private fun deliveryFixture(transport: QueuedScrobbleTransport): DeliveryFixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
@@ -276,6 +307,10 @@ class ApplePlaybackQueueFacadeTest {
         val client: ApplePlaybackQueueClient,
         val reports: MutableList<ApplePlaybackDeliveryReportDto>,
     ) {
+        fun closeDriver() {
+            driver.close()
+        }
+
         fun close() {
             client.close()
             driver.close()

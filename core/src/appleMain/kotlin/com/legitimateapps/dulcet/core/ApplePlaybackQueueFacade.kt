@@ -125,6 +125,7 @@ public class ApplePlaybackQueueClient private constructor(
     private val deliveryEvents = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
     private var delivery: ApplePlaybackDeliveryComposition? = null
     private var deliveryCounts = ApplePlaybackDeliveryCounts()
+    private var lastKnownPending = 0L
     private var deliveryReportObserver: ((ApplePlaybackDeliveryReportDto) -> Unit)? = null
 
     init {
@@ -192,6 +193,10 @@ public class ApplePlaybackQueueClient private constructor(
      * Receives every change to the delivery report, on the delivery dispatcher (the main thread in
      * production). The observer is the only way a shell can learn that a submitted play reached the
      * server: the ingestion calls return once the play is persisted, which is earlier.
+     *
+     * The observer fires RE-ENTRANTLY from inside the ingestion call that persisted the play
+     * (`captureEffects`), before that call has returned its transition. It must record and return;
+     * calling back into this client from it would nest a queue operation inside another.
      */
     public fun setDeliveryReportObserver(
         observer: ((ApplePlaybackDeliveryReportDto) -> Unit)?,
@@ -200,9 +205,19 @@ public class ApplePlaybackQueueClient private constructor(
         observer?.invoke(deliveryReport())
     }
 
-    public fun deliveryReport(): ApplePlaybackDeliveryReportDto = deliveryCounts.toDto(
-        pending = delivery?.outbox?.count() ?: 0,
-    )
+    /**
+     * Never throws across the boundary: the pending count is a SQLite read, and after [close] or
+     * on a storage failure it falls back to the last count this client managed to read.
+     */
+    public fun deliveryReport(): ApplePlaybackDeliveryReportDto {
+        val pending = try {
+            delivery?.outbox?.count() ?: lastKnownPending
+        } catch (_: Throwable) {
+            lastKnownPending
+        }
+        lastKnownPending = pending
+        return deliveryCounts.toDto(pending = pending)
+    }
 
     internal fun installDelivery(
         serverId: ServerId,
@@ -683,9 +698,19 @@ public class ApplePlaybackQueueClient private constructor(
      * reports the same delivered count it started with.
      */
     private suspend fun drainOutbox(worker: ScrobbleOutboxDeliveryWorker) {
-        val result = worker.onForeground()
+        // This runs on a coroutine the shell never sees; an exception here (a storage failure, or
+        // a drain racing close()) would be unhandled and terminate the process. Report it as a
+        // failed attempt instead: the play stays in the outbox for the next drain or launch.
+        val delivered = try {
+            worker.onForeground().deliveredCount
+        } catch (_: Throwable) {
+            updateDeliveryReport {
+                copy(submittedPlayFailedAttempts = submittedPlayFailedAttempts + 1)
+            }
+            return
+        }
         updateDeliveryReport {
-            copy(submittedPlaysDelivered = submittedPlaysDelivered + result.deliveredCount)
+            copy(submittedPlaysDelivered = submittedPlaysDelivered + delivered)
         }
     }
 
@@ -693,7 +718,11 @@ public class ApplePlaybackQueueClient private constructor(
         change: ApplePlaybackDeliveryCounts.() -> ApplePlaybackDeliveryCounts,
     ) {
         deliveryCounts = deliveryCounts.change()
-        deliveryReportObserver?.invoke(deliveryReport())
+        try {
+            deliveryReportObserver?.invoke(deliveryReport())
+        } catch (_: Throwable) {
+            // An observer failure must not unwind the ingestion or drain that reported to it.
+        }
     }
 }
 
