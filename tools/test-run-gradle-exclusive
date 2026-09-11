@@ -194,7 +194,9 @@ def case_negative_control() -> None:
         intervals = directory / "intervals"
         intervals.touch()
         environment = make_repo(directory, intervals)
-        environment["HOLD_SECONDS"] = "1"
+        # Three seconds, so a >1 s gap between the two Popen calls on a loaded runner cannot
+        # make the unwrapped pair look disjoint and fail this control for the wrong reason.
+        environment["HOLD_SECONDS"] = "3"
         run_pair([str(directory / "gradlew")], environment, directory)
         spans = read_intervals(intervals)
         check(len(spans) == 2, f"both invocations ran (observed {len(spans)})")
