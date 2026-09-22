@@ -22,7 +22,7 @@
       "pin": "navidrome-linux-manifest"
     },
     "darwin": {
-      "version": "9.0.1",
+      "version": "9.0.2",
       "formula": "ffmpeg",
       "path": "/opt/homebrew/bin/ffmpeg",
       "required_encoders": ["libmp3lame", "libopus"],
@@ -37,9 +37,9 @@
         {
           "formula": "mpg123", "version": "1.33.7", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/mpg123/blobs/sha256:acabaed07a2aa95e360e1047df604cb45845254f2ff136671b9fb0d4bafc69ce",
-          "sha256": "acabaed07a2aa95e360e1047df604cb45845254f2ff136671b9fb0d4bafc69ce"
+          "bottle_rebuild": 1,
+          "url": "https://ghcr.io/v2/homebrew/core/mpg123/blobs/sha256:5fcd87caeb9b6e6730d7de5c7738e785c84814c641d1ba9ac578a142d2b033f5",
+          "sha256": "5fcd87caeb9b6e6730d7de5c7738e785c84814c641d1ba9ac578a142d2b033f5"
         },
         {
           "formula": "lame", "version": "4.0", "revision": 0,
@@ -49,18 +49,18 @@
           "sha256": "b0fe0cfb39c74a53b7635833fe3293a62c886b084bc5ccc8ed7cd177803182e4"
         },
         {
-          "formula": "libvmaf", "version": "3.2.0", "revision": 0,
+          "formula": "libvmaf", "version": "3.2.1", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
           "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/libvmaf/blobs/sha256:bb9f00a9f9ef91d725d1fcd23205642cedf8557e132f1e38bb9d16a22086beaa",
-          "sha256": "bb9f00a9f9ef91d725d1fcd23205642cedf8557e132f1e38bb9d16a22086beaa"
+          "url": "https://ghcr.io/v2/homebrew/core/libvmaf/blobs/sha256:703f56cd94ba6bb86ee1463bec792d8ad6f9841f67152fa6e93040b966bbf82f",
+          "sha256": "703f56cd94ba6bb86ee1463bec792d8ad6f9841f67152fa6e93040b966bbf82f"
         },
         {
           "formula": "libvpx", "version": "1.17.0", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/libvpx/blobs/sha256:0b25798cd931cf522c100b7dafbdb75a4bf9f3758e3036e91bef071375d3ec09",
-          "sha256": "0b25798cd931cf522c100b7dafbdb75a4bf9f3758e3036e91bef071375d3ec09"
+          "bottle_rebuild": 1,
+          "url": "https://ghcr.io/v2/homebrew/core/libvpx/blobs/sha256:f98fa074f8eef7b2de3346fb83d4da15e7e6284fd13bf65210d855043f78f8c1",
+          "sha256": "f98fa074f8eef7b2de3346fb83d4da15e7e6284fd13bf65210d855043f78f8c1"
         },
         {
           "formula": "ca-certificates", "version": "2026-08-13", "revision": 0,
@@ -114,24 +114,24 @@
         {
           "formula": "x265", "version": "4.3", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/x265/blobs/sha256:844a99704d4b41e0b33331b795d3a0bba7756001f68c1925dc3dea88d5aa3a18",
-          "sha256": "844a99704d4b41e0b33331b795d3a0bba7756001f68c1925dc3dea88d5aa3a18"
+          "bottle_rebuild": 1,
+          "url": "https://ghcr.io/v2/homebrew/core/x265/blobs/sha256:46dd2b3656ec8e99438a789b627e41a25e3a24407dc76a3a6b88cf159b447858",
+          "sha256": "46dd2b3656ec8e99438a789b627e41a25e3a24407dc76a3a6b88cf159b447858"
         },
         {
-          "formula": "xz", "version": "5.8.3", "revision": 0,
+          "formula": "xz", "version": "5.8.4", "revision": 0,
           "version_scheme": 1, "dependencies": [], "bottle_tag": "arm64_tahoe",
           "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5",
-          "sha256": "55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5"
+          "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:d291ad2277682238329b0e4d249e5e2c948c4b10cd64dba1963d897330ad88dd",
+          "sha256": "d291ad2277682238329b0e4d249e5e2c948c4b10cd64dba1963d897330ad88dd"
         },
         {
-          "formula": "ffmpeg", "version": "9.0.1", "revision": 1,
+          "formula": "ffmpeg", "version": "9.0.2", "revision": 0,
           "version_scheme": 0,
           "dependencies": ["dav1d", "lame", "libvmaf", "libvpx", "openssl@3", "opus", "sdl2-compat", "svt-av1", "x264", "x265", "xz"],
           "bottle_tag": "arm64_tahoe", "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:24f31aa47b7cb0aa5ce042023073ca08c342f9c2198edc0819adc1e28e0f5168",
-          "sha256": "24f31aa47b7cb0aa5ce042023073ca08c342f9c2198edc0819adc1e28e0f5168"
+          "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:1c3f1b92bece4e10027a022be15a87e8544a54ab0df16b05f098e9abef8abdd6",
+          "sha256": "1c3f1b92bece4e10027a022be15a87e8544a54ab0df16b05f098e9abef8abdd6"
         }
       ]
     }
