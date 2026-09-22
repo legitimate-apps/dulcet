@@ -19,11 +19,11 @@ class LibrarySyncTest {
         val store = DulcetDatabaseStore.open(driver)
         val repository = LibrarySyncRepository(store)
 
-        repository.putTracks(SERVER, 1, listOf(album("old-album", track("old-track"))))
+        repository.putTracks(SERVER, 1, rows("old-album", track("old-track")))
         repository.completeStage(SERVER, 1, LibrarySyncStage.Tracks)
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
 
-        repository.putTracks(SERVER, 2, listOf(album("new-album", track("new-track"))))
+        repository.putTracks(SERVER, 2, rows("new-album", track("new-track")))
         repository.completeStage(SERVER, 2, LibrarySyncStage.Tracks)
 
         assertEquals(1, repository.readCommitted(SERVER).generation)
@@ -41,11 +41,11 @@ class LibrarySyncTest {
         val driver = createTestDriver()
         val store = DulcetDatabaseStore.open(driver)
         val repository = LibrarySyncRepository(store)
-        repository.putTracks(SERVER, 1, listOf(album("old-album", track("old-track"))))
+        repository.putTracks(SERVER, 1, rows("old-album", track("old-track")))
         repository.completeStage(SERVER, 1, LibrarySyncStage.Tracks)
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
 
-        repository.putTracks(SERVER, 2, listOf(album("new-album", track("new-track"))))
+        repository.putTracks(SERVER, 2, rows("new-album", track("new-track")))
         repository.completeStage(SERVER, 2, LibrarySyncStage.Tracks)
         val interrupted = LibrarySyncRepository(store) {
             throw CommitInterruption
@@ -100,11 +100,11 @@ class LibrarySyncTest {
             playback_position = 0,
         )
 
-        repository.putTracks(SERVER, 1, listOf(album("album", track("stable-track", "Before"))))
+        repository.putTracks(SERVER, 1, rows("album", track("stable-track", "Before")))
         repository.completeStage(SERVER, 1, LibrarySyncStage.Tracks)
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
 
-        repository.putTracks(SERVER, 2, listOf(album("album", track("stable-track", "After"))))
+        repository.putTracks(SERVER, 2, rows("album", track("stable-track", "After")))
         repository.completeStage(SERVER, 2, LibrarySyncStage.Tracks)
         assertEquals(0, repository.commit(SERVER, 2, LibrarySyncStability.Verified)
             .deletionReconciliations.size)
@@ -127,7 +127,7 @@ class LibrarySyncTest {
         val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
         val source = MutableSource().apply { mutateStarredAfterEveryRead = true }
 
-        val result = LibrarySyncEngine(repository, albumPageSize = 2)
+        val result = LibrarySyncEngine(repository, enumerationPageSize = 2)
             .synchronize(SERVER, source)
 
         val completed = assertIs<LibrarySyncResult.Completed>(result)
@@ -138,17 +138,19 @@ class LibrarySyncTest {
     }
 
     @Test
-    fun albumDetailConcurrencyNeverExceedsFour() = runTest {
+    fun perItemPlaylistConcurrencyNeverExceedsFour() = runTest {
         val driver = createTestDriver()
         val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
-        val source = MutableSource(albumCount = 9, albumDelayMilliseconds = 1)
+        val source = MutableSource(playlistCount = 9, playlistDelayMilliseconds = 1)
 
         assertIs<LibrarySyncResult.Completed>(
-            LibrarySyncEngine(repository, albumPageSize = 2).synchronize(SERVER, source),
+            LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
         )
 
-        assertTrue(source.maximumActiveAlbumRequests <= 4)
-        assertEquals(4, source.maximumActiveAlbumRequests)
+        // Playlists are the only stage that still reads one server item per request, so this is
+        // where the bounded-concurrency contract (spec 16.5 rule 6) is now observable at all.
+        assertTrue(source.maximumActivePlaylistRequests <= 4)
+        assertEquals(4, source.maximumActivePlaylistRequests)
         driver.close()
     }
 
@@ -157,7 +159,7 @@ class LibrarySyncTest {
         val driver = createTestDriver()
         val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
         val source = MutableSource(playlistCount = 2).apply { failPlaylistIdOnce = "playlist-1" }
-        val engine = LibrarySyncEngine(repository, albumPageSize = 2, maxInFlight = 1)
+        val engine = LibrarySyncEngine(repository, enumerationPageSize = 2, maxInFlight = 1)
 
         assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, source))
         val checkpoint = requireNotNull(repository.checkpoint(SERVER))
@@ -212,7 +214,7 @@ class LibrarySyncTest {
         val driver = createTestDriver()
         val repository = LibrarySyncRepository(DulcetDatabaseStore.open(driver))
         val source = InterruptingAlbumPaginationSource(MutableSource(albumCount = 4))
-        val engine = LibrarySyncEngine(repository, albumPageSize = 1)
+        val engine = LibrarySyncEngine(repository, enumerationPageSize = 1)
 
         assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, source))
         val interrupted = requireNotNull(repository.checkpoint(SERVER))
@@ -265,7 +267,7 @@ class LibrarySyncTest {
         val playlist = LibraryPlaylist(playlistSummary, listOf(id("track")))
         val starred = LibraryStarredItem(LibraryStarredKind.Track, id("track"))
 
-        repository.putTracks(SERVER, 1, listOf(album("album", track("track"))))
+        repository.putTracks(SERVER, 1, rows("album", track("track")))
         repository.completeStage(SERVER, 1, LibrarySyncStage.Tracks)
         repository.putPlaylists(SERVER, 1, listOf(playlist))
         repository.completeStage(SERVER, 1, LibrarySyncStage.Playlists)
@@ -336,9 +338,13 @@ class LibrarySyncTest {
     private class MutableSource(
         albumCount: Int = 1,
         playlistCount: Int = 0,
-        private val albumDelayMilliseconds: Long = 0,
+        private val playlistDelayMilliseconds: Long = 0,
     ) : LibrarySyncSource {
         private val albums = List(albumCount) { index -> album("album-$index", track("track-$index")) }
+        private val artists = listOf(LibraryArtist(id("artist"), "Artist", null))
+        private val trackRows = albums.flatMap { value ->
+            value.tracks.map { LibraryTrackRow(value.id.rawId, it) }
+        }
         private val playlistSummaries = List(playlistCount) { index ->
             LibraryPlaylistSummary(id("playlist-$index"), "Playlist $index")
         }
@@ -348,29 +354,27 @@ class LibrarySyncTest {
         var mutateStarredAfterEveryRead = false
         var starredReadCount = 0
         private var starred = false
-        private var activeAlbumRequests = 0
-        var maximumActiveAlbumRequests = 0
+        private var activePlaylistRequests = 0
+        var maximumActivePlaylistRequests = 0
             private set
 
         override suspend fun musicFolders(): List<LibraryMusicFolder> =
             listOf(LibraryMusicFolder(id("folder"), "Music"))
 
-        override suspend fun artists(): List<LibraryArtist> =
-            listOf(LibraryArtist(id("artist"), "Artist", null))
+        override suspend fun probeEnumeration(): LibraryEnumerationProbe =
+            LibraryEnumerationProbe(
+                knownPositiveAlbumCount = minOf(albums.size, 1),
+                enumeratedAlbumCount = minOf(albums.size, 1),
+            )
+
+        override suspend fun artistPage(offset: Long, size: Int): List<LibraryArtist> =
+            artists.drop(offset.toInt()).take(size)
 
         override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> =
             albums.drop(offset.toInt()).take(size).map { summary(it) }
 
-        override suspend fun album(rawId: String): LibraryAlbum {
-            activeAlbumRequests += 1
-            maximumActiveAlbumRequests = maxOf(maximumActiveAlbumRequests, activeAlbumRequests)
-            try {
-                if (albumDelayMilliseconds > 0) delay(albumDelayMilliseconds)
-                return albums.single { it.id.rawId == rawId }
-            } finally {
-                activeAlbumRequests -= 1
-            }
-        }
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            trackRows.drop(offset.toInt()).take(size)
 
         override suspend fun playlists(): List<LibraryPlaylistSummary> = playlistSummaries
 
@@ -381,7 +385,15 @@ class LibrarySyncTest {
                 failPlaylistIdOnce = null
                 error("interrupted playlist stage")
             }
-            return LibraryPlaylist(summary, playlistTracks.getValue(rawId).map(::id))
+            activePlaylistRequests += 1
+            maximumActivePlaylistRequests =
+                maxOf(maximumActivePlaylistRequests, activePlaylistRequests)
+            try {
+                if (playlistDelayMilliseconds > 0) delay(playlistDelayMilliseconds)
+                return LibraryPlaylist(summary, playlistTracks.getValue(rawId).map(::id))
+            } finally {
+                activePlaylistRequests -= 1
+            }
         }
 
         override suspend fun starred(): List<LibraryStarredItem> {
@@ -452,6 +464,9 @@ class LibrarySyncTest {
             artworkKey = null,
             tracks = tracks.toList(),
         )
+
+        fun rows(albumRawId: String, vararg tracks: LibraryTrack) =
+            tracks.map { LibraryTrackRow(albumRawId, it) }
 
         fun summary(album: LibraryAlbum) = AlbumSummary(
             id = album.id,

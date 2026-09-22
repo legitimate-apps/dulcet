@@ -57,6 +57,11 @@ public class AppleLibraryTrackDto internal constructor(
     public val artworkKey: String?,
 )
 
+/**
+ * [trackCount] is what the server declares for the album, so the grid can draw "N tracks" without
+ * a track list. [tracksLoaded] separates "this album has no tracks" from "nobody has read this
+ * album's tracks yet" — [tracks] is empty in both cases.
+ */
 public class AppleLibraryAlbumDto internal constructor(
     public val providerInstanceId: String,
     public val rawId: String,
@@ -66,6 +71,8 @@ public class AppleLibraryAlbumDto internal constructor(
     public val durationMilliseconds: Long,
     public val mediaSourceId: String?,
     public val artworkKey: String?,
+    public val trackCount: Int,
+    public val tracksLoaded: Boolean,
     public val tracks: List<AppleLibraryTrackDto>,
 )
 
@@ -84,6 +91,12 @@ public class AppleLibraryBrowseOutcome internal constructor(
     public val error: AppleLibraryBrowseErrorDto?,
 )
 
+/** Exactly one of [album] and [error] is populated. */
+public class AppleLibraryAlbumTracksOutcome internal constructor(
+    public val album: AppleLibraryAlbumDto?,
+    public val error: AppleLibraryBrowseErrorDto?,
+)
+
 /** Objective-C-compatible completion-handler facade for the read-through library walk. */
 public class AppleLibraryBrowseClient internal constructor(
     private val browser: LibraryBrowser,
@@ -96,36 +109,48 @@ public class AppleLibraryBrowseClient internal constructor(
         request: AppleLibraryBrowseRequest,
         completion: (AppleLibraryBrowseOutcome) -> Unit,
     ): AppleLibraryBrowseOperation {
-        val operation = AppleLibraryBrowseOperationImpl(scope, browser, request, completion)
+        val operation = AppleLibraryOperationImpl(scope, completion) {
+            browser.browse(request.toCoreRequest()).toAppleOutcome()
+        }
+        operation.start()
+        return operation
+    }
+
+    /** Reads one album's track list. One request, under the same deadline as a first paint. */
+    public fun startAlbumTracks(
+        request: AppleLibraryBrowseRequest,
+        albumRawId: String,
+        completion: (AppleLibraryAlbumTracksOutcome) -> Unit,
+    ): AppleLibraryBrowseOperation {
+        val operation = AppleLibraryOperationImpl(scope, completion) {
+            browser.albumTracks(request.toCoreRequest(), albumRawId).toAppleOutcome()
+        }
         operation.start()
         return operation
     }
 }
 
-private class AppleLibraryBrowseOperationImpl(
+private class AppleLibraryOperationImpl<T>(
     private val scope: CoroutineScope,
-    private val browser: LibraryBrowser,
-    private val request: AppleLibraryBrowseRequest,
-    private val completion: (AppleLibraryBrowseOutcome) -> Unit,
+    private val completion: (T) -> Unit,
+    private val cancelledOutcome: () -> T,
+    private val failureOutcome: (Throwable) -> T,
+    private val work: suspend () -> T,
 ) : AppleLibraryBrowseOperation {
     private var delivered = false
     private val job: Job = scope.launch(start = CoroutineStart.LAZY) {
-        val result = try {
-            browser.browse(request.toCoreRequest())
+        val outcome = try {
+            work()
         } catch (_: CancellationException) {
-            LibraryBrowseResult.Failed(DomainError.Transport.Cancelled)
+            cancelledOutcome()
         } catch (failure: Throwable) {
-            LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure))
+            failureOutcome(failure)
         }
-        deliver(result.toAppleOutcome())
+        deliver(outcome)
     }.also { operationJob ->
         operationJob.invokeOnCompletion { failure ->
             if (failure is CancellationException) {
-                scope.launch {
-                    deliver(
-                        LibraryBrowseResult.Failed(DomainError.Transport.Cancelled).toAppleOutcome(),
-                    )
-                }
+                scope.launch { deliver(cancelledOutcome()) }
             }
         }
     }
@@ -138,12 +163,44 @@ private class AppleLibraryBrowseOperationImpl(
         job.cancel()
     }
 
-    private fun deliver(outcome: AppleLibraryBrowseOutcome) {
+    private fun deliver(outcome: T) {
         if (delivered) return
         delivered = true
         completion(outcome)
     }
 }
+
+private fun AppleLibraryOperationImpl(
+    scope: CoroutineScope,
+    completion: (AppleLibraryBrowseOutcome) -> Unit,
+    work: suspend () -> AppleLibraryBrowseOutcome,
+) = AppleLibraryOperationImpl(
+    scope = scope,
+    completion = completion,
+    cancelledOutcome = {
+        LibraryBrowseResult.Failed(DomainError.Transport.Cancelled).toAppleOutcome()
+    },
+    failureOutcome = { failure ->
+        LibraryBrowseResult.Failed(mapAccountConnectionFailure(failure)).toAppleOutcome()
+    },
+    work = work,
+)
+
+private fun AppleLibraryOperationImpl(
+    scope: CoroutineScope,
+    completion: (AppleLibraryAlbumTracksOutcome) -> Unit,
+    work: suspend () -> AppleLibraryAlbumTracksOutcome,
+) = AppleLibraryOperationImpl(
+    scope = scope,
+    completion = completion,
+    cancelledOutcome = {
+        LibraryAlbumTracksResult.Failed(DomainError.Transport.Cancelled).toAppleOutcome()
+    },
+    failureOutcome = { failure ->
+        LibraryAlbumTracksResult.Failed(mapAccountConnectionFailure(failure)).toAppleOutcome()
+    },
+    work = work,
+)
 
 private fun AppleLibraryBrowseRequest.toCoreRequest(): LibraryBrowseRequest = LibraryBrowseRequest(
     providerInstanceId = providerInstanceId,
@@ -152,6 +209,17 @@ private fun AppleLibraryBrowseRequest.toCoreRequest(): LibraryBrowseRequest = Li
     password = password,
     allowLocalHttp = allowLocalHttp,
 )
+
+private fun LibraryAlbumTracksResult.toAppleOutcome(): AppleLibraryAlbumTracksOutcome = when (this) {
+    is LibraryAlbumTracksResult.Loaded -> AppleLibraryAlbumTracksOutcome(
+        album = album.toAppleDto(),
+        error = null,
+    )
+    is LibraryAlbumTracksResult.Failed -> AppleLibraryAlbumTracksOutcome(
+        album = null,
+        error = AppleLibraryBrowseErrorDto(error.appleLibraryKind()),
+    )
+}
 
 private fun LibraryBrowseResult.toAppleOutcome(): AppleLibraryBrowseOutcome = when (this) {
     is LibraryBrowseResult.Loaded -> AppleLibraryBrowseOutcome(
@@ -193,6 +261,8 @@ private fun LibraryAlbum.toAppleDto(): AppleLibraryAlbumDto = AppleLibraryAlbumD
     durationMilliseconds = duration.inWholeMilliseconds,
     mediaSourceId = mediaSourceId,
     artworkKey = artworkKey,
+    trackCount = trackCount,
+    tracksLoaded = tracksLoaded,
     tracks = tracks.map { track ->
         AppleLibraryTrackDto(
             providerInstanceId = track.id.providerInstanceId,

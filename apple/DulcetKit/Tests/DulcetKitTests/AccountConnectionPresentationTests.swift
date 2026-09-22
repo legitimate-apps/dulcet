@@ -154,11 +154,19 @@ func connectedLibraryPublishesReadThroughContentAndCancelsWhenLeaving() {
     #expect(store.snapshot.albums == [album])
     #expect(store.snapshot.artists.map(\.name) == ["Opaque Artist"])
 
+    // Re-entering a library that is already held redraws it without contacting the server, so
+    // there is no second request and nothing in flight for the next departure to cancel. This
+    // previously asserted the opposite — that re-entry starts a read and leaving cancels it —
+    // which was the defect, not the contract. The cancellation control it carried now lives in
+    // `leavingTheLibraryCancelsAReadThatHasNotFinished`, where a read really is in flight.
     store.selectDestination(.library)
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [album])
+    #expect(libraryBrowser.requests.count == 1)
     #expect(libraryBrowser.operations.last?.cancelCount == 0)
     store.selectDestination(.search)
-    #expect(libraryBrowser.operations.last?.cancelCount == 1)
-    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
     #expect(store.snapshot.state == .searchIdle)
     #expect(store.snapshot.selectedDestination == .search)
 }
@@ -472,6 +480,71 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     store.selectDestination(.nowPlaying)
     #expect(search.operations[3].cancelCount == 1)
     #expect(store.snapshot.state == .nowPlayingUnavailable)
+}
+
+/// A person typing into search drives one store write per character, and every one of those
+/// writes republishes a snapshot that carries a query string back to the text field. If a
+/// publication ever carried a query composed before the character that triggered it, the field
+/// would be reset to older text and the person would lose what they had just typed.
+///
+/// One apple-ci run read the field mid-typing and reported six of nine characters, which looks
+/// exactly like that. It is not: traced against the app's own text binding on an iPad Pro 11-inch
+/// (M5) simulator, with per-keystroke cost induced at 0, 20, 60, 150, 400 and 1000 ms, all 217
+/// publications echoed the live query and no value regressed across 84 keystrokes. This pins that
+/// property so a future change -- capturing the query when a request starts, say, instead of
+/// reading it at publish time -- fails here in milliseconds rather than as a rare UI flake.
+@Test @MainActor
+func searchPublicationNeverCarriesAQueryOlderThanTheTypedText() async {
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+
+    // One write per character, as the text field produces them. Checking after every character is
+    // the point: an overwrite would be repaired by the next character if only the end were
+    // checked, so the final value alone cannot see it.
+    var typed = ""
+    for character in "atlas" {
+        typed.append(character)
+        store.searchQuery = typed
+        #expect(store.searchQuery == typed)
+        #expect(store.snapshot.searchQuery == typed)
+    }
+
+    // A publication that arrives after further typing must still carry the later text. The
+    // in-flight request was composed for "atlas"; completing it once the person has typed more
+    // must not put "atlas" back in the field.
+    await settleSearchTask(until: { search.requests.count == 1 })
+    #expect(search.requests.first?.query == "atlas")
+    store.searchQuery = "atlas north"
+    await settleSearchTask(until: { search.requests.count == 2 })
+    search.complete(at: search.requests.count - 1, .loaded(searchPage(
+        results: [searchResult(id: "track:one", title: "Atlas North")]
+    )))
+    #expect(store.snapshot.state == .searchResults)
+    #expect(store.searchQuery == "atlas north")
+    #expect(store.snapshot.searchQuery == "atlas north")
+
+    // Clearing is a genuine source-initiated change and must still reach the field, so the
+    // property above cannot be satisfied by refusing to apply snapshots at all.
+    store.searchQuery = ""
+    #expect(store.searchQuery.isEmpty)
+    #expect(store.snapshot.searchQuery.isEmpty)
+    #expect(store.snapshot.state == .searchIdle)
 }
 
 @Test @MainActor
@@ -1277,11 +1350,14 @@ private final class ControlledAccountOperation: DulcetAccountConnectOperation {
 }
 
 @MainActor
-private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
+private final class ControlledLibraryBrowser: DulcetLibraryBrowsing, DulcetAlbumTracksLoading {
     private let onCancel: @MainActor () -> Void
     private(set) var requests: [DulcetLibraryBrowseRequest] = []
     private(set) var operations: [ControlledLibraryOperation] = []
+    private(set) var albumTrackRequests: [String] = []
     private var completions: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+    private var delivered: [(@MainActor (DulcetLibraryBrowseOutcome) -> Void)] = []
+    private var albumTrackCompletions: [(@MainActor (DulcetAlbumTracksOutcome) -> Void)] = []
 
     init(onCancel: @escaping @MainActor () -> Void = {}) {
         self.onCancel = onCancel
@@ -1298,9 +1374,32 @@ private final class ControlledLibraryBrowser: DulcetLibraryBrowsing {
         return operation
     }
 
+    func loadAlbumTracks(
+        _ request: DulcetLibraryBrowseRequest,
+        albumRawID: String,
+        completion: @escaping @MainActor (DulcetAlbumTracksOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        albumTrackRequests.append(albumRawID)
+        albumTrackCompletions.append(completion)
+        return ControlledLibraryOperation(onCancel: onCancel)
+    }
+
     func complete(_ outcome: DulcetLibraryBrowseOutcome) {
         guard !completions.isEmpty else { return }
-        completions.removeFirst()(outcome)
+        let completion = completions.removeFirst()
+        delivered.append(completion)
+        completion(outcome)
+    }
+
+    /// The production browser answers one library open more than once — a fast preview, then the
+    /// committed library — so a double is only faithful if it can do the same.
+    func completeAgain(_ outcome: DulcetLibraryBrowseOutcome) {
+        delivered.last?(outcome)
+    }
+
+    func completeAlbumTracks(_ outcome: DulcetAlbumTracksOutcome) {
+        guard !albumTrackCompletions.isEmpty else { return }
+        albumTrackCompletions.removeFirst()(outcome)
     }
 }
 
@@ -1403,6 +1502,7 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
     private(set) var queueIntents: [DulcetPlaybackQueueIntent] = []
     private(set) var controlIntents: [DulcetPlaybackControlIntent] = []
     private(set) var restoredCatalogs: [[DulcetTrack]] = []
+    private(set) var restoredCoverages: [DulcetLibraryCatalogCoverage] = []
     private(set) var disconnectCount = 0
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
 
@@ -1421,8 +1521,12 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
         publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
     }
 
-    func restorePersistedQueue(with tracks: [DulcetTrack]) {
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    ) {
         restoredCatalogs.append(tracks)
+        restoredCoverages.append(catalogCoverage)
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
@@ -1496,6 +1600,24 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
 }
 
 @MainActor
+/// The album as the grid receives it after a first paint: the server's declared track count and
+/// no track list at all.
+private func fixtureUnreadAlbum(trackCount: Int = 12) -> DulcetAlbum {
+    let album = fixtureLibraryAlbum()
+    return DulcetAlbum(
+        id: album.id,
+        title: album.title,
+        credits: album.credits,
+        year: album.year,
+        duration: album.duration,
+        mediaSourceID: album.mediaSourceID,
+        artwork: album.artwork,
+        tracks: [],
+        trackCount: trackCount,
+        areTracksLoaded: false
+    )
+}
+
 private func fixtureLibraryAlbum() -> DulcetAlbum {
     let providerID = "provider-instance-fixture"
     let artistID = DulcetProviderItemID(providerInstanceID: providerID, rawID: "artist:opaque")
@@ -1649,4 +1771,709 @@ private final class MemoryCredentialStore: DulcetCredentialStoring {
 @MainActor
 private final class ControlledDeleteDecision {
     var shouldFail = true
+}
+
+// MARK: - Lazy album track lists
+
+@MainActor
+private func connectedLibraryStore(
+    connector: ControlledAccountConnector,
+    libraryBrowser: ControlledLibraryBrowser,
+    playback: ControlledPlaybackController
+) -> DulcetPresentationStore {
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    return store
+}
+
+/// The control for the whole change on this side of the boundary: drawing the library must not
+/// read a single album. Asserting "the library appeared" passed before this change too.
+@Test @MainActor
+func theAlbumGridIsDrawnWithoutReadingAnyAlbumsTrackList() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+
+    let albums = (0 ..< 25).map { index in
+        let base = fixtureUnreadAlbum(trackCount: index + 1)
+        return DulcetAlbum(
+            id: DulcetProviderItemID(
+                providerInstanceID: "provider-instance-fixture",
+                rawID: "album:opaque-\(index)"
+            ),
+            title: base.title,
+            credits: base.credits,
+            year: base.year,
+            duration: base.duration,
+            mediaSourceID: base.mediaSourceID,
+            artwork: base.artwork,
+            tracks: [],
+            trackCount: index + 1,
+            areTracksLoaded: false
+        )
+    }
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: albums))
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums.count == 25)
+    #expect(store.snapshot.albums.map(\.trackCount) == Array(1 ... 25))
+    #expect(store.snapshot.albums.allSatisfy { $0.tracks.isEmpty })
+    #expect(store.snapshot.albums.allSatisfy { !$0.areTracksLoaded })
+    #expect(libraryBrowser.albumTrackRequests.isEmpty)
+
+    // The instrument is not blind: opening one album moves the counter off zero, and by exactly
+    // one, so the zero above is a measurement.
+    store.selectAlbum(try #require(albums.first).id)
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque-0"])
+}
+
+@Test @MainActor
+func openingAnAlbumReadsItsTracksAndReRunsQueueRestoration() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+
+    // The first paint knows no tracks, so the catalog handed to the controller is empty — and it
+    // is declared PARTIAL, because "not in the catalog" here means "not read yet", not "gone".
+    #expect(playback.restoredCatalogs.last?.isEmpty == true)
+    #expect(playback.restoredCoverages.last == .partial)
+
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.areTracksLoaded == false)
+    #expect(store.snapshot.selectedAlbumTracksFailure == nil)
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque"])
+
+    let tracks = fixtureLibraryAlbum().tracks
+    libraryBrowser.completeAlbumTracks(.loaded(tracks))
+
+    let selected = try #require(store.snapshot.selectedAlbum)
+    #expect(selected.areTracksLoaded)
+    #expect(selected.tracks.map(\.id) == tracks.map(\.id))
+    #expect(selected.trackCount == tracks.count)
+    #expect(store.snapshot.albums.first?.tracks.map(\.id) == tracks.map(\.id))
+    // The saved queue can now be restored, because these tracks are known — and with every album
+    // read, the catalog is authoritative again.
+    #expect(playback.restoredCatalogs.last?.map(\.id) == tracks.map(\.id))
+    #expect(playback.restoredCoverages.last == .wholeLibrary)
+}
+
+@Test @MainActor
+func aFailedTrackReadIsShownOnTheAlbumAndTheRetryReadsItAgain() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+
+    store.selectAlbum(album.id)
+    libraryBrowser.completeAlbumTracks(.failed(DulcetLibraryFailure(kind: .timeout)))
+
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbumTracksFailure?.kind == .timeout)
+    #expect(store.snapshot.selectedAlbum?.areTracksLoaded == false)
+
+    store.retryAlbumTracks()
+    #expect(store.snapshot.selectedAlbumTracksFailure == nil)
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque", "album:opaque"])
+
+    let tracks = fixtureLibraryAlbum().tracks
+    libraryBrowser.completeAlbumTracks(.loaded(tracks))
+    #expect(store.snapshot.selectedAlbum?.tracks.map(\.id) == tracks.map(\.id))
+    #expect(store.snapshot.selectedAlbumTracksFailure == nil)
+}
+
+/// A library open publishes more than once now — a fast preview, then the committed library. The
+/// later one must not throw someone out of the album they are reading.
+@Test @MainActor
+func aSecondLibraryPublicationKeepsThePersonOnTheAlbumTheyAreReading() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    let complete = fixtureLibraryAlbum()
+    libraryBrowser.completeAgain(.loaded(musicFolders: [], artists: [], albums: [complete]))
+    #expect(libraryBrowser.albumTrackRequests == ["album:opaque"])
+
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(store.snapshot.selectedAlbum?.areTracksLoaded == true)
+    #expect(store.snapshot.selectedAlbum?.tracks.map(\.id) == complete.tracks.map(\.id))
+}
+
+// MARK: - A preview is not the end of a library open
+
+@MainActor
+private final class CountingLibraryRefreshScheduler: DulcetLibraryRefreshScheduling {
+    private(set) var scheduledCount = 0
+    private(set) var scheduledDelays: [Duration] = []
+    private var actions: [@MainActor () -> Void] = []
+
+    func schedule(
+        after delay: Duration,
+        action: @escaping @MainActor () -> Void
+    ) -> any DulcetLibraryRefreshOperation {
+        scheduledCount += 1
+        scheduledDelays.append(delay)
+        actions.append(action)
+        return CountingLibraryRefreshOperation()
+    }
+
+    func fireMostRecent() {
+        guard let action = actions.popLast() else { return }
+        action()
+    }
+}
+
+@MainActor
+private final class CountingLibraryRefreshOperation: DulcetLibraryRefreshOperation {
+    func cancel() {}
+}
+
+@MainActor
+private func connectedLibraryStore(
+    libraryBrowser: ControlledLibraryBrowser,
+    refreshScheduler: CountingLibraryRefreshScheduler
+) -> DulcetPresentationStore {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    return store
+}
+
+/// The refresh cadence means "re-read the library this long after it was last read in full". A
+/// preview has not read it in full — the authoritative read is still running — so arming the
+/// cadence there measures from first paint instead, and a read slower than the cadence gets a
+/// refresh fired on top of it, which opens the library again while it is still opening.
+@Test @MainActor
+func aPreviewDoesNotStartTheLibraryRefreshCadence() {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    let album = fixtureUnreadAlbum()
+
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(refreshScheduler.scheduledCount == 0)
+
+    libraryBrowser.completeAgain(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(refreshScheduler.scheduledCount == 1)
+    #expect(refreshScheduler.scheduledDelays == [.seconds(60)])
+
+    // One open arms the cadence exactly once, so a refresh cannot be double-booked.
+    #expect(libraryBrowser.requests.count == 1)
+}
+
+/// The preview arriving must not release the operation: the authoritative read is still in
+/// flight, and the operation is the only handle that can cancel it. Releasing it leaves a sync
+/// that nothing can stop, still holding the server, whose eventual result the presentation then
+/// discards because a newer open has superseded it.
+@Test @MainActor
+func aLibraryOpenIsStillCancellableAfterItsPreviewArrives() {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+
+    libraryBrowser.complete(.preview(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureUnreadAlbum()]
+    ))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+
+    store.selectDestination(.search)
+    #expect(libraryBrowser.operations.last?.cancelCount == 1)
+}
+
+/// The final publication does release it, or every completed open would leak its handle.
+@Test @MainActor
+func aFinishedLibraryOpenReleasesItsOperation() {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+
+    libraryBrowser.complete(.preview(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureUnreadAlbum()]
+    ))
+    libraryBrowser.completeAgain(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+
+    store.selectDestination(.search)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+}
+
+// MARK: - Re-entering the library
+
+/// The control for the operator's "when i tap out and tap in it has to refresh". Asserting that
+/// the library is shown passes before and after the fix, so this asserts the REQUEST COUNT across
+/// navigate-away-and-back cycles: it must not grow.
+@Test @MainActor
+func reEnteringTheLibraryRedrawsItWithoutAskingTheServerAgain() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    let album = fixtureLibraryAlbum()
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(libraryBrowser.requests.count == 1)
+
+    for destination in [DulcetSidebarDestination.search, .nowPlaying, .settings] {
+        store.selectDestination(destination)
+        store.selectDestination(.library)
+        #expect(store.snapshot.state == .libraryBrowse, "returning from \(destination)")
+        #expect(store.snapshot.albums == [album], "returning from \(destination)")
+        #expect(libraryBrowser.requests.count == 1, "returning from \(destination)")
+    }
+
+    // The cadence keeps running across navigation, because it measures time since the last full
+    // read — not time since the person last looked at the screen.
+    #expect(refreshScheduler.scheduledCount == 1)
+}
+
+/// The instrument is not blind: the counter does move when a read is genuinely required.
+@Test @MainActor
+func reconnectingReadsTheLibraryAgainEvenWhenOneIsHeld() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 1)
+
+    // Connecting again describes a different session, so the held library stops being an answer
+    // and the connection itself reads — the person pressed Reconnect on the library screen.
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    #expect(libraryBrowser.requests.count == 2)
+    libraryBrowser.complete(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+
+    // And once that read has finished, re-entry is free again.
+    store.selectDestination(.search)
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+}
+
+/// 🚨 The window this protects is everything between the preview painting and the sync
+/// committing. Its DURATION is a property of the sync's transport, not of this behaviour, and it
+/// has already changed once by about two orders of magnitude — so this control deliberately does
+/// not depend on it, and neither does the guard it covers.
+///
+/// `selectDestination(.library)` is this surface's ONLY way back out of an album detail; there is
+/// no separate back action, which `republishHeldLibrary` says in so many words. During that window
+/// `libraryReadCompleted` is still false, so backing out fell straight through the held-data guard,
+/// cancelled the whole in-flight pair, and started a second one — replacing the grid the person was
+/// looking at with a loading spinner and re-reading the entire library.
+///
+/// Asserting that the grid is shown passes identically before and after the fix, so this asserts
+/// the REQUEST COUNT, and also that the live operation was never cancelled: the outcome and the
+/// process, because the outcome alone is satisfied by a cancel-and-restart that lands on the same
+/// albums.
+@Test @MainActor
+func backingOutOfAnAlbumWhileTheFirstReadRunsDoesNotStartASecondWalk() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    let album = fixtureUnreadAlbum()
+
+    // The preview paints. The sync behind it has not finished, so the operation is still live and
+    // `libraryReadCompleted` is still false — this is the whole window under test.
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [album])
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+
+    // The read that was left alone still finishes, and still replaces the preview with the
+    // committed library. Guarding initiation must not cost the answer.
+    libraryBrowser.completeAgain(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums == [fixtureLibraryAlbum()])
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(refreshScheduler.scheduledCount == 1)
+}
+
+/// Nothing has been drawn yet, so there is no grid to redraw — but there is also nothing to
+/// restart. Re-entering during the blank part of the window must keep showing the loading surface
+/// rather than publishing an empty library over a read that is still running.
+@Test @MainActor
+func reEnteringBeforeThePreviewArrivesKeepsLoadingRatherThanRereading() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+
+    #expect(store.snapshot.state == .libraryLoading)
+    #expect(libraryBrowser.requests.count == 1)
+    #expect(libraryBrowser.operations.last?.cancelCount == 0)
+}
+
+/// A read that failed is not a library, so the error surface's Try Again — which re-enters the
+/// destination — must reach the server.
+@Test @MainActor
+func aFailedLibraryReadIsRetriedWhenTheLibraryIsEnteredAgain() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    libraryBrowser.complete(.failed(DulcetLibraryFailure(kind: .timeout)))
+    #expect(store.snapshot.state == .libraryError)
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}
+
+/// A read interrupted part way through is not a library either: leaving cancels it, and coming
+/// back must read rather than redraw a half-answered one.
+@Test @MainActor
+func leavingTheLibraryCancelsAReadThatHasNotFinished() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let store = connectedLibraryStore(
+        libraryBrowser: libraryBrowser,
+        refreshScheduler: refreshScheduler
+    )
+    #expect(store.snapshot.state == .libraryLoading)
+
+    store.selectDestination(.search)
+    #expect(libraryBrowser.operations.last?.cancelCount == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}
+
+/// Connecting from Settings does not itself open the library — only a Reconnect pressed ON the
+/// library screen does that. So the held library has to be invalidated by the connection, or
+/// walking to Library afterwards would redraw the previous session's albums without asking.
+/// Found by mutation: removing that invalidation left every other test green.
+@Test @MainActor
+func connectingFromSettingsInvalidatesTheHeldLibrary() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(libraryBrowser.requests.count == 1)
+
+    // Connect again from Settings, which does not open the library.
+    store.selectDestination(.settings)
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Other",
+        normalizedServerURL: "https://other.example.invalid"
+    )))
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.library)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}
+
+/// A search can return an album the last library read did not include — the server has it and we
+/// simply have not looked since. Held data answers navigation only when it can actually answer it,
+/// so that case reads rather than dropping the person on a grid they did not ask for.
+@Test @MainActor
+func activatingASearchResultAbsentFromTheHeldLibraryReadsAgain() async throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        serverSearch: search,
+        searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    let album = fixtureLibraryAlbum()
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [], albums: [album]))
+    #expect(libraryBrowser.requests.count == 1)
+
+    store.selectDestination(.search)
+    store.searchQuery = "opaque"
+    await settleSearchTask(until: { search.requests.count == 1 })
+    let held = searchResult(id: album.id.rawID, title: album.title, kind: .album)
+    let absent = searchResult(id: "album:not-in-the-held-library", title: "Newer", kind: .album)
+    search.complete(at: 0, .loaded(searchPage(results: [held, absent])))
+
+    // An album the held library does contain is navigation, and costs nothing.
+    store.activateSearchResult(held.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(libraryBrowser.requests.count == 1)
+
+    // One it does not contain must reach the server rather than silently show the grid.
+    store.selectDestination(.search)
+    store.activateSearchResult(absent.id)
+    #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.state == .libraryLoading)
+}
+
+/// `.preview` makes "a preview is not an ending" unrepresentable. This is the other half: an
+/// ending is final. A preview arriving after the authoritative result would blank the library —
+/// tracks back to zero, restoration coverage back to partial — and ordering across two HTTP
+/// clients is not something the consumer can assume.
+@Test @MainActor
+func aPreviewArrivingAfterTheAuthoritativeResultIsIgnored() throws {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let refreshScheduler = CountingLibraryRefreshScheduler()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        libraryRefreshCadence: .seconds(60),
+        libraryRefreshScheduler: refreshScheduler,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.library)
+
+    let complete = fixtureLibraryAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [fixtureUnreadAlbum()]))
+    libraryBrowser.completeAgain(.loaded(musicFolders: [], artists: [], albums: [complete]))
+    #expect(store.snapshot.albums.first?.areTracksLoaded == true)
+    #expect(store.snapshot.albums.first?.tracks.count == 1)
+    #expect(playback.restoredCoverages.last == .wholeLibrary)
+
+    // A preview for the same open, delivered late.
+    libraryBrowser.completeAgain(.preview(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureUnreadAlbum()]
+    ))
+
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.albums.first?.areTracksLoaded == true)
+    #expect(store.snapshot.albums.first?.tracks.count == 1)
+    #expect(store.snapshot.albums.map(\.id) == [complete.id])
+    #expect(playback.restoredCoverages.last == .wholeLibrary)
+}
+
+// MARK: - Library-wide playback before track lists exist
+
+/// The predicate behind the Play All / Shuffle enablement. The review found that removing all
+/// four `.disabled(...)` modifiers still passed the whole suite, because nothing asserted either
+/// the decision or what it protects. This asserts the decision.
+@Test @MainActor
+func wholeLibraryPlaybackIsOnlyPossibleOnceSomeTrackListExists() {
+    func snapshot(albums: [DulcetAlbum], looseTracks: [DulcetTrack] = []) -> DulcetSnapshot {
+        DulcetSnapshot(
+            state: .libraryBrowse,
+            selectedDestination: .library,
+            accountConnected: true,
+            connectivity: .online(serverName: "Music"),
+            albums: albums,
+            looseTracks: looseTracks,
+            recentlyAddedTracks: [],
+            captureDate: Date(timeIntervalSince1970: 0)
+        )
+    }
+    let unread = fixtureUnreadAlbum()
+    let complete = fixtureLibraryAlbum()
+
+    #expect(!snapshot(albums: []).canPlayWholeLibrary)
+    #expect(!snapshot(albums: [unread]).canPlayWholeLibrary)
+    #expect(!snapshot(albums: [unread, unread]).canPlayWholeLibrary)
+    #expect(snapshot(albums: [complete]).canPlayWholeLibrary)
+    #expect(snapshot(albums: [unread, complete]).canPlayWholeLibrary)
+    #expect(snapshot(albums: [unread], looseTracks: complete.tracks).canPlayWholeLibrary)
+}
+
+/// And this asserts what it protects: with no track list anywhere, the action reaches the
+/// playback boundary as nothing at all rather than as an empty queue.
+@Test @MainActor
+func playingTheWholeLibraryBeforeTrackListsExistQueuesNothing() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(!store.snapshot.canPlayWholeLibrary)
+
+    store.playLibrary(shuffle: false)
+    store.playLibrary(shuffle: true)
+    store.playAlbum(album.id, shuffle: false)
+    #expect(playback.queueIntents.isEmpty)
+
+    // The instrument is not blind: once the tracks arrive the same actions do build a queue.
+    libraryBrowser.completeAgain(.loaded(
+        musicFolders: [],
+        artists: [],
+        albums: [fixtureLibraryAlbum()]
+    ))
+    #expect(store.snapshot.canPlayWholeLibrary)
+    store.playLibrary(shuffle: false)
+    #expect(playback.queueIntents.count == 1)
 }

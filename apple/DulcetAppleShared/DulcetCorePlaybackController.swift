@@ -13,6 +13,27 @@ protocol DulcetCorePlaybackEngine: DulcetApplePlaybackEngine {
 
 extension DulcetAVPlayerEngine: DulcetCorePlaybackEngine {}
 
+/// What this process has done with scrobble effects, as counted by the core facade. Only
+/// `submittedPlaysDelivered` says a play reached the server: it moves on an `ok` envelope for
+/// `scrobble submission=true` and on nothing else. A persisted play is durable, not delivered.
+struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
+    let submittedPlaysPersisted: Int
+    let submittedPlaysDelivered: Int
+    let submittedPlaysPending: Int
+    let submittedPlayFailedAttempts: Int
+    let nowPlayingSent: Int
+    let nowPlayingDropped: Int
+
+    init(_ dto: ApplePlaybackDeliveryReportDto) {
+        submittedPlaysPersisted = Int(dto.submittedPlaysPersisted)
+        submittedPlaysDelivered = Int(dto.submittedPlaysDelivered)
+        submittedPlaysPending = Int(dto.submittedPlaysPending)
+        submittedPlayFailedAttempts = Int(dto.submittedPlayFailedAttempts)
+        nowPlayingSent = Int(dto.nowPlayingSent)
+        nowPlayingDropped = Int(dto.nowPlayingDropped)
+    }
+}
+
 @MainActor
 final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     private let queueClient: ApplePlaybackQueueClient
@@ -71,6 +92,26 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         presentationHandler = handler
     }
 
+    /// Receives the current report immediately and every later change, on the main actor. The
+    /// presentation never carries this: a shell that wants to say "played" must wait for it here,
+    /// because the ingestion path returns once the play is persisted, before any request leaves.
+    func setScrobbleDeliveryHandler(
+        _ handler: (@MainActor (DulcetScrobbleDeliveryReport) -> Void)?
+    ) {
+        guard let handler else {
+            queueClient.setDeliveryReportObserver(observer: nil)
+            return
+        }
+        queueClient.setDeliveryReportObserver { dto in
+            let report = DulcetScrobbleDeliveryReport(dto)
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { handler(report) }
+            } else {
+                DispatchQueue.main.async { handler(report) }
+            }
+        }
+    }
+
     func configure(account presentationAccount: DulcetPlaybackAccount) {
         resolveOperation?.cancel()
         resolveOperation = nil
@@ -124,12 +165,26 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         start(transition.startDirective)
     }
 
-    func restorePersistedQueue(with tracks: [DulcetTrack]) {
+    /// Restores the saved queue from the tracks the library can currently speak for.
+    ///
+    /// The core reads the supplied catalog as "what can resolve now" and clears the saved
+    /// selection when the current entry is missing from it, so no launch keeps trying to start
+    /// something unresolvable. That is right only when the catalog is authoritative. Track lists
+    /// are now read one album at a time, so right after a first paint the catalog is empty
+    /// because nobody has read any album — not because the queue is gone. Under
+    /// `.partial` coverage this therefore says nothing at all until the catalog can speak about
+    /// the current entry, and the library calls it again as each album's tracks arrive. Under
+    /// `.wholeLibrary` the behaviour is unchanged.
+    func restorePersistedQueue(
+        with tracks: [DulcetTrack],
+        catalogCoverage: DulcetLibraryCatalogCoverage
+    ) {
         guard let account else { return }
         catalog.merge(
             Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) }),
             uniquingKeysWith: { _, latest in latest }
         )
+        if catalogCoverage == .partial, !catalogCoversPersistedSelection() { return }
         let transition = queueClient.restoreCurrentPausedWithCatalog(
             providerInstanceId: account.providerInstanceId,
             availableRawIds: tracks.filter {
@@ -143,6 +198,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         // A bypass has no playback work and must not republish a live session's snapshot.
         guard let directive = transition.startDirective else { return }
         start(directive)
+    }
+
+    /// Whether the merged catalog holds the entry the saved queue is currently pointing at.
+    /// A queue with no saved selection has nothing to restore either way.
+    private func catalogCoversPersistedSelection() -> Bool {
+        guard let persisted = queueClient.snapshot().snapshot else { return false }
+        let currentIndex = Int(persisted.currentIndex)
+        guard currentIndex >= 0, currentIndex < persisted.entries.count else { return false }
+        let entry = persisted.entries[currentIndex]
+        return catalog[DulcetProviderItemID(
+            providerInstanceID: entry.providerInstanceId,
+            rawID: entry.rawId
+        )] != nil
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {

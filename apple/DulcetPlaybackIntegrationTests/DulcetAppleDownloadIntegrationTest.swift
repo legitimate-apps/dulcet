@@ -324,47 +324,44 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
 
     private func loadLiveTrack(baseURL: String) async throws -> DulcetTrack {
         let client = AppleLibraryBrowseClient()
-        let (seed, failure): (LiveDownloadTrackSeed?, String) = await withCheckedContinuation { continuation in
-            _ = client.startBrowse(request: AppleLibraryBrowseRequest(
-                providerInstanceId: providerInstanceID,
-                normalizedBaseUrl: baseURL,
-                username: fixtureUsername,
-                password: fixturePassword,
-                allowLocalHttp: true
-            )) { outcome in
-                if let error = outcome.error {
-                    continuation.resume(returning: (nil, "library browse failed: kind=\(error.kind)"))
-                    return
-                }
-                guard let snapshot = outcome.snapshot else {
-                    continuation.resume(returning: (nil, "library browse returned neither snapshot nor error"))
-                    return
-                }
-                let tracks = snapshot.albums.flatMap(\.tracks)
-                guard !tracks.isEmpty else {
-                    continuation.resume(returning: (nil, "library empty: albums=\(snapshot.albums.count), tracks=0"))
-                    return
-                }
-                guard let source = tracks.first(where: { $0.sourceContainer != nil }) else {
-                    continuation.resume(returning: (nil, "no track carrying a source container: tracks=\(tracks.count)"))
-                    return
-                }
-                continuation.resume(returning: (LiveDownloadTrackSeed(
-                    providerInstanceID: source.providerInstanceId,
-                    rawID: source.rawId,
-                    title: source.title,
-                    albumTitle: source.albumTitle,
-                    discNumber: source.discNumber?.intValue,
-                    trackNumber: source.trackNumber?.intValue,
-                    durationMilliseconds: source.durationMilliseconds,
-                    sourceContainer: source.sourceContainer,
-                    mediaSourceID: source.mediaSourceId
-                ), ""))
+        let request = AppleLibraryBrowseRequest(
+            providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: baseURL,
+            username: fixtureUsername,
+            password: fixturePassword,
+            allowLocalHttp: true
+        )
+        // The album grid is read without a request per album, so a browse answers albums with
+        // empty track lists and a declared count. A download seed is a TRACK, so this reads one
+        // album's tracks through the same lazy path the album screen uses, taking the first album
+        // that declares any. Every failure below still names what was actually seen: a bare
+        // unwrap here would turn "the corpus has no downloadable format" and "the server stopped
+        // answering" into the same nil.
+        let albums = try await browseAlbumSeeds(client: client, request: request)
+        var albumsRead = 0
+        var tracksSeen = 0
+        var albumsDeclaringTracks = 0
+        var seed: LiveDownloadTrackSeed?
+        for album in albums where album.trackCount > 0 {
+            albumsDeclaringTracks += 1
+            let read = try await readAlbumSeed(
+                client: client,
+                request: request,
+                albumRawID: album.rawID
+            )
+            albumsRead += 1
+            tracksSeen += read.trackCount
+            if let source = read.seed {
+                seed = source
+                break
             }
         }
         let source = try XCTUnwrap(
             seed,
-            "the disposable library must expose one downloadable track; \(failure)"
+            "the disposable library must expose one downloadable track; "
+                + "albums=\(albums.count), albums declaring tracks=\(albumsDeclaringTracks), "
+                + "albums read=\(albumsRead), tracks seen=\(tracksSeen), "
+                + "tracks carrying a source container=0"
         )
         let container = try XCTUnwrap(
             source.sourceContainer.flatMap(downloadContainer),
@@ -385,6 +382,89 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             mediaSourceID: source.mediaSourceID,
             artwork: DulcetArtwork(seed: "download-integration", palette: .indigoCoral)
         )
+    }
+
+    /// Kotlin DTOs are not `Sendable`, so every continuation below extracts plain values inside
+    /// the callback rather than carrying a DTO across the boundary.
+    private func browseAlbumSeeds(
+        client: AppleLibraryBrowseClient,
+        request: AppleLibraryBrowseRequest
+    ) async throws -> [LiveDownloadAlbumSeed] {
+        let (albums, failure): ([LiveDownloadAlbumSeed]?, String) =
+            await withCheckedContinuation { continuation in
+                _ = client.startBrowse(request: request) { outcome in
+                    if let error = outcome.error {
+                        continuation.resume(returning: (nil, "library browse failed: kind=\(error.kind)"))
+                        return
+                    }
+                    guard let snapshot = outcome.snapshot else {
+                        continuation.resume(
+                            returning: (nil, "library browse returned neither snapshot nor error")
+                        )
+                        return
+                    }
+                    guard !snapshot.albums.isEmpty else {
+                        continuation.resume(returning: (nil, "library empty: albums=0"))
+                        return
+                    }
+                    continuation.resume(returning: (
+                        snapshot.albums.map {
+                            LiveDownloadAlbumSeed(rawID: $0.rawId, trackCount: Int($0.trackCount))
+                        },
+                        ""
+                    ))
+                }
+            }
+        return try XCTUnwrap(
+            albums,
+            "the disposable library must expose at least one album; \(failure)"
+        )
+    }
+
+    private func readAlbumSeed(
+        client: AppleLibraryBrowseClient,
+        request: AppleLibraryBrowseRequest,
+        albumRawID: String
+    ) async throws -> (seed: LiveDownloadTrackSeed?, trackCount: Int) {
+        let (result, failure): ((LiveDownloadTrackSeed?, Int)?, String) =
+            await withCheckedContinuation { continuation in
+                _ = client.startAlbumTracks(request: request, albumRawId: albumRawID) { outcome in
+                    if let error = outcome.error {
+                        continuation.resume(
+                            returning: (nil, "album track read failed: kind=\(error.kind)")
+                        )
+                        return
+                    }
+                    guard let album = outcome.album else {
+                        continuation.resume(
+                            returning: (nil, "album track read returned neither album nor error")
+                        )
+                        return
+                    }
+                    let source = album.tracks.first { $0.sourceContainer != nil }
+                    continuation.resume(returning: ((
+                        source.map {
+                            LiveDownloadTrackSeed(
+                                providerInstanceID: $0.providerInstanceId,
+                                rawID: $0.rawId,
+                                title: $0.title,
+                                albumTitle: $0.albumTitle,
+                                discNumber: $0.discNumber?.intValue,
+                                trackNumber: $0.trackNumber?.intValue,
+                                durationMilliseconds: $0.durationMilliseconds,
+                                sourceContainer: $0.sourceContainer,
+                                mediaSourceID: $0.mediaSourceId
+                            )
+                        },
+                        album.tracks.count
+                    ), ""))
+                }
+            }
+        let unwrapped = try XCTUnwrap(
+            result,
+            "reading album \(albumRawID) must answer a track list; \(failure)"
+        )
+        return (unwrapped.0, unwrapped.1)
     }
 
     private func downloadContainer(coreName: String) -> DulcetAudioContainer? {
@@ -443,6 +523,13 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
     }
+}
+
+private struct LiveDownloadAlbumSeed: Sendable {
+    let rawID: String
+    /// The count the server declares on the album list, which is what says an album is worth
+    /// reading without reading it first.
+    let trackCount: Int
 }
 
 private struct LiveDownloadTrackSeed: Sendable {

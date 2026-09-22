@@ -7,7 +7,7 @@ class LocalLibrarySearchTest {
     @Test fun firstCharacterAndUnseenQueriesRankAllFourTiersFromCommittedRows() = withLibrary { store, repository ->
         val tracks = listOf(track("substring", "Reecho"), track("word", "An Echo"),
             track("prefix", "Echoes"), track("exact:opaque/not-an-int", "Écho"))
-        repository.putTracks(SERVER, 1, listOf(album(tracks)))
+        repository.putTracks(SERVER, 1, rowsOf(tracks))
         repository.putArtists(SERVER, 1, listOf(LibraryArtist(id("artist"), "Echo", null)))
         repository.putAlbums(SERVER, 1, listOf(AlbumSummary(id("album"), "Echo", emptyList(), null, 1.seconds, null, null)))
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
@@ -23,7 +23,7 @@ class LocalLibrarySearchTest {
     @Test fun sharedNormalizationIndexesCompatibilityCaseFoldingAndEveryCredit() = withLibrary { store, repository ->
         val accented = track("opaque", "Ｃａｆé Straße").copy(credits = listOf(
             Credit(CreditRole.Artist, "First", null), Credit(CreditRole.AlbumArtist, "Beyoncé", id("artist"))))
-        repository.putTracks(SERVER, 1, listOf(album(listOf(accented))))
+        repository.putTracks(SERVER, 1, rowsOf(listOf(accented)))
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
         val search = LocalLibrarySearch(store)
         for (query in listOf("cafe", "STRASSE", "beyonce")) {
@@ -35,9 +35,9 @@ class LocalLibrarySearchTest {
     }
 
     @Test fun pendingUpdatesAndDeletionStayInvisibleUntilCommit() = withLibrary { store, repository ->
-        repository.putTracks(SERVER, 1, listOf(album(listOf(track("opaque", "Old"), track("gone", "Old deleted")))))
+        repository.putTracks(SERVER, 1, rowsOf(listOf(track("opaque", "Old"), track("gone", "Old deleted"))))
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
-        repository.putTracks(SERVER, 2, listOf(album(listOf(track("opaque", "New")))))
+        repository.putTracks(SERVER, 2, rowsOf(listOf(track("opaque", "New"))))
         repository.completeStage(SERVER, 2, LibrarySyncStage.Tracks)
         val search = LocalLibrarySearch(store)
         assertEquals(2, search.search(SERVER, "old").size)
@@ -48,7 +48,7 @@ class LocalLibrarySearchTest {
     }
 
     @Test fun migratedRowsAreBackfilledBeforeReopenPublishesTheNewVersion() = withLibrary { store, repository ->
-        repository.putTracks(SERVER, 1, listOf(album(listOf(track("legacy", "École")))))
+        repository.putTracks(SERVER, 1, rowsOf(listOf(track("legacy", "École"))))
         repository.commit(SERVER, 1, LibrarySyncStability.Verified)
         store.driver.execute(null, "UPDATE track SET normalized_title = NULL, normalized_album_title = NULL", 0)
         store.driver.execute(null, "UPDATE search_index_meta SET normalization_version = 0", 0)
@@ -68,7 +68,6 @@ class LocalLibrarySearchTest {
     private fun id(raw: String) = ProviderItemId(SERVER, raw)
     private fun track(raw: String, title: String) = LibraryTrack(id(raw), title, emptyList(), null,
         1, 2, 30.seconds, AudioContainer.Flac, "source", "artwork")
-    private fun album(tracks: List<LibraryTrack>) = LibraryAlbum(id("album"), "Library", emptyList(),
-        null, 30.seconds, null, null, tracks)
+    private fun rowsOf(tracks: List<LibraryTrack>) = tracks.map { LibraryTrackRow("album", it) }
     private companion object { const val SERVER = "local-search-account" }
 }

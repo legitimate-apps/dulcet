@@ -10,10 +10,24 @@ import Foundation
         func check(_ condition: Bool, _ message: String) {
             if !condition { failures += 1; print("FAIL: \(message)") }
         }
-        for (available, hasSourceContainer) in [
-            (["a", "c"], true), ([], true), (["a", "missing", "c"], false),
-        ] as [([String], Bool)] {
-            let name = "\(CommandLine.arguments[1])-\(available.count).db"
+        // Coverage is the second dimension on purpose. `wholeLibrary` means the catalog can
+        // speak about absence, so an absent selection is cleared and no launch retries it.
+        // `partial` means track lists are still being read one album at a time, so absence is
+        // "not read yet" and clearing would destroy a good position from no evidence. The
+        // third catalog below is the discriminator: its selection IS present (just unplayable),
+        // so partial coverage must still act on it. A blanket bypass would fail that row.
+        for (available, hasSourceContainer, coverage) in [
+            (["a", "c"], true, DulcetLibraryCatalogCoverage.wholeLibrary),
+            ([], true, DulcetLibraryCatalogCoverage.wholeLibrary),
+            (["a", "missing", "c"], false, DulcetLibraryCatalogCoverage.wholeLibrary),
+            (["a", "c"], true, DulcetLibraryCatalogCoverage.partial),
+            ([], true, DulcetLibraryCatalogCoverage.partial),
+            (["a", "missing", "c"], false, DulcetLibraryCatalogCoverage.partial),
+        ] as [([String], Bool, DulcetLibraryCatalogCoverage)] {
+            // Absence is only unknown while the selection itself is unread. These are the rows
+            // where partial coverage must defer rather than clear.
+            let deferring = coverage == .partial && !available.contains("missing")
+            let name = "\(CommandLine.arguments[1])-\(available.count)-\(coverage).db"
             let seed = ApplePlaybackQueueClient(databaseName: name)
             let started = seed.replaceAndStart(request: ApplePlaybackQueueRequestDto(
                 items: ["a", "missing", "c"].map {
@@ -49,9 +63,11 @@ import Foundation
                     check(!tracks.isEmpty && tracks.allSatisfy { $0.sourceContainer == nil },
                           "nonempty catalog has no source-container metadata")
                 }
-                controller.restorePersistedQueue(with: tracks)
+                controller.restorePersistedQueue(with: tracks, catalogCoverage: coverage)
                 store.selectDestination(.nowPlaying)
-                let label = "available=\(available) containers=\(hasSourceContainer) launch=\(launch)"
+                let label =
+                    "available=\(available) containers=\(hasSourceContainer) "
+                    + "coverage=\(coverage) launch=\(launch)"
                 print("\(label) controller=\(controller.currentPresentation.status) surface=\(store.snapshot.state)")
                 check(controller.currentPresentation.status == .unavailable, "\(label) controller idle")
                 check(store.snapshot.state == .nowPlayingUnavailable, "\(label) published idle")
@@ -61,8 +77,21 @@ import Foundation
                 check(saved.errorKind == nil, "\(label) read durable queue")
                 check(saved.snapshot?.entries.map(\.rawId) == ["a", "missing", "c"], "\(label) preserved ALL persisted entries")
                 check(saved.snapshot?.entries.map(\.queueEntryId) == retainedIDs, "\(label) preserved queue identities")
-                check(saved.snapshot?.currentIndex == -1, "\(label) cleared selection")
-                check(reader.restoreCurrentPaused().startDirective == nil, "\(label) no stale restore directive")
+                if deferring {
+                    // Deferred, not disarmed: the saved position is exactly where it was, and
+                    // the durable queue still points at the same entry.
+                    check(saved.snapshot?.currentIndex == 1, "\(label) preserved selection")
+                    check(
+                        reader.restoreCurrentPaused().startDirective?.rawId == "missing",
+                        "\(label) durable selection still points at the saved entry"
+                    )
+                } else {
+                    check(saved.snapshot?.currentIndex == -1, "\(label) cleared selection")
+                    check(
+                        reader.restoreCurrentPaused().startDirective == nil,
+                        "\(label) no stale restore directive"
+                    )
+                }
                 reader.close()
                 controller.disconnect()
             }
@@ -91,7 +120,7 @@ import Foundation
             check(store.snapshot.state == .nowPlayingFailed, "explicit play publishes failure")
             print("explicit play controller=\(player.currentPresentation.status) surface=\(store.snapshot.state)")
             let beforeBypass = player.currentPresentation
-            player.restorePersistedQueue(with: [])
+            player.restorePersistedQueue(with: [], catalogCoverage: .wholeLibrary)
             print("after bypass controller=\(player.currentPresentation.status) surface=\(store.snapshot.state)")
             check(player.currentPresentation == beforeBypass, "bypassed restoration preserves failed presentation")
             check(store.snapshot.state == .nowPlayingFailed, "bypassed restoration still publishes failed state")
@@ -99,8 +128,9 @@ import Foundation
             // reject even an identical re-publication on repeated no-op restoration.
             var bypassPublications = 0
             player.setPresentationHandler { _ in bypassPublications += 1 }
-            player.restorePersistedQueue(with: [])
-            player.restorePersistedQueue(with: [unsupported])
+            player.restorePersistedQueue(with: [], catalogCoverage: .wholeLibrary)
+            player.restorePersistedQueue(with: [unsupported], catalogCoverage: .wholeLibrary)
+            player.restorePersistedQueue(with: [], catalogCoverage: .partial)
             check(bypassPublications == 0, "bypassed restoration publishes nothing")
             player.disconnect()
         }

@@ -1,0 +1,952 @@
+package com.legitimateapps.dulcet.core
+
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+/**
+ * The two properties the fill transport exists for, and one hazard that would silently undo both.
+ *
+ * 1. **The request count does not grow with the album count.** [fullSyncRequestCountDoesNotGrow...]
+ *    runs the same import over 8 albums and over 400 and requires the *identical* call counts at
+ *    the transport seam. Any per-album read has to come through that seam, so reintroducing one
+ *    breaks the equality by exactly the number of albums.
+ * 2. **The library the walks produce is the library `getAlbum` produced.**
+ *    [theWalkProducesTheSameLibraryAsGetAlbum] drives both shapes from one set of server responses:
+ *    the expected side goes through the production `getAlbumList2`/`getAlbum` parsers, the actual
+ *    side through the production walk parsers, the real engine and the real repository, and the
+ *    committed snapshots are compared field for field.
+ *
+ * What that second control can and cannot say is worth stating, because the difference is where
+ * this kind of test usually lies. It proves *our* two parse paths agree and that grouping songs by
+ * `albumId` reconstructs the same albums. It cannot prove the *server* sends the same values to
+ * both endpoints — that is a measurement, made against Navidrome 0.63.2 on 2026-09-11 over 2,500
+ * albums (60,000 field values, zero differences) and recorded in the spec.
+ */
+class LibrarySyncTransportTest {
+    @Test
+    fun fullSyncRequestCountDoesNotGrowWithTheNumberOfAlbums() = runTest {
+        val small = syncCallCounts(albumCount = 8)
+        val large = syncCallCounts(albumCount = 400)
+
+        assertEquals(
+            mapOf(
+                // One probe call, two requests: the empty query and the known positive it is
+                // validated against.
+                "probeEnumeration" to 1,
+                "musicFolders" to 2,
+                // Two walks each — one fill pass, one stable witness — and two requests per walk:
+                // the page, and the empty page that ends it. The second is the corroboration a
+                // short page needs, because a short page and a capped page are the same response
+                // (see `aSingleShortPageMidWalkDoesNotEndIt`). One extra request per walk is the
+                // whole price, and it does not grow with the library.
+                "artistPage" to 4,
+                "albumPage" to 4,
+                "trackPage" to 4,
+                "playlists" to 2,
+                "starred" to 2,
+                "genres" to 2,
+            ),
+            small.counts,
+            "a full import is a fixed number of walks: one fill pass and one stable witness each",
+        )
+        assertEquals(
+            small.counts,
+            large.counts,
+            "fifty times the albums must cost the same requests, or the transport reads per album",
+        )
+        assertTrue(
+            large.total < 400,
+            "an import of 400 albums that issues ${large.total} requests is reading per album",
+        )
+        assertEquals(400, large.committedAlbumIds.size)
+        assertEquals(400, large.committedTrackIds.size)
+    }
+
+    @Test
+    fun theWalkProducesTheSameLibraryAsGetAlbum() = runTest {
+        val fixture = libraryFixture()
+
+        // Expected: the transport this change replaced. `getAlbumList2` for the album row, then
+        // `getAlbum` for that album's songs, both through the production browse parsers.
+        val summaries = parseAlbumList(SERVER, fixture.albumListResponse())
+        val expected = summaries.map { summary ->
+            parseAlbum(SERVER, summary, fixture.albumResponse(summary.id.rawId))
+        }
+
+        withRepository { repository ->
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 3)
+                    .synchronize(SERVER, WalkSource(fixture)),
+            )
+            val committed = repository.readCommittedLibrary(SERVER).library
+
+            assertEquals(
+                expected.map { it.id.rawId }.sorted(),
+                committed.albums.map { it.id.rawId }.sorted(),
+            )
+            expected.forEach { album ->
+                val actual = committed.albums.single { it.id.rawId == album.id.rawId }
+                assertEquals(album.title, actual.title, "title of ${album.id.rawId}")
+                assertEquals(album.credits, actual.credits, "credits of ${album.id.rawId}")
+                assertEquals(album.year, actual.year, "year of ${album.id.rawId}")
+                assertEquals(album.artworkKey, actual.artworkKey, "artwork of ${album.id.rawId}")
+                assertEquals(album.mediaSourceId, actual.mediaSourceId, "source of ${album.id.rawId}")
+                assertEquals(
+                    album.tracks.sortedBy { it.id.rawId },
+                    actual.tracks.sortedBy { it.id.rawId },
+                    "tracks of ${album.id.rawId}",
+                )
+                // The album-level duration is the one field where the two transports can disagree,
+                // and only when the album row omits `duration`: `getAlbum` then falls back to
+                // summing its songs, while the walk keeps the album row's own value. The fixture
+                // exercises that case deliberately. It does not arise on the reference server —
+                // OBSERVED 2026-09-11, every album row on both an 8-album and a 2,500-album
+                // Navidrome 0.63.2 library carried a `duration`, and all 15,048 album-level field
+                // values matched `getAlbum` exactly.
+                assertEquals(
+                    summaries.single { it.id.rawId == album.id.rawId }.duration,
+                    actual.duration,
+                    "duration of ${album.id.rawId}",
+                )
+            }
+            assertEquals(
+                fixture.artistIds.sorted(),
+                committed.artists.map { it.id.rawId }.sorted(),
+            )
+            assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
+        }
+    }
+
+    @Test
+    fun aServerThatSilentlyServesShorterPagesStillImportsEveryRow() = runTest {
+        withRepository { repository ->
+            // The reference server caps `getAlbumList2` at 500 rows without saying so (OBSERVED
+            // 2026-09-11). A walk that ended on "shorter than I asked for" would stop at the cap
+            // and commit a library missing everything past it, with no error anywhere.
+            val source = CappedSource(GeneratedSource(albumCount = 250), serverPageCap = 100)
+
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 500).synchronize(SERVER, source),
+            )
+
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(250, committed.albumIds.size, "the walk stopped at the server's silent cap")
+            assertEquals(250, committed.trackIds.size)
+            assertEquals(
+                100,
+                source.largestPageServed,
+                "the control proved nothing: the fake server never actually capped a page",
+            )
+        }
+    }
+
+    @Test
+    fun aResumedWalkCostsTheSameRequestsAsAnUninterruptedOne() = runTest {
+        // Five albums at two per page: 2, 2, 1, then the empty page that ends the walk. The
+        // interrupted run dies fetching page three, so the resumed run re-validates the two pages
+        // it already wrote and then finishes the walk itself.
+        val uninterrupted = withRepository { repository ->
+            val source = CountingSource(GeneratedSource(albumCount = 5))
+            assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+            source.counts.getValue("albumPage")
+        }
+        assertEquals(8, uninterrupted, "fill 2+2+1+0 pages, then an identical witness walk")
+
+        withRepository { repository ->
+            val failing = GeneratedSource(albumCount = 5).failingAlbumPageAt(failureOffset = 4)
+            val engine = LibrarySyncEngine(repository, enumerationPageSize = 2)
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, failing))
+
+            val resumed = CountingSource(GeneratedSource(albumCount = 5))
+            val completed = assertIs<LibrarySyncResult.Completed>(engine.synchronize(SERVER, resumed))
+
+            assertEquals(
+                LibrarySyncStability.Verified,
+                completed.stability,
+                "nothing changed on the server between the interruption and the resume",
+            )
+            // 2 to re-validate the written prefix, 2 to finish the fill, 4 for the witness walk.
+            // A resumed walk has to reach the same page count as a fresh one, or its witness
+            // reports a change that never happened and the stage is rewritten for nothing.
+            assertEquals(
+                8,
+                resumed.counts.getValue("albumPage"),
+                "the resumed walk did not cost what an uninterrupted one costs",
+            )
+            assertEquals(5, repository.readCommitted(SERVER).albumIds.size)
+        }
+    }
+
+    @Test
+    fun aSingleShortPageMidWalkDoesNotEndIt() = runTest {
+        withRepository { repository ->
+            // A page can be short for two unrelated reasons — the list ended, or the server served
+            // fewer rows than asked — and the response does not say which. Reading the first as the
+            // end drops every row after it, silently, and (before the songs walk gained its own
+            // known positive) reported the result as verified.
+            val source = OneShortPageSource(GeneratedSource(albumCount = 10), shortAtOffset = 4)
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 4).synchronize(SERVER, source),
+            )
+
+            assertTrue(source.servedShortPage, "the control proved nothing: no short page was served")
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            assertEquals(10, repository.readCommitted(SERVER).trackIds.size)
+        }
+    }
+
+    @Test
+    fun anAlbumsWalkThatFindsAlbumsAndASongsWalkThatFindsNothingIsRejected() = runTest {
+        withRepository { repository ->
+            val noSongs = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
+                override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
+            }
+
+            val failed = assertIs<LibrarySyncResult.Failed>(
+                LibrarySyncEngine(repository).synchronize(SERVER, noSongs),
+            )
+
+            assertEquals(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync), failed.error)
+            assertEquals(0, repository.committedGeneration())
+        }
+    }
+
+    @Test
+    fun asongsWalkThatGoesEmptyCannotEmptyAnAlreadyCommittedLibrary() = runTest {
+        withRepository { repository ->
+            val engine = LibrarySyncEngine(repository)
+            assertIs<LibrarySyncResult.Completed>(
+                engine.synchronize(SERVER, GeneratedSource(albumCount = 4)),
+            )
+            assertEquals(4, repository.readCommitted(SERVER).trackIds.size)
+
+            val noSongs = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
+                override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
+            }
+
+            // The damaging shape is the RETRY, not the first rejection, and a rejection that only
+            // holds once is worse than none: it converts a loud failure into a silent success at
+            // the second press of the button. Loop it.
+            repeat(4) { attempt ->
+                assertIs<LibrarySyncResult.Failed>(
+                    engine.synchronize(SERVER, noSongs),
+                    "sync ${attempt + 1} against a server enumerating no songs",
+                )
+                val committed = repository.readCommitted(SERVER)
+                assertEquals(1, committed.generation, "generation moved on retry ${attempt + 1}")
+                assertEquals(4, committed.trackIds.size, "tracks lost on retry ${attempt + 1}")
+            }
+
+            // Rejecting forever is only half the contract: a rejection that leaves the stage
+            // unrepeatable would make even a healthy server unable to refill it, and no shipping
+            // caller can pass restart = true to clear that.
+            val recovered = assertIs<LibrarySyncResult.Completed>(
+                engine.synchronize(SERVER, GeneratedSource(albumCount = 4)),
+            )
+            assertEquals(LibrarySyncStability.Verified, recovered.stability)
+            assertEquals(2, repository.readCommitted(SERVER).generation)
+            assertEquals(4, repository.readCommitted(SERVER).trackIds.size)
+        }
+    }
+
+    @Test
+    fun aSpuriousEmptyPageMidWalkCannotCommitAsVerified() = runTest {
+        withRepository { repository ->
+            // An empty page is the only thing that ends a walk, so a server that emits one in the
+            // middle of a list truncates the import and the re-walk agrees with it deterministically
+            // — the witness cannot see it. What catches it is the per-album invariant: albums left
+            // with no tracks at all.
+            val source = EmptyPageSource(GeneratedSource(albumCount = 10), emptyAtOffset = 4)
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+
+            assertTrue(source.servedEmptyPage, "the control proved nothing: no empty page was served")
+            assertEquals(
+                LibrarySyncStability.Unverified,
+                completed.stability,
+                "six albums committed with no tracks at all cannot be reported as verified",
+            )
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(10, committed.albumIds.size)
+            assertEquals(4, committed.trackIds.size)
+        }
+    }
+
+    @Test
+    fun anAlbumDeletedBetweenTheTwoWalksIsNotCommittedAsVerified() = runTest {
+        withRepository { repository ->
+            // The songs walk cannot tell "this album was deleted a moment ago" from "this album has
+            // no songs", and the album row is already written. One phantom album is a small, real
+            // consequence of walking two lists at two instants; committing it as verified is not.
+            val source = MissingSongsForAlbumSource(GeneratedSource(albumCount = 4), "album-1")
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+
+            assertEquals(LibrarySyncStability.Unverified, completed.stability)
+            assertEquals(4, repository.readCommitted(SERVER).albumIds.size)
+            assertEquals(3, repository.readCommitted(SERVER).trackIds.size)
+            assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
+        }
+    }
+
+    @Test
+    fun aResumeWhoseAlbumSetWentStaleIsNotCommittedAsVerified() = runTest {
+        withRepository { repository ->
+            val engine = LibrarySyncEngine(repository, enumerationPageSize = 4)
+            val dying = object : LibrarySyncSource by GeneratedSource(albumCount = 10) {
+                override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+                    throw LibraryRequestFailure(DomainError.Transport.Unreachable)
+            }
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, dying))
+            assertEquals(LibrarySyncStage.Tracks, assertNotNull(repository.checkpoint(SERVER)).stage)
+
+            // The albums stage has completed, so the resume does not re-walk it: the tracks stage
+            // reads the album set this generation already wrote. If the server lost albums in
+            // between, that set is stale and nothing re-validates it — a known limit of walking two
+            // lists at two instants (spec 16.5). What must not happen is committing the phantoms as
+            // a verified library.
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                engine.synchronize(SERVER, GeneratedSource(albumCount = 5)),
+            )
+
+            assertEquals(LibrarySyncStability.Unverified, completed.stability)
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(10, committed.albumIds.size, "the stale album set is what got committed")
+            assertEquals(5, committed.trackIds.size)
+            assertEquals(0, repository.visibleDanglingReferenceCount(SERVER))
+        }
+    }
+
+    @Test
+    fun aResumedWitnessCostsOneWalk() = runTest {
+        withRepository { repository ->
+            val engine = LibrarySyncEngine(repository, enumerationPageSize = 2)
+            val interrupted = CountingSource(
+                GeneratedSource(albumCount = 5).failingAlbumPageAt(failureOffset = 0, afterCalls = 4),
+            )
+            assertIs<LibrarySyncResult.Failed>(engine.synchronize(SERVER, interrupted))
+            val checkpoint = assertNotNull(repository.checkpoint(SERVER))
+            assertEquals(LibrarySyncStage.Albums, checkpoint.stage)
+            assertEquals(
+                1,
+                checkpoint.attempt,
+                "the interruption must land on the witness walk, not the fill",
+            )
+
+            val resumed = CountingSource(GeneratedSource(albumCount = 5))
+            val completed = assertIs<LibrarySyncResult.Completed>(engine.synchronize(SERVER, resumed))
+
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            // One clean witness walk: 2, 2, 1, 0. A resumed witness comparing against the fill's
+            // own page count instead of the baseline it produced cannot match a walk that has not
+            // changed, and pays two walks proving it while spending one of three attempts.
+            assertEquals(
+                4,
+                resumed.counts.getValue("albumPage"),
+                "the resumed witness did not cost exactly one walk",
+            )
+        }
+    }
+
+    @Test
+    fun aWalkTheServerWillNotLetTerminateFailsInsteadOfRunningForever() = runTest {
+        withRepository { repository ->
+            val source = OffsetIgnoringSource(GeneratedSource(albumCount = 4))
+
+            val failed = assertIs<LibrarySyncResult.Failed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2, maxEnumerationPages = 8)
+                    .synchronize(SERVER, source),
+            )
+
+            assertEquals(DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync), failed.error)
+            assertEquals(0, repository.committedGeneration())
+            // Assert the COUNT, not just the outcome. Without it the control passes for any bound
+            // at all, including one high enough to be indistinguishable from no bound; without the
+            // bound the suite does not fail, it hangs, because nothing in the walk suspends.
+            assertEquals(8, source.albumPageCalls, "the walk did not stop at its declared ceiling")
+        }
+    }
+
+    @Test
+    fun aSongNamingAnAlbumThisGenerationNeverSawIsDroppedAndReportedUnverified() = runTest {
+        withRepository { repository ->
+            val source = ForeignAlbumSongSource(GeneratedSource(albumCount = 4))
+
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2).synchronize(SERVER, source),
+            )
+
+            assertEquals(
+                LibrarySyncCompletionStability.Unverified,
+                when (completed.stability) {
+                    LibrarySyncStability.Verified -> LibrarySyncCompletionStability.Verified
+                    LibrarySyncStability.Unverified -> LibrarySyncCompletionStability.Unverified
+                },
+                "a dropped song is a library that changed under the pass, and must say so",
+            )
+            val committed = repository.readCommitted(SERVER)
+            assertEquals(4, committed.albumIds.size)
+            assertEquals(3, committed.trackIds.size, "the song naming an unseen album was dropped")
+            assertEquals(
+                0,
+                repository.visibleDanglingReferenceCount(SERVER),
+                "storing it instead would leave a track pointing at no album",
+            )
+        }
+    }
+
+    @Test
+    fun bothParsersReadOneServerRowToTheSameValues() {
+        val fixture = libraryFixture()
+        val listShape = parseAlbumList(SERVER, fixture.albumListResponse())
+        val walkShape = parseEnumeratedAlbums(SERVER, fixture.albumPageResponse(0, 100))
+
+        // Whole-object equality on purpose: a field added to one parser and not the other is a
+        // divergence between what the browse view shows and what the mirror stores, and this is
+        // the assertion that says so at the moment it is introduced.
+        assertEquals(listShape, walkShape)
+
+        val album = fixture.albumResponse(listShape.first().id.rawId)
+        val detailTracks = parseAlbum(SERVER, listShape.first(), album).tracks
+        val walkTracks = parseEnumeratedTracks(SERVER, fixture.songPageResponse(0, 100))
+            .filter { it.albumRawId == listShape.first().id.rawId }
+            .map(LibraryTrackRow::track)
+        assertEquals(detailTracks, walkTracks)
+        assertTrue(detailTracks.isNotEmpty(), "the fixture album must actually carry tracks")
+    }
+
+    @Test
+    fun anEmptyEnumerationIsRejectedUnlessTheLibraryIsAlsoEmptyToAKnownPositive() = runTest {
+        withRepository { repository ->
+            val cannotEnumerate = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {
+                override suspend fun probeEnumeration() =
+                    LibraryEnumerationProbe(knownPositiveAlbumCount = 1, enumeratedAlbumCount = 0)
+
+                override suspend fun albumPage(offset: Long, size: Int) = emptyList<AlbumSummary>()
+                override suspend fun trackPage(offset: Long, size: Int) = emptyList<LibraryTrackRow>()
+        }
+
+        val failed = assertIs<LibrarySyncResult.Failed>(
+            LibrarySyncEngine(repository).synchronize(SERVER, cannotEnumerate),
+        )
+
+        assertEquals(
+            DomainError.CapabilityUnsupported(CapabilityFeature.LibrarySync),
+            failed.error,
+        )
+        assertEquals(
+            0,
+            repository.committedGeneration(),
+            "a server that cannot enumerate must not commit an empty library over a full one",
+        )
+        }
+    }
+
+    @Test
+    fun anEmptyLibraryEnumeratesToAnEmptyLibraryWithoutFailing() = runTest {
+        withRepository { repository ->
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository).synchronize(SERVER, GeneratedSource(albumCount = 0)),
+            )
+
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            assertEquals(emptyList(), repository.readCommitted(SERVER).albumIds)
+        }
+    }
+
+    @Test
+    fun everyWalkAsksForOneEntityAndZeroesTheOtherTwo() {
+        assertEquals(
+            mapOf(
+                "query" to "\"\"",
+                "artistCount" to "0",
+                "albumCount" to "500",
+                "songCount" to "0",
+                "albumOffset" to "1000",
+            ),
+            libraryEnumerationParameters(LibraryEnumerationKind.Album, offset = 1000, size = 500),
+        )
+        assertEquals(
+            mapOf(
+                "query" to "\"\"",
+                "artistCount" to "0",
+                "albumCount" to "0",
+                "songCount" to "7",
+                "songOffset" to "0",
+            ),
+            libraryEnumerationParameters(LibraryEnumerationKind.Song, offset = 0, size = 7),
+        )
+    }
+
+    @Test
+    fun aSongThatCannotBeFiledUnderAnAlbumFailsInsteadOfVanishing() {
+        val body = searchResponse(
+            "song",
+            listOf(
+                jsonObject(
+                    "id" to JsonPrimitive("track"),
+                    "title" to JsonPrimitive("Orphan"),
+                    "suffix" to JsonPrimitive("flac"),
+                ),
+            ),
+        )
+
+        val failure = kotlin.runCatching { parseEnumeratedTracks(SERVER, body) }.exceptionOrNull()
+
+        assertIs<LibraryRequestFailure>(failure)
+        assertEquals(DomainError.Protocol.MalformedEnvelope, failure.error)
+    }
+
+    private suspend fun syncCallCounts(albumCount: Int): SyncCallCounts =
+        withRepository { repository ->
+                val source = CountingSource(GeneratedSource(albumCount = albumCount))
+
+                assertIs<LibrarySyncResult.Completed>(
+                    LibrarySyncEngine(repository, enumerationPageSize = 500).synchronize(SERVER, source),
+                )
+
+                val committed = repository.readCommitted(SERVER)
+                SyncCallCounts(source.counts.toMap(), committed.albumIds, committed.trackIds)
+        }
+
+    /**
+     * Opens a database for one test and always closes it.
+     *
+     * 🚨 Not tidiness. On Kotlin/Native the test driver opens an in-memory database **by name**, so
+     * every test in the binary shares one database for as long as any connection to it is open. A
+     * single test that leaks its driver leaves its committed generation visible to every test that
+     * runs after it: OBSERVED 2026-09-11, one missing `close()` here turned 11 unrelated tests red
+     * on macosArm64 while the whole suite stayed green on the JVM.
+     */
+    private suspend fun <T> withRepository(body: suspend (LibrarySyncRepository) -> T): T {
+        val driver = createTestDriver()
+        return try {
+            body(LibrarySyncRepository(DulcetDatabaseStore.open(driver)))
+        } finally {
+            driver.close()
+        }
+    }
+
+    private class SyncCallCounts(
+        val counts: Map<String, Int>,
+        val committedAlbumIds: List<String>,
+        val committedTrackIds: List<String>,
+    ) {
+        val total: Int get() = counts.values.sum()
+    }
+
+    /**
+     * Counts every call that reaches the transport seam.
+     *
+     * Written as explicit overrides rather than a reflective proxy so that a new source method
+     * cannot be added without deciding, here, whether it costs a request per album.
+     */
+    private class CountingSource(private val delegate: LibrarySyncSource) : LibrarySyncSource {
+        val counts = mutableMapOf<String, Int>()
+
+        private fun <T> record(name: String, value: T): T {
+            counts[name] = counts.getOrElse(name) { 0 } + 1
+            return value
+        }
+
+        override suspend fun musicFolders() = record("musicFolders", delegate.musicFolders())
+        override suspend fun probeEnumeration() =
+            record("probeEnumeration", delegate.probeEnumeration())
+
+        override suspend fun artistPage(offset: Long, size: Int) =
+            record("artistPage", delegate.artistPage(offset, size))
+
+        override suspend fun albumPage(offset: Long, size: Int) =
+            record("albumPage", delegate.albumPage(offset, size))
+
+        override suspend fun trackPage(offset: Long, size: Int) =
+            record("trackPage", delegate.trackPage(offset, size))
+
+        override suspend fun playlists() = record("playlists", delegate.playlists())
+        override suspend fun playlist(summary: LibraryPlaylistSummary) =
+            record("playlist", delegate.playlist(summary))
+
+        override suspend fun starred() = record("starred", delegate.starred())
+        override suspend fun genres() = record("genres", delegate.genres())
+    }
+
+    /**
+     * Wraps a source so one album-page request fails, once, at a chosen offset — optionally only
+     * after [afterCalls] earlier album pages, which is how an interruption is aimed at the witness
+     * walk rather than the fill.
+     */
+    private fun LibrarySyncSource.failingAlbumPageAt(
+        failureOffset: Long,
+        afterCalls: Int = 0,
+    ): LibrarySyncSource {
+        val delegate = this
+        return object : LibrarySyncSource by delegate {
+            private var armed = true
+            private var calls = 0
+
+            override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> {
+                calls += 1
+                if (armed && offset == failureOffset && calls > afterCalls) {
+                    armed = false
+                    throw LibraryRequestFailure(DomainError.Transport.Unreachable)
+                }
+                return delegate.albumPage(offset, size)
+            }
+        }
+    }
+
+    /** A server that silently serves fewer rows than the page asked for, every page. */
+    private class CappedSource(
+        private val delegate: LibrarySyncSource,
+        private val serverPageCap: Int,
+    ) : LibrarySyncSource by delegate {
+        var largestPageServed = 0
+            private set
+
+        override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> =
+            delegate.albumPage(offset, minOf(size, serverPageCap)).also(::record)
+
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            delegate.trackPage(offset, minOf(size, serverPageCap)).also(::record)
+
+        private fun record(page: List<*>) {
+            largestPageServed = maxOf(largestPageServed, page.size)
+        }
+    }
+
+    /** A server that serves one short page in the middle of an otherwise healthy walk. */
+    private class OneShortPageSource(
+        private val delegate: LibrarySyncSource,
+        private val shortAtOffset: Long,
+    ) : LibrarySyncSource by delegate {
+        var servedShortPage = false
+            private set
+
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> {
+            if (offset != shortAtOffset) return delegate.trackPage(offset, size)
+            servedShortPage = true
+            return delegate.trackPage(offset, maxOf(1, size - 1))
+        }
+    }
+
+    /** A server that serves one spurious EMPTY page in the middle of an otherwise healthy walk. */
+    private class EmptyPageSource(
+        private val delegate: LibrarySyncSource,
+        private val emptyAtOffset: Long,
+    ) : LibrarySyncSource by delegate {
+        var servedEmptyPage = false
+            private set
+
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> {
+            if (offset != emptyAtOffset) return delegate.trackPage(offset, size)
+            servedEmptyPage = true
+            return emptyList()
+        }
+    }
+
+    /** A server whose songs walk has lost one album's songs since the albums walk ran. */
+    private class MissingSongsForAlbumSource(
+        private val delegate: LibrarySyncSource,
+        private val albumRawId: String,
+    ) : LibrarySyncSource by delegate {
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            delegate.trackPage(offset, size).filterNot { it.albumRawId == albumRawId }
+    }
+
+    /** A server whose pages ignore the offset, so the walk can never reach the end. */
+    private class OffsetIgnoringSource(
+        private val delegate: LibrarySyncSource,
+    ) : LibrarySyncSource by delegate {
+        var albumPageCalls = 0
+            private set
+
+        override suspend fun albumPage(offset: Long, size: Int): List<AlbumSummary> {
+            albumPageCalls += 1
+            return delegate.albumPage(0, size)
+        }
+    }
+
+    /** A server whose songs name an album the albums walk never returned. */
+    private class ForeignAlbumSongSource(
+        private val delegate: LibrarySyncSource,
+    ) : LibrarySyncSource by delegate {
+        override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> =
+            delegate.trackPage(offset, size).mapIndexed { index, row ->
+                if (index == 0 && offset == 0L) row.copy(albumRawId = "album-added-mid-pass") else row
+            }
+    }
+
+    /** A library of [albumCount] albums with one track each, served as three walks. */
+    private class GeneratedSource(private val albumCount: Int) : LibrarySyncSource {
+        private val albums = List(albumCount) { index ->
+            AlbumSummary(
+                id = ProviderItemId(SERVER, "album-$index"),
+                title = "Album $index",
+                credits = emptyList(),
+                year = null,
+                duration = kotlin.time.Duration.ZERO,
+                mediaSourceId = null,
+                artworkKey = null,
+            )
+        }
+        private val tracks = albums.map { album ->
+            LibraryTrackRow(
+                albumRawId = album.id.rawId,
+                track = LibraryTrack(
+                    id = ProviderItemId(SERVER, "track-${album.id.rawId}"),
+                    title = "Track ${album.id.rawId}",
+                    credits = emptyList(),
+                    albumTitle = album.title,
+                    discNumber = null,
+                    trackNumber = 1,
+                    duration = kotlin.time.Duration.ZERO,
+                    sourceContainer = AudioContainer.Flac,
+                    mediaSourceId = null,
+                    artworkKey = null,
+                ),
+            )
+        }
+
+        override suspend fun musicFolders() =
+            listOf(LibraryMusicFolder(ProviderItemId(SERVER, "folder"), "Music"))
+
+        override suspend fun probeEnumeration() = LibraryEnumerationProbe(
+            knownPositiveAlbumCount = minOf(albumCount, 1),
+            enumeratedAlbumCount = minOf(albumCount, 1),
+        )
+
+        override suspend fun artistPage(offset: Long, size: Int): List<LibraryArtist> =
+            listOf(LibraryArtist(ProviderItemId(SERVER, "artist"), "Artist", null))
+                .drop(offset.toInt()).take(size)
+
+        override suspend fun albumPage(offset: Long, size: Int) =
+            albums.drop(offset.toInt()).take(size)
+
+        override suspend fun trackPage(offset: Long, size: Int) =
+            tracks.drop(offset.toInt()).take(size)
+
+        override suspend fun playlists() = emptyList<LibraryPlaylistSummary>()
+        override suspend fun playlist(summary: LibraryPlaylistSummary) =
+            LibraryPlaylist(summary, emptyList())
+
+        override suspend fun starred() = emptyList<LibraryStarredItem>()
+        override suspend fun genres() = emptyList<LibraryGenre>()
+    }
+
+    /** Serves [LibraryFixture]'s `search3` pages through the production walk parsers. */
+    private class WalkSource(private val fixture: LibraryFixture) : LibrarySyncSource {
+        override suspend fun musicFolders() =
+            listOf(LibraryMusicFolder(ProviderItemId(SERVER, "folder"), "Music"))
+
+        override suspend fun probeEnumeration() = LibraryEnumerationProbe(1, 1)
+
+        override suspend fun artistPage(offset: Long, size: Int) =
+            parseEnumeratedArtists(SERVER, fixture.artistPageResponse(offset, size))
+
+        override suspend fun albumPage(offset: Long, size: Int) =
+            parseEnumeratedAlbums(SERVER, fixture.albumPageResponse(offset, size))
+
+        override suspend fun trackPage(offset: Long, size: Int) =
+            parseEnumeratedTracks(SERVER, fixture.songPageResponse(offset, size))
+
+        override suspend fun playlists() = emptyList<LibraryPlaylistSummary>()
+        override suspend fun playlist(summary: LibraryPlaylistSummary) =
+            LibraryPlaylist(summary, emptyList())
+
+        override suspend fun starred() = emptyList<LibraryStarredItem>()
+        override suspend fun genres() = emptyList<LibraryGenre>()
+    }
+
+    /**
+     * One library rendered in both wire shapes from one set of facts.
+     *
+     * The variety is deliberate: a multi-disc release, a track with no artist credit, a track with
+     * no artwork, a missing duration, a missing year and four container suffixes. A comparison over
+     * fields that are null on both sides proves nothing.
+     *
+     * What it does NOT cover, and cannot: several album artists. `al-2` carries the reference
+     * server's rendering of one — a single `artist` string joining them — and neither parser splits
+     * it, nor does either read OpenSubsonic's `artists[]`/`albumArtists[]` arrays. So both
+     * transports produce exactly one credit from one field, which is why they agree here; it is not
+     * evidence that multi-artist releases are handled. The live corpus does hold such a release,
+     * and the two transports produced identical rows for it — identically single-credit.
+     */
+    private class LibraryFixture(private val albums: List<JsonObject>) {
+        val artistIds: List<String> = albums.mapNotNull { album ->
+            (album["artistId"] as? JsonPrimitive)?.content
+        }.distinct()
+
+        private fun songs(album: JsonObject): List<JsonObject> =
+            (album["song"] as? JsonArray).orEmpty().map { it as JsonObject }
+
+        private fun albumRow(album: JsonObject): JsonObject =
+            JsonObject(album.filterKeys { it != "song" })
+
+        fun albumListResponse(): String = envelope("albumList2", "album", albums.map(::albumRow))
+
+        fun albumResponse(rawId: String): String {
+            val album = albums.single { (it["id"] as JsonPrimitive).content == rawId }
+            return "{\"subsonic-response\":{\"status\":\"ok\",\"album\":$album}}"
+        }
+
+        fun albumPageResponse(offset: Long, size: Int): String = searchResponse(
+            "album",
+            albums.map(::albumRow).drop(offset.toInt()).take(size),
+        )
+
+        fun songPageResponse(offset: Long, size: Int): String = searchResponse(
+            "song",
+            albums.flatMap { album ->
+                songs(album).map { song ->
+                    JsonObject(song + ("albumId" to album.getValue("id")))
+                }
+            }.drop(offset.toInt()).take(size),
+        )
+
+        fun artistPageResponse(offset: Long, size: Int): String = searchResponse(
+            "artist",
+            albums.mapNotNull { album ->
+                val id = album["artistId"] as? JsonPrimitive ?: return@mapNotNull null
+                jsonObject("id" to id, "name" to album.getValue("artist"))
+            }.distinctBy { (it.getValue("id") as JsonPrimitive).content }
+                .drop(offset.toInt()).take(size),
+        )
+
+        private fun envelope(container: String, field: String, rows: List<JsonObject>): String =
+            "{\"subsonic-response\":{\"status\":\"ok\",\"$container\":" +
+                "{\"$field\":${JsonArray(rows)}}}}"
+    }
+
+    private companion object {
+        const val SERVER = "server:transport"
+
+        fun jsonObject(vararg fields: Pair<String, JsonElement>): JsonObject =
+            JsonObject(fields.toMap().filterValues { it != JsonNull })
+
+        fun searchResponse(field: String, rows: List<JsonObject>): String =
+            "{\"subsonic-response\":{\"status\":\"ok\",\"searchResult3\":" +
+                "{\"$field\":${JsonArray(rows)}}}}"
+
+        fun song(
+            id: String,
+            title: String,
+            albumTitle: String,
+            artist: String?,
+            artistId: String?,
+            disc: Int?,
+            track: Int?,
+            duration: Int?,
+            suffix: String?,
+            contentType: String?,
+            coverArt: String?,
+        ): JsonObject = jsonObject(
+            "id" to JsonPrimitive(id),
+            "title" to JsonPrimitive(title),
+            "album" to JsonPrimitive(albumTitle),
+            "artist" to (artist?.let(::JsonPrimitive) ?: JsonNull),
+            "artistId" to (artistId?.let(::JsonPrimitive) ?: JsonNull),
+            "discNumber" to (disc?.let(::JsonPrimitive) ?: JsonNull),
+            "track" to (track?.let(::JsonPrimitive) ?: JsonNull),
+            "duration" to (duration?.let(::JsonPrimitive) ?: JsonNull),
+            "suffix" to (suffix?.let(::JsonPrimitive) ?: JsonNull),
+            "contentType" to (contentType?.let(::JsonPrimitive) ?: JsonNull),
+            "coverArt" to (coverArt?.let(::JsonPrimitive) ?: JsonNull),
+        )
+
+        fun album(
+            id: String,
+            name: String,
+            artist: String?,
+            artistId: String?,
+            year: Int?,
+            duration: Int?,
+            coverArt: String?,
+            songs: List<JsonObject>,
+        ): JsonObject = jsonObject(
+            "id" to JsonPrimitive(id),
+            "name" to JsonPrimitive(name),
+            "artist" to (artist?.let(::JsonPrimitive) ?: JsonNull),
+            "artistId" to (artistId?.let(::JsonPrimitive) ?: JsonNull),
+            "year" to (year?.let(::JsonPrimitive) ?: JsonNull),
+            "duration" to (duration?.let(::JsonPrimitive) ?: JsonNull),
+            "coverArt" to (coverArt?.let(::JsonPrimitive) ?: JsonNull),
+            "song" to JsonArray(songs),
+        )
+
+        fun libraryFixture() = LibraryFixture(
+            listOf(
+                album(
+                    id = "al-1", name = "Двойные линии", artist = "Хор", artistId = "ar-1",
+                    year = 1998, duration = 244, coverArt = "al-1_6aa3",
+                    songs = listOf(
+                        song(
+                            "tr-1", "Первая", "Двойные линии", "Хор", "ar-1",
+                            disc = 1, track = 1, duration = 121, suffix = "flac",
+                            contentType = "audio/flac", coverArt = "mf-tr-1_1",
+                        ),
+                        song(
+                            "tr-2", "Вторая", "Двойные линии", "Хор", "ar-1",
+                            disc = 2, track = 1, duration = 123, suffix = "mp3",
+                            contentType = "audio/mpeg", coverArt = "mf-tr-2_1",
+                        ),
+                    ),
+                ),
+                album(
+                    id = "al-2", name = "Several Album Artists",
+                    artist = "Alpha • Beta", artistId = "ar-2", year = null, duration = 60,
+                    coverArt = "al-2_1",
+                    songs = listOf(
+                        song(
+                            "tr-3", "No credit at all", "Several Album Artists", null, null,
+                            disc = null, track = 4, duration = 60, suffix = "m4a",
+                            contentType = "audio/mp4", coverArt = null,
+                        ),
+                    ),
+                ),
+                album(
+                    id = "al-3", name = "Unknown duration", artist = "Solo", artistId = "ar-3",
+                    year = 2026, duration = null, coverArt = null,
+                    songs = listOf(
+                        song(
+                            "tr-4", "No duration", "Unknown duration", "Solo", "ar-3",
+                            disc = null, track = null, duration = null, suffix = null,
+                            contentType = "application/ogg", coverArt = "mf-tr-4_1",
+                        ),
+                        song(
+                            "tr-5", "Aac by suffix", "Unknown duration", "Solo", "ar-3",
+                            disc = null, track = 2, duration = 3, suffix = "aac",
+                            contentType = null, coverArt = null,
+                        ),
+                    ),
+                ),
+                album(
+                    id = "al-4", name = "Fourth, to force a second page", artist = "Solo",
+                    artistId = "ar-3", year = 2001, duration = 1, coverArt = "al-4_2",
+                    songs = listOf(
+                        song(
+                            "tr-6", "Last", "Fourth, to force a second page", "Solo", "ar-3",
+                            disc = null, track = 1, duration = 1, suffix = "wav",
+                            contentType = "audio/wav", coverArt = "mf-tr-6_1",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+}

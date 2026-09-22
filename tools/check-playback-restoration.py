@@ -31,12 +31,32 @@ with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".bu
         "-o", str(temp / "check"),
     ], check=True)
     prefix = f"dulcet-restoration-check-{uuid.uuid4()}"
+    assert prefix.startswith("dulcet-restoration-check-"), prefix
+    # NativeSqliteDriver's macOS database directory. Everything this run creates begins with the
+    # run's own fresh UUID prefix, so deriving the cleanup from that prefix cannot reach the app's
+    # dulcet.db and cannot stop matching when the Swift renames its databases.
+    #
+    # It did stop matching. This loop used to delete a hardcoded `{prefix}-{count}.db` for counts
+    # (0, 2, 3); when the control gained a coverage dimension the Swift began writing
+    # `{prefix}-{count}-{coverage}.db` and every file leaked. MEASURED 2026-09-11 before this
+    # change: 264 files across 54 run prefixes, and ZERO in the old naming -- which is the
+    # positive control that the cleanup worked until the rename and has deleted nothing since.
+    database_dir = Path.home() / "Library/Application Support/databases"
+    failure = None
     try:
         subprocess.run([str(temp / "check"), prefix], check=True)
+    except subprocess.CalledProcessError as error:
+        failure = error
     finally:
-        # NativeSqliteDriver's macOS database directory. Only these three newly named
-        # synthetic databases belong to this run; never open the app's dulcet.db.
-        database_dir = Path.home() / "Library/Application Support/databases"
-        for count in (0, 2, 3):
-            for suffix in ("", "-wal", "-shm", "-journal"):
-                (database_dir / f"{prefix}-{count}.db{suffix}").unlink(missing_ok=True)
+        for path in sorted(database_dir.glob(f"{prefix}*")):
+            path.unlink(missing_ok=True)
+    if failure is not None:
+        raise failure
+    # A cleanup that silently stops matching is what produced those 264 files, so the run now
+    # proves it removed its own databases rather than assuming the pattern still fits.
+    leaked = sorted(path.name for path in database_dir.glob(f"{prefix}*"))
+    if leaked:
+        raise SystemExit(
+            "restoration check left its synthetic databases behind, so its cleanup no longer "
+            f"matches what the Swift writes: {leaked}"
+        )

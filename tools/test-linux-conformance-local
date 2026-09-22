@@ -3,6 +3,7 @@
 
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -184,8 +185,35 @@ for required_source in ('source.add_argument("--log-file")', 'choices=("true", "
         raise AssertionError(f"cache observation source is missing {required_source!r}")
 
 apple_workflow = APPLE_WORKFLOW.read_text()
-if apple_workflow.count("          restart_navidrome_cold\n") != 3:
-    raise AssertionError("apple-ci must restart and observe cold exactly once before each native run")
+# The claim is "exactly once BEFORE each native run", so check the order, not just the count.
+# Counting alone cannot tell three restarts placed correctly from three placed anywhere -- and this
+# assertion is the only thing standing between a rearranged step and a native suite that runs
+# against a warm transcode cache. The call takes arguments now (the sequencing experiment's arm),
+# so match a call with any arguments; the definition line ends in `() {` and is excluded.
+RESTART_CALL = re.compile(r"^ +restart_navidrome_cold(?: +\S+)*$")
+NATIVE_TASK = re.compile(
+    r":core-conformance:(macosArm64Test|iosSimulatorArm64Test|tvosSimulatorArm64Test)\b"
+)
+apple_sequence: list[str] = []
+for apple_line in apple_workflow.splitlines():
+    if apple_line.lstrip().startswith("#"):
+        continue
+    if RESTART_CALL.match(apple_line):
+        apple_sequence.append("restart")
+        continue
+    native = NATIVE_TASK.search(apple_line)
+    if native and "gradlew" in apple_line:
+        apple_sequence.append(native.group(1))
+expected_sequence = [
+    "restart", "macosArm64Test",
+    "restart", "iosSimulatorArm64Test",
+    "restart", "tvosSimulatorArm64Test",
+]
+if apple_sequence != expected_sequence:
+    raise AssertionError(
+        "apple-ci must restart and observe cold exactly once before each native run; observed "
+        f"{apple_sequence}, expected {expected_sequence}"
+    )
 for required_workflow in (
     'tools/conformance-env/reset-transcode-cache --root "$ROOT"',
     '--log-file "$ROOT/logs/navidrome.log" --expect-cached false',

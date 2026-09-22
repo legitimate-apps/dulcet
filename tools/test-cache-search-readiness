@@ -1,38 +1,218 @@
 #!/usr/bin/env python3
-"""Exercise cache-search recovery without changing stream or corpus assertions."""
+"""Prove the cache search POLLS, and that a stall is reported as a stall.
+
+Every assertion in the previous version of this file checked an OUTCOME -- the exit code, the
+message, the elapsed time -- and every one of them passed while the loop made exactly one attempt.
+MEASURED across 167 apple-ci job logs (2026-09-02..2026-09-10): all five `cache search transport
+error` failures printed one transport-error line and exited, so the retry never ran. An
+outcome-checking control cannot see that, because a one-attempt poll and a real poll fail the same
+way once the deadline expires.
+
+So the controls below assert the PROCESS: the number of `search3` requests the stub server actually
+received, cross-checked against the count the tool reports for itself. A poll that quietly stops
+polling fails here even when its output is unchanged.
+
+⚠️ What these controls do NOT establish: that a starved apple-ci runner can deliver SIGALRM to this
+process on time. They prove the retry path exists and runs; they cannot prove preemption on a host
+they are not running on.
+"""
 
 from pathlib import Path
 import runpy
+import re
 import time
 
 controls = runpy.run_path(str(Path(__file__).with_name("test-transcode-probe-timeout-diagnostic")))
 controls["require_port_free"]()
 run_probe = controls["run_probe"]
 
-recovered = run_probe(mode="search-reset", budget=2)
-assert recovered.returncode == 0, recovered.stdout + recovered.stderr
-assert "cache search transport error:" in recovered.stderr, recovered.stderr
-assert "TRANSCODE CACHE OBSERVATION cached=false transcoding=true" in recovered.stdout, recovered.stdout
-print("POSITIVE CONTROL PASS cache_search_transport_retried=true")
-print(recovered.stderr.strip())
-print(recovered.stdout.strip())
 
+def reported_attempts(stdout: str) -> int | None:
+    match = re.search(r"^TRANSCODE CACHE SEARCH attempts=(\d+)\b", stdout, re.MULTILINE)
+    return int(match.group(1)) if match else None
+
+
+def failed_attempts(stderr: str) -> int | None:
+    matches = re.findall(r"\battempts=(\d+)\b", stderr)
+    return int(matches[-1]) if matches else None
+
+
+def reported_transport_errors(text: str) -> int | None:
+    match = re.search(r"\btransport_errors=(\d+)\b", text)
+    return int(match.group(1)) if match else None
+
+
+def require_counts_agree(tool: int | None, server: int, context: str) -> None:
+    """The tool may count MORE attempts than the server received, never fewer.
+
+    An attempt that fails before its request reaches the handler -- a refused or reset connection
+    -- is a real attempt the tool must count and the server cannot see. Asserting equality makes
+    the control flaky for a reason that has nothing to do with what it is testing; asserting the
+    inequality keeps the property (a self-report that undercounts is a self-report that lies).
+    """
+    assert tool is not None, f"{context}: the tool reported no attempt count at all"
+    assert tool >= server, (
+        f"{context}: the tool reported {tool} attempts while the server received {server} "
+        "requests; a self-reported count below the observed one cannot be true"
+    )
+
+
+# --- 1. a reset connection is retried, and the retry is a SECOND request ---------------------
+observed: dict = {}
+recovered = run_probe(mode="search-reset", budget=2, search_attempt=0.4, observed=observed)
+assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+assert "cache search transport error (attempt 1):" in recovered.stderr, recovered.stderr
+assert "TRANSCODE CACHE OBSERVATION cached=false transcoding=true" in recovered.stdout, recovered.stdout
+assert observed["search_requests"] == 2, observed
+require_counts_agree(reported_attempts(recovered.stdout), observed["search_requests"], "reset retry")
+print(
+    "POSITIVE CONTROL PASS cache_search_transport_retried=true "
+    f"server_observed_requests={observed['search_requests']} "
+    f"tool_reported_attempts={reported_attempts(recovered.stdout)}"
+)
+
+# --- 2. THE PROCESS CONTROL: three stalled attempts, then an answer --------------------------
+# This is the assertion the previous control was missing. With the per-attempt timeout derived from
+# the remaining deadline, attempt one consumes the whole window and this reads
+# server_observed_requests=1 -- a failure that names exactly what went wrong.
+observed = {}
+polled = run_probe(
+    mode="search-stall-then-answer",
+    budget=2,
+    search_attempt=0.3,
+    search_deadline=6,
+    stall_first=3,
+    observed=observed,
+)
+assert polled.returncode == 0, polled.stdout + polled.stderr
+assert observed["search_requests"] >= 4, (
+    f"the poll made {observed['search_requests']} server-observed attempt(s), not the 4 the three "
+    "stalls plus one answer require; a per-attempt timeout that is not independent of the total "
+    "deadline produces exactly 1\n" + polled.stdout + polled.stderr
+)
+require_counts_agree(reported_attempts(polled.stdout), observed["search_requests"], "poll")
+# On success the last attempt is the one that answered, so the census must close exactly.
+assert reported_attempts(polled.stdout) == (reported_transport_errors(polled.stdout) or 0) + 1, (
+    "the tool's own attempt census does not close: "
+    f"attempts={reported_attempts(polled.stdout)} "
+    f"transport_errors={reported_transport_errors(polled.stdout)}\n" + polled.stdout
+)
+assert polled.stderr.count("cache search transport error (attempt") >= 3, polled.stderr
+print(
+    "POSITIVE CONTROL PASS cache_search_is_a_poll=true "
+    f"server_observed_requests={observed['search_requests']} "
+    f"tool_reported_attempts={reported_attempts(polled.stdout)}"
+)
+
+# --- 3. a total stall is named a stall, not an absent corpus item ----------------------------
+observed = {}
 started = time.monotonic()
-stalled = run_probe(mode="search-stall", budget=2)
+stalled = run_probe(
+    mode="search-stall", budget=2, search_attempt=0.3, search_deadline=1.5, observed=observed
+)
 elapsed = time.monotonic() - started
 assert stalled.returncode != 0, stalled.stdout
-assert "cache search transport error: timed out" in stalled.stderr, stalled.stderr
-assert "known transcode cache probe is absent from the disposable corpus" in stalled.stderr, stalled.stderr
-assert elapsed < 7, f"search escaped its five-second deadline: {elapsed:.3f}s"
-print(f"NEGATIVE CONTROL PASS cache_search_deadline=true elapsed_seconds={elapsed:.3f}")
+assert "cache search never received an answer from the disposable server" in stalled.stderr, (
+    stalled.stderr
+)
+assert "This is a stall, not an absent corpus item" in stalled.stderr, stalled.stderr
+assert "known transcode cache probe is absent" not in stalled.stderr, (
+    "a stall is still being reported as an empty corpus:\n" + stalled.stderr
+)
+assert observed["search_requests"] >= 3, (
+    f"a stalling server was asked {observed['search_requests']} time(s) in 1.5s with a 0.3s "
+    "per-attempt timeout; that is not a poll\n" + stalled.stderr
+)
+require_counts_agree(failed_attempts(stalled.stderr), observed["search_requests"], "stall")
+assert elapsed < 6, f"search escaped its deadline: {elapsed:.3f}s"
+print(
+    f"NEGATIVE CONTROL PASS cache_search_stall_named=true elapsed_seconds={elapsed:.3f} "
+    f"server_observed_requests={observed['search_requests']}"
+)
 
+# --- 4. the incoherent budget shape is refused outright --------------------------------------
+# The numbers can drift back; the guard cannot. A per-attempt timeout at or above the total
+# deadline leaves no room for a second attempt, so the tool must refuse to run at all rather than
+# silently degrade into a single request.
+incoherent = run_probe(mode="healthy", budget=2, search_attempt=5, search_deadline=5)
+assert incoherent.returncode != 0, incoherent.stdout
+assert "must be strictly smaller than its total" in incoherent.stderr, incoherent.stderr
+print("NEGATIVE CONTROL PASS one_attempt_budget_refused=true")
+
+# --- 4b. a non-finite budget is not a positive one ------------------------------------------
+# `float("inf") <= 0` is False and `inf >= inf` is False, so a bare positivity check plus the
+# coherence check both wave `inf` through as an unbounded search. `nan` is worse: it fails every
+# comparison, reaches settimeout() and dies there as an uncaught ValueError -- safe by accident,
+# and silent about why.
+for label, attempt, deadline in [
+    ("infinite deadline", "0.3", "inf"),
+    ("infinite attempt", "inf", "60"),
+    ("nan deadline", "0.3", "nan"),
+]:
+    started = time.monotonic()
+    nonfinite = run_probe(
+        mode="search-stall", budget=2, search_attempt=attempt, search_deadline=deadline
+    )
+    elapsed = time.monotonic() - started
+    assert nonfinite.returncode != 0, f"{label} was accepted: {nonfinite.stdout}"
+    assert "must be a finite number greater than zero" in nonfinite.stderr, (
+        f"{label} was not refused by the budget guard:\n" + nonfinite.stderr
+    )
+    assert "Traceback" not in nonfinite.stderr, (
+        f"{label} died by accident rather than being refused:\n" + nonfinite.stderr
+    )
+    assert elapsed < 5, f"{label} ran a search before the guard rejected it: {elapsed:.3f}s"
+    print(f"NEGATIVE CONTROL PASS nonfinite_budget_refused={label.replace(' ', '_')}")
+
+# --- 5. answers that are not transport failures keep their own diagnosis ---------------------
+# The elapsed assertion is the point of the `search_settle` parameter. Without it, deleting the
+# settling window's break leaves every assertion here green while an absent corpus goes from
+# reporting in half a second to consuming the whole transport deadline -- 5 s to 60 s with the
+# shipped defaults, which is exactly the regression the settle window exists to prevent.
 for mode, message in [
     ("search-http-error", "HTTP Error 503"),
     ("search-missing-id", "known transcode cache probe is absent from the disposable corpus"),
     ("search-error-envelope", "known transcode cache probe is absent from the disposable corpus"),
 ]:
-    rejected = run_probe(mode=mode, budget=2)
+    started = time.monotonic()
+    rejected = run_probe(
+        mode=mode, budget=2, search_attempt=0.3, search_deadline=8, search_settle=0.4
+    )
+    elapsed = time.monotonic() - started
     assert rejected.returncode != 0, rejected.stdout
     assert message in rejected.stderr, rejected.stderr
-    assert "cache search transport error:" not in rejected.stderr, rejected.stderr
-    print(f"NEGATIVE CONTROL PASS {mode}=rejected message={message}")
+    assert "cache search transport error" not in rejected.stderr, rejected.stderr
+    assert "never received an answer" not in rejected.stderr, rejected.stderr
+    assert elapsed < 3, (
+        f"{mode} took {elapsed:.3f}s against a 0.4s settling window and an 8s transport deadline; "
+        "a responsive server that answers without the track is being given the transport budget\n"
+        + rejected.stderr
+    )
+    print(
+        f"NEGATIVE CONTROL PASS {mode}=rejected elapsed_seconds={elapsed:.3f} message={message}"
+    )
+
+# --- 6. answered once without the track, then stalled: neither conclusion is claimed ---------
+# `settle_deadline` is set by the first answered response and never cleared, so a host that stalls
+# afterwards used to exit through the absence branch and print the exact sentence this work set out
+# to remove. Two different facts were arriving through one variable.
+observed = {}
+mixed = run_probe(
+    mode="search-absent-then-stall",
+    budget=2,
+    search_attempt=0.3,
+    search_deadline=2.5,
+    search_settle=5,
+    observed=observed,
+)
+assert mixed.returncode != 0, mixed.stdout
+assert "cannot separate an absent corpus item from a stall" in mixed.stderr, mixed.stderr
+assert "known transcode cache probe is absent from the disposable corpus" not in mixed.stderr, (
+    "a window that both answered and stalled is still reported as a plain absence:\n"
+    + mixed.stderr
+)
+assert observed["search_requests"] >= 2, observed
+print(
+    "NEGATIVE CONTROL PASS answered_then_stalled_not_called_absent=true "
+    f"server_observed_requests={observed['search_requests']}"
+)
