@@ -794,7 +794,10 @@ was a name away from a real defect; the rename removes it.
 
 `libraryChangeSource()` returns a **source with checkpoint/resume semantics, not a push stream**,
 because Subsonic has no change feed (§16.1). Naming it a source rather than `Flow<Change>` keeps the
-interface honest that nothing is being pushed.
+interface honest that nothing is being pushed. **Revision 99:** for the reader it is the source of the
+*catalog epoch* (§16.11) — a pollable reading of `getScanStatus.lastScan` and the music-folder id set
+that answers "could the catalog have changed since this read?" and nothing finer. It never claims to
+name what changed.
 
 ### 9.4 `PlaybackPlan` — what a bare URL cannot be
 
@@ -1045,12 +1048,23 @@ playing from library A) is deferred and is not a v1 feature.
 · `mutation_outbox` (§18.3) · `artwork_cache` · `resume_position` (§15.5) · `sync_checkpoint` ·
 `schema_meta` (SQLDelight schema version, cache-format version, `committed_generation`).
 
+**Revision 99 — the target set.** The generation-versioned library tables above (`artist`, `album`,
+`track`, `credit`, `playlist`, `playlist_entry`, the starred and genre tables, `sync_*`,
+`deletion_reconciliation`, and `committed_generation`) belong to the retired mirror and are dropped by
+the subtractive migration of §16.16. They are replaced by the seen-cache: `cache_binding`,
+`cache_epoch`, `cache_artist` / `cache_album` / `cache_track` / `cache_playlist`, `cache_credit`,
+`cache_list` / `cache_list_member` and `cache_pin` (§16.10). Queue, download, outbox, artwork and
+resume tables are unchanged.
+
 ### 11.4 Migrations and protected data
 
 - SQLDelight `.sqm` migrations, with `verifySqlDelightMigration` in CI on every PR.
 - **Protected data — must survive every migration:** `scrobble_outbox`, `mutation_outbox`,
   `download` rows plus their files, and `resume_position`. These are the only things not re-derivable
-  from the server.
+  from the server. **Revision 99 adds** the pinned cache rows of downloaded and queued items
+  (§16.13): the metadata is re-derivable from the server only while the server is reachable and the
+  item still exists, and a downloaded file with nothing to display is exactly the case offline use
+  exists for.
 - **The gate is semantic, not textual.** Revision 1 proposed failing a migration that "touches" a
   protected table; that is unenforceable — destruction happens through table recreation, cascades,
   trigger changes, column reinterpretation and failed conversions while the name is preserved. The
@@ -1071,7 +1085,9 @@ The **cache rebuild** path is a first-class, tested operation: quarantine the da
 (kept for one release cycle for diagnosis), salvage protected data where readable, create a fresh
 database, replay salvaged protected rows, re-scan the download directory to rebuild `download` rows
 from files on disk, and run a full sync. The user is told what happened and what, if anything, was
-lost.
+lost. **Revision 99:** there is no full sync to run. The rebuilt database starts with an empty
+seen-cache that refills one screen at a time; downloads whose pinned metadata could not be salvaged
+get identity-only pinned rows marked *metadata missing*, refilled by their next live read (§16.16).
 
 ---
 
@@ -1801,7 +1817,10 @@ Even an entirely unresolvable queue is retained, with no selection, including on
 A resolvable selection continues the normal paused restoration path. Recovery never applies to an
 existing playback session or another account's queue. Failures of an explicitly started item retain
 the playback failure presentation. No session or attempt identity is created for a cleared selection
-(§12.1). Automatic entry removal is deferred until the input carries a trustworthy, provider-scoped
+(§12.1). **Revision 99:** every queue entry's metadata is pinned in the seen-cache (§16.13), so the
+catalog supplied to restoration can always speak about the current entry — its no-completeness
+contract is unchanged, but "the catalog is empty because nobody has opened that album yet" (§16.7)
+no longer arises for a queued item. Automatic entry removal is deferred until the input carries a trustworthy, provider-scoped
 completeness guarantee; content alone, including a nonempty catalog, never authorizes deletion.
 
 ### 14.2 Shuffle — persist the order, not a seed
@@ -1854,7 +1873,11 @@ and reconciliation against a changed server item. The platform owns the **execut
   the platform, causes a restart from zero rather than a stuck row.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
 - **Server-side change** (duration or size changed since download) is detected at the next sync and
-  marks the file stale; stale files still play but are flagged for re-download.
+  marks the file stale; stale files still play but are flagged for re-download. **Revision 99:**
+  there is no next sync. The change is detected when the track's album is next read live, and after
+  every catalog-epoch change the albums containing downloads are re-read at concurrency 1 (§16.11
+  rule 4); a code-70 answer marks the track `gone` and raises the §16.5 rule 4 reconciliation. The
+  track's display metadata is pinned for as long as the download exists (§16.13).
 - **Disk pressure** pauses new downloads and never evicts a completed explicit download to make room
   (§14.6).
 - **Transcoded downloads yield to playback.** They participate in the per-server transcode budget
@@ -1873,9 +1896,12 @@ One disk budget per account, user-configurable, with a strict priority order:
 | explicit user downloads (partial, stale > 30 days) | yes, with notice |
 | streamed-media cache | yes, LRU |
 | artwork cache | yes, LRU, evicted first |
+| seen-cache metadata, pinned (§16.13) | never while its download, queue entry or session exists |
+| seen-cache metadata, unpinned | yes, least-recently-*accessed*, by row-count ceilings (§16.13) |
 
 Artwork and stream cache share a separate, smaller budget, so an artwork sweep can never delete a
-download.
+download. **Revision 99:** the artwork of a downloaded album at the 256 px bucket is pinned with its
+metadata (§16.13), so an artwork sweep cannot leave a downloaded album without a cover either.
 
 ### 14.7 Signing out and account removal
 
@@ -1887,7 +1913,7 @@ One transactional operation with a defined order, resumable if the app dies part
 3. delete the secure-store credential;
 4. cancel platform download tasks;
 5. delete downloaded media, artwork and stream cache for that `server_id`;
-6. delete all database rows for that `server_id`;
+6. delete all database rows for that `server_id`, the seen-cache and its binding included (§16.10);
 7. clear the `server_account` row.
 
 Undo is available only before step 3. If the app dies mid-removal, the `removing` flag resumes the
@@ -2007,12 +2033,30 @@ v1**, so cross-device resume is not a v1 feature and is not claimed. This is sta
 Target scale — the design is sized against a large real-world library of **~31,500 tracks across
 ~2,950 albums**, and every figure below is derived from that.
 
+🚨 **Revision 99 changed the target architecture. Read §16.8 first.** Dulcet is a **reader**: it
+reads the server live and caches what the person has seen (§16.8–§16.19). The whole-library mirror
+described in §16.2–§16.7 is being retired by the phases of §16.18 and stays documented here, marked
+superseded, only until the code it describes is deleted. **§16.1 is about the server and remains
+binding** — the reader's window rules (§16.12) depend on it — as do §16.2 rule 1 and §16.5 rules 4
+and 6, which §16.16 lists as kept.
+
 ### 16.1 There is no change token, and offset paging is not a snapshot
 
 Subsonic has no delta-sync contract. Do not assume any list endpoint gives a reliable total count, a
-stable cursor, or a change token. `getIndexes` accepts `ifModifiedSince`, but whether the reference
-server honors it and at what granularity is **CONF-31**, not an assumption — and even honored it is
-artist-level and cannot detect a changed track under an unchanged artist.
+stable cursor, or a change token. `getIndexes` accepts `ifModifiedSince`; whether the reference
+server honors it and at what granularity is **CONF-34** (revision 86 renumbered it; this sentence said
+CONF-31 until revision 99).
+
+**OBSERVED 2026-09-11**, against a disposable Navidrome 0.63.2: the reference server honors
+`ifModifiedSince` in milliseconds with a strictly-greater predicate, and its `lastModified` is a
+**whole-library** watermark — a track added under an existing album by an existing artist moved it.
+Revision 2's claim that it "cannot detect a changed track under an unchanged artist" was wrong about
+the *detection*; it is right only about the *payload*, which carries artist rows and never names what
+changed. Two traps: the "nothing changed" response **omits the `index` key** rather than returning an
+empty array, so a parser mapping absence to `[]` reads "unchanged" as "no artists"; and
+`lastModified` is **second-granular**, so a change scanned in the same wall-clock second as the
+baseline is invisible to it — observed on the first attempt. That is why the reader's catalog epoch
+(§16.11) reads `getScanStatus.lastScan`, never this endpoint.
 
 **The honest statement revision 1 was missing:** offset pagination over a collection that mutates
 during the pass **cannot** be made snapshot-consistent by deduplication. Dedupe removes repeats; it
@@ -2050,6 +2094,9 @@ So the design does not claim snapshot consistency from the paging. It gets consi
 **commit model** (§16.3) and detects the paging problem with a **stability witness** (§16.4).
 
 ### 16.2 Shape of a full import
+
+> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> retires; it remains until phase R5 (§16.18) deletes the code. Rule 1 below is kept and binds the reader's windows (§16.12).
 
 Artists, albums and tracks are **three independent whole-library walks** — one entity per request,
 the other two counts zeroed — and each album's track list is reconstructed from each song's
@@ -2135,6 +2182,9 @@ a claim about them that this project has not measured.
 
 ### 16.3 Commit model: row versioning, reads pinned to a committed generation
 
+> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> retires; it remains until phase R5 (§16.18) deletes the code. What replaces generation pinning for a reader is §16.12.
+
 Revision 1 proposed in-place updates plus two-pass tombstoning, then claimed users never see a mixed
 snapshot. Those contradict: in-place updates make a partially completed pass visible immediately.
 
@@ -2157,6 +2207,9 @@ snapshot. Those contradict: in-place updates make a partially completed pass vis
 
 ### 16.4 Stability witness and repeat-until-stable
 
+> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> retires; it remains until phase R5 (§16.18) deletes the code. The reader detects a torn window with a post-page epoch check instead (§16.12).
+
 Because paging is not a snapshot, each list stage records a **witness**: the complete set of ids
 returned and the number of pages consumed. After the stage completes, the index is re-walked and the
 witness recomputed. **The witness is a re-walk of the same pages** — about 7 calls for albums and 65
@@ -2172,6 +2225,9 @@ a set of track ids was stable, never that content was fresh.
 
 ### 16.5 Other required properties
 
+> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> retires; it remains until phase R5 (§16.18) deletes the code. Rules 2, 4 and 6 are kept (§16.16); rule 2's browse-path gap is closed by §16.12.
+
 1. Deterministic ordering where offered. For the *view* that is `alphabeticalByName` over `random`;
    for the *import walks* it is the empty-query `search3` enumeration, whose rowid order is a total
    order and is the one that cannot be shifted by an insertion mid-pass (§16.1). The import does not
@@ -2183,7 +2239,9 @@ a set of track ids was stable, never that content was fresh.
    opportunistically for progress, never as the termination signal.
    ⚠️ **The read-through browse path does not yet obey this** — it asks for exactly 500 and ends on
    a short page, which is correct only while 500 equals the server's silent cap. That is a known
-   gap in a path this section does not govern, not an exemption from the rule.
+   gap in a path this section does not govern, not an exemption from the rule. The reader's windows
+   (§16.12) obey it: they ask for 100, advance by rows returned, and end only on an empty page or a
+   row count equal to `X-Total-Count`.
 3. Dedupe by opaque server id within a pass.
 4. Deletion reconciliation: a closed row that has a downloaded file or a queue entry produces a
    user-visible reconciliation ("12 tracks are no longer on the server"), never a silent disappearance.
@@ -2227,6 +2285,9 @@ a set of track ids was stable, never that content was fresh.
 
 ### 16.6 Freshness pass — a heuristic, not incremental sync
 
+> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> retires; it remains until phase R5 (§16.18) deletes the code. The reader's freshness policy is §16.11; the `coverArt` version token below keys the artwork cache (§18.2).
+
 After the first full import the cheap periodic pass runs `getAlbumList2?type=newest` (bounded),
 `getStarred2`, `getPlaylists`, and targeted `getAlbum` for albums whose `songCount` or `duration`
 changed.
@@ -2261,6 +2322,9 @@ last fully scanned. Sync is never triggered by scrolling.
 ---
 
 ### 16.7 Browse is not sync, and first paint is not a full import
+
+> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> retires; it remains until phase R5 (§16.18) deletes the code. Its preview/`loaded` double publication is replaced by freshness-labelled publications from one read path (§16.14, §16.17); property 1 (`songCount`) is kept; the client-owned collation rule no longer arises (§16.9).
 
 **OBSERVED 2026-09-10.** The interactive library read and the durable sync were the same call. The
 production `DulcetLibraryBrowsing` ran a whole §16.2 import — including the `getAlbum` per album and
@@ -2336,6 +2400,569 @@ album's tracks, so restoration must not act on it at all. The platform controlle
 persisted queue's own current entry against the catalog and stays silent until the catalog can speak
 about it; the library calls restoration again as each album's tracks arrive.
 
+### 16.8 The reader — the target architecture (revision 99)
+
+**Decision (the maintainer, 2026-09-10): read live, cache what was seen.** Dulcet pages from the
+server on demand, like a reader. Whatever the person has browsed stays available offline; what they
+never opened does not. The first paint of any screen is at most one request. The full local mirror
+of §16.2–§16.6 — a whole-library import into generation-versioned tables — is **not** the target
+architecture and is retired by the phases in §16.18.
+
+The reasoning, stated so it can be argued with rather than re-derived:
+
+1. **The server is already the indexed database.** Navidrome answers `getAlbumList2`, `getArtists`,
+   `getAlbum` and `search3` from index-covered SQL. A second copy of the whole library on the device
+   answers the same questions, needs a consistency model of its own (§16.3–§16.4), and was the
+   component that put an *offline* feature on the *online* critical path (§16.7).
+2. **Dulcet is single-provider and its offline contract is "what I browsed".** A whole-library
+   mirror earns its cost in clients that merge several servers into one sorted view, or that promise
+   the whole catalogue offline. Dulcet does neither (§11.2, CORPUS §5a item 6).
+3. **One authority.** The server is the source of truth; the device holds a read-through record of
+   what was seen. There is no second library whose freshness has to be reasoned about.
+
+**The strongest argument against, recorded because it is correct on its own terms.** Revision 98
+measured that the mirror is *cheap* once its transport is right: three empty-query `search3` walks
+fill it in 48 requests at 2,500 albums (§16.2), and whole-library offline browse, complete local
+search, client-side sort and deletion detection all come with it. The reader gives those up, and
+§16.19 lists exactly what is lost. The choice is a product decision about the offline promise, not
+a cost argument, and cost no longer decides it either way. §16.19 also records that nothing here
+precludes a later, explicit, user-initiated "keep my whole library available offline" action that
+fills the same cache with those walks.
+
+**Three jobs, separated.** The mirror fused them; the reader keeps them apart.
+
+| job | mechanism | cost |
+|---|---|---|
+| render the screen being looked at | one live request for the visible window (§16.9) | 1 request per screen, plus 1 `getScanStatus` per appended page (§16.12) |
+| remember what was seen | write-through into the seen-cache (§16.10) | free: the bytes are already on the wire |
+| know whether what is remembered is current | the catalog epoch (§16.11) | 2 small requests per foreground/reconnect |
+
+**There is exactly one read path.** Every live response is written into the seen-cache in one
+transaction, and the screen is published **from the cache** — online and offline alike. A live
+response is never rendered directly beside a cached one. This is the rule that stops a reader with a
+cache from becoming two sources of truth: the server is the authority, the cache is the only thing
+the UI reads, and every publication says how old it is (§16.14).
+
+### 16.9 What is read live — the data model
+
+Every screen maps to one request shape. The **list key** is the canonical request: endpoint plus the
+sorted non-credential parameters, excluding paging (`offset`/`size`) and the Subsonic protocol
+parameters (`u`, `t`, `s`, `p`, `v`, `c`, `f`). Paging is a property of the *window* (§16.12), not
+of the key.
+
+| screen | request | paging | cached as |
+|---|---|---|---|
+| album grid, by name / by artist / newest / by year / by genre | `getAlbumList2?type=alphabeticalByName` \| `alphabeticalByArtist` \| `newest` \| `byYear&fromYear&toYear` \| `byGenre&genre`, optional `musicFolderId` | windowed, `size=100`, never above 500 | list window + album entities |
+| album grid, activity-ordered | `getAlbumList2?type=recent` \| `frequent` \| `highest` \| `starred` \| `random` | **single page**, `size=100`; never offset-paged | list window (one page) + album entities |
+| artists | `getArtists` (optional `musicFolderId`) | the server returns the whole index in one response | list + artist entities |
+| one artist | `getArtist?id=` | one response | artist entity + its album summaries |
+| one album | `getAlbum?id=` | one response | album entity, marked *detail-complete*, + its track entities in order |
+| playlists | `getPlaylists` | one response | list + playlist entities |
+| one playlist | `getPlaylist?id=` | one response | playlist entity + ordered entries (duplicates kept, §18.6) |
+| favourites | `getStarred2` | one response | list + entities |
+| genres | `getGenres` | one response | list |
+| songs of a genre | `getSongsByGenre?genre=&count=&offset=` | windowed, `count=100` | list window + track entities |
+| music folders | `getMusicFolders` | one response | part of the catalog epoch (§16.11) |
+| search | `search3` (§16.15) | per-type offsets (§18.1) | **entities only**; result lists are not cached |
+| artwork | `getCoverArt` (§18.2) | — | the artwork cache, keyed by the whole versioned `coverArt` id |
+| lyrics | `getLyricsBySongId` / `getLyrics` (§18.4) | — | not cached in v1 |
+
+Rules the table does not show:
+
+- **`random` is never paged.** The reference server reseeds only at `offset=0`, and other servers
+  ignore `offset` or reseed per request, so a second page is not a continuation of the first. One page,
+  and a "shuffle again" that is a new read.
+- **Activity-ordered lists are single pages for a related reason:** their order moves with the
+  person's own plays and ratings, which the scan stamp never sees (§16.11, OBSERVED below), so
+  stitching two pages of them has no consistency guarantee at all.
+- **One-response lists need no window rule.** A single response is one server read (§16.12).
+  `getArtists` is unpaged by protocol; at a large artist count it is one large response, which is
+  still one request. **OBSERVED 2026-09-22**, disposable Navidrome 0.63.2, 100 artists: 41,761
+  bytes, 3.4 ms over loopback.
+- **Every value is the one the server returned.** A window stores the server's *positions*, so the
+  cached grid and the live grid are the same order by construction. §16.7's "ordering belongs to the
+  client" was a consequence of drawing one grid from two differently-collated sources; with one read
+  path it no longer arises. The client sorts only views it assembles itself from cached entities
+  across windows (the offline "Available offline" views of §16.14), and labels them as such.
+
+**Measured shape of the live reads.** OBSERVED 2026-09-22 against a disposable Navidrome 0.63.2
+holding 2,498 albums / 4,996 tracks, read as a **non-admin** user over loopback:
+
+| request | bytes (JSON) | gzip | time |
+|---|---|---|---|
+| `getAlbumList2?type=alphabeticalByName&size=100` | 61,694 (~617 per album) | 7,362 | 18.7 ms |
+| `getAlbum` (a two-track album) | 2,853 | — | 4.6 ms |
+| `search3` (20 of each type) | 41,752 | — | 14.4 ms |
+| `getScanStatus` | < 200 | — | < 2 ms |
+
+The server honours `Accept-Encoding: gzip` on these responses (8.4× smaller on the album page).
+OBSERVED 2026-09-11, read-only, on a real 3,240-album library over a local network: seven 500-album
+pages took 0.71 s in total and `getScanStatus` took 4.3 ms — so one screen-sized page is a few tens
+of milliseconds on a LAN, and the request *count* is what a slow link charges for (§16.2).
+
+`X-Total-Count` is an HTTP header on `getAlbumList2`, never in the body, and absent on `search3`
+(§16.6). OBSERVED 2026-09-22 per list type: present and equal to the library size on
+`alphabeticalByName`, `alphabeticalByArtist`, `newest`, `random` and `byYear`; present and equal to
+the genre's album count on `byGenre`; present and `0` on `recent`, `frequent`, `highest` and
+`starred` for a user with no plays, ratings or stars. It is used opportunistically as a window's
+**total**, never as its termination signal, and a server that omits it yields a window with an
+unknown total (§16.12).
+
+### 16.10 The seen-cache — keying, schema intent, binding
+
+**Keyed by provider instance, never by server.** Every cached row is scoped by `server_id`, which is
+the `providerInstanceId` of §9.2 — one account, i.e. one user on one server. This is not tidiness:
+the catalog payloads carry **per-user state**. OBSERVED 2026-09-22: after a non-admin user starred,
+rated (4) and scrobbled one album, that album's `getAlbumList2` entry and its `getAlbum` both
+carried `starred`, `userRating: 4`, `playCount: 1` and `played` for that user, while the same album
+read as the admin user carried none of them. A cache keyed by server URL would show one user's
+favourites to another.
+
+**Structural binding.** A namespace records the normalized server URL and username it was filled
+from (`cache_binding`). Before any read, the cache compares the binding with the account presenting
+the `providerInstanceId`; on any difference the namespace is purged in one transaction before a row
+is served. A reused or restored `providerInstanceId` therefore cannot surface another server's
+library — the property is enforced by the store, not remembered by a caller.
+
+**Schema intent** (SQLDelight, one new migration; §11.3 carries the table list):
+
+| table | holds | key |
+|---|---|---|
+| `cache_binding` | normalized URL, username, created wall-clock | `server_id` |
+| `cache_epoch` | the last catalog epoch read (§16.11): raw `lastScan` string, folder-id set, `scanning`, read wall-clock | `server_id` |
+| `cache_artist` / `cache_album` / `cache_track` / `cache_playlist` | the latest-seen fields of each entity, including per-user state; `fetched_at_wall`, `fetched_epoch` (the epoch the response was read under), `last_access_wall`; albums and playlists also `detail_complete` | `(server_id, raw_id)` |
+| `cache_credit` | credits of cached albums/tracks (§9.5 invariant 3) | `(server_id, owner_kind, owner_raw_id, role, ordinal)` |
+| `cache_list` | list key, window epoch, total (nullable), coverage (`complete` \| `open` \| `torn`), `fetched_at_wall`, `last_access_wall` | `(server_id, list_key)` |
+| `cache_list_member` | the server's order: position → `(item_kind, raw_id)` | `(server_id, list_key, position)` |
+| `cache_pin` | why an entity must not be evicted: `download` \| `queue` \| `playing` | `(server_id, item_kind, raw_id, reason)` |
+
+- **Entities are normalized, not stored as response blobs.** One album is one row however many lists
+  contain it, the most recent read of it wins, and a later read never has to be reconciled with an
+  earlier blob.
+- **Upserts are field-complete per source.** A list page carries album *summaries* and never a track
+  list; writing a summary never clears `detail_complete` or deletes cached tracks. Only a `getAlbum`
+  response rewrites an album's track membership, and it rewrites all of it in one transaction.
+- **A list window and its entities are written in one transaction** with the response that carried
+  them, so a cached window never references an entity that is not cached.
+- **Nothing here is versioned by generation.** There is no `valid_from`/`valid_to`, no committed
+  generation and no pruning pass. The unit of consistency is the response and the window (§16.12),
+  and both are replaced whole.
+- The normalized search columns of §18.1 live on `cache_artist`, `cache_album` and `cache_track`.
+
+### 16.11 Staleness and invalidation — the catalog epoch
+
+**There is no HTTP-level revalidation to use.** OBSERVED 2026-09-22 on every `/rest` JSON endpoint
+the reader calls (`getAlbumList2`, `getAlbum`, `getArtists`, `search3`, `getGenres`, `getStarred2`,
+`getPlaylists`): no `ETag`, no `Last-Modified`, no `Cache-Control`; a request carrying
+`If-None-Match` and a far-future `If-Modified-Since` returned a full `200` with the identical 61,694
+bytes. So the reader has no per-entity validator from the protocol, and does not invent one: an
+entity is revalidated by **reading it again**, which costs exactly what reading it the first time
+cost.
+
+**The catalog epoch** is the pair *(`getScanStatus.lastScan`, the `getMusicFolders` id set)*, read
+together. It answers one question: *could the catalog — not the user's state — have changed since a
+given cached read?*
+
+- **`lastScan` is the scan clock** (§16.1, OBSERVED 2026-09-11): it moved on every real content
+  change put to it, including an in-place retag that left `count` and `folderCount` identical; it
+  also moves on no-op and start-up scans, so its failure direction is a needless revalidation, never a
+  missed change. It is published **before** `scanning` clears (12 of 12 trials), so a reading with
+  `scanning == true` is never an epoch. Its fraction is variable-width and its offset is the server's
+  local one: it is compared **as a raw string for equality only** — never ordered, never parsed into
+  an instant that "knows" two spellings are equal.
+- **The folder-id set** is the one input that answers *as this user*: a server with several
+  libraries can assign or unassign one to a user without scanning, and the catalog that user sees
+  changes under an unchanged stamp. It is compared as a set. **ASSUMED** that this covers per-user
+  library assignment on the reference server; the assignment change itself is unmeasured.
+- **Readable by any user.** OBSERVED 2026-09-22: a non-admin user reads `getScanStatus` with the
+  same payload the admin reads, so the epoch does not depend on the account's role.
+- **A sentinel is not a stamp.** OBSERVED 2026-09-22: while a fresh server performs its first scan,
+  `lastScan` reads `0001-01-01T00:00:00Z` with `scanning == true`. That value, an absent `lastScan`,
+  a `scanning == true` reading, or a failed request is **"no epoch"** — never "unchanged".
+
+**What the epoch does not cover — user state.** OBSERVED 2026-09-11 and again 2026-09-22: `star`,
+`setRating`, `createPlaylist` and `scrobble` each took effect and **none moved `lastScan`**, while
+the catalog payloads the reader caches carry that state (§16.10). So an unchanged epoch licenses the
+*catalog* fields of a cached read and says nothing about `starred`, `userRating`, `playCount`,
+`played`, playlists or favourites. That is why §16.8 revalidates the visible screen when online even
+under an unchanged epoch: one request, and the only way to learn user state.
+
+**Freshness policy, precisely:**
+
+1. **Epoch reads** happen on connect, on every return to the foreground, on reconnect (§16.14), and
+   every **5 minutes** while a library screen is visible and the app is in the foreground (ASSUMED
+   interval — a `getScanStatus` is a few milliseconds; tune from measurement, never raise it to
+   hide a cost). Nothing reads the epoch in the background.
+2. **A changed epoch marks every cached catalog read stale by comparison, not by writing.** A row is
+   catalog-current when its `fetched_epoch` equals the latest epoch; no bulk update runs, so an epoch
+   change costs nothing and cannot be interrupted halfway.
+3. **The visible screen is revalidated when online** — on open, on epoch change while visible, and on
+   an explicit refresh — unless it was read live under the current epoch within the last **60
+   seconds** (ASSUMED). Revalidation is stale-while-revalidate: the cached window is already on
+   screen and is replaced in place when the read lands. **No spinner replaces content.**
+4. **Nothing off screen is revalidated speculatively**, with one bounded exception: the albums that
+   contain downloaded tracks (§16.13), which are re-read at concurrency 1 after an epoch change so
+   that §14.5's server-side-change detection keeps its promise.
+5. **Revalidation failure never evicts and never blanks.** The cached window stays, re-labelled with
+   the failure kind and its age (§16.14).
+
+**Deletion is detected lazily, and says so.** A live read that no longer contains an id removes it
+from *that list window* (the window is replaced whole). A detail read of a vanished entity returns
+error code 70: OBSERVED 2026-09-22, `getAlbum` of an album whose directory had been removed and
+rescanned returned `status="failed"`, code 70, where the same id returned `ok` before the removal
+(a positive control) — and returned `ok` again, **under the same id**, once the directory was
+restored and rescanned. Code 70 on a detail read marks the cached entity `gone`; it is not deleted
+while pinned (§16.13), and a `gone` entity with a download or a queue entry produces the §16.5 rule 4
+reconciliation, with its rename caveat intact — the reference server derives ids from content, so a
+vanished id may be a retag. An entity that is deleted on the server and never revisited stays in the
+offline cache until evicted; it cannot be played unless downloaded, and it disappears from every list
+the next time that list is read live. That is the declared cost of not enumerating (§16.19).
+
+### 16.12 Consistency: a page, a window, and what replaces the committed generation
+
+CORPUS §4 line 11 said reads of the local library are pinned to a committed sync generation, so a
+partially completed scan is never visible. A reader has no local library to pin. What replaces it
+has to answer the same question — *can the person be shown a list that no single state of the server
+ever held?* — and it does so at two granularities.
+
+**A page is one server read.** One `/rest` response is produced by one server request; the reader
+treats it as internally consistent (**ASSUMED**: the reference server answers a list request from a
+single query; nothing in this design depends on more than that), writes it in one transaction, and
+never publishes part of it.
+
+**A window is a sequence of pages presented as one list**, and here offset paging is not a snapshot
+(§16.1): a deletion before the cursor silently skips a row, an insertion duplicates one. The reader
+does not pretend otherwise; it **detects** it:
+
+- A window opens by reading the epoch: `scanning == false` and a stamp, or it has no epoch.
+- **After** each page's response is received, the reader reads `getScanStatus` again. The page is
+  appended only if the stamp is unchanged and `scanning == false`. A scan that ran at any moment
+  between the window's opening and that page's read either is still running (so `scanning` is true)
+  or has finished (so the stamp moved) — either way the check fires. The check is sequenced after the
+  page, never concurrent with it.
+- **A fired check tears the window.** The torn page is not appended; the window is re-read under the
+  new epoch from offset 0 through the pages already shown (bounded concurrency 4, §16.5 rule 6),
+  replaced in one transaction, and the scroll position is kept by item id. Rows are deduplicated by
+  opaque id within a window in any case.
+- **OBSERVED 2026-09-22** against a disposable Navidrome 0.63.2 holding 2,498 albums, as a non-admin
+  user, `alphabeticalByName`, pages of 100: with no mutation, eight pages returned 800 distinct albums,
+  zero albums that existed throughout were missed, and the check fired on **no** page. With an album
+  at alphabetical position 49 removed after page 4 and the watcher's scan allowed to finish, the eight
+  pages again returned 800 distinct ids — **one album that existed before and after the removal was
+  returned by no page**, the silent skip of §16.1 — and the check fired on **page 5, the first page
+  read after the removal, and every page after it**. The experiment asserts the removal happened and
+  the skip occurred; the control asserts the check stays silent without them.
+- **Termination.** A window advances by rows **returned**, asks for at most 500 (the reader asks for
+  100), and is `complete` only when an **empty** page arrives or its row count equals the window's
+  `X-Total-Count`. A short page is a candidate end, confirmed by one more request when there is no
+  total (§16.2 rule 1). Until then the window is `open`, and an `open` window read offline is
+  presented as partial (§16.14).
+- **A page that contributes no new id does not end the window** (§16.2 rule 2). The window stops
+  loading when the person stops scrolling; it never walks ahead of the viewport by more than one page.
+
+**The replacement invariant**, which is what CORPUS line 11 becomes (proposed; the CORPUS edit is
+the maintainer's):
+
+> *The server is the library; the device holds only what was seen. A list presented as one list was
+> read under one unchanged scan stamp with no scan running, or it is labelled incomplete — a page is
+> never stitched to a page read under a different stamp. Cached content is always published with its
+> age and never as live; an error never replaces cached content, and cached content never overwrites
+> a newer live read. Metadata of anything downloaded, queued or playing is pinned.*
+
+**What is acceptable, and the exposures that remain — recorded, not closed:**
+
+- A cached list may be as old as the last time it was read live; that age is always shown.
+- **A scan killed partway** leaves `lastScan` unmoved while the rows it wrote are live; the server
+  resumes and finishes it seconds after its next start (OBSERVED 2026-09-11). A window read inside
+  that window of time can be torn without the check firing, until that resumed scan moves the stamp.
+- **Direct edits to the server's database** are invisible to `lastScan` (OBSERVED 2026-09-11).
+- **A folder assignment changed mid-window** is not checked per page — only at window open.
+- **A server without `lastScan`** (or answering the sentinel) has no epoch: windows are
+  deduplicated by id and are otherwise unguarded, and a deletion during scrolling can skip a row. Such
+  windows are not labelled differently, because the label would be on every list of that server; the
+  limitation is stated here and in the server-compatibility notes instead.
+- **Activity-ordered lists** are single pages precisely because no check covers them (§16.9).
+
+### 16.13 What "seen" means, eviction, bounds and pins
+
+**Seen, precisely** — the only things that enter the cache:
+
+1. every list page a screen requested and received, plus at most **one page of look-ahead** past the
+   viewport;
+2. every album, artist and playlist the person **opened** (the detail read, with its tracks or
+   entries);
+3. every entity returned by a search the person ran (the entities, not the result list);
+4. the metadata of every track that was queued or played — already cached by (1)–(3), because a
+   track can only be queued from a screen that read it, and **pinned** while it is in the queue;
+5. artwork the UI actually requested, in the artwork cache of §18.2.
+
+Nothing else is fetched on the person's behalf: no whole-library walk, no prefetch of albums nobody
+opened, no background refresh of lists nobody is looking at.
+
+**Pins.** A pinned entity is never evicted and never purged by a revalidation that no longer lists
+it.
+
+| pin | set when | released when |
+|---|---|---|
+| `download` | a download row is created — in the **same transaction** — for the track, its album (with the album's credits) and the album's artwork at the 256 px bucket | the download row is deleted |
+| `queue` | a queue entry references the track | no queue entry references it |
+| `playing` | a playback session starts | the session ends |
+
+**Downloaded tracks always keep their metadata.** The `download` table (§14.5) holds identity, file
+and integrity fields only; everything a downloaded track needs to be *browsed and shown* offline —
+title, credits, album, disc/track number, duration, artwork — lives in pinned cache rows, so eviction,
+revalidation and an epoch change cannot strand a playable file with nothing to show for it.
+
+**Bounds and eviction.** Metadata is small next to artwork: at the sizes measured in §16.9 (~617 bytes
+of JSON per album summary, less once normalized — ASSUMED), even a person who browses an entire
+30,000-track library holds tens of megabytes. So the metadata bound exists to make growth finite,
+not to ration browsing:
+
+- **Row-count ceilings, not byte estimates** — deterministic and testable: default 50,000 albums,
+  500,000 tracks, 20,000 artists and 2,000 list windows per account (ASSUMED defaults, each above
+  any library this project has measured). Artwork keeps its own byte budget (§14.6).
+- **Evict by least-recently-*accessed*, never by fetch age.** `last_access_wall` is updated when an
+  entity or window is *shown*, so evicting oldest-fetched first would delete exactly what the person
+  keeps coming back to — the contract undoing itself.
+- **Windows go first, then orphaned entities.** A list window is evicted whole (never a hole in the
+  middle); an entity is evictable only when it is unpinned and no remaining window or detail
+  references it.
+- Eviction runs after a write that crosses a ceiling, in its own transaction, and never while a
+  window it would touch is being written.
+
+### 16.14 Offline, the three presentation states, and reconnect
+
+**Every publication carries a freshness value**, computed in the core and copied to each shell:
+
+| freshness | meaning | presented as |
+|---|---|---|
+| `live` | read from the server in this session under the current epoch | nothing extra |
+| `cached(asOf, reason)` | served from the seen-cache; `asOf` is the wall-clock of its live read. `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), or `stale` (the epoch moved and no live read has landed yet) | the content, plus one line stating its age and reason — "Showing what you last saw 3 days ago — you're offline" |
+| `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
+
+Lists also carry **coverage**: `complete`, or `partial(have, total?)` for an `open` or `torn` window
+read offline. Partial coverage is stated **above** the list, not in a footer — a grid that simply
+stops reads as finished — and with `X-Total-Count` it states both numbers: "Showing 120 of 3,240
+albums — the rest need a connection."
+
+**Rows carry playability**, a tri-state that is both a badge and a filter predicate: `downloaded`,
+`streamable` (online), `unavailable offline`. Offline, an unavailable row is dimmed **and** badged
+**and** its accessibility label says why (never colour alone); tapping it says something — "Not
+downloaded. It'll play when you reconnect." — rather than silently doing nothing or jumping to the
+next playable track. Context menus hide actions that cannot work offline instead of dimming them.
+User-facing words are "Available offline", "Downloaded" and "Not available offline"; never "cached"
+or "sync".
+
+**Exactly what renders with no network:**
+
+| surface | offline |
+|---|---|
+| a list window that was read | its cached pages, `cached(offline)`, with coverage |
+| a list never read (a sort order never chosen, a genre never opened) | `unavailable` |
+| an album that was opened | its tracks, each with playability |
+| an album seen only in a grid | its summary (title, artist, year, track count from `songCount`, artwork if cached) and `unavailable` for the track list — distinguishable from an album with no tracks (§16.7 property 1) |
+| downloads | always complete: pinned metadata and artwork |
+| the queue | always resolvable for display: every entry's metadata is pinned |
+| "Available offline" views | the shell's local views over cached entities — downloaded items, and everything seen — sorted locally and labelled as local |
+| search | local search over the seen-cache, scope-labelled (§16.15) |
+| mutations | favourites and ratings queue in the outbox (§18.3); playlist editing is disabled (§18.6) |
+
+**No spinner before a cached paint.** When an open has anything cached, the first publication is
+that cached content, delivered **before any network request is issued and before any loading state
+is published**; a loading indicator may appear only when nothing is cached. The acceptance tests
+assert the whole publication sequence, not just its last element, because a spinner frame between
+two correct states passes every test that only checks the end.
+
+**Reconnect**, in order, when reachability returns or the app returns to the foreground online:
+
+1. flush the scrobble and mutation outboxes (§15.3, §18.3) — user-authored data first;
+2. read the catalog epoch (two requests); a changed epoch makes every cached catalog read stale by
+   comparison (§16.11 rule 2);
+3. revalidate the **visible** screen (one request, or the window re-read of §16.12 if it was torn);
+4. if the epoch changed, re-read the albums that contain downloads, at concurrency 1 (§16.11 rule 4);
+5. nothing else. There is no catch-up walk, no bulk refetch, and nothing re-read because it is old.
+
+### 16.15 Search in a reader
+
+§18.1 stands — `search3` from two characters, local results from the first, 250 ms debounce, shared
+normalization, one ranker, merge by id — with its local half now defined over the seen-cache rather
+than a committed generation. What changes is that **the result carries an honest scope**:
+
+| scope | when | label |
+|---|---|---|
+| `serverAndDevice` | the server search completed and local rows were merged | none needed, or "Your server" |
+| `deviceWhileServerPending` | fewer than two characters, or the server request is in flight | "On this device" until replaced |
+| `deviceOffline` | the server is unreachable | "Searching what's available offline — 1,204 albums and 9,870 tracks on this device" |
+| `deviceServerFailed(kind)` | the server search failed | the device label plus the §18.12 kind |
+
+The counts in the offline label are the seen-cache's own, so the person can tell "no match" from "no
+match *among what this device has seen*". A local-only row — one the server's autocomplete matcher
+did not return (CONF-43 measures that divergence) — stays in the merged list and is marked as coming
+from this device, because it may be the match the person wanted. Search result *lists* are not
+cached; entities are (§16.13 item 3).
+
+### 16.16 The fate of the mirror, and migration of existing databases
+
+**Deleted** (phase R5, §16.18), once no shell reads them:
+
+- `LibrarySync.kt` in its entirety — the engine, the repository, the three enumeration walks, the
+  enumeration probe, the witness, checkpoints and resumability; `LibrarySyncControlDatabase` and its
+  three platform actuals; `AppleLibrarySyncFacade.kt`; `AndroidLibraryDatabase.synchronize` and
+  `readCommitted`.
+- The generation machinery: `schema_meta.committed_generation`, and the `music_folder`, `artist`,
+  `album`, `track`, `credit`, `playlist`, `playlist_entry`, `library_starred`, `genre`,
+  `sync_checkpoint`, `sync_seen`, `sync_generation` and `deletion_reconciliation` tables.
+- §16.7's preview/committed double publication, and the refresh cadence that re-ran an import.
+- CONF-31, CONF-32 and CONF-33, which pin behaviour of the deleted engine (§20.4).
+
+**Kept**, because they are true of the server or of the protocol, not of the mirror:
+
+- §16.1 (paging is not a snapshot; the ordering table) and §16.2 rule 1 (never above 500; advance by
+  rows returned; a short page is a candidate end) — the window rules of §16.12 depend on both.
+- §16.5 rule 4 (deletion reconciliation, with the rename caveat) and rule 6 (bounded concurrency).
+- The parsers for album summaries, albums, artists and credits in `LibraryBrowse.kt`, and the
+  `KtorLibraryEndpointTransport`.
+- The `getScanStatus` reading and its comparison rules, which move from the sync gate to the catalog
+  epoch (§16.11).
+- Downloads, queue, scrobble and resume tables — untouched except for the pins (§16.13).
+
+**Migration of on-device databases** — two schema steps, because the shells move between them:
+
+1. **Additive (the next schema version, 6 on the current main).** Creates the `cache_*` tables
+   beside the mirror. In the same migration, for every `download` row and every `queue_entry`, the
+   committed generation's track row, its album row and their credits are copied into the cache as
+   **pinned** entities, `fetched_epoch` empty (so they read as stale) and `fetched_at_wall` set to the
+   generation's commit time where known. A download or queue entry whose track is absent from the
+   committed generation gets a pinned identity-only row marked *metadata missing*, refilled by its
+   next live read — never a dropped download. The mirror is not otherwise copied: its rows have no
+   server order to rebuild a window from, and the cache refills in one request per screen.
+2. **Subtractive (the version after).** Drops the mirror tables and `committed_generation` once R2–R4
+   have moved every reader off them.
+
+Both obey §11.4: fixture databases from every released schema version are migrated in CI with
+row-level preservation of `download` (plus files), `queue_entry`, `scrobble_outbox`,
+`mutation_outbox` and `resume_position`, and the additive step additionally asserts a pin exists for
+every download and queue entry. The one-time user-visible effect is stated, not hidden: immediately
+after upgrading, **offline** browsing shows downloads and the queue only, until each screen has been
+opened online once.
+
+**The unmerged instant-open change** (committed-first paint plus a `getScanStatus` gate on the
+mirror's catalog walk, with a schema bump) is **folded in, not shipped**. On the current `main` the
+cost it removes is already small — first paint is a 7-request preview and the background import is
+the 48-request walk of §16.2 — so its gain would be real but marginal, while it would add a schema
+version that every future migration fixture must carry, for columns the subtractive step then drops,
+and it carries review findings against machinery this revision deletes. What it established is kept:
+
+- the `lastScan` rules — raw-string equality, `scanning == false`, "cannot read" is never
+  "unchanged", the folder-id set as a second input — become the catalog epoch of §16.11;
+- **structural binding** of stored data to its server becomes `cache_binding` (§16.10);
+- **no spinner frame before the committed paint** becomes the publication-sequence rule of §16.14;
+- surfacing a failed refresh **beside** the content with its age becomes `cached(asOf, failed(kind))`;
+- its §16.1 correction of `getIndexes?ifModifiedSince` is applied in this revision;
+- its third review finding — deferring orphan generations — has no counterpart, because there are no
+  generations.
+
+### 16.17 Platform shells and the facade
+
+**Core (KMP).** A `LibraryReader` per account owns the live source, the seen-cache store, the
+epoch, window state and eviction. Its public surface is expressed as *queries* and *publications*:
+
+- `LibraryQuery` — a closed set matching §16.9's rows (album list by type, artists, artist, album,
+  playlists, playlist, starred, genres, songs by genre, music folders).
+- `LibraryPublication` — the items as flat value types, `freshness` (§16.14), `coverage`, `total`,
+  and per-row playability.
+- A window handle with `loadMore()` and `close()`.
+
+**Apple (ObjC boundary, CORPUS §4 line 8, §7).** A window can publish more than once — cached, then
+live, then a re-read after a tear — so it is an **event stream**, not a completion: the facade exposes
+`subscribeLibraryWindow(request, listener) -> AppleLibraryWindowSubscription`, where the subscription
+carries `loadMore()` and `close()`, per §7.2's event-stream rule. This also retires `DulcetKit`'s
+`browse` completion, which is invoked twice for one open (a `preview`, then `loaded`) — a completion
+that means "more may follow" is a stream in disguise. Specifics:
+
+- Each publication is a **final, immutable Kotlin class of primitives, `String`s and `List`s of such
+  classes**; freshness and coverage are closed string kinds plus nullable epoch-millis and counts, as
+  the existing facade already encodes errors (`kind: String`) — no sealed hierarchy with a generic
+  payload crosses. No SQLDelight entity, no `Flow`, no generic repository crosses.
+- `DulcetKit` copies each publication into hand-written Swift structs — `DulcetLibraryWindow`,
+  `DulcetFreshness`, `DulcetCoverage`, `DulcetPlayability` — with a Swift copy test per type (§7.1).
+- Listener calls are on the main thread; `close()` is idempotent and cancels in-flight reads; no
+  Kotlin exception crosses; the generated Objective-C header diff is reviewed (§20.5).
+- The presentation protocols `DulcetLibraryBrowsing`, `DulcetCommittedLibraryBrowsing` and
+  `DulcetAlbumTracksLoading` collapse into one `DulcetLibraryReading`, and
+  `DulcetLibraryBrowseOutcome.preview`/`.loaded` are replaced by publications with freshness. The
+  §16.7 rule "a preview is not an ending" becomes unnecessary: nothing about a publication means
+  "the open finished"; a window ends only when it is closed.
+- tvOS reads the same way; it has no downloads (§14.5), so its playability is `streamable` or
+  `unavailable offline` and its offline views are what was seen.
+
+**Android.** The same `LibraryReader` is consumed directly in Kotlin (no ObjC rule applies), exposed
+to Compose as `StateFlow<LibraryPublication>` inside the Android shell — never inside the core's
+public API, where CORPUS line 8 keeps raw `Flow` off the Apple boundary. `LibrarySession`'s 15-minute
+full-import cadence is removed; the epoch policy of §16.11 replaces it.
+
+**Core-owned rules, never shell-owned.** Freshness, coverage, playability and search scope are
+computed in the core and copied out. A product rule encoded in one platform's control dies on the
+platform that cannot draw the control; six shells over one core is exactly the shape that bug aims at.
+
+### 16.18 Phased implementation plan
+
+Each phase is a set of briefs in the §19.4 format. Phases in the same row run in parallel; each brief
+names the files it owns so two implementers never edit one file. Every phase ends with an independent
+adversarial review that checks commit messages and comments against the code.
+
+| phase | parallel briefs | files | acceptance |
+|---|---|---|---|
+| **R0** server facts as conformance | one brief | new `core/src/commonTest/.../ReaderConformanceTest.kt` (JVM + `macosArm64`, disposable server), `tools/conformance-env` fixture additions, §20.4 | CONF-70..75 green on both conformance legs; each mutation test asserts its mutation fired and has a no-mutation control |
+| **R1a** cache store | one brief | new `SeenCache.sq`, `migrations/5.sqm`, `databases/6.db`, new `SeenCacheStore.kt`, `DulcetDatabase.kt` (version), `tools/migration-fixtures/v6/`, `ServerData.sq` (account removal) | additive migration + pins from the mirror (CONF-81); binding purge (CONF-80); eviction order and pins (CONF-78); §11.4 fixture gate |
+| **R1b** live source, epoch, windows | one brief, after R1a's schema lands | new `LibraryReader.kt`, `LibraryWindow.kt`, `CatalogEpoch.kt`; `LibraryBrowse.kt` (parsers kept, `LibraryBrowser` retired) | window tear + re-read (CONF-70 driven through the production reader), freshness sequence with no loading frame before a cached paint (CONF-76), reconnect request budget (CONF-77) — request counts asserted, not wall time |
+| **R1c** local search over the cache | one brief, after R1a | `LocalLibrarySearch.kt`, `Search.kt` (scope), `LocalSearchMigrationTest` | CONF-41 unchanged and green; CONF-79 scope values in core |
+| **R2** Apple shells | one brief per surface group: macOS; iOS + iPadOS; tvOS — after R1b's facade lands | new `core/src/appleMain/.../AppleLibraryReaderFacade.kt`; `DulcetKit/.../AccountConnectionPresentation.swift`, `PresentationModels.swift`, `DulcetLibraryViews.swift`, `DulcetStrings.swift`; `DulcetAppleShared/DulcetAppleProduction.swift`; app-host tests per destination | CONF-76, 77, 79 per destination, each with its own test identity (an iPhone run does not evidence iPad); generated header diff reviewed |
+| **R3** Android shells | one brief (phone + TV) | `core/src/androidMain/.../AndroidLibraryDatabase.kt` → `AndroidLibraryReader.kt`; `android/shared/.../library/LibrarySession.kt`, `LibraryEntry.kt`; `search/AndroidLibrarySearchSource.kt`, `SearchPresentation.kt` | CONF-76, 77, 79 on `android` and `androidtv` |
+| **R4** downloads and pins | one brief, parallel with R2/R3 | `DownloadPolicy.kt`, `Downloads.sq`, `AppleDownloadFacade.kt`, `DulcetAppleShared/DulcetCoreDownloads.swift`, `PlaybackQueueController.kt` (queue pins) | a download enqueue pins its metadata in the same transaction; downloaded albums re-read after an epoch change; code 70 marks `gone` and raises reconciliation (CONF-74, CONF-78) |
+| **R5** retirement | one brief, after R2–R4 | delete `LibrarySync.kt`, `LibrarySyncControlDatabase*.kt`, `AppleLibrarySyncFacade.kt`; `Library.sq` (mirror tables), `SchemaMeta.sq` (`committed_generation`), `ServerData.sq`; subtractive `migrations/6.sqm` + `databases/7.db` + `tools/migration-fixtures/v7/`; `FEATURES.yml`; `tools/parity_gate.py` | CONF-31..33 retired from the registry; `library.sync` retired by an explicit declaration; subtractive migration preserves protected data (CONF-81) |
+
+**`FEATURES.yml`.** `library.sync` is `shipped` on all six platforms, and the gate fails
+**unconditionally** on a removed row (`tools/parity_gate.py`: "feature row removed") — there is no
+declaration that permits it. So R5 either extends the gate with an `accepted_removals` declaration,
+reviewed like `accepted_regressions`, with a mutation control proving an undeclared removal still
+fails; or keeps the row forever as `n/a` under six `accepted_regressions` entries. The first is
+recommended; it is a gate change and the maintainer's call. The new rows are **`library.browse`**
+(CONF-70, 76, 77) and **`library.offline`** (CONF-74, 78, 80, 81), `planned` on every platform until
+each cell carries its own evidence; `search.query` gains CONF-79.
+
+**New conformance and control ids** (§20.4 carries the registry rows):
+
+| id | pins | kind |
+|---|---|---|
+| CONF-70 | a deletion before the cursor, scanned between two pages, is detected by the post-page `getScanStatus` check, and the window is re-read; no-mutation control stays silent | server + reader |
+| CONF-71 | `getScanStatus` is readable by a non-admin user; `lastScan` is unmoved by `star`, `setRating`, `scrobble`; the first-scan sentinel reads as no epoch | server |
+| CONF-72 | per-user state (`starred`, `userRating`, `playCount`, `played`) in `getAlbumList2` and `getAlbum` reflects the reading user only | server |
+| CONF-73 | `/rest` JSON reads carry no `ETag`/`Last-Modified`/`Cache-Control`, and a conditional request returns a full `200` | server |
+| CONF-74 | a detail read of a removed entity returns code 70 (positive control: `ok` before removal); the cached entity is marked `gone`, not deleted while pinned | server + reader |
+| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type; absence degrades to an unknown total | server |
+| CONF-76 | an open with cached content publishes it before any request and before any loading state; offline, a never-opened album is `unavailable` with copy | reader + shell |
+| CONF-77 | reconnect performs outbox flush, epoch read, visible-screen revalidation and nothing else — counted requests | reader + shell |
+| CONF-78 | eviction removes least-recently-accessed unpinned windows then orphans; pinned download/queue metadata survives at every ceiling | reader |
+| CONF-79 | search publishes the correct scope in each of the four cases, with the seen-cache counts offline | reader + shell |
+| CONF-80 | a namespace whose binding differs from the presenting account is purged before any row is served | reader |
+| CONF-81 | both migrations preserve protected data; the additive step pins every download and queue entry | migration |
+
+### 16.19 What the reader gives up, stated honestly
+
+| given up | consequence | mitigation |
+|---|---|---|
+| whole-library offline browse | offline shows what was seen; unseen albums are not there | partial coverage is stated above the list with have/total (§16.14) |
+| complete local search | offline search finds only what was seen | the scope label says so, with counts (§16.15) |
+| eager deletion detection | an unrevisited deleted album stays in the offline cache | lists drop it on their next live read; code 70 marks detail reads `gone`; downloads are re-checked after an epoch change (§16.11) |
+| client-side sort over the whole library | sort orders are the server's fixed `type=` set online | offline "Available offline" views sort locally, labelled local |
+| a snapshot of the whole catalogue | consistency is per page and per window, not per library | the post-page epoch check makes a torn window detectable (§16.12) |
+
+**Not precluded:** an explicit, user-initiated "Make my whole library available offline" action can
+later fill the seen-cache with the §16.2 walks — 48 requests at 2,500 albums — marking everything
+seen, with no generation machinery, because the cache's unit of consistency is the response. It is
+not in v1 and is not scheduled; whether to offer it is a product decision.
+
 ---
 
 ## 17. Server quirks register
@@ -2372,6 +2999,11 @@ and rumours are how this app category accumulates "mysteriously does not work wi
 
 `search3` with per-type counts and offsets, merged with an instant local-cache query.
 
+**Revision 99:** the local half queries the seen-cache (§16.10), not a committed generation, and
+every result carries a scope — `serverAndDevice`, `deviceWhileServerPending`, `deviceOffline` or
+`deviceServerFailed(kind)` — with the seen-cache's own counts in the offline label, so "no match" and
+"no match among what this device has seen" are distinguishable (§16.15).
+
 - **Debounce 250 ms**; a new keystroke cancels the in-flight server request.
 - **Minimum query length 2** for the server query; local search runs from the first character.
 - **Normalization** is shared by both sides: Unicode NFKD, case folding, diacritic stripping, with the
@@ -2393,7 +3025,10 @@ and rumours are how this app category accumulates "mysteriously does not work wi
 ### 18.2 Artwork
 
 `getCoverArt?id=&size=`. Disk cache keyed by `(server_id, artwork_key, size_bucket)` with a bounded LRU
-(§14.6). `size_bucket` is a small fixed set (96/256/512/1024 px) so the cache does not fragment across
+(§14.6). The `artwork_key` is the **whole** `coverArt` string as the server returned it; on the
+reference server that string embeds the album's modification time (§16.6), so a changed cover arrives
+under a new key and the cache never has to revalidate an image — which it could not do anyway, since
+`/rest` offers no conditional requests (§16.11). `size_bucket` is a small fixed set (96/256/512/1024 px) so the cache does not fragment across
 every layout's exact pixel size. Artwork keys are opaque and may be album- or song-scoped — never
 derived from an item id.
 
@@ -2427,7 +3062,8 @@ retry loop.
 - **Compaction:** successive mutations of the same `(target_id, field)` collapse to the last before
   send — star then unstar sends only unstar; rating 5 then 2 sends only 2.
 - **Conflict:** on reconnect the server's value wins **unless** a local mutation is newer than the last
-  successful sync for that item, in which case the local mutation is sent and the server's echoed value
+  successful sync for that item (revision 99: the last successful *live read* of that item — there is
+  no sync), in which case the local mutation is sent and the server's echoed value
   is then adopted. Last-writer-wins with an explicit ordering key, not "whatever arrives".
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
   at-least-once is safe here — unlike scrobbles (§15.3).
@@ -2946,15 +3582,27 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-23 | repeated `scrobble` with the same `time` — measures whether the server deduplicates (§15.3) |
 | CONF-34 | `getIndexes?ifModifiedSince` behavior and granularity (§16.1) |
 | CONF-35 | paging past the end returns an empty list, not an error |
-| CONF-33 | library mutated mid-import: the committed generation is internally consistent and the stability witness detects the change |
+| CONF-33 | library mutated mid-import: the committed generation is internally consistent and the stability witness detects the change — **retired by phase R5 of §16.18**; CONF-70 pins the reader's equivalent |
 | CONF-44 | `getCoverArt` size behavior, content types, HTTP-200 JSON/XML error envelopes, code-70 unavailable mapping, and positive image signatures |
 | CONF-42 | `songLyrics` v2 structured response shape |
 | CONF-10d | permission errors for the restricted user map to `Auth.Forbidden`, not a generic failure |
 | CONF-61 | unknown fields in a response are preserved and ignored |
-| CONF-31 | generation-pinned reads: a sync generation's reads observe one committed snapshot (§16.3) |
-| CONF-32 | atomic sync-generation commit: a generation becomes visible in one step or not at all (§16.4) |
+| CONF-31 | generation-pinned reads: a sync generation's reads observe one committed snapshot (§16.3) — **retired by phase R5 of §16.18** with the engine it pins |
+| CONF-32 | atomic sync-generation commit: a generation becomes visible in one step or not at all (§16.4) — **retired by phase R5 of §16.18** |
 | CONF-41 | local and server search results merge without duplicating or dropping an entry (§18.1) |
 | CONF-51 | validated atomic download promotion: live exact and cold-estimated response bodies pass the §12.4 validator before atomic rename; exact mismatch leaves no destination, observed terminal length becomes exact, and duplicate delivery is idempotent (§14.5) |
+| CONF-70 | a deletion before the cursor, scanned between two pages of a window, is detected by the post-page `getScanStatus` check and the window re-read; the mutation is asserted to have fired and a no-mutation control stays silent (§16.12) |
+| CONF-71 | `getScanStatus` readable by a non-admin user; `lastScan` unmoved by `star`, `setRating` and `scrobble`; the first-scan sentinel `0001-01-01T00:00:00Z` reads as no epoch (§16.11) |
+| CONF-72 | per-user state in `getAlbumList2` and `getAlbum` reflects the reading user only (§16.10) |
+| CONF-73 | `/rest` JSON reads carry no `ETag`/`Last-Modified`/`Cache-Control`, and a conditional request returns a full `200` (§16.11) |
+| CONF-74 | a detail read of a removed entity returns code 70, with an `ok` positive control before removal; the cached entity is marked `gone`, not deleted while pinned (§16.11) |
+| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type; absence degrades to an unknown total (§16.9) |
+| CONF-76 | an open with cached content publishes it before any request and before any loading state; offline, a never-opened album is `unavailable` with copy (§16.14) |
+| CONF-77 | reconnect performs outbox flush, epoch read and visible-screen revalidation and nothing else, by counted requests (§16.14) |
+| CONF-78 | eviction removes least-recently-accessed unpinned windows, then orphans; pinned download and queue metadata survives every ceiling (§16.13) |
+| CONF-79 | search publishes the correct scope in each of its four cases, with seen-cache counts offline (§16.15) |
+| CONF-80 | a namespace whose binding differs from the presenting account is purged before any row is served (§16.10) |
+| CONF-81 | the additive and subtractive reader migrations preserve protected data, and the additive step pins every download and queue entry (§16.16) |
 | CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
 
 ### 20.5 Facade header review
@@ -3582,7 +4230,7 @@ compiles.
 | phase | deliverable | exit criteria |
 |---|---|---|
 | **0** | spec approved; toolchain matrix (§4.4) **incl. the pinned ffmpeg**; dependency licence audit; **public** repo scaffold; CI skeleton; branch protection + `CODEOWNERS` + required checks per §19.3; `docs/APP-REVIEW-NOTES.md` (§23.4); `FEATURES.yml` seeded at `planned`; `apple-ci` timeout calibrated from one real run (§21.1) | `core-ci` and `parity-gate` green on an empty core; both OS-floor settings (§4.1) asserted by a CI check |
-| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync, the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..08, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
+| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync (revision 99: superseded by the reader, whose phases R0–R5 are §16.18), the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..08, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
 | **2** | **macOS app**, TestFlight | **Signing dry run first, and its job is narrow: prove CREATE permission** (register `com.legitimateapps.dulcet`, create the App ID, generate a profile) **and prove the sandbox entitlements**, by archiving a *sandboxed* hello-world that declares `com.apple.security.network.client` and writes into its container (§23.1, §23.3). macOS submission itself is already proven on this team and is not re-established here. Then: browse, search, play, queue, scrobble, offline **metadata** cache; installed from TestFlight on a real Mac and driven end to end. **No media downloads in Phase 2** — offline means the library browses, not that it plays offline |
 | **3** | iOS + iPadOS; **media downloads on all three Apple surfaces** | background download and background playback observed on a real device; iPad evidence from an iPad job, not an iPhone one |
 | **4** | Android phone/tablet | Media3 engine parity; parser-parity and wire-pathology green on every target |
@@ -3665,6 +4313,68 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 99 (2026-09-22)** — Dulcet becomes a **reader**. The maintainer's direction of
+2026-09-10 — *read live, cache what I've seen* — replaces the whole-library mirror as the target
+architecture. §16.8–§16.19 are new; §16.2–§16.7 are marked superseded in place and stay until the
+code they describe is deleted.
+
+1. **The decision and the argument against it, both recorded (§16.8).** The server is already the
+   indexed database; Dulcet is single-provider; its offline promise is "what I browsed". Revision
+   98's measurement that the mirror costs only 48 requests at 2,500 albums is kept as the strongest
+   counter-argument, and §16.19 lists exactly what the reader gives up. A later, explicit "keep my
+   whole library offline" action that fills the same cache with those walks is recorded as not
+   precluded.
+2. **One read path (§16.8).** Live responses are written through into the seen-cache and every
+   screen is published from it, online and offline, with a freshness value — `live`,
+   `cached(asOf, reason)` or `unavailable(reason)` (§16.14). The server is the authority; the cache is
+   the only thing the UI reads.
+3. **The data model (§16.9–§16.10).** Every screen maps to one request shape; the cache is keyed by
+   provider instance and canonical request, with normalized entities, server-ordered list windows,
+   pins, and a structural binding to the server and user it was filled from. OBSERVED 2026-09-22
+   against a disposable Navidrome 0.63.2 (2,498 albums): catalog payloads carry per-user state
+   (`starred`, `userRating`, `playCount`, `played`) for the reading user only, so a server-keyed cache
+   would leak one user's state to another; `X-Total-Count` presence per list type is tabled.
+4. **Staleness without validators (§16.11).** OBSERVED 2026-09-22: `/rest` JSON reads carry no
+   `ETag`, `Last-Modified` or `Cache-Control`, and a conditional request returns a full `200`. The
+   catalog epoch — `getScanStatus.lastScan` compared as a raw string, plus the music-folder id set —
+   says whether the *catalog* could have changed; it never covers user state, so the visible screen
+   is revalidated when online. OBSERVED: `getScanStatus` is readable by a non-admin user, and a
+   first scan reports the sentinel `0001-01-01T00:00:00Z`, which is "no epoch". A detail read of a
+   removed album returns code 70 (with an `ok` control before removal, and `ok` under the same id
+   after restoration); deletion is detected lazily and says so.
+5. **CORPUS §4 line 11's replacement (§16.12).** A reader has no committed generation to pin, so the
+   invariant moves to the page and the window: a page is one server read; a window is appended to
+   only when a `getScanStatus` read *after* each page shows the stamp unchanged and no scan running,
+   and is otherwise torn and re-read. OBSERVED 2026-09-22 (2,498 albums, pages of 100, non-admin):
+   a removal before the cursor, scanned between pages 4 and 5, skipped one album that existed
+   throughout and the check fired from page 5 on; the no-mutation control skipped nothing and never
+   fired. The remaining exposures — a killed scan, direct database edits, a folder assignment changed
+   mid-window, a server with no `lastScan`, activity-ordered lists — are recorded, not closed. The
+   CORPUS text is proposed, not edited: that change is the maintainer's.
+6. **Offline and reconnect (§16.13–§16.14).** "Seen" is defined item by item; eviction is by
+   least-recently-*accessed* under row-count ceilings; downloaded, queued and playing items' metadata
+   is pinned — the `download` table holds no display metadata, so without the pin a downloaded file
+   could be stranded with nothing to show. No spinner frame may precede a cached paint. Reconnect is
+   outbox flush, epoch read, visible-screen revalidation, downloaded-album recheck, and nothing else.
+7. **Search scope (§16.15, §18.1).** Local search runs over the seen-cache; every result names its
+   scope, with the cache's counts offline.
+8. **Retirement and migration (§16.16).** `LibrarySync.kt`, the generation tables, the sync facades
+   and CONF-31..33 are deleted in phase R5. Existing databases migrate in two steps: an additive one
+   that creates the cache and pins every download and queue entry from the committed generation, and
+   a subtractive one that drops the mirror once no shell reads it. The unmerged instant-open change
+   is folded in rather than shipped: its `lastScan` rules become the catalog epoch, its three review
+   findings become the binding rule, the no-spinner rule and nothing (there are no generations to
+   orphan), and its schema version is not added.
+9. **Corrections in place.** §16.1: `getIndexes?ifModifiedSince` is CONF-34, not CONF-31, and its
+   claimed blindness to a changed track under an unchanged artist was false of the detection (its
+   real limits — a missing `index` key when unchanged, second granularity — are recorded). §9.3
+   `libraryChangeSource`, §11.3–§11.5, §14.1, §14.5–§14.7, §18.1–§18.3 and the §20.4 registry
+   (CONF-70..81 added) are amended where they assumed a sync.
+10. **A gate finding.** `tools/parity_gate.py` fails unconditionally when a `FEATURES.yml` row is
+    removed and offers no declaration for it, so retiring the `shipped` `library.sync` row needs
+    either an `accepted_removals` declaration added to the gate or six `accepted_regressions` to
+    `n/a`. §16.18 recommends the first; it is the maintainer's call.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to
