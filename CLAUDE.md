@@ -245,11 +245,20 @@ They are deliberately not reproduced in this repository.**
     types are hand-written Swift structs in `DulcetKit`. Async is completion-handler plus a
     synchronously-returned `OperationHandle`; callbacks on the main thread; no Kotlin exception may
     cross (it terminates the process). Review the generated ObjC header diff on every facade change.
-18. **Sync has no change token, and offset paging is not a snapshot.** Dedupe cannot recover an omitted
-    row. Consistency comes from row versioning with reads pinned to a committed generation, one atomic
-    commit, and a stability witness with bounded retries (spec §16.3–§16.4). Bounded concurrency 4.
-19. **The freshness pass is a heuristic, not incremental sync** — it cannot see a tag change that
-    preserves count and duration. Do not describe it as incremental sync in UI copy.
+18. **There is no change token, and offset paging is not a snapshot.** Dedupe cannot recover an
+    omitted row. Dulcet is a reader, not a mirror (spec §16.8): a page is one server read, and a
+    window of pages is extended only when a `getScanStatus` read taken **after** each page shows the
+    window's stamp unchanged and `scanning == false`. A window whose stored stamp differs from the
+    current one is torn at its first live read and rebased around the viewport — never stitched.
+    While the server scans, pages append marked unverified and the list says so (spec §16.12).
+    Bounded concurrency 4.
+19. **The catalog epoch is a scan clock, not a change feed** (spec §16.11). `lastScan` is compared as
+    a raw string for equality only, together with the `getMusicFolders` id set; the sentinel
+    `0001-01-01T00:00:00Z`, an absent value or a failed read is "no epoch", never "unchanged". It never
+    covers user state (stars, ratings, play counts), so the visible screen is re-read when online.
+    `/rest` has no ETags or conditional requests. Gone-ness comes from a successful `getAlbum` no
+    longer listing a track, or code 70 — **never** from `getSong` answering `ok` or from `songCount`,
+    because a server keeping missing files answers both as if the file still existed.
 20. **Two clocks.** Monotonic for accumulation, timeouts, backoff and cadence; wall clock for scrobble
     timestamps and retention. Never persist a monotonic value.
 21. 🚨 **The Compose-for-TV artifact is `androidx.tv:tv-material` (1.1.0), NOT `androidx.tv:tv-material3`.**
