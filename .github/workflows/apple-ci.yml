@@ -1092,11 +1092,18 @@ jobs:
           # does not show a scrobble was delivered, and a count change alone does not show our app
           # caused it.
           #
-          # `--await-seconds` on the AFTER read because scrobble delivery is asynchronous and
-          # at-least-once (spec 15.2); the count is not visible the instant the app crosses the
-          # threshold. The repo's own conformance client polls for the same reason
-          # (`awaitPlayCount`, 20 x 50ms). The BEFORE read has no wait -- a baseline must hold
-          # immediately, and waiting for it would mask a canary another actor had already moved.
+          # The XCUITest returns only after the app's DEBUG delivery marker reports the server
+          # acknowledged `scrobble submission=true` (delivered=1), never on the threshold alone.
+          # Twice (6f20917 on 2026-09-06, run 34626315446 on 2026-09-11) it returned on the
+          # displayed threshold while the app's accumulator, counted from its first sampled
+          # position, had not crossed; XCUITest's teardown then killed the app before its next
+          # sample, nothing was persisted, and this AFTER read found 0 with the test green.
+          #
+          # `--await-seconds` on the AFTER read is therefore only the gap between the app seeing
+          # its `ok` envelope and the count being readable through the API, plus a loaded host;
+          # it is no longer the race window. The repo's own conformance client polls for the same
+          # reason (`awaitPlayCount`, 20 x 50ms). The BEFORE read has no wait -- a baseline must
+          # hold immediately, and waiting for it would mask a canary another actor had already moved.
           #
           # TEST_RUNNER_-prefixed variables must be in XCODEBUILD's OWN environment; the prefix is
           # stripped on the way into the runner. A trailing `KEY=value` on the xcodebuild line is

@@ -33,16 +33,23 @@ enum DulcetAppleProduction {
     static func makeIOSComposition() -> DulcetiOSProductionComposition {
         let credentialStore = DulcetKeychainCredentialStore()
         let downloads = DulcetCoreDownloadController.production()
+        let playbackController = DulcetCorePlaybackController(downloadController: downloads)
         return DulcetiOSProductionComposition(
-            store: makeStore(credentialStore: credentialStore, downloads: downloads),
-            downloads: downloads
+            store: makeStore(
+                credentialStore: credentialStore,
+                downloads: downloads,
+                playbackController: playbackController
+            ),
+            downloads: downloads,
+            playbackController: playbackController
         )
     }
     #endif
 
     private static func makeStore(
         credentialStore: DulcetKeychainCredentialStore,
-        downloads: (any DulcetDownloadControlling)?
+        downloads: (any DulcetDownloadControlling)?,
+        playbackController: DulcetCorePlaybackController? = nil
     ) -> DulcetPresentationStore {
         DulcetPresentationStore(
             source: DulcetAccountDataSource(
@@ -51,7 +58,7 @@ enum DulcetAppleProduction {
                 libraryBrowser: DulcetCoreLibraryBrowser(),
                 artworkFetcher: DulcetCoreArtworkFetcher(),
                 serverSearch: DulcetCoreServerSearch(),
-                playbackController: DulcetCorePlaybackController(
+                playbackController: playbackController ?? DulcetCorePlaybackController(
                     downloadController: downloads
                 ),
                 downloadController: downloads,
@@ -76,6 +83,9 @@ struct DulcetMacProductionComposition {
 struct DulcetiOSProductionComposition {
     let store: DulcetPresentationStore
     let downloads: DulcetCoreDownloadController?
+    /// The same controller the store drives, exposed so the shell's debug hooks can observe
+    /// scrobble delivery without a presentation field the product never needs.
+    let playbackController: DulcetCorePlaybackController
 }
 #endif
 

@@ -13,6 +13,27 @@ protocol DulcetCorePlaybackEngine: DulcetApplePlaybackEngine {
 
 extension DulcetAVPlayerEngine: DulcetCorePlaybackEngine {}
 
+/// What this process has done with scrobble effects, as counted by the core facade. Only
+/// `submittedPlaysDelivered` says a play reached the server: it moves on an `ok` envelope for
+/// `scrobble submission=true` and on nothing else. A persisted play is durable, not delivered.
+struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
+    let submittedPlaysPersisted: Int
+    let submittedPlaysDelivered: Int
+    let submittedPlaysPending: Int
+    let submittedPlayFailedAttempts: Int
+    let nowPlayingSent: Int
+    let nowPlayingDropped: Int
+
+    init(_ dto: ApplePlaybackDeliveryReportDto) {
+        submittedPlaysPersisted = Int(dto.submittedPlaysPersisted)
+        submittedPlaysDelivered = Int(dto.submittedPlaysDelivered)
+        submittedPlaysPending = Int(dto.submittedPlaysPending)
+        submittedPlayFailedAttempts = Int(dto.submittedPlayFailedAttempts)
+        nowPlayingSent = Int(dto.nowPlayingSent)
+        nowPlayingDropped = Int(dto.nowPlayingDropped)
+    }
+}
+
 @MainActor
 final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     private let queueClient: ApplePlaybackQueueClient
@@ -69,6 +90,26 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     ) {
         presentationHandler = handler
+    }
+
+    /// Receives the current report immediately and every later change, on the main actor. The
+    /// presentation never carries this: a shell that wants to say "played" must wait for it here,
+    /// because the ingestion path returns once the play is persisted, before any request leaves.
+    func setScrobbleDeliveryHandler(
+        _ handler: (@MainActor (DulcetScrobbleDeliveryReport) -> Void)?
+    ) {
+        guard let handler else {
+            queueClient.setDeliveryReportObserver(observer: nil)
+            return
+        }
+        queueClient.setDeliveryReportObserver { dto in
+            let report = DulcetScrobbleDeliveryReport(dto)
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { handler(report) }
+            } else {
+                DispatchQueue.main.async { handler(report) }
+            }
+        }
     }
 
     func configure(account presentationAccount: DulcetPlaybackAccount) {

@@ -1,7 +1,9 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.Dispatchers
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
@@ -176,6 +178,189 @@ class ApplePlaybackQueueFacadeTest {
             client.close()
             driver.close()
         }
+    }
+
+    @Test
+    fun deliveryReportCountsASubmittedPlayOnlyAfterTheServerAcknowledgesIt() {
+        val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), okEnvelope())))
+        val delivery = deliveryFixture(transport)
+        try {
+            val client = delivery.client
+            client.replaceAndStart(queueRequest())
+            client.recordReady("attempt:2", 30_000, "seekable")
+            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+            client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+            client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+
+            // Now-playing went out on progress begin; nothing was submitted below the threshold.
+            assertEquals(listOf("false"), transport.parameters.map { it["submission"] })
+            val beforeThreshold = client.deliveryReport()
+            assertEquals(1, beforeThreshold.nowPlayingSent)
+            assertEquals(0, beforeThreshold.submittedPlaysPersisted)
+            assertEquals(0, beforeThreshold.submittedPlaysDelivered)
+
+            client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+
+            assertEquals(listOf("false", "true"), transport.parameters.map { it["submission"] })
+            val afterThreshold = client.deliveryReport()
+            assertEquals(1, afterThreshold.submittedPlaysPersisted)
+            assertEquals(1, afterThreshold.submittedPlaysDelivered)
+            assertEquals(0, afterThreshold.submittedPlaysPending)
+            assertEquals(0, afterThreshold.submittedPlayFailedAttempts)
+            // The observer saw the persisted-but-undelivered state before the delivered one, so a
+            // shell watching it cannot read "delivered" off the hand-off alone.
+            val persistedFirst = delivery.reports.first { it.submittedPlaysPersisted == 1L }
+            assertEquals(0, persistedFirst.submittedPlaysDelivered)
+            assertEquals(1, delivery.reports.last().submittedPlaysDelivered)
+        } finally {
+            delivery.close()
+        }
+    }
+
+    @Test
+    fun deliveryReportDoesNotCountAPlayTheServerRejected() {
+        val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), failedEnvelope())))
+        val delivery = deliveryFixture(transport)
+        try {
+            val client = delivery.client
+            client.replaceAndStart(queueRequest())
+            client.recordReady("attempt:2", 30_000, "seekable")
+            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+            client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+            client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+            client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+
+            assertEquals(listOf("false", "true"), transport.parameters.map { it["submission"] })
+            val report = client.deliveryReport()
+            assertEquals(1, report.submittedPlaysPersisted)
+            assertEquals(0, report.submittedPlaysDelivered)
+            assertEquals(1, report.submittedPlaysPending)
+            assertEquals(1, report.submittedPlayFailedAttempts)
+            assertFalse(delivery.reports.any { it.submittedPlaysDelivered > 0 })
+        } finally {
+            delivery.close()
+        }
+    }
+
+    @Test
+    fun deliveryReportSurvivesAClosedDatabaseAndAClosedClient() {
+        val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), failedEnvelope())))
+        val delivery = deliveryFixture(transport)
+        val client = delivery.client
+        client.replaceAndStart(queueRequest())
+        client.recordReady("attempt:2", 30_000, "seekable")
+        client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+        client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+        client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+        client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+        client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+        val live = client.deliveryReport()
+        assertEquals(1, live.submittedPlaysPending)
+
+        // The pending count is a SQLite read. With the database gone it must not throw across
+        // the Objective-C boundary; it reports the last count it managed to read.
+        delivery.closeDriver()
+        val afterDatabase = client.deliveryReport()
+        assertEquals(1, afterDatabase.submittedPlaysPersisted)
+        assertEquals(1, afterDatabase.submittedPlaysPending)
+        assertEquals(0, afterDatabase.submittedPlaysDelivered)
+
+        client.close()
+        val afterClose = client.deliveryReport()
+        assertEquals(1, afterClose.submittedPlaysPersisted)
+        assertEquals(1, afterClose.submittedPlaysPending)
+        client.setDeliveryReportObserver { }
+        client.setDeliveryReportObserver(null)
+    }
+
+    private fun deliveryFixture(transport: QueuedScrobbleTransport): DeliveryFixture {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var identity = 0
+        val client = ApplePlaybackQueueClient(
+            database = database,
+            controller = PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = resumePositions,
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+            resumePositions = resumePositions,
+            // Unconfined runs delivery inline on the ingesting thread, so every report is visible
+            // the moment the ingestion call returns and the test needs no main run loop.
+            deliveryDispatcher = Dispatchers.Unconfined,
+        )
+        val reports = mutableListOf<ApplePlaybackDeliveryReportDto>()
+        client.setDeliveryReportObserver { reports += it }
+        client.installDelivery(
+            serverId = ServerId("server"),
+            sender = ScrobbleEndpointSender(transport),
+            outbox = PersistentScrobbleOutbox(database, OutboxWallClock { 1_788_000_000_000 }),
+        )
+        return DeliveryFixture(driver, client, reports)
+    }
+
+    private class DeliveryFixture(
+        private val driver: app.cash.sqldelight.db.SqlDriver,
+        val client: ApplePlaybackQueueClient,
+        val reports: MutableList<ApplePlaybackDeliveryReportDto>,
+    ) {
+        fun closeDriver() {
+            driver.close()
+        }
+
+        fun close() {
+            client.close()
+            driver.close()
+        }
+    }
+
+    private class QueuedScrobbleTransport(
+        private val responses: ArrayDeque<AuthenticatedEndpointResponse>,
+    ) : ScrobbleEndpointTransport {
+        val parameters = mutableListOf<Map<String, String>>()
+
+        override suspend fun request(
+            parameters: Map<String, String>,
+        ): AuthenticatedEndpointResponse {
+            this.parameters += parameters
+            return responses.removeFirst()
+        }
+    }
+
+    private fun okEnvelope() = envelope("""{"subsonic-response":{"status":"ok"}}""")
+
+    private fun failedEnvelope() =
+        envelope("""{"subsonic-response":{"status":"failed","error":{"code":0}}}""")
+
+    private fun envelope(json: String): AuthenticatedEndpointResponse {
+        val body = json.encodeToByteArray()
+        val redactedUrl = "https://music.invalid:443/rest/scrobble.view?<redacted>"
+        return AuthenticatedEndpointResponse(
+            statusCode = 200,
+            body = body,
+            redactedUrl = redactedUrl,
+            headers = AuthenticatedEndpointResponseHeaders(
+                contentType = "application/json",
+                contentLength = PlaybackContentLength.Exact(body.size.toLong()),
+                retryAfter = null,
+                acceptRanges = null,
+                contentRange = null,
+            ),
+            requestTrace = RequestTrace.observed(
+                endpoint = "scrobble",
+                method = "GET",
+                redactedUrl = redactedUrl,
+                authenticationLocation = AuthenticationLocation.Query,
+                queryAuthenticationParameters = emptySet(),
+                formAuthenticationParameters = emptySet(),
+                channels = emptySet(),
+                requestedProtocolVersion = "1.16.1",
+                saltFingerprint = "fixture",
+            ),
+        )
     }
 
     private fun fixture(): FacadeFixture {

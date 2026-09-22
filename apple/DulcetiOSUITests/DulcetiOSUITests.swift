@@ -558,6 +558,13 @@ final class DulcetiOSUITests: XCTestCase {
         guard let configuration = livePlaybackConfiguration() else { return }
 
         let app = XCUIApplication()
+        // The app's DEBUG delivery marker. The Now Playing slider shows the threshold; nothing in
+        // the product shows delivery, and delivery is the event the workflow's play-count read
+        // depends on. Without it this proof twice returned on the displayed threshold while the
+        // app's own accumulator (counted from its first sampled position) had not crossed, and
+        // XCUITest's teardown killed the app before its next sample (apple-ci 2026-09-06 and
+        // 2026-09-11: NowPlaying logged, no Scrobbled line, count stayed 0, test green).
+        app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
         if usingInjectedAccount {
             app.launchArguments += [
                 "-dulcet-debug-connect-account",
@@ -651,6 +658,35 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        // Negative control, before any playback: the marker must be live and read three zeros,
+        // each excluding a different way a later "delivered=1" could be credited to the wrong
+        // event. The counts are per process; only `pending` reads the durable outbox.
+        //   delivered=0  this launch has not yet delivered anything (a leftover row drained on
+        //                configureDelivery would already show here);
+        //   pending=0    no row survives from an earlier launch on a reused simulator, so a
+        //                drain that has not happened yet cannot supply the 1 either;
+        //   persisted=0  this launch has not itself persisted a play (a crossing before the
+        //                account settled, or a restored session, would show here).
+        let deliveryMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
+        guard deliveryMarker.waitForExistence(timeout: 10) else {
+            XCTFail("The app's scrobble delivery marker must exist when its launch argument is passed")
+            return
+        }
+        guard let baseline = waitForScrobbleDeliveryCounts(
+            in: deliveryMarker,
+            timeout: 10,
+            until: { $0["delivered"] != nil }
+        ) else {
+            XCTFail("The scrobble delivery marker must report counts; last label: \(deliveryMarker.label)")
+            return
+        }
+        XCTAssertEqual(baseline["delivered"], 0, "No play may be delivered before playback starts")
+        XCTAssertEqual(baseline["pending"], 0, "No play may be waiting in the outbox from an earlier launch")
+        XCTAssertEqual(baseline["persisted"], 0, "No play may be persisted by this launch before playback")
+        guard baseline["delivered"] == 0, baseline["pending"] == 0, baseline["persisted"] == 0 else {
+            return
+        }
+
         // staticTexts avoids the duplicate Image/StaticText identifier carried by sidebar Labels.
         let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
         guard library.waitForExistence(timeout: 5) else {
@@ -710,6 +746,25 @@ final class DulcetiOSUITests: XCTestCase {
             threshold,
             "Observed progressing media time must move past the §15.2 scrobble threshold"
         )
+
+        // The displayed position and the accumulator are different quantities with half a second
+        // between them on this track, so the threshold is necessary, never sufficient. Return only
+        // once the app reports the server acknowledged `submission=true`; XCUITest kills the app
+        // when this method returns, and a play that has not left by then never leaves in CI.
+        // The budget covers the next 500 ms position sample, the request, and a loaded host; it
+        // is not a retry window, because the facade schedules no in-process retry.
+        guard let delivered = waitForScrobbleDeliveryCounts(
+            in: deliveryMarker,
+            timeout: 30,
+            until: { ($0["delivered"] ?? 0) >= 1 }
+        ) else {
+            XCTFail(
+                "The app must report the scrobble delivered before this proof returns; last marker: \(deliveryMarker.label)"
+            )
+            return
+        }
+        XCTAssertEqual(delivered["delivered"], 1, "Exactly one play is expected for one crossing")
+        XCTAssertEqual(delivered["failures"], 0, "No delivery attempt may have failed")
     }
 
     private func livePlaybackConfiguration() -> LivePlaybackConfiguration? {
@@ -984,6 +1039,40 @@ final class DulcetiOSUITests: XCTestCase {
         application.buttons.allElementsBoundByIndex.map { button in
             button.label.isEmpty ? "<empty>" : button.label
         }
+    }
+
+    /// Polls the delivery marker's label (`dulcet-scrobble persisted=N delivered=N ...`) until
+    /// `until` accepts the parsed counts, returning nil at the deadline. A label without counts
+    /// (the app has not yet installed its observer) never satisfies a predicate.
+    @MainActor
+    private func waitForScrobbleDeliveryCounts(
+        in marker: XCUIElement,
+        timeout: TimeInterval,
+        until accepted: ([String: Int]) -> Bool
+    ) -> [String: Int]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let counts = scrobbleDeliveryCounts(from: marker.label), accepted(counts) {
+                return counts
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        if let counts = scrobbleDeliveryCounts(from: marker.label), accepted(counts) {
+            return counts
+        }
+        return nil
+    }
+
+    private func scrobbleDeliveryCounts(from label: String) -> [String: Int]? {
+        let words = label.split(separator: " ")
+        guard words.first == "dulcet-scrobble" else { return nil }
+        var counts: [String: Int] = [:]
+        for word in words.dropFirst() {
+            let pair = word.split(separator: "=", maxSplits: 1)
+            guard pair.count == 2, let value = Int(pair[1]) else { return nil }
+            counts[String(pair[0])] = value
+        }
+        return counts.isEmpty ? nil : counts
     }
 
     @MainActor
