@@ -3032,7 +3032,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
-| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22): `push` to `main` ships DEV, a `v*` tag ships PROD. The only workflow able to read signing secrets |
+| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. The only workflow able to read signing secrets |
 
 **Note on the Linux-only claim:** GitHub Actions **service containers** require a Linux runner, so the
 `services:`-based Navidrome cannot run in the Apple job. That is a statement about the Actions feature,
@@ -3067,11 +3067,12 @@ a dedicated Mac, not less.
 ### 21.2 Secrets and release credentials
 
 The only privileged material in CI is the Apple distribution signing identity and the App Store Connect
-API key used by `release.yml`. Both live in **GitHub Actions secrets scoped to an environment**. The
-PROD path additionally requires manual environment approval; the DEV path runs unattended on merge to
-`main`, which is safe because it can only reach internal testers on the maintainer's own devices
-(§22.1). No other workflow can read the secrets, so a fork PR — which cannot access secrets at all —
-has no path to them even in principle.
+API key used by `release.yml`. Both live in **GitHub Actions secrets scoped to the `release`
+environment**, which requires a maintainer's approval for every run, DEV and PROD alike, and accepts
+deployments from protected branches only. `release.yml` is `workflow_dispatch`-only (revision 99). No
+other workflow can read the secrets, so a fork PR — which cannot access secrets at all, and cannot
+dispatch a workflow — has no path to them even in principle. `tools/verify_release_policy.py` fails CI
+if any of those properties drifts.
 
 ### 21.3 OQ-1 is CLOSED for the CI matrix — one narrow exception, in §21.3.1
 
@@ -3163,13 +3164,13 @@ TestFlight actually works rather than onto a naming convention.
 
 | | **DEV** | **PROD** |
 |---|---|---|
-| trigger | **every merge to `main`**, fully automatic | **a `vX.Y.Z` tag**, cut by hand every few days or few iterations, once DEV has accumulated genuinely finished features. **Never automatic** |
+| trigger | **dispatched by hand on a significant merge to `main`**, and the maintainer is notified (maintainer decision 2026-09-11, revision 99). Not every merge | **a `vX.Y.Z` tag**, cut by hand every few days or few iterations, once DEV has accumulated genuinely finished features, then a dispatch of that commit. **Never automatic** |
 | TestFlight group | **internal** testers (up to 100; maintainer devices only) | **external** group (the wider trusted testers) |
 | Beta App Review | **not required** — internal builds are available within minutes | **required** — so PROD is slower by design |
 | purpose | dogfooding against a real library (§22.4) | a build other people are asked to rely on |
 | breakage | expected, and the point | a defect here costs someone else's afternoon |
-| marketing version | the in-progress `vX.Y.Z-dev` | `vX.Y.Z` |
-| build number | auto-incremented per build | auto-incremented per build |
+| marketing version | the in-progress `X.Y.Z` (`CFBundleShortVersionString` cannot carry a `-dev` suffix; the bundle identifier, name and icon mark DEV) | `X.Y.Z` |
+| build number | one above the highest build App Store Connect holds for the record, never below the repository floor (§22.6) | same rule |
 
 **The external-review latency is a feature, not friction to engineer around.** It is the thing that
 stops a bad afternoon on `main` reaching anyone who is not the person who caused it. Do not add a
@@ -3265,8 +3266,67 @@ Machine-specific paths and addresses for either instance live in maintainer-loca
   rather than by vigilance.
 - `CHANGELOG.md` in the repository is the source for PROD notes and is updated as part of cutting the
   tag, not afterwards.
-- The `release.yml` workflow (§21.1) handles both channels, selected by trigger: `push` to `main`
-  produces DEV, a `v*` tag produces PROD. It remains the only workflow able to read signing secrets.
+- The `release.yml` workflow (§21.1, §22.6) handles both channels, selected by its `channel` input.
+  It remains the only workflow able to read signing secrets.
+- **Not yet built:** generated DEV release notes. `release.yml` sets no TestFlight "What to Test"
+  text; the bullet above describes the intent, not a mechanism.
+
+### 22.6 `release.yml` as built (revision 99)
+
+**Dispatch** (from `main` only; anything else is refused before a secret is decoded):
+
+```
+gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_run=false
+```
+
+| channel / platform | scheme | bundle identifier | profile | package |
+|---|---|---|---|---|
+| dev / macos | `DulcetMac` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Mac Dev App Store | signed `.pkg`, internal-only |
+| dev / ios | `DulcetiOS` | `${BUNDLE_PREFIX}.ios.dev` | Dulcet CI iOS Dev App Store | `.ipa`, internal-only |
+| prod / macos | `DulcetMacRelease` | `${BUNDLE_PREFIX}` | Dulcet CI Mac App Store | signed `.pkg` |
+
+Refused, with the reason printed: `prod/ios` (no PROD iOS target exists) and `dev/tvos` (App Store
+Connect requires a layered tvOS icon and a top-shelf image, which `DulcetTV` does not have). The pairs
+live in `tools/release_plan.py`, which also refuses a plan whose profile differs from the target's
+`PROVISIONING_PROFILE_SPECIFIER` in `apple/project.yml`.
+
+**The three brakes before an upload:** the workflow must be dispatched (nothing triggers it); the
+`release` environment must be approved; and `dry_run` must be exactly `false` — it defaults to `true`,
+and any other spelling is refused rather than read as "upload".
+
+**What a run does, in order:** resolve the plan (no secrets); for PROD, require the tag
+`v<MARKETING_VERSION>` on the dispatched commit and every required check green on it; number the build
+from App Store Connect; archive and export under a temporary keychain holding only the CI identities;
+verify the artifact actually produced — bundle identifier, `CFBundleVersion`, marketing version, the
+export-compliance declaration, the app icon, the signed application identifier, that the signing leaf
+is the CI certificate, the embedded profile, and for macOS the App Sandbox and the installer
+signature — then check the packaged payload again, including that every file is world-readable. A dry
+run with an existing record asks App Store Connect to validate the package without uploading; an
+upload is followed by polling until App Store Connect reports the build `VALID`, because an uploader
+exiting 0 is not arrival.
+
+**Build numbers** are one above the larger of (a) the highest build App Store Connect holds for that
+bundle identifier's record and (b) the PROD target's committed `CURRENT_PROJECT_VERSION`. Numbering is
+therefore monotonic per record whether a build was cut by hand or by the workflow, and a new DEV record
+starts above the builds PROD already shipped. A non-integer build number in App Store Connect stops the
+run rather than being guessed at.
+
+**App Store Connect records.** Records cannot be created through the API (it answers that `apps` does
+not allow `CREATE`), so each is a one-time web-UI step. §22.5's one-record-per-identifier rule means
+DEV needs one record per platform identifier: `${BUNDLE_PREFIX}.dev` (macOS) and
+`${BUNDLE_PREFIX}.ios.dev` (iOS). An upload run whose record is absent fails in seconds, before the
+archive, naming the missing record.
+
+**The preconfigured-server guard (§22.3).** No build carries a preconfigured server today. What
+exists is the guard that keeps PROD unable to: `verify_release_policy.py` rejects any server-named
+setting on the PROD target or any server setting passed by `release.yml`, and the archive step refuses
+a PROD artifact whose `Info.plist` names a server. A future DEV convenience URL must travel through a
+DEV-only `Info.plist` entry, which is the one route both checks cover.
+
+**Signing material** is the CI-only Apple Distribution certificate, a CI-only Mac Installer
+Distribution certificate (a macOS App Store package must be installer-signed), the four `Dulcet CI …`
+profiles and the App Store Connect API key, all as `release`-environment secrets. Revoking the CI
+certificates breaks only CI.
 
 ---
 
@@ -3665,6 +3725,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 99 (2026-09-22)** — the delivery channel is built, and its trigger changed. §22.1 said DEV
+ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
+2026-09-11 that DEV is instead dispatched on significant merges, with a notification. `release.yml` is
+therefore `workflow_dispatch`-only for both channels, every run needs approval of the `release`
+environment (§21.2 previously exempted DEV), and `tools/verify_release_policy.py` keeps those properties
+in CI. §22.6 records the workflow as built, including two facts earlier text got wrong or left out:
+DEV spans two App Store Connect records (one per platform bundle identifier, as §22.5's rule already
+implied), and a DEV marketing version cannot carry a `-dev` suffix. It also states plainly that no
+build carries a preconfigured server yet: what exists is the guard, not the DEV feature, and that
+DEV release notes are not generated.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

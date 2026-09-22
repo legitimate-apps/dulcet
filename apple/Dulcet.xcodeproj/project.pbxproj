@@ -17,6 +17,7 @@
 		1144DE9D237F7517F9571B69 /* PlaybackResourceLoadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA2CF9278ECFE5438004376 /* PlaybackResourceLoadingTests.swift */; };
 		12031086B8F87FBD5F98619C /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 15F1FBE62418F9CA54452CFD /* navidrome-reference.mp3 */; };
 		127D19FAA195A69D247E6A57 /* DulcetAppleProduction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0981D7D7493E2D1ED3C611B /* DulcetAppleProduction.swift */; };
+		193CA7350563961332E40497 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3309680298081D9B1DFF990E /* Assets.xcassets */; };
 		1D698E922A99003F2B2EE47F /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
 		1DF0D7C03F7E2F0DD71CDF71 /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 15F1FBE62418F9CA54452CFD /* navidrome-reference.mp3 */; };
 		20C40A8C5DC75C327A0E2CE8 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */; };
@@ -134,6 +135,7 @@
 		22ED479F9A02BD779D206FCE /* AVPlayerEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerEngineTests.swift; sourceTree = "<group>"; };
 		24B75E50328D01AA3A47D275 /* DulcetKitTVOSTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DulcetKitTVOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		32C57C7DD02906D31F5E33C5 /* DulcetKitIOSRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetKitIOSRenderTests.swift; sourceTree = "<group>"; };
+		3309680298081D9B1DFF990E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3363452E7B2DECD19EB207B2 /* DulcetCorePlaybackPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlaybackPresentationTests.swift; sourceTree = "<group>"; };
 		33D3480778A0B2C3AD3ACD10 /* DulcetiOSDownloadIntegrationTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DulcetiOSDownloadIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		355F8AE988967610CF1A480F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -277,6 +279,7 @@
 		15B71ACC7A6C2A1F4D9F2CB3 /* DulcetiOS */ = {
 			isa = PBXGroup;
 			children = (
+				3309680298081D9B1DFF990E /* Assets.xcassets */,
 				D0E1B48A359DA49D31A27896 /* DulcetiOSApp.swift */,
 			);
 			path = DulcetiOS;
@@ -696,6 +699,7 @@
 			buildPhases = (
 				228A4780425D9C613826E604 /* Compile Kotlin Framework */,
 				D39B864E960FD2B9352BC98A /* Sources */,
+				FB9A63F5316BDD417A23B5D1 /* Resources */,
 				52565928B5C4E4B59C3C92AF /* Frameworks */,
 			);
 			buildRules = (
@@ -746,7 +750,6 @@
 					};
 					8BCA96527B244E2CCEE2901B = {
 						DevelopmentTeam = 3LTL47SJ8C;
-						ProvisioningStyle = Automatic;
 					};
 					BAC15431FAE29AC4A7F630CC = {
 						DevelopmentTeam = 3LTL47SJ8C;
@@ -771,7 +774,6 @@
 					};
 					F191FAA4D2589FA394AC07D2 = {
 						DevelopmentTeam = 3LTL47SJ8C;
-						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -847,6 +849,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				E82522968B7D9F724CE5310A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB9A63F5316BDD417A23B5D1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				193CA7350563961332E40497 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1192,10 +1202,17 @@
 		09CF159A04C1B438042F6BE8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
 				CODE_SIGN_ENTITLEMENTS = DulcetMac/DulcetMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = DulcetMac/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Dulcet DEV";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Legitimate LLC. All rights reserved.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1204,6 +1221,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_MODULE_NAME = DulcetMac;
 				PRODUCT_NAME = "Dulcet DEV";
+				PROVISIONING_PROFILE_SPECIFIER = "Dulcet CI Mac Dev App Store";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1295,9 +1313,14 @@
 		5488B7A744D4ECDEE10416E9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_KEY_CFBundleDisplayName = "Dulcet DEV";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1305,6 +1328,7 @@
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.ios.dev;
 				PRODUCT_NAME = "Dulcet DEV";
+				PROVISIONING_PROFILE_SPECIFIER = "Dulcet CI iOS Dev App Store";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1419,7 +1443,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
@@ -1490,7 +1513,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
 				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet;
 				PRODUCT_MODULE_NAME = DulcetMac;
@@ -1553,6 +1575,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";
@@ -1632,7 +1655,7 @@
 		CDB8A273766321642A7B3738 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1752,6 +1775,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

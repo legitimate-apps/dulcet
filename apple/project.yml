@@ -15,6 +15,10 @@ settings:
     DEVELOPMENT_TEAM: 3LTL47SJ8C
     FRAMEWORK_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
     OTHER_LDFLAGS: "$(inherited) -framework DulcetCore"
+    # One marketing version for every channel and platform (spec §22.1: DEV carries the
+    # in-progress version). CFBundleShortVersionString cannot carry a "-dev" suffix, so DEV is
+    # told apart by its bundle identifier, name and icon, never by this value.
+    MARKETING_VERSION: "0.1.0"
 packages:
   DulcetKit:
     path: DulcetKit
@@ -35,6 +39,22 @@ targets:
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
+      configs:
+        # Release is what release.yml archives for the DEV channel. Debug (every CI build and
+        # test) is deliberately untouched. Beyond identity, name and icon, these match
+        # DulcetMacRelease, because spec §22.3 lets nothing else differ between the channels.
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac Dev App Store"
+          ENABLE_HARDENED_RUNTIME: YES
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+          INFOPLIST_KEY_CFBundleDisplayName: Dulcet DEV
+          INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+          INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
+          # Same declaration and reason as DulcetMacRelease: without it every upload parks at
+          # MISSING_EXPORT_COMPLIANCE and never reaches a tester.
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -68,7 +88,6 @@ targets:
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
         PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"
-        MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "4"
     info:
       # An explicit plist, NOT INFOPLIST_KEY_* settings: that mechanism only honours a fixed
@@ -158,6 +177,21 @@ targets:
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # Every configuration, not Release only: this target now has an asset catalog, and actool
+        # fails an iOS build whose catalog lacks the named icon set (XcodeGen's default is AppIcon).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+      configs:
+        # Release is what release.yml archives for the iOS DEV channel; Debug is untouched.
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS Dev App Store"
+          INFOPLIST_KEY_CFBundleDisplayName: Dulcet DEV
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+          # An iPad build that supports multitasking must declare all four orientations or
+          # App Store Connect rejects the upload. These are the platform defaults, stated.
+          INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+          INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false

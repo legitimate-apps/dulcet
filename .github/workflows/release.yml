@@ -1,0 +1,207 @@
+name: release
+
+# The delivery channel (spec §22): archive, sign, export and upload one Dulcet build to TestFlight.
+#
+# workflow_dispatch ONLY, from main only, in the `release` environment, which requires a
+# maintainer's approval and holds the only signing and App Store Connect secrets in the repository.
+# A fork pull request cannot trigger this workflow and cannot read those secrets.
+# tools/verify_release_policy.py keeps every one of those properties from drifting.
+#
+# DEV is cut on significant merges rather than on every merge (maintainer decision; spec §22.1
+# records the change). dry_run defaults to true: it archives, signs, exports and validates, and
+# asks App Store Connect to validate the package when the app record exists, but uploads nothing.
+#
+# Dispatch:  gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_run=false
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: dev (internal TestFlight) or prod (external TestFlight, needs a v<version> tag)
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - prod
+      platform:
+        description: Apple platform to build
+        required: true
+        type: choice
+        default: macos
+        options:
+          - macos
+          - ios
+      dry_run:
+        description: Build, sign, export and validate without uploading
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: release-${{ inputs.channel }}-${{ inputs.platform }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: ${{ inputs.channel }} ${{ inputs.platform }} release
+    runs-on: macos-latest
+    timeout-minutes: 100
+    environment: release
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Reads no secret. Refuses unknown pairs, non-main refs and any dry_run spelling other than
+      # exactly true/false, before a single signing payload is decoded.
+      - name: Resolve the release plan
+        id: plan
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_PLATFORM: ${{ inputs.platform }}
+          RELEASE_DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_REF: ${{ github.ref }}
+        run: python3 tools/release_plan.py >> "$GITHUB_OUTPUT"
+
+      - name: Require the PROD cut gate
+        if: ${{ steps.plan.outputs.channel == 'prod' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAGS_AT_HEAD="$(git tag --points-at HEAD | tr '\n' ' ')"
+          export RELEASE_TAGS_AT_HEAD
+          python3 tools/release_plan.py prod-gate
+
+      - name: Prove the release tooling
+        run: python3 tools/test-release-channel
+
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # An upload needs the App Store Connect record to exist (records are web-UI only), so an
+      # upload run without one fails here, in seconds, instead of after the archive.
+      - name: Number the build from App Store Connect
+        id: build
+        env:
+          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}
+          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
+          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          BUILD_FLOOR: ${{ steps.plan.outputs.build_floor }}
+          UPLOAD: ${{ steps.plan.outputs.upload }}
+        run: |
+          set -euo pipefail
+          if [[ "$UPLOAD" == true ]]; then
+            python3 tools/app_store_connect.py next-build \
+              --bundle-id "$BUNDLE_ID" --floor "$BUILD_FLOOR" --require-record >> "$GITHUB_OUTPUT"
+          else
+            python3 tools/app_store_connect.py next-build \
+              --bundle-id "$BUNDLE_ID" --floor "$BUILD_FLOOR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Archive, sign, export and verify
+        id: package
+        env:
+          DULCET_CI_SIGNING_P12_BASE64: ${{ secrets.DULCET_CI_SIGNING_P12_BASE64 }}
+          DULCET_CI_SIGNING_P12_PASSWORD: ${{ secrets.DULCET_CI_SIGNING_P12_PASSWORD }}
+          DULCET_CI_INSTALLER_P12_BASE64: ${{ secrets.DULCET_CI_INSTALLER_P12_BASE64 }}
+          DULCET_CI_INSTALLER_P12_PASSWORD: ${{ secrets.DULCET_CI_INSTALLER_P12_PASSWORD }}
+          DULCET_MAC_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_APP_STORE_PROFILE_BASE64 }}
+          DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 }}
+          DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64 }}
+          DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64 }}
+          RELEASE_CHANNEL: ${{ steps.plan.outputs.channel }}
+          RELEASE_PLATFORM: ${{ steps.plan.outputs.platform }}
+          RELEASE_SCHEME: ${{ steps.plan.outputs.scheme }}
+          RELEASE_BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          RELEASE_PROFILE_NAME: ${{ steps.plan.outputs.profile_name }}
+          RELEASE_DESTINATION: ${{ steps.plan.outputs.destination }}
+          RELEASE_PACKAGE_KIND: ${{ steps.plan.outputs.package_kind }}
+          RELEASE_MARKETING_VERSION: ${{ steps.plan.outputs.marketing_version }}
+          RELEASE_INTERNAL_ONLY: ${{ steps.plan.outputs.internal_only }}
+          RELEASE_BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          export RELEASE_ROOT="$RUNNER_TEMP/release"
+          export RELEASE_DERIVED_DATA="$RUNNER_TEMP/DerivedData"
+          if [[ "$RELEASE_PLATFORM" != macos ]]; then
+            # Only a macOS package is installer-signed; do not decode that identity otherwise.
+            unset DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD
+          fi
+          tools/signing/with-temporary-keychain -- tools/release/archive-and-export \
+            | tee "$RUNNER_TEMP/archive.log"
+          package="$(sed -n 's/^RELEASE PACKAGE //p' "$RUNNER_TEMP/archive.log")"
+          test -f "$package"
+          echo "path=$package" >> "$GITHUB_OUTPUT"
+
+      # Server-side validation without uploading, possible only once the record exists.
+      - name: Ask App Store Connect to validate the package (dry run)
+        if: ${{ steps.plan.outputs.upload != 'true' && steps.build.outputs.app_record == 'present' }}
+        env:
+          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}
+          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
+          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}
+          PACKAGE: ${{ steps.package.outputs.path }}
+        run: python3 tools/app_store_connect.py validate --package "$PACKAGE"
+
+      - name: Upload to TestFlight
+        if: ${{ steps.plan.outputs.upload == 'true' }}
+        env:
+          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}
+          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
+          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}
+          PACKAGE: ${{ steps.package.outputs.path }}
+        run: python3 tools/app_store_connect.py upload --package "$PACKAGE"
+
+      # altool exiting 0 is not arrival. The run is green only once the build is VALID.
+      - name: Confirm the build arrived and processed
+        if: ${{ steps.plan.outputs.upload == 'true' }}
+        env:
+          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}
+          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
+          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}
+          APP_ID: ${{ steps.build.outputs.app_id }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+        run: python3 tools/app_store_connect.py await-build --app-id "$APP_ID" --build-number "$BUILD_NUMBER"
+
+      - name: Summarise
+        if: ${{ always() }}
+        env:
+          CHANNEL: ${{ steps.plan.outputs.channel }}
+          PLATFORM: ${{ steps.plan.outputs.platform }}
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          VERSION: ${{ steps.plan.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          UPLOAD: ${{ steps.plan.outputs.upload }}
+          APP_RECORD: ${{ steps.build.outputs.app_record }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          {
+            echo "### Dulcet ${CHANNEL:-?} ${PLATFORM:-?} release: ${OUTCOME}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| bundle id | \`${BUNDLE_ID:-?}\` |"
+            echo "| version (build) | ${VERSION:-?} (${BUILD_NUMBER:-?}) |"
+            echo "| uploaded | ${UPLOAD:-false} |"
+            echo "| App Store Connect record | ${APP_RECORD:-unknown} |"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

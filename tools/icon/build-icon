@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regenerate the AppIcon asset catalog from tools/icon/dulcet.svg.
+# Regenerate the AppIcon asset catalogs (production and DEV) from tools/icon/dulcet.svg.
 # The PNGs are committed so the build never depends on cairosvg being installed.
 # NOTE: the Mac App Store requires an ASSET CATALOG — a bare .icns is rejected with
 # ITMS-90546 "Missing asset catalog", which is exactly how build 1 failed.
@@ -26,3 +26,59 @@ json.dump({'images': images, 'info': {'version': 1, 'author': 'xcode'}},
           open(os.path.join('$SET', 'Contents.json'), 'w'), indent=2)
 "
 echo "wrote $SET"
+
+# DEV variants (spec §22.2: the two channels must be distinguishable at a glance). The DEV icon is
+# the production artwork with a "DEV" band, generated from the same SVG so the two cannot drift.
+#   macOS: AppIconDev beside AppIcon, same ten mac sizes, transparent margin kept.
+#   iOS:   one 1024 "universal" image. iOS masks the corners itself and App Store Connect rejects
+#          an iOS marketing icon with an alpha channel, so it is rendered full-bleed (the squircle
+#          radius set to 0 and the view box cropped to the 824 grid) and flattened to RGB.
+MAC_DEV="$REPO/apple/DulcetMac/Assets.xcassets/AppIconDev.appiconset"
+IOS_CATALOG="$REPO/apple/DulcetiOS/Assets.xcassets"
+IOS_DEV="$IOS_CATALOG/AppIconDev.appiconset"
+mkdir -p "$MAC_DEV" "$IOS_DEV"
+python3 - "$HERE/dulcet.svg" "$WORK" "$MAC_DEV" "$IOS_CATALOG" "$IOS_DEV" <<'PY'
+import json, os, sys
+import cairosvg
+from PIL import Image
+
+svg_path, work, mac_dev, ios_catalog, ios_dev = sys.argv[1:]
+svg = open(svg_path).read()
+band = (
+    '<clipPath id="devclip"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>'
+    '<g clip-path="url(#devclip)">'
+    '<rect x="100" y="792" width="824" height="132" fill="#E0531F"/>'
+    '<text x="512" y="889" font-family="Helvetica" font-weight="bold" font-size="92" '
+    'letter-spacing="14" text-anchor="middle" fill="#FFFFFF">DEV</text></g>'
+)
+dev_svg = svg.replace("</svg>", band + "</svg>")
+
+cairosvg.svg2png(bytestring=dev_svg.encode(), write_to=os.path.join(work, "dev_mac.png"),
+                 output_width=1024, output_height=1024)
+src = Image.open(os.path.join(work, "dev_mac.png")).convert("RGBA")
+pairs = [('16x16','1x',16),('16x16','2x',32),('32x32','1x',32),('32x32','2x',64),
+         ('128x128','1x',128),('128x128','2x',256),('256x256','1x',256),
+         ('256x256','2x',512),('512x512','1x',512),('512x512','2x',1024)]
+images = []
+for size, scale, px in pairs:
+    fn = 'icon_%s%s.png' % (size, '@2x' if scale == '2x' else '')
+    src.resize((px, px), Image.LANCZOS).save(os.path.join(mac_dev, fn))
+    images.append({'size': size, 'idiom': 'mac', 'filename': fn, 'scale': scale})
+json.dump({'images': images, 'info': {'version': 1, 'author': 'xcode'}},
+          open(os.path.join(mac_dev, 'Contents.json'), 'w'), indent=2)
+
+ios_svg = (dev_svg.replace('rx="185"', 'rx="0"')
+           .replace('viewBox="0 0 1024 1024"', 'viewBox="100 100 824 824"'))
+cairosvg.svg2png(bytestring=ios_svg.encode(), write_to=os.path.join(work, "dev_ios.png"),
+                 output_width=1024, output_height=1024)
+ios = Image.open(os.path.join(work, "dev_ios.png")).convert("RGBA")
+flat = Image.new("RGB", ios.size, (7, 30, 32))
+flat.paste(ios, mask=ios.split()[3])
+flat.save(os.path.join(ios_dev, "icon_1024.png"))
+json.dump({'images': [{'filename': 'icon_1024.png', 'idiom': 'universal', 'platform': 'ios',
+                       'size': '1024x1024'}], 'info': {'version': 1, 'author': 'xcode'}},
+          open(os.path.join(ios_dev, 'Contents.json'), 'w'), indent=2)
+json.dump({'info': {'version': 1, 'author': 'xcode'}},
+          open(os.path.join(ios_catalog, 'Contents.json'), 'w'), indent=2)
+PY
+echo "wrote $MAC_DEV and $IOS_DEV"
