@@ -138,7 +138,6 @@
 		3309680298081D9B1DFF990E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3363452E7B2DECD19EB207B2 /* DulcetCorePlaybackPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlaybackPresentationTests.swift; sourceTree = "<group>"; };
 		33D3480778A0B2C3AD3ACD10 /* DulcetiOSDownloadIntegrationTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DulcetiOSDownloadIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		355F8AE988967610CF1A480F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		38AD664A62CF5D87788543B0 /* DulcetMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DulcetMac.entitlements; sourceTree = "<group>"; };
 		39F42D228CAB447B990FAEC6 /* DulcetKitTVOSRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetKitTVOSRenderTests.swift; sourceTree = "<group>"; };
 		41D4E46A00FEC9EC06B9005F /* DulcetMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DulcetMacRelease.entitlements; sourceTree = "<group>"; };
@@ -324,7 +323,6 @@
 				38AD664A62CF5D87788543B0 /* DulcetMac.entitlements */,
 				55CAC4FCF3C96C4D7CC83F91 /* DulcetMacApp.swift */,
 				41D4E46A00FEC9EC06B9005F /* DulcetMacRelease.entitlements */,
-				355F8AE988967610CF1A480F /* Info.plist */,
 			);
 			path = DulcetMac;
 			sourceTree = "<group>";
@@ -1208,11 +1206,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				INFOPLIST_FILE = DulcetMac/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Dulcet DEV";
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Legitimate LLC. All rights reserved.";
+				INFOPLIST_FILE = DulcetMacDev/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1236,7 +1230,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
-				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.tvos.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_NAME = "Dulcet DEV";
 				SDKROOT = appletvos;
 				TARGETED_DEVICE_FAMILY = 3;
@@ -1262,10 +1256,10 @@
 		3BD66460B4D1FB7D9875D805 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
 				CODE_SIGN_ENTITLEMENTS = DulcetMac/DulcetMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				INFOPLIST_FILE = DulcetMac/Info.plist;
+				INFOPLIST_FILE = DulcetMacDev/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1326,9 +1320,9 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
-				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.ios.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_NAME = "Dulcet DEV";
-				PROVISIONING_PROFILE_SPECIFIER = "Dulcet CI iOS Dev App Store";
+				PROVISIONING_PROFILE_SPECIFIER = "Dulcet CI Dev iOS App Store";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1438,7 +1432,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_HARDENED_RUNTIME = YES;
-				INFOPLIST_FILE = DulcetMac/Info.plist;
+				INFOPLIST_FILE = DulcetMacRelease/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1508,7 +1502,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_HARDENED_RUNTIME = YES;
-				INFOPLIST_FILE = DulcetMac/Info.plist;
+				INFOPLIST_FILE = DulcetMacRelease/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1597,7 +1591,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
-				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.tvos.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_NAME = "Dulcet DEV";
 				SDKROOT = appletvos;
 				TARGETED_DEVICE_FAMILY = 3;
@@ -1663,7 +1657,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-export_dynamic";
-				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.ios.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.legitimateapps.dulcet.dev;
 				PRODUCT_NAME = "Dulcet DEV";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

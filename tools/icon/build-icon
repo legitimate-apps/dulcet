@@ -27,7 +27,10 @@ json.dump({'images': images, 'info': {'version': 1, 'author': 'xcode'}},
 "
 echo "wrote $SET"
 
-# DEV variants (spec §22.2: the two channels must be distinguishable at a glance). The DEV icon is
+# DEV variants (spec §22.2: the two channels must be distinguishable at a glance).
+# Font dependency: the band's "DEV" is set in Helvetica through cairo's system font lookup, so a
+# machine without it substitutes another face. Builds never run this script -- they use the
+# committed PNGs -- so that can change a regeneration, never a build. Review the PNGs after one. The DEV icon is
 # the production artwork with a "DEV" band, generated from the same SVG so the two cannot drift.
 #   macOS: AppIconDev beside AppIcon, same ten mac sizes, transparent margin kept.
 #   iOS:   one 1024 "universal" image. iOS masks the corners itself and App Store Connect rejects

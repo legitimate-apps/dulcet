@@ -6,12 +6,17 @@
    defaulting to true).
 2. Every job runs in the `release` environment (maintainer approval, protected branches only)
    on the standard hosted `macos-latest` label, never a larger, billed one.
-3. Only release.yml may name the release secrets or the release environment, and it may name
-   only the secrets that environment is documented to hold.
-4. The upload step runs only when the resolved plan says upload, which only an exact
-   dry_run=false produces.
-5. PROD cannot carry a preconfigured server (spec §22.3): the PROD target declares nothing whose
-   name mentions a server, and release.yml passes no server setting to any build.
+3. Only release.yml may name the release secrets or the release environment (in any YAML
+   spelling), and it may name only the secrets that environment is documented to hold.
+4. Every upload mechanism appears in exactly one step, guarded by the resolved plan's upload
+   decision, which only an exact dry_run=false produces. No other workflow and no archive script
+   contains one, and the export writes a package rather than uploading it.
+5. PROD has no configuration route for a preconfigured server (spec §22.3). Its Info.plist sits in
+   a directory only the PROD target reads and must hold exactly the allowlisted keys; its target
+   settings and the project-level settings it inherits are allowlisted by NAME, so a server
+   setting cannot hide behind an innocent one; no value on that path may hold a URL; and the
+   archive passes no build setting but the build number. What this cannot see is a URL literal
+   compiled into Swift shared by both channels -- that is review's job, not this gate's.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed.
@@ -20,6 +25,7 @@ mutated copies. Exits 1 with every violation listed.
 from __future__ import annotations
 
 from pathlib import Path
+import plistlib
 import re
 import sys
 
@@ -33,10 +39,37 @@ RELEASE_SECRETS = {
     "DULCET_CI_INSTALLER_P12_PASSWORD",
     "DULCET_CI_SIGNING_P12_BASE64",
     "DULCET_CI_SIGNING_P12_PASSWORD",
-    "DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64",
+    "DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64",
+    "DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64",
     "DULCET_MAC_APP_STORE_PROFILE_BASE64",
     "DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64",
-    "DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64",
+}
+# Anything that can move a build to App Store Connect. `pilot` and `upload_to_testflight` are the
+# fastlane spellings; `destination` upload is the exportArchive one.
+UPLOAD_MECHANISMS = re.compile(
+    r"altool|upload-package|upload-app|iTMSTransporter|Transporter|app_store_connect\.py upload"
+    r"|fastlane|upload_to_testflight|\bpilot\b|['\"]?destination['\"]?\s*[:=]\s*['\"]?upload",
+    re.I,
+)
+ARCHIVE_SCRIPT = Path("tools/release/archive-and-export")
+PROD_PLIST = Path("apple/DulcetMacRelease/Info.plist")
+PROD_INFO_KEYS = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIconFile",
+    "CFBundleIconName", "CFBundleIdentifier", "CFBundleInfoDictionaryVersion", "CFBundleName",
+    "CFBundlePackageType", "CFBundleShortVersionString", "CFBundleVersion",
+    "ITSAppUsesNonExemptEncryption", "LSApplicationCategoryType", "LSMinimumSystemVersion",
+    "NSHumanReadableCopyright",
+}
+PROD_TARGET_SETTINGS = {
+    "OTHER_LDFLAGS", "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_MODULE_NAME", "PRODUCT_NAME",
+    "CODE_SIGN_ENTITLEMENTS", "ASSETCATALOG_COMPILER_APPICON_NAME", "ENABLE_HARDENED_RUNTIME",
+    "CODE_SIGN_STYLE", "CODE_SIGN_IDENTITY", "PROVISIONING_PROFILE_SPECIFIER",
+    "CURRENT_PROJECT_VERSION",
+}
+PROJECT_SETTINGS = {
+    "SWIFT_VERSION", "ARCHS", "ENABLE_USER_SCRIPT_SANDBOXING", "GENERATE_INFOPLIST_FILE",
+    "CODE_SIGN_STYLE", "DEVELOPMENT_TEAM", "FRAMEWORK_SEARCH_PATHS", "OTHER_LDFLAGS",
+    "MARKETING_VERSION",
 }
 
 
@@ -103,14 +136,27 @@ def check(errors: list[str]) -> None:
     if unknown:
         errors.append(f"{RELEASE}: references secrets the release environment does not hold: {unknown}")
 
-    upload_steps = re.split(r"(?m)^      - ", text)
-    uploads = [step for step in upload_steps if "app_store_connect.py upload" in step]
+    steps = re.split(r"(?m)^      - ", "\n".join(code(line) for line in lines))
+    uploads = [step for step in steps if UPLOAD_MECHANISMS.search(step)]
     if len(uploads) != 1 or not re.search(
             r"(?m)^        if: \$\{\{ steps\.plan\.outputs\.upload == 'true' \}\}$", uploads[0]):
-        errors.append(f"{RELEASE}: exactly one upload step, guarded by steps.plan.outputs.upload == 'true'")
+        errors.append(f"{RELEASE}: exactly one upload step, guarded by steps.plan.outputs.upload == 'true'; "
+                      f"found {len(uploads)} step(s) with an upload mechanism")
 
-    if any(re.search("server", code(line), re.I) for line in lines):
-        errors.append(f"{RELEASE}: passes a server setting; PROD must be unable to carry one")
+    if any(re.search(r"server|://|-xcconfig|INFOPLIST_KEY_", code(line), re.I) for line in lines):
+        errors.append(f"{RELEASE}: passes a server, URL or plist setting; PROD must be unable to carry one")
+
+    if not ARCHIVE_SCRIPT.is_file():
+        errors.append(f"{ARCHIVE_SCRIPT} is missing")
+    else:
+        script = "\n".join(code(line) for line in ARCHIVE_SCRIPT.read_text().splitlines())
+        if UPLOAD_MECHANISMS.search(script):
+            errors.append(f"{ARCHIVE_SCRIPT}: contains an upload mechanism; only release.yml's guarded step may upload")
+        if '"destination": "export"' not in script:
+            errors.append(f"{ARCHIVE_SCRIPT}: the export must write a package (destination export)")
+        overrides = set(re.findall(r"(?m)^\s+([A-Z][A-Z0-9_]*)=", script))
+        if overrides != {"CURRENT_PROJECT_VERSION"} or "-xcconfig" in script:
+            errors.append(f"{ARCHIVE_SCRIPT}: the archive may override CURRENT_PROJECT_VERSION only, found {sorted(overrides)}")
 
     for workflow in sorted(Path(".github/workflows").glob("*.y*ml")):
         if workflow == RELEASE:
@@ -119,25 +165,102 @@ def check(errors: list[str]) -> None:
         leaked = sorted(set(re.findall(r"secrets\.(DULCET_[A-Za-z0-9_]*)", other)) & RELEASE_SECRETS)
         if leaked:
             errors.append(f"{workflow}: only release.yml may read the release secrets, found {leaked}")
-        if re.search(r"(?m)^\s+environment:\s*(name:\s*)?release\s*$", other):
+        if re.search(r"(?m)^\s+environment:\s*(?:\n\s+)?(?:name:\s*)?['\"]?release['\"]?\s*$", other) \
+                or re.search(r"environment:\s*\{[^}]*name:\s*['\"]?release['\"]?", other):
             errors.append(f"{workflow}: only release.yml may use the release environment")
+        if UPLOAD_MECHANISMS.search("\n".join(code(line) for line in other.splitlines())):
+            errors.append(f"{workflow}: contains an upload mechanism; only release.yml may upload")
 
+    check_prod_configuration(errors)
+
+
+def yaml_block(lines: list[str], path: list[str]) -> list[str] | None:
+    """Lines under a nested key path of block-style YAML, by indentation (no dependency)."""
+    body = lines
+    indents = [len(code(line)) - len(code(line).lstrip()) for line in body if code(line).strip()]
+    indent = min(indents, default=0)
+    for key in path:
+        found = None
+        for index, line in enumerate(body):
+            if code(line) == " " * indent + key + ":" or code(line).startswith(" " * indent + key + ": "):
+                found = index
+                break
+        if found is None:
+            return None
+        nested = []
+        for line in body[found + 1:]:
+            stripped = code(line)
+            if stripped and len(stripped) - len(stripped.lstrip()) <= indent:
+                break
+            nested.append(line)
+        body = nested
+        indents = [len(code(line)) - len(code(line).lstrip()) for line in body if code(line).strip()]
+        indent = min(indents, default=indent + 2)
+    return body
+
+
+def mapping(lines: list[str]) -> dict[str, str]:
+    entries = [re.fullmatch(r"( *)([A-Za-z0-9_]+):\s*(.*)", code(line)) for line in lines]
+    entries = [entry for entry in entries if entry]
+    if not entries:
+        return {}
+    indent = min(len(entry.group(1)) for entry in entries)
+    return {entry.group(2): entry.group(3).strip('"\'') for entry in entries if len(entry.group(1)) == indent}
+
+
+def check_prod_configuration(errors: list[str]) -> None:
     project = Path("apple/project.yml")
-    if project.is_file():
-        target = []
-        inside = False
-        for line in project.read_text().splitlines():
-            if re.fullmatch(r"  [A-Za-z0-9_]+:\s*", line):
-                inside = line.strip() == "DulcetMacRelease:"
-                continue
-            if line and not line.startswith(" "):
-                inside = False
-            if inside:
-                target.append(code(line))
-        if not target:
-            errors.append(f"{project}: no DulcetMacRelease target")
-        elif any(re.search("server", line, re.I) for line in target):
-            errors.append(f"{project}: the PROD target DulcetMacRelease declares a server setting")
+    if not project.is_file():
+        errors.append(f"{project} is missing")
+        return
+    lines = project.read_text().splitlines()
+
+    inherited = mapping(yaml_block(lines, ["settings", "base"]) or [])
+    if yaml_block(lines, ["settings", "configs"]) is not None:
+        errors.append(f"{project}: project-level configs would reach PROD unreviewed; use settings.base")
+    for name in sorted(set(inherited) - PROJECT_SETTINGS):
+        errors.append(f"{project}: project-level setting {name} is not allowlisted, and PROD inherits it")
+
+    target = yaml_block(lines, ["targets", "DulcetMacRelease"])
+    if target is None:
+        errors.append(f"{project}: no DulcetMacRelease target")
+        return
+    settings = yaml_block(target, ["settings"]) or []
+    own = mapping(yaml_block(settings, ["base"]) or [])
+    if set(mapping(settings)) - {"base"}:
+        errors.append(f"{project}: DulcetMacRelease may declare settings.base only")
+    for name in sorted(set(own) - PROD_TARGET_SETTINGS):
+        errors.append(f"{project}: PROD target DulcetMacRelease declares {name}, which is not allowlisted")
+    for name, value in {**inherited, **own}.items():
+        if "://" in value:
+            errors.append(f"{project}: {name} carries a URL on the PROD configuration path")
+    info = mapping(yaml_block(target, ["info"]) or [])
+    if info.get("path") != "DulcetMacRelease/Info.plist":
+        errors.append(f"{project}: DulcetMacRelease must use its own DulcetMacRelease/Info.plist")
+    sources = [code(line).strip() for line in yaml_block(target, ["sources"]) or []]
+    if any("DulcetMacRelease" in source for source in sources):
+        errors.append(f"{project}: the PROD plist directory must not be a source folder")
+    for other, other_lines in ((name, yaml_block(lines, ["targets", name]) or [])
+                               for name in re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(
+                                   yaml_block(lines, ["targets"]) or []))):
+        if other != "DulcetMacRelease" and any("DulcetMacRelease" in code(line) for line in other_lines):
+            errors.append(f"{project}: target {other} reads the PROD-only DulcetMacRelease directory")
+
+    if not PROD_PLIST.is_file():
+        errors.append(f"{PROD_PLIST} is missing")
+        return
+    try:
+        document = plistlib.loads(PROD_PLIST.read_bytes())
+    except Exception as error:  # noqa: BLE001 - any parse failure is a policy failure
+        errors.append(f"{PROD_PLIST}: unreadable: {error}")
+        return
+    keys = set(document)
+    if keys != PROD_INFO_KEYS:
+        errors.append(f"{PROD_PLIST}: keys must be exactly the allowlist; extra {sorted(keys - PROD_INFO_KEYS)}, "
+                      f"missing {sorted(PROD_INFO_KEYS - keys)}")
+    for key, value in document.items():
+        if isinstance(value, str) and "://" in value:
+            errors.append(f"{PROD_PLIST}: {key} holds a URL")
 
 
 def main() -> int:

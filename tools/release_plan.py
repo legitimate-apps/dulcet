@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -26,6 +27,10 @@ from required_checks import load_required_checks  # noqa: E402
 
 TEAM_ID = "3LTL47SJ8C"
 PROJECT = Path("apple/project.yml")
+# Universal purchase (spec §22.2): exactly two identifiers, one App Store Connect record each, and
+# every platform of a channel ships under its channel's identifier. Build numbers are taken across
+# the whole family so the two records never hand out overlapping numbers.
+FAMILY = "com.legitimateapps.dulcet"
 
 # target is the project.yml target the scheme archives; its PROVISIONING_PROFILE_SPECIFIER must
 # equal profile_name (tools/test-release-channel holds the two together).
@@ -41,8 +46,8 @@ PLANS: dict[tuple[str, str], dict[str, str]] = {
     ("dev", "ios"): {
         "scheme": "DulcetiOS",
         "target": "DulcetiOS",
-        "bundle_id": "com.legitimateapps.dulcet.ios.dev",
-        "profile_name": "Dulcet CI iOS Dev App Store",
+        "bundle_id": "com.legitimateapps.dulcet.dev",
+        "profile_name": "Dulcet CI Dev iOS App Store",
         "destination": "generic/platform=iOS",
         "package_kind": "ipa",
     },
@@ -57,7 +62,10 @@ PLANS: dict[tuple[str, str], dict[str, str]] = {
 }
 
 REFUSALS: dict[tuple[str, str], str] = {
-    ("prod", "ios"): "there is no PROD iOS target yet; PROD ships macOS first (spec §23.1)",
+    ("prod", "ios"): (
+        "there is no PROD iOS target yet (it will ship as com.legitimateapps.dulcet on the same "
+        "record as macOS); PROD ships macOS first (spec §23.1)"
+    ),
     ("dev", "tvos"): (
         "tvOS DEV is not deliverable yet: App Store Connect requires a layered tvOS app icon and "
         "a top-shelf image, which the DulcetTV target does not have"
@@ -106,18 +114,6 @@ def marketing_version(project_text: str) -> str:
     return values[0]
 
 
-def build_floor(project_text: str) -> int:
-    """The highest build number the repository has declared: the PROD target's committed value.
-
-    App Store Connect is the authority (tools/app_store_connect.py takes the max of both), but this
-    floor keeps a brand-new DEV record from starting below builds that already exist on PROD.
-    """
-    values = setting(target_block(project_text, "DulcetMacRelease"), "CURRENT_PROJECT_VERSION")
-    if len(values) != 1 or not values[0].isdigit():
-        raise PlanError("DulcetMacRelease must declare one integer CURRENT_PROJECT_VERSION")
-    return int(values[0])
-
-
 def resolve(channel: str, platform: str, dry_run: str, ref: str, project_text: str) -> dict[str, str]:
     if ref != "refs/heads/main":
         raise PlanError(f"releases are cut from refs/heads/main only; this dispatch ran on {ref!r}")
@@ -141,7 +137,7 @@ def resolve(channel: str, platform: str, dry_run: str, ref: str, project_text: s
         platform=platform,
         upload="true" if dry_run == "false" else "false",
         marketing_version=marketing_version(project_text),
-        build_floor=str(build_floor(project_text)),
+        family_bundle_id=FAMILY,
         # DEV builds are marked internal-only at export, so no DEV binary can reach external
         # TestFlight or App Store review even if someone tried (spec §22.2).
         internal_only="true" if channel == "dev" else "false",
@@ -164,7 +160,9 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
         raise PlanError(
             f"PROD needs the tag {expected_tag} on the dispatched commit; found {sorted(tags_at_head)}"
         )
-    latest = {run["name"]: run.get("conclusion") for run in check_runs}
+    # Only GitHub Actions' own runs count: a third-party app can post a check run with any name.
+    latest = {run["name"]: run.get("conclusion") for run in check_runs
+              if run.get("app") == "github-actions"}
     missing = sorted(name for name in required if latest.get(name) != "success")
     if missing:
         raise PlanError(
@@ -180,9 +178,13 @@ def fetch_check_runs(repository: str, sha: str, token: str) -> list[dict[str, st
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
     })
-    with urllib.request.urlopen(request, timeout=30) as response:
-        document = json.load(response)
-    return [{"name": run["name"], "conclusion": run.get("conclusion")}
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            document = json.load(response)
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        raise PlanError(f"could not read this commit's check runs: {error}") from None
+    return [{"name": run["name"], "conclusion": run.get("conclusion"),
+             "app": (run.get("app") or {}).get("slug")}
             for run in document.get("check_runs", [])]
 
 

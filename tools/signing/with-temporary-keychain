@@ -20,16 +20,17 @@ Required environment variables:
   DULCET_CI_SIGNING_P12_PASSWORD
   DULCET_MAC_APP_STORE_PROFILE_BASE64
   DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64
 
 Optional, and required together (a macOS App Store package must be installer-signed):
   DULCET_CI_INSTALLER_P12_BASE64
   DULCET_CI_INSTALLER_P12_PASSWORD
 
 The command receives DULCET_SIGNING_KEYCHAIN and DULCET_SIGNING_IDENTITY_SHA1, plus
-DULCET_INSTALLER_IDENTITY_SHA1 when the installer identity was supplied. Signing material is
-removed on exit.
+DULCET_INSTALLER_IDENTITY_SHA1 when the installer identity was supplied, and none of the secret
+variables above: they are unset before it starts. Decoded key material is deleted as soon as it is
+imported; the keychain and installed profiles are removed on exit.
 EOF
   exit 64
 }
@@ -42,8 +43,8 @@ readonly REQUIRED_SECRETS=(
   DULCET_CI_SIGNING_P12_PASSWORD
   DULCET_MAC_APP_STORE_PROFILE_BASE64
   DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64
 )
 
 for secret_name in "${REQUIRED_SECRETS[@]}"; do
@@ -147,6 +148,7 @@ extract_identity() {
     -out "$private_key_path" >/dev/null 2>&1 \
     || die "PKCS#12 private-key extraction failed for $p12_variable"
   unset DULCET_P12_PASSWORD_FOR_OPENSSL
+  /bin/rm -P -f -- "$p12_path"
   /bin/chmod 600 "$certificate_path" "$private_key_path"
 
   /usr/bin/openssl x509 -in "$certificate_path" -noout -checkend 0 >/dev/null \
@@ -265,12 +267,13 @@ validate_and_install_profile \
 validate_and_install_profile \
   DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 \
   com.legitimateapps.dulcet.dev
+# Universal purchase: iOS, iPadOS and tvOS DEV share the macOS DEV identifier (spec §22.2).
 validate_and_install_profile \
-  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64 \
-  com.legitimateapps.dulcet.ios.dev
+  DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.dev
 validate_and_install_profile \
-  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64 \
-  com.legitimateapps.dulcet.tvos.dev
+  DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.dev
 
 /usr/bin/security list-keychains -d user > "$original_keychains_path"
 while IFS= read -r existing_keychain; do
@@ -293,6 +296,8 @@ import_identity() {
     -T /usr/bin/codesign \
     -T /usr/bin/productbuild \
     -T /usr/bin/security >/dev/null
+  # The keychain now holds the key; the plaintext PEMs have no further use.
+  /bin/rm -P -f -- "$work_dir/$prefix-certificate.pem" "$work_dir/$prefix-private-key.pem"
 }
 import_identity identity
 if [[ "$installer_supplied" -eq 1 ]]; then
@@ -322,5 +327,8 @@ export DULCET_SIGNING_KEYCHAIN="$keychain_path"
 export DULCET_SIGNING_IDENTITY_SHA1="$identity_sha1"
 printf 'dulcet-signing: installed identity %s in temporary keychain; installer=%s; profiles=%s\n' \
   "$identity_sha1" "${DULCET_INSTALLER_IDENTITY_SHA1:-none}" "${#created_profiles[@]}"
+
+# The command needs the keychain, never the payloads that built it.
+unset "${REQUIRED_SECRETS[@]}" DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD
 
 "$@"

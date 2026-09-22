@@ -87,15 +87,28 @@ else
     || die "no asset-catalog app icon"
 fi
 
-# Spec §22.3: PROD ships NO preconfigured server. The only admissible carrier for one is a DEV
-# Info.plist entry, so the PROD artifact is refused if its Info.plist names a server at all.
+# Spec §22.3: PROD ships NO preconfigured server. tools/verify_release_policy.py closes the
+# configuration routes statically; this checks the artifact itself. The archived PROD Info.plist
+# may hold only the keys the source plist is allowlisted for plus the ones Xcode stamps into every
+# build (both lists OBSERVED on the build-4 archive), and no value anywhere in it may be a URL.
 if [[ "$RELEASE_CHANNEL" == prod ]]; then
-  if /usr/bin/plutil -convert json -o - "$info" | /usr/bin/python3 -c '
-import json, re, sys
+  /usr/bin/plutil -convert json -o - "$info" | /usr/bin/python3 -c '
+import json, sys
+allowed = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIconFile",
+    "CFBundleIconName", "CFBundleIdentifier", "CFBundleInfoDictionaryVersion", "CFBundleName",
+    "CFBundlePackageType", "CFBundleShortVersionString", "CFBundleVersion",
+    "ITSAppUsesNonExemptEncryption", "LSApplicationCategoryType", "LSMinimumSystemVersion",
+    "NSHumanReadableCopyright",
+    "BuildMachineOSBuild", "CFBundleSupportedPlatforms", "DTCompiler", "DTPlatformBuild",
+    "DTPlatformName", "DTPlatformVersion", "DTSDKBuild", "DTSDKName", "DTXcode", "DTXcodeBuild",
+}
 document = json.load(sys.stdin)
-sys.exit(0 if any(re.search("server", key, re.I) for key in document) else 1)'; then
-    die "the PROD Info.plist carries a server key; PROD must ship no preconfigured server"
-  fi
+extra = sorted(set(document) - allowed)
+urls = sorted(key for key, value in document.items() if "://" in json.dumps(value))
+if extra or urls:
+    sys.exit(f"PROD Info.plist: unexpected keys {extra}, URL-valued keys {urls}")
+' || die "the PROD Info.plist is not the allowlisted, URL-free set; PROD must ship no preconfigured server"
 fi
 
 /usr/bin/codesign --verify --deep --strict "$app" || die "archived app signature does not verify"
@@ -158,7 +171,9 @@ package="${packages[0]}"
 payload="$RELEASE_ROOT/payload"
 if [[ "$RELEASE_PACKAGE_KIND" == pkg ]]; then
   # An App Store installer certificate reports "signed by a developer certificate issued by
-  # Apple (Development)"; that wording is expected. What must hold is that it is signed at all and
+  # Apple (Development)"; that wording is expected. OBSERVED with this team's installer
+  # certificates on a local macOS 26 / Xcode 26.6 host (builds 4 and the DEV dry run);
+  # ASSUMED, not yet observed, to read the same on the hosted runner image. What must hold is that it is signed at all and
   # that the leaf is this team's installer certificate.
   /usr/sbin/pkgutil --check-signature "$package" > "$RELEASE_ROOT/pkg-signature.txt" \
     || die "the package signature does not check"
@@ -186,6 +201,16 @@ unreadable="$(/usr/bin/find "$payload_app" ! -perm -o+r | /usr/bin/wc -l | /usr/
 [[ "$(plist "$payload_app/$payload_info_suffix" CFBundleVersion)" == "$RELEASE_BUILD_NUMBER" ]] \
   || die "packaged CFBundleVersion differs from the archive"
 /usr/bin/codesign --verify --deep --strict "$payload_app" || die "packaged app signature does not verify"
+
+# Internal-only is read from the package that will be uploaded, not assumed from the export
+# options: Xcode records testFlightInternalTestingOnly as TFInternalTestingOnly in the app's
+# Info.plist (OBSERVED on both DEV packages). DEV must carry it; PROD must not.
+packaged_internal="$(plist "$payload_app/$payload_info_suffix" TFInternalTestingOnly || true)"
+if [[ "$internal_only" == true ]]; then
+  [[ "$packaged_internal" == true ]] || die "the DEV package is not marked internal-testing-only"
+else
+  [[ "$packaged_internal" != true ]] || die "the PROD package is marked internal-testing-only"
+fi
 
 printf 'RELEASE PACKAGE %s\n' "$package"
 printf 'RELEASE VERIFIED channel=%s platform=%s bundle-id=%s version=%s build=%s internal-only=%s\n' \

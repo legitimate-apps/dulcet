@@ -62,7 +62,13 @@ for (channel, platform), expected in plan.PLANS.items():
 
 expect(bool(__import__("re").fullmatch(r"\d+\.\d+(\.\d+)?", plan.marketing_version(PROJECT))),
        "marketing version is a dotted numeric version")
-expect(plan.build_floor(PROJECT) >= 4, "build floor never drops below the four builds already shipped")
+# Universal purchase: every DEV platform ships under the one DEV identifier, every PROD platform
+# under the PROD one, and the build-number family covers both.
+expect({p["bundle_id"] for (c, _), p in plan.PLANS.items() if c == "dev"} == {"com.legitimateapps.dulcet.dev"},
+       "every DEV platform uses com.legitimateapps.dulcet.dev")
+expect({p["bundle_id"] for (c, _), p in plan.PLANS.items() if c == "prod"} == {"com.legitimateapps.dulcet"},
+       "every PROD platform uses com.legitimateapps.dulcet")
+expect(all(p["bundle_id"].startswith(plan.FAMILY) for p in plan.PLANS.values()), "family covers every plan")
 
 for spelling in ("False", "no", "0", "", "false ", "FALSE"):
     refused(lambda s=spelling: plan.resolve("dev", "macos", s, "refs/heads/main", PROJECT),
@@ -84,7 +90,8 @@ refused(lambda: plan.resolve("dev", "macos", "true", "refs/heads/main", drifted)
         "the archive would not find its profile", "DEV target signing with the PROD profile")
 
 # PROD cut gate
-green = [{"name": name, "conclusion": "success"} for name in ("apple-ci", "core-ci", "parity-gate")]
+green = [{"name": name, "conclusion": "success", "app": "github-actions"}
+         for name in ("apple-ci", "core-ci", "parity-gate")]
 required = {"apple-ci", "core-ci", "parity-gate"}
 plan.prod_gate("0.1.0", ["v0.1.0"], green, required)
 passed += 1
@@ -93,12 +100,16 @@ refused(lambda: plan.prod_gate("0.1.0", [], green, required), "needs the tag", "
 red = [dict(run, conclusion="failure") if run["name"] == "apple-ci" else run for run in green]
 refused(lambda: plan.prod_gate("0.1.0", ["v0.1.0"], red, required), "apple-ci=failure", "red check")
 refused(lambda: plan.prod_gate("0.1.0", ["v0.1.0"], green[1:], required), "apple-ci=None", "absent check")
+impostor = [dict(run, app="some-other-app") if run["name"] == "apple-ci" else run for run in green]
+refused(lambda: plan.prod_gate("0.1.0", ["v0.1.0"], impostor, required), "apple-ci=None",
+        "a check run of the right name from another app")
 
 # --- App Store Connect helper -----------------------------------------------------------------
-expect(asc.next_build_number([], 4) == 5, "a fresh record starts above the floor")
-expect(asc.next_build_number([2, 3, 4], 4) == 5, "next build after 4 is 5")
-expect(asc.next_build_number([2, 11, 4], 4) == 12, "App Store Connect ahead of the floor wins")
-expect(asc.next_build_number([3], 9) == 10, "the floor ahead of App Store Connect wins")
+expect(asc.next_build_number([]) == 1, "an empty family starts at 1")
+expect(asc.next_build_number([2, 3, 4]) == 5, "next build after 4 is 5")
+expect(asc.next_build_number([2, 11, 4]) == 12, "the highest build wins, not the last listed")
+expect(asc.family_identifiers(plan.FAMILY) == ["com.legitimateapps.dulcet", "com.legitimateapps.dulcet.dev"],
+       "the numbering family is exactly the two channel identifiers")
 expect(asc.build_versions([{"attributes": {"version": "7"}}]) == [7], "integer versions parse")
 refused(lambda: asc.build_versions([{"attributes": {"version": "1.2"}}]), "non-integer build number",
         "dotted build number", asc.AscError)
@@ -145,6 +156,62 @@ with tempfile.TemporaryDirectory() as scratch:
     expect(verifies(f"{header}.{payload}", raw), "openssl verifies the helper's token")
     expect(not verifies(f"{header}.{payload}x", raw), "a tampered token does not verify (control)")
     expect(not list(Path(scratch).glob("dulcet-asc-*")), "the temporary key directory is removed")
+
+    # Token lifetime: await-build runs for up to 30 minutes and a token lives 15. Every request of a
+    # simulated 30-minute poll must carry a token that is unexpired when it is sent.
+    import io
+    import json as json_module
+    import urllib.error
+
+    def claims(jwt_token: str) -> dict:
+        body = jwt_token.split(".")[1]
+        return json_module.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+
+    start = 2_000_000
+    clock = [start]
+    client = asc.Client(asc.Credentials(), clock=lambda: clock[0])
+    first = client.bearer()
+    clock[0] = start + asc.TOKEN_LIFETIME - asc.REFRESH_MARGIN - 1
+    expect(client.bearer() == first and client.minted == 1, "a fresh token is reused")
+    clock[0] += 2
+    expect(client.bearer() != first and client.minted == 2, "a token near expiry is re-minted")
+    stale = []
+    for offset in range(0, 1801, 30):
+        clock[0] = start + offset
+        if claims(client.bearer())["exp"] <= clock[0]:
+            stale.append(offset)
+    expect(not stale, f"requests over a 30-minute poll sent expired tokens at {stale}")
+
+    # A 401 (what an expired token returns) re-mints once and retries; a second 401 is an error.
+    sent: list[str] = []
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(responses):
+        def urlopen(request, timeout=None):
+            sent.append(request.get_header("Authorization"))
+            status = responses.pop(0)
+            if status != 200:
+                raise urllib.error.HTTPError(request.full_url, status, "Unauthorized", {}, io.BytesIO(b"{}"))
+            return Response(b'{"data": []}')
+        return urlopen
+
+    real_urlopen = asc.urllib.request.urlopen
+    try:
+        asc.urllib.request.urlopen = fake_urlopen([401, 200])
+        minted_before = client.minted
+        expect(client.get("/v1/apps") == {"data": []}, "a 401 is recovered by re-minting")
+        expect(client.minted == minted_before + 1 and sent[0] != sent[1],
+               "the retry after a 401 carries a new token")
+        asc.urllib.request.urlopen = fake_urlopen([401, 401])
+        refused(lambda: client.get("/v1/apps"), "HTTP 401", "a persistent 401", asc.AscError)
+    finally:
+        asc.urllib.request.urlopen = real_urlopen
     for name in ("DULCET_ASC_KEY_ID", "DULCET_ASC_ISSUER_ID", "DULCET_ASC_KEY_P8_BASE64", "RUNNER_TEMP"):
         os.environ.pop(name)
 
@@ -155,8 +222,11 @@ POLICY = TOOLS / "verify_release_policy.py"
 def run_policy(mutate) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as root:
         shutil.copytree(REPO / ".github/workflows", Path(root, ".github/workflows"))
-        Path(root, "apple").mkdir()
+        Path(root, "apple/DulcetMacRelease").mkdir(parents=True)
         shutil.copy(REPO / "apple/project.yml", Path(root, "apple/project.yml"))
+        shutil.copy(REPO / "apple/DulcetMacRelease/Info.plist", Path(root, "apple/DulcetMacRelease/Info.plist"))
+        Path(root, "tools/release").mkdir(parents=True)
+        shutil.copy(REPO / "tools/release/archive-and-export", Path(root, "tools/release/archive-and-export"))
         mutate(Path(root))
         return subprocess.run([sys.executable, str(POLICY)], cwd=root, capture_output=True, text=True)
 
@@ -175,6 +245,7 @@ baseline = run_policy(lambda root: None)
 expect(baseline.returncode == 0, f"unmutated repository passes the release policy: {baseline.stderr}")
 
 WORKFLOW = ".github/workflows/release.yml"
+PROD_ANCHOR = '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"\n'
 MUTATIONS = [
     ("a pull_request trigger", edit(WORKFLOW, "on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
      "workflow_dispatch only"),
@@ -192,12 +263,41 @@ MUTATIONS = [
     ("an unknown secret", edit(WORKFLOW, "secrets.DULCET_ASC_KEY_ID }}", "secrets.DULCET_ASC_KEY_IDX }}"),
      "does not hold"),
     ("a server setting passed to the build", edit(WORKFLOW, "          RELEASE_BUILD_NUMBER:", "          DULCET_DEV_SERVER_URL: x\n          RELEASE_BUILD_NUMBER:"),
-     "passes a server setting"),
+     "passes a server, URL or plist setting"),
     ("another workflow reading a release secret", edit(".github/workflows/core-ci.yml", "jobs:\n", "env:\n  LEAK: ${{ secrets.DULCET_CI_SIGNING_P12_BASE64 }}\njobs:\n"),
      "only release.yml may read the release secrets"),
-    ("a server setting on the PROD target", edit("apple/project.yml", '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"\n',
-                                                  '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"\n        DULCET_PRECONFIGURED_SERVER_URL: "https://example.invalid"\n'),
-     "PROD target DulcetMacRelease declares a server setting"),
+    ("a server setting on the PROD target", edit("apple/project.yml", PROD_ANCHOR,
+                                                  PROD_ANCHOR + '        DULCET_PRECONFIGURED_SERVER_URL: "https://example.invalid"\n'),
+     "declares DULCET_PRECONFIGURED_SERVER_URL, which is not allowlisted"),
+    ("a PROD setting whose name does not say server", edit("apple/project.yml", PROD_ANCHOR,
+                                                           PROD_ANCHOR + '        DULCET_HOME: "music.example.invalid"\n'),
+     "declares DULCET_HOME, which is not allowlisted"),
+    ("a project-level server setting PROD inherits", edit("apple/project.yml", '    MARKETING_VERSION: "0.1.0"\n',
+                                                          '    MARKETING_VERSION: "0.1.0"\n    DULCET_SERVER_URL: "https://example.invalid"\n'),
+     "project-level setting DULCET_SERVER_URL is not allowlisted"),
+    ("project-level configs", edit("apple/project.yml", "packages:\n", "  configs:\n    Release:\n      X: y\npackages:\n"),
+     "project-level configs would reach PROD"),
+    ("PROD reading the shared plist again", edit("apple/project.yml", "path: DulcetMacRelease/Info.plist", "path: DulcetMac/Info.plist"),
+     "must use its own DulcetMacRelease/Info.plist"),
+    ("a DEV target reading the PROD plist directory", edit("apple/project.yml", "      path: DulcetMacDev/Info.plist", "      path: DulcetMacRelease/Info.plist"),
+     "target DulcetMac reads the PROD-only DulcetMacRelease directory"),
+    ("an extra PROD plist key", edit("apple/DulcetMacRelease/Info.plist", "<dict>\n", "<dict>\n\t<key>DulcetHome</key>\n\t<string>x</string>\n"),
+     "keys must be exactly the allowlist"),
+    ("a URL in a PROD plist value", edit("apple/DulcetMacRelease/Info.plist", "<string>en</string>", "<string>https://example.invalid</string>"),
+     "CFBundleDevelopmentRegion holds a URL"),
+    ("a quoted release environment elsewhere", edit(".github/workflows/core-ci.yml", "    runs-on: ubuntu-latest\n", "    environment: 'release'\n    runs-on: ubuntu-latest\n"),
+     "only release.yml may use the release environment"),
+    ("a mapping-form release environment elsewhere", edit(".github/workflows/core-ci.yml", "    runs-on: ubuntu-latest\n", "    environment:\n      name: release\n    runs-on: ubuntu-latest\n"),
+     "only release.yml may use the release environment"),
+    ("a direct altool upload step", edit(WORKFLOW, "      - name: Summarise\n", "      - name: Sneak\n        run: xcrun altool --upload-package x.pkg\n      - name: Summarise\n"),
+     "exactly one upload step"),
+    ("an upload in another workflow", edit(".github/workflows/core-ci.yml", "    steps:\n", "    steps:\n      - run: xcrun altool --upload-app -f x.ipa\n"),
+     "core-ci.yml: contains an upload mechanism"),
+    ("an export that uploads", edit("tools/release/archive-and-export", '"destination": "export"', '"destination": "upload"'),
+     "archive-and-export: contains an upload mechanism"),
+    ("an extra archive build setting", edit("tools/release/archive-and-export", '  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"',
+                                             '  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \\\n  DULCET_HOME="$X"'),
+     "may override CURRENT_PROJECT_VERSION only"),
     ("release.yml deleted", lambda root: (root / WORKFLOW).unlink(), "no delivery channel"),
 ]
 for label, mutate, reason in MUTATIONS:

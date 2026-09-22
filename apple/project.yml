@@ -39,22 +39,32 @@ targets:
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
       configs:
-        # Release is what release.yml archives for the DEV channel. Debug (every CI build and
-        # test) is deliberately untouched. Beyond identity, name and icon, these match
+        # Release is what release.yml archives for the DEV channel; Debug keeps automatic
+        # signing for local and CI builds. Beyond identity, name and icon, these match
         # DulcetMacRelease, because spec §22.3 lets nothing else differ between the channels.
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Apple Distribution"
           PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac Dev App Store"
           ENABLE_HARDENED_RUNTIME: YES
-          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
-          INFOPLIST_KEY_CFBundleDisplayName: Dulcet DEV
-          INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
-          INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
-          # Same declaration and reason as DulcetMacRelease: without it every upload parks at
-          # MISSING_EXPORT_COMPLIANCE and never reaches a tester.
-          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+    info:
+      # DEV's own plist, in a directory no PROD target reads. It is the one place a DEV-only
+      # convenience value (spec §22.3) may ever be added; PROD's plist lives beside
+      # DulcetMacRelease and tools/verify_release_policy.py holds it to a fixed key set.
+      path: DulcetMacDev/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Dulcet DEV
+        CFBundleIconFile: AppIconDev
+        CFBundleIconName: AppIconDev
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -93,7 +103,9 @@ targets:
       # An explicit plist, NOT INFOPLIST_KEY_* settings: that mechanism only honours a fixed
       # allowlist, and CFBundleIconFile/CFBundleIconName are not on it — they were silently
       # dropped from the generated plist while the build still succeeded.
-      path: DulcetMac/Info.plist
+      # PROD-only directory: the shared DulcetMac source folder holds no plist, so no DEV target
+      # can contribute a key to this one.
+      path: DulcetMacRelease/Info.plist
       properties:
         CFBundleDevelopmentRegion: en
         CFBundleDisplayName: Dulcet
@@ -173,7 +185,9 @@ targets:
     settings:
       base:
         OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
-        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
+        # Universal purchase (spec §22.2): one DEV identifier for macOS, iOS, iPadOS and tvOS, so
+        # one App Store Connect record carries every platform. Test bundles keep suffixes.
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -185,7 +199,7 @@ targets:
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Apple Distribution"
-          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS Dev App Store"
+          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Dev iOS App Store"
           INFOPLIST_KEY_CFBundleDisplayName: Dulcet DEV
           INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
           # An iPad build that supports multitasking must declare all four orientations or
@@ -303,7 +317,7 @@ targets:
     settings:
       base:
         OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
-        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
         PRODUCT_NAME: Dulcet DEV
     preBuildScripts:
       - name: Compile Kotlin Framework

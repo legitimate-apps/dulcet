@@ -11,19 +11,19 @@ import UIKit
 final class DulcetKeychainAttributeTests: XCTestCase {
 #if os(iOS)
     func testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator() throws {
-        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.ios.dev")
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .phone)
         try assertProductionSaveRecordsExpectedAttributes()
     }
 
     func testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator() throws {
-        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.ios.dev")
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
         try assertProductionSaveRecordsExpectedAttributes()
     }
 #elseif os(tvOS)
     func testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator() throws {
-        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.tvos.dev")
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
         try assertProductionSaveRecordsExpectedAttributes()
     }
 #endif

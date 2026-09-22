@@ -8,7 +8,8 @@ name: release
 # tools/verify_release_policy.py keeps every one of those properties from drifting.
 #
 # DEV is cut on significant merges rather than on every merge (maintainer decision; spec §22.1
-# records the change). dry_run defaults to true: it archives, signs, exports and validates, and
+# records the change). This workflow sends no notification: whoever dispatches it tells the
+# maintainer, and TestFlight notifies internal testers of a new build. dry_run defaults to true: it archives, signs, exports and validates, and
 # asks App Store Connect to validate the package when the app record exists, but uploads nothing.
 #
 # Dispatch:  gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_run=false
@@ -41,9 +42,13 @@ permissions:
   contents: read
   checks: read
 
+# One queue per channel, and a newer dispatch WAITS rather than cancelling the running one: a
+# cancelled upload may already have reached App Store Connect, and the next run would reuse its
+# build number. Per channel, not per platform, because macOS and iOS share one App Store Connect
+# record and therefore one build-number sequence. verify_ci_policy.py exempts exactly this file.
 concurrency:
-  group: release-${{ inputs.channel }}-${{ inputs.platform }}
-  cancel-in-progress: true
+  group: release-${{ inputs.channel }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -105,16 +110,16 @@ jobs:
           DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}
           DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}
           BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
-          BUILD_FLOOR: ${{ steps.plan.outputs.build_floor }}
+          FAMILY: ${{ steps.plan.outputs.family_bundle_id }}
           UPLOAD: ${{ steps.plan.outputs.upload }}
         run: |
           set -euo pipefail
           if [[ "$UPLOAD" == true ]]; then
             python3 tools/app_store_connect.py next-build \
-              --bundle-id "$BUNDLE_ID" --floor "$BUILD_FLOOR" --require-record >> "$GITHUB_OUTPUT"
+              --bundle-id "$BUNDLE_ID" --family "$FAMILY" --require-record >> "$GITHUB_OUTPUT"
           else
             python3 tools/app_store_connect.py next-build \
-              --bundle-id "$BUNDLE_ID" --floor "$BUILD_FLOOR" >> "$GITHUB_OUTPUT"
+              --bundle-id "$BUNDLE_ID" --family "$FAMILY" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Archive, sign, export and verify
@@ -126,8 +131,8 @@ jobs:
           DULCET_CI_INSTALLER_P12_PASSWORD: ${{ secrets.DULCET_CI_INSTALLER_P12_PASSWORD }}
           DULCET_MAC_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_APP_STORE_PROFILE_BASE64 }}
           DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 }}
-          DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64 }}
-          DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64 }}
+          DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64 }}
+          DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64 }}
           RELEASE_CHANNEL: ${{ steps.plan.outputs.channel }}
           RELEASE_PLATFORM: ${{ steps.plan.outputs.platform }}
           RELEASE_SCHEME: ${{ steps.plan.outputs.scheme }}
