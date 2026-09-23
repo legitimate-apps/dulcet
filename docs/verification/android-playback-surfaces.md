@@ -140,12 +140,61 @@ x86_64, and the local runs above were arm64.
 | 3 | pass, `server-plays=0->1` | pass, `server-plays=0->1`, remote pause held 0 ms | **pass**: `executed parity evidence valid … tests=32` |
 | 4 | pass, `server-plays=0->1` | pass, `server-plays=0->1` | **pass** |
 
-The KVM step now waits for udev to settle. The run-2 phone failure is **not explained**, and one failure in four phone runs is too few to put a rate on. Media3
-keeps the service in the foreground for ten minutes after playback disengages, so a real demotion
-means either the notification was removed or a `startForeground` from the background was refused.
-The logcat showed neither. The check now reports the service's foreground record, the
-notification records and the session state when it fails, and fails on the first observation
-without polling.
+The KVM step now waits for udev to settle.
+
+### The phone-leg intermittent: the installation, not the app
+
+A soak dispatch (`emulator_reps`, twelve independent emulators per leg) at the commit that added
+the failure diagnostic gave **phone 11/12, TV 12/12** (run 35823952903). The failing rep's
+diagnostic separated the three candidate defects:
+
+```
+service:        isForeground=true foregroundId=1001 foregroundNoti=Notification(... flags=0x68 category=transport ...)
+notifications:  none
+media session:  active=true state=PLAYING(3) position=6259
+```
+
+The service never left the foreground and the session never stopped. The notification service
+alone had dropped the record, after the foreground check had already found it.
+
+**Mechanism — the notification service source, OBSERVED:** its package receiver treats
+`ACTION_PACKAGE_ADDED` like a package change and cancels every notification the package holds,
+with no flags exempted, so foreground-service notifications go too
+(`NotificationManagerService`, `mPackageIntentReceiver`, android14-release). The service record
+keeps its foreground notification, and Media3 reposts only on its next player update.
+
+**Trigger — OBSERVED in the device logs:** the instrumentation installs the app immediately before
+the test, and on a freshly booted emulator the app's own `PACKAGE_ADDED` was still queued well
+into the test. Across the eleven phone reps with logs, the one failure is the only rep in which it
+reached receivers after the foreground check and before the background check (Home 49.8 s,
+delivered 53.6 s, check 57.0 s). In rep 6 it landed about a second after the check, and that rep
+passed. Run 2's log shows the same late delivery. The cancellation itself is not logged, so the
+link from delivery to that record's removal is taken from the source, not from a log line.
+
+None of the brief's candidates held: the notification was posted (the foreground check passed),
+the app declares no notification permission and its media notification is exempt at posting, and
+the check was not early (the record was present and then removed).
+
+**Not a product defect.** A running app receives its own `PACKAGE_ADDED` only when the broadcast
+lags an install that was just made. An update kills the process instead.
+
+**Fix, in the tests:** every device proof now waits on `am wait-for-broadcast-barrier` before
+anything plays, and requires the command's own `Test barrier passed` line. The notification
+assertions are unchanged.
+
+| run | phone leg | TV leg | `core-ci` |
+|---|---|---|---|
+| soak 35823952903 (before the fix) | 11/12 | 12/12 | failed |
+| soak 35825040936 (barrier) | **12/12** | **12/12** | **pass** |
+
+In the second soak the app's `PACKAGE_ADDED` reached receivers *during* the barrier in 4 of 12
+phone reps (reps 1, 3, 8 and 10; the barrier took 4.3 to 14.9 s). The condition was met and held
+off in those runs, not avoided by luck. Every leg logged the barrier's passed marker.
+
+**The assertion can still fail, OBSERVED on a local emulator with the barrier in place:** a
+mutation that makes the service call `stopForeground(STOP_FOREGROUND_REMOVE)` once the activity
+stops, while playback continues, fails with `background: no foreground notification … position=6019`.
+The barrier had passed after 157 ms. The unmutated run passed, with server plays 8 → 9.
 
 ## Still assumed or open
 
@@ -154,8 +203,12 @@ without polling.
 - **Audio focus and becoming-noisy**: Media3 requested focus (**OBSERVED** in the log, usage media,
   content music). Loss of focus to another app and a headset unplug were not exercised.
 - **Acoustic output**: never claimed; the corpus is silent and the emulator's audio is virtual.
-- **Citable evidence**: the emulator job exists but no `FEATURES.yml` cell is promoted here; that
-  needs a green CI run of it first.
+- **Citable evidence**: `playback.stream` and `playback.scrobble` are promoted on `android` and
+  `androidtv`. Each cell cites its emulator proof as an observation row in `core-ci/core-ci`. The
+  declared conformance controls in those cells run on the host JVM, not on the emulator's runtime.
+- **Validation on the device**: that the engine consumed validated bytes is inferred. The data
+  source throws before releasing any byte that has not matched an audio signature. No on-device
+  marker records the validation itself.
 - **Phone search**: a row still opens the detail screen, because the cited CONF-41 evidence routes
   that way; track rows have a Play button that plays directly (`MobileSearchPlayTest`).
 - **Library breadth** (songs, playlists, sort) waits for the library reader.

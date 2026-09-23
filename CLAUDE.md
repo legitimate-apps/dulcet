@@ -381,6 +381,15 @@ They are deliberately not reproduced in this repository.**
     and hostname checks without opening JDK modules. Keep the exact source-request-count assertion:
     a TLS failure also throws the expected playback exception and would otherwise counterfeit a pass.
 
+43. **A freshly installed Android app can have its foreground notification cancelled mid-test.**
+    The notification service answers `PACKAGE_ADDED` by cancelling *every* notification the
+    package holds, foreground-service ones included, and the service stays in the foreground with
+    no notification record. On a freshly booted emulator the app's own install broadcast can land
+    15 s into the first test. It presents as a flaky "no foreground notification" with the session
+    still playing. Device proofs wait on `am wait-for-broadcast-barrier` before playing
+    (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
+    (docs/verification/android-playback-surfaces.md).
+
 ## Review and delegation
 
 **Architecture decisions and verification stay with the maintainer; implementation of a
