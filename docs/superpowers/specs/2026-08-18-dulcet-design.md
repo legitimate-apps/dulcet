@@ -4720,8 +4720,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
     test: no R1b id is declared server-backed, and the server facts it relied on are R0's CONF-70
     and CONF-74.
 17. **An independent review of R1a/R1b (`d3968e45`) found three blockers and seven should-fixes;
-    each has a test that was run red before its fix, and each fix's guard was mutation-checked
-    (ReaderReviewFixesTest).** (a) **B1** — the scan-end path dereferenced a failed status read
+    each has a test in ReaderReviewFixesTest — sixteen run red against `d3968e45` before the fix, the
+    rest written with it — and every new guard was mutated and caught (24 of 24).** (a) **B1** — the scan-end path dereferenced a failed status read
     (`after!!`) and crashed the reader's scope. A failed reading is now its own outcome (*unread*,
     §16.12) and concludes nothing. The reader's scope is supervised, every live operation turns a
     throw into an `internalFailure` publication, and a failed store write is caught by the
