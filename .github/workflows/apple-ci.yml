@@ -52,9 +52,19 @@ jobs:
         run: python3 tools/test-measure-conformance-phase-gaps
       - name: Prove the host-pressure summary reports a known delta and refuses an empty record
         run: python3 tools/test-host-pressure
+      - name: Prove simulator isolation keeps the device OS=latest would pick and shuts down the rest
+        run: python3 tools/test-isolate-simulator
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      # Samples vm_stat, swap and load every 5 s for the rest of the job. The file ends in .log so the
+      # failure upload's `$RUNNER_TEMP/*.log` glob carries it; the summary step prints it per phase.
+      - name: Start host-pressure sampling
+        run: |
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample \
+            --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+          python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
       - name: Prove ffmpeg version gate rejects prefix collisions
         run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
@@ -85,6 +95,23 @@ jobs:
         run: python3 tools/verify_dulcet_core_build_order.py
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (CLAUDE.md
+      # trap 36), and this step used to sit behind ~55 minutes of platform builds and UI tests: run
+      # 35796413810 on main (2026-09-22) spent 55.6 minutes of a hosted macOS slot before this
+      # step reported six drifted formulae in 49 seconds. Nothing between Xcode selection and the
+      # old position reads Homebrew, the conformance root, or the pinned ffmpeg.
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Install and verify checksum-pinned Darwin conformance closure
+        timeout-minutes: 9
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -566,20 +593,8 @@ jobs:
           --macos-app "$RUNNER_TEMP/DulcetMacDerivedData/Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
           --ios-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app/Dulcet DEV"
           --tvos-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Dulcet DEV"
-      - name: Create isolated Darwin conformance root
-        id: conformance_root
-        run: >-
-          echo "path=$(tools/conformance-env/new-class-root
-          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
-      - name: Install and verify checksum-pinned Darwin conformance closure
-        timeout-minutes: 9
-        env:
-          ROOT: ${{ steps.conformance_root.outputs.path }}
-        run: |
-          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
-          tools/conformance-env/install-darwin-ffmpeg
       - name: Prove the measurement rejects the observed first-only state
         run: |
           set +e
@@ -730,6 +745,12 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          # SEQUENCING. Every simulator phase below starts with exactly the device it needs booted
+          # and nothing else: the platform steps above leave an iPhone, an iPad and an Apple TV up,
+          # and on this 3-CPU runner the loopback stalls concentrate where extra devices are
+          # resident (docs/investigations/2026-09-22-apple-ci-host-contention.md). Each call prints
+          # `SIMULATOR ISOLATION ... isolated=true|false` and marks the host-pressure record.
+          python3 tools/ci/isolate-simulator --phase macos-app-and-download --none
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test \
@@ -921,6 +942,7 @@ jobs:
           # variables are stripped into the runner process, where the test independently rejects
           # anything except the disposable loopback Navidrome. Each named test gets its own
           # xcresult because the execution guard requires exactly one individual result.
+          python3 tools/ci/isolate-simulator --phase download-iphone --keep-name "iPhone 17 Pro"
           TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test \
@@ -963,6 +985,7 @@ jobs:
             DulcetAppleDownloadIntegrationTest
           IPAD_DOWNLOAD_DESTINATION="$(python3 tools/resolve-ipad-destination)"
           echo "iPadOS download destination: $IPAD_DOWNLOAD_DESTINATION"
+          python3 tools/ci/isolate-simulator --phase download-ipad --keep "${IPAD_DOWNLOAD_DESTINATION##*id=}"
           TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test-without-building \
@@ -1003,12 +1026,13 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-download-conf52.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit/TEST-CONF-52.xml" \
             DulcetAppleDownloadIntegrationTest
-          # BASELINE ARM. No `xcrun simctl create` has run in this step -- but simulators ARE
-          # running: the four xcodebuild runs above use iOS and iPadOS Simulator destinations and
-          # nothing shuts them down before here. `simulator_created_before=false` means exactly
-          # what it says and is not a claim that no simulator is up. That distinction is the
-          # hypothesis: this is the FASTEST of the three restarts despite those boots, which points
-          # at a freshly CREATED device rather than at a running one.
+          # BASELINE ARM. No `xcrun simctl create` has run in this step, and since 2026-09-22 the
+          # isolation call below also leaves NO simulator booted here (before that, the download
+          # legs' iPhone and iPad were still up). The experiment these markers served was read
+          # SUPPORTED over 23 green runs before that change -- see
+          # docs/investigations/2026-09-10-restart-sequencing-experiment.md -- so ratios measured
+          # after it are a different arrangement and are not comparable with its baseline.
+          python3 tools/ci/isolate-simulator --phase conformance-macos --none
           restart_navidrome_cold macos baseline false
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
@@ -1035,7 +1059,12 @@ jobs:
           # 18 IllegalStateException without it, 0 with it.
           conformance_sim="$(xcrun simctl create \
             dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
-          xcrun simctl boot "$conformance_sim"
+          # Boots it, shuts down anything else, and waits for `bootstatus -b` before any clock starts.
+          python3 tools/ci/isolate-simulator --phase conformance-ios --keep "$conformance_sim"
+          # Link in its OWN Gradle JVM, which exits before the suite starts. The single-use Gradle
+          # daemon runs with -Xmx3g (gradle.properties) and links in-process, so otherwise whatever
+          # heap the link grew stays resident on a 7 GB host while the suite it built runs.
+          ./gradlew --no-daemon :core-conformance:linkDebugTestIosSimulatorArm64
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
             SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
@@ -1059,9 +1088,11 @@ jobs:
           tvos_conformance_sim="$(xcrun simctl create \
             dulcet-tvos-conformance \
             com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p)"
-          xcrun simctl boot "$tvos_conformance_sim"
-          # UNCHANGED ARM -- the in-run control. Leave this restart after its simulator create+boot.
-          # Moving it too would remove the within-run comparison the experiment is built on.
+          python3 tools/ci/isolate-simulator --phase conformance-tvos --keep "$tvos_conformance_sim"
+          ./gradlew --no-daemon :core-conformance:linkDebugTestTvosSimulatorArm64
+          # UNCHANGED ARM -- the in-run control. Still after its simulator create+boot, but that boot
+          # is now waited on (`bootstatus -b`) and linked past before this restart runs, so this is
+          # no longer the arrangement the pre-registered criteria were read against.
           restart_navidrome_cold tvos unchanged true
           SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true \
@@ -1117,6 +1148,7 @@ jobs:
             --expect 0
           IPAD_PLAYBACK_DESTINATION="$(python3 tools/resolve-ipad-destination)"
           echo "iPadOS playback destination: $IPAD_PLAYBACK_DESTINATION"
+          python3 tools/ci/isolate-simulator --phase playback-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
           # test-without-building: the iPadOS step above already built this scheme into this same
           # derived-data tree. Rebuilding re-enters the Gradle run-script phase while Navidrome and
           # three python servers are live, consuming the conformance step budget.
@@ -1158,27 +1190,9 @@ jobs:
           # only the disposable fixture coordinates. The iPhone run evidences the ios cell, the
           # iPad run the ipados cell -- the test itself fails on the wrong window class, so one
           # destination's evidence cannot be mistaken for the other's.
-          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
-            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
-            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
-            xcodebuild test-without-building \
-              -project apple/Dulcet.xcodeproj \
-              -scheme DulcetiOS \
-              -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
-              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
-              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
-              -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone 2>&1 | \
-            tee "$RUNNER_TEMP/dulcet-ios-search.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
-            DulcetiOSUITests.DulcetiOSUITests \
-            testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
-            "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
-            DulcetiOSUITests
+          # iPad first: the iPad playback proof above already has it booted, so this order costs one
+          # simulator boot fewer than iPhone-then-iPad.
+          python3 tools/ci/isolate-simulator --phase search-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -1200,12 +1214,35 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-search.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           # tvOS setup supplies an account and nothing else. The control reaches Search through
           # the section bar by remote, types into the real field, activates the focused result,
           # and returns to Library the same way, so it evidences reachability and not only that
           # the surface works once something else reaches it. Keep this inside the disposable
           # fixture lifetime and retain simulator signing: the account hook uses the production
           # Keychain store.
+          python3 tools/ci/isolate-simulator --phase search-tvos --keep-name "Apple TV 4K (3rd generation)"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -1252,6 +1289,13 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit"
+      # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
+      # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
+      - name: Summarise host pressure by phase
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
+          || echo "host-pressure record unavailable; see the summary line above"
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
