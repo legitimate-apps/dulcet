@@ -104,6 +104,9 @@ public enum DulcetPlaybackCommand: Sendable {
     case setRate(commandID: DulcetPlaybackCommandID, rate: Double)
     case replaceCurrent(commandID: DulcetPlaybackCommandID, plan: DulcetPlaybackPlan)
     case preloadNext(commandID: DulcetPlaybackCommandID, plan: DulcetPlaybackPlan)
+    /// Removes the named preloaded item, so the engine cannot advance into an entry the queue no
+    /// longer plays next. Rejected when no preload with that attempt is held.
+    case discardPreloaded(commandID: DulcetPlaybackCommandID, attemptID: DulcetPlaybackAttemptID)
     case release(commandID: DulcetPlaybackCommandID)
 
     public var commandID: DulcetPlaybackCommandID {
@@ -111,7 +114,8 @@ public enum DulcetPlaybackCommand: Sendable {
         case let .prepare(commandID, _), let .play(commandID), let .pause(commandID),
              let .stop(commandID), let .seek(commandID, _), let .setVolume(commandID, _),
              let .setRate(commandID, _), let .replaceCurrent(commandID, _),
-             let .preloadNext(commandID, _), let .release(commandID):
+             let .preloadNext(commandID, _), let .discardPreloaded(commandID, _),
+             let .release(commandID):
             commandID
         }
     }

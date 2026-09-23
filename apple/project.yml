@@ -158,6 +158,10 @@ targets:
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # UIBackgroundModes is not on Xcode's INFOPLIST_KEY_* allowlist, so it lives in a partial
+        # plist that Xcode merges into the generated one. Without `audio` iOS suspends playback
+        # when the screen locks or the app leaves the foreground.
+        INFOPLIST_FILE: DulcetiOS/BackgroundAudio.plist
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -271,6 +275,8 @@ targets:
         OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
         PRODUCT_NAME: Dulcet DEV
+        # See DulcetiOS: the background audio mode, merged into the generated plist.
+        INFOPLIST_FILE: DulcetTV/BackgroundAudio.plist
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false

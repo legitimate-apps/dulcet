@@ -249,7 +249,8 @@ public final class DulcetDeterministicDataSource: DulcetDataSource {
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
         case .loadMoreSearchResults, .retrySearch, .playLibrary, .playAlbum, .downloadTrack,
-             .activateTrack, .activateSearchResult, .playbackControl, .retryAlbumTracks:
+             .activateTrack, .activateSearchResult, .playbackControl, .retryAlbumTracks,
+             .editQueue:
             // The fixture's albums always carry their tracks, so there is nothing to re-read.
             break
         case let .selectAlbum(id):

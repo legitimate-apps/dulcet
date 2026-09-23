@@ -587,7 +587,7 @@ public class PlaybackWireClient private constructor(
     }
 }
 
-private fun RemotePlaybackWirePlan.isTranscoded(): Boolean = when (val decision = transcode) {
+internal fun RemotePlaybackWirePlan.isTranscoded(): Boolean = when (val decision = transcode) {
     PlaybackWireTranscodeDecision.DirectPlay -> false
     is PlaybackWireTranscodeDecision.Transcoded -> true
     is PlaybackWireTranscodeDecision.LegacyHint ->

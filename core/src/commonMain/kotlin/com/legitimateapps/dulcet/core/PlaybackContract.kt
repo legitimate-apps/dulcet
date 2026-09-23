@@ -83,6 +83,12 @@ internal sealed interface PlaybackCommand {
         val plan: PlaybackPlan,
     ) : PlaybackCommand
 
+    /** Removes a preloaded item that no longer plays next (a queue edit, a failed preload). */
+    public data class DiscardPreloaded(
+        override val commandId: PlaybackCommandId,
+        val attemptId: AttemptId,
+    ) : PlaybackCommand
+
     public data class Release(override val commandId: PlaybackCommandId) : PlaybackCommand
 }
 

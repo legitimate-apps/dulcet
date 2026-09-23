@@ -33,12 +33,17 @@ enum DulcetAppleProduction {
     static func makeIOSComposition() -> DulcetiOSProductionComposition {
         let credentialStore = DulcetKeychainCredentialStore()
         let downloads = DulcetCoreDownloadController.production()
-        let playbackController = DulcetCorePlaybackController(downloadController: downloads)
+        let artworkFetcher = DulcetCoreArtworkFetcher()
+        let playbackController = DulcetCorePlaybackController(
+            downloadController: downloads,
+            artworkFetcher: artworkFetcher
+        )
         return DulcetiOSProductionComposition(
             store: makeStore(
                 credentialStore: credentialStore,
                 downloads: downloads,
-                playbackController: playbackController
+                playbackController: playbackController,
+                artworkFetcher: artworkFetcher
             ),
             downloads: downloads,
             playbackController: playbackController
@@ -49,17 +54,21 @@ enum DulcetAppleProduction {
     private static func makeStore(
         credentialStore: DulcetKeychainCredentialStore,
         downloads: (any DulcetDownloadControlling)?,
-        playbackController: DulcetCorePlaybackController? = nil
+        playbackController: DulcetCorePlaybackController? = nil,
+        artworkFetcher: DulcetCoreArtworkFetcher = DulcetCoreArtworkFetcher()
     ) -> DulcetPresentationStore {
+        // One artwork fetcher, and so one disk cache, serves the library grid and the system Now
+        // Playing entry: the lock-screen image is usually already cached by the time it is asked.
         DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
                 credentialStore: credentialStore,
                 libraryBrowser: DulcetCoreLibraryBrowser(),
-                artworkFetcher: DulcetCoreArtworkFetcher(),
+                artworkFetcher: artworkFetcher,
                 serverSearch: DulcetCoreServerSearch(),
                 playbackController: playbackController ?? DulcetCorePlaybackController(
-                    downloadController: downloads
+                    downloadController: downloads,
+                    artworkFetcher: artworkFetcher
                 ),
                 downloadController: downloads,
                 providerInstanceIDFactory: {

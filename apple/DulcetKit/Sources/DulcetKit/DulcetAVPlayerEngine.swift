@@ -46,6 +46,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var cancelAudioSessionGrace: (@Sendable () -> Void)?
     private var activeAudioSessionID: DulcetPlaybackSessionID?
     private var interruptionWasPlaying = false
+    /// Validated artwork bytes per session: at most the current and the preloaded one.
+    private var artworkBySession: [DulcetPlaybackSessionID: Data] = [:]
     private var resourceLoaderTraceHandler:
         (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?
 
@@ -207,6 +209,19 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         return applied
     }
 
+    /// Supplies artwork for a session's system Now Playing entry. It may arrive before the session
+    /// is current (a preloaded next item), in which case it is shown when the session takes over.
+    public func setNowPlayingArtwork(_ imageData: Data?, for sessionID: DulcetPlaybackSessionID) {
+        performOnQueueSynchronously { [self] in
+            guard current?.plan.playbackSessionID == sessionID ||
+                preloaded?.plan.playbackSessionID == sessionID else { return }
+            artworkBySession[sessionID] = imageData
+            if let current, current.plan.playbackSessionID == sessionID, current.readyEmitted {
+                publishNowPlaying(current)
+            }
+        }
+    }
+
     private func superInitQueue() {
         queue.setSpecific(key: queueKey, value: 1)
         player.actionAtItemEnd = .advance
@@ -317,6 +332,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             prepare(plan, replacing: true, commandID: commandID, completion: completion)
         case let .preloadNext(commandID, plan):
             preload(plan, commandID: commandID, completion: completion)
+        case let .discardPreloaded(commandID, attemptID):
+            guard let preloaded, preloaded.plan.attemptID == attemptID else {
+                completion(.rejected(commandID: commandID, reason: .invalidState))
+                return
+            }
+            discardPreloadedItem(preloaded)
+            completion(.completed(commandID: commandID, result: .withoutData))
         case let .release(commandID):
             releaseEngine()
             completion(.completed(commandID: commandID, result: .withoutData))
@@ -380,9 +402,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             completion(.rejected(commandID: commandID, reason: .unsupported))
             return
         }
-        preloaded?.invalidate()
-        if let existing = preloaded?.item {
-            player.remove(existing)
+        if let existing = preloaded {
+            discardPreloadedItem(existing)
         }
         let context = makeContext(plan: plan, resource: resource, isPreloaded: true)
         preloaded = context
@@ -391,6 +412,15 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
         emit(.preparing(attemptID: plan.attemptID))
         completion(.accepted(commandID: commandID))
+    }
+
+    private func discardPreloadedItem(_ context: PlayerItemContext) {
+        context.invalidate()
+        if usesAVFoundationMediaStack, player.items().contains(where: { $0 === context.item }) {
+            player.remove(context.item)
+        }
+        artworkBySession[context.plan.playbackSessionID] = nil
+        if preloaded === context { preloaded = nil }
     }
 
     private func seek(
@@ -450,6 +480,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         preloaded?.invalidate()
         self.current = nil
         preloaded = nil
+        artworkBySession = [:]
         player.removeAllItems()
         deactivateAudioSessionImmediately()
         systemMediaControls.clear()
@@ -727,9 +758,17 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         )
         outgoing.invalidate()
         incoming.isPreloaded = false
+        // The listener asked for music, not for one item: the preloaded item inherits the
+        // outgoing item's play request. Without this the sampler -- which only samples a context
+        // whose play was requested -- never sees the new item progress, so it never reports
+        // PlaybackProgressBegan and the play is never scrobbled, while audio is plainly playing.
+        incoming.playRequested = outgoing.playRequested
         current = incoming
         preloaded = nil
+        artworkBySession = artworkBySession.filter { $0.key == incoming.plan.playbackSessionID }
         activeAudioSessionID = incoming.plan.playbackSessionID
+        cancelAudioSessionGrace?()
+        cancelAudioSessionGrace = nil
         if incoming.readyEmitted {
             publishNowPlaying(incoming)
         }
@@ -749,6 +788,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                         position: currentPosition(for: current)
                     )
                 )
+                updateSystemTransport(for: current, isPlaying: current.playRequested)
             }
             if current.pausedAfterProgress {
                 current.pausedAfterProgress = false
@@ -783,6 +823,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 position: currentPosition(for: context)
             )
         )
+        // Still "playing" to the listener (the pause button stays), but the system must stop
+        // extrapolating elapsed time, or the lock-screen scrubber runs ahead of the audio.
+        updateSystemTransport(for: context, isPlaying: context.playRequested, rateOverride: 0)
     }
 
     private func pause(context: PlayerItemContext) {
@@ -949,19 +992,22 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             rate: Double(desiredRate),
             isPlaying: isPlaying,
             seekability: seekability,
-            remoteCapabilities: remoteCommandCapabilities
+            remoteCapabilities: remoteCommandCapabilities,
+            artworkImageData: artworkBySession[plan.playbackSessionID]
         ))
     }
 
     private func updateSystemTransport(
         for context: PlayerItemContext? = nil,
-        isPlaying: Bool
+        isPlaying: Bool,
+        rateOverride: Double? = nil
     ) {
         guard let context = context ?? current, context.readyEmitted else { return }
+        let rate = rateOverride ?? (context.buffering ? 0 : Double(desiredRate))
         systemMediaControls.updateTransport(
             sessionID: context.plan.playbackSessionID,
             position: currentPosition(for: context),
-            rate: Double(desiredRate),
+            rate: rate,
             isPlaying: isPlaying
         )
     }

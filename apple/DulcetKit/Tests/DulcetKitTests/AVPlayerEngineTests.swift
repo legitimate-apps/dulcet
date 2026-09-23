@@ -441,6 +441,135 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
+    /// The gapless boundary must keep the music "requested". The sampler samples only a context
+    /// whose play was requested, so an incoming item that did not inherit the request would play
+    /// audibly and never report PlaybackProgressBegan -- and so never be scrobbled.
+    @Test
+    func aPreloadedAdvanceInheritsThePlayRequestAndReportsItsOwnProgress() async throws {
+        let player = AVQueuePlayer()
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan(
+            resource: InMemoryPlaybackResource(data: makePCMWave(duration: 1)),
+            session: "gapless-a",
+            attempt: "gapless-attempt-a"
+        )
+        let next = plan(
+            resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)),
+            session: "gapless-b",
+            attempt: "gapless-attempt-b"
+        )
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        #expect(await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
+            == .accepted(commandID: .init("preload")))
+
+        try await waitUntil(
+            "the first item never reached its natural end and advanced",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            events.containsAdvance(old: first.attemptID, new: next.attemptID)
+        }
+        try await waitUntil(
+            "the preloaded item played but never reported progress",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            events.progressBeganAttemptIDs.contains(next.attemptID)
+        }
+        let snapshot = events.snapshot
+        let ended = try #require(snapshot.firstIndex {
+            if case let .endedNaturally(attemptID, _) = $0 { attemptID == first.attemptID } else { false }
+        })
+        let advanced = try #require(snapshot.firstIndex(of: .advancedToPreloaded(
+            oldAttemptID: first.attemptID,
+            newAttemptID: next.attemptID
+        )))
+        #expect(ended < advanced, "the outgoing session ends before the boundary")
+        #expect(!snapshot.contains { if case .skipped = $0 { true } else { false } },
+                "a gapless advance is not a stop")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func aDiscardedPreloadIsNotAdvancedIntoAndCannotBeDiscardedTwice() async throws {
+        let player = AVQueuePlayer()
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan(
+            resource: InMemoryPlaybackResource(data: makePCMWave(duration: 1)),
+            session: "discard-a",
+            attempt: "discard-attempt-a"
+        )
+        let next = plan(session: "discard-b", attempt: "discard-attempt-b")
+
+        #expect(await execute(engine, .discardPreloaded(
+            commandID: .init("discard-none"),
+            attemptID: next.attemptID
+        )) == .rejected(commandID: .init("discard-none"), reason: .invalidState))
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        _ = await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
+        #expect(player.items().count == 2)
+
+        #expect(await execute(engine, .discardPreloaded(
+            commandID: .init("discard"),
+            attemptID: next.attemptID
+        )) == .completed(commandID: .init("discard"), result: .withoutData))
+        #expect(player.items().count == 1)
+        #expect(await execute(engine, .discardPreloaded(
+            commandID: .init("discard-again"),
+            attemptID: next.attemptID
+        )) == .rejected(commandID: .init("discard-again"), reason: .invalidState))
+
+        try await waitUntil(
+            "the first item never ended",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            events.snapshot.contains {
+                if case let .endedNaturally(attemptID, _) = $0 { attemptID == first.attemptID } else { false }
+            }
+        }
+        #expect(!events.snapshot.contains {
+            if case .advancedToPreloaded = $0 { true } else { false }
+        })
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func nowPlayingArtworkIsPublishedForTheCurrentSessionOnlyAndCarriedAcrossTransportUpdates()
+        async throws {
+        let mediaControls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: mediaControls)
+        let current = plan(session: "artwork-session", attempt: "artwork-attempt")
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: current))
+        try await waitUntil(
+            "Ready did not publish now playing",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            !mediaControls.publications.isEmpty
+        }
+        #expect(mediaControls.publications.last?.artworkImageData == nil)
+
+        let image = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01])
+        let published = mediaControls.publications.count
+        engine.setNowPlayingArtwork(Data([0x00]), for: .init("some-other-session"))
+        #expect(mediaControls.publications.count == published,
+                "artwork for a session that is neither current nor preloaded is dropped")
+
+        engine.setNowPlayingArtwork(image, for: current.playbackSessionID)
+        #expect(mediaControls.publications.count == published + 1)
+        #expect(mediaControls.publications.last?.artworkImageData == image)
+        #expect(mediaControls.publications.last?.metadata.title == current.metadata.title)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
     @Test
     func attachingALateListenerImmediatelyResynchronizesTheCurrentAttempt() async throws {
         let engine = DulcetAVPlayerEngine()
@@ -807,8 +936,11 @@ struct AVPlayerEngineTests {
         #expect(center.nextTrackCommand.isEnabled)
         #expect(center.previousTrackCommand.isEnabled)
         #expect(center.changePlaybackPositionCommand.isEnabled)
-        #expect(center.ratingCommand.isEnabled)
-        #expect(center.likeCommand.isEnabled)
+        // Favourites and ratings are unbuilt, so the command centre must not offer them even
+        // when a caller claims the capability: a lock-screen heart that does nothing is worse
+        // than none.
+        #expect(!center.ratingCommand.isEnabled)
+        #expect(!center.likeCommand.isEnabled)
         #expect(!center.stopCommand.isEnabled)
         #expect(!center.changePlaybackRateCommand.isEnabled)
         #expect(!center.changeRepeatModeCommand.isEnabled)

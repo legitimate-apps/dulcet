@@ -363,6 +363,90 @@ class ApplePlaybackQueueFacadeTest {
         )
     }
 
+    @Test
+    fun queueEditingCrossesTheBoundaryAsClosedDtosAndNeverThrows() {
+        val fixture = fixture()
+        val client = fixture.client
+        val started = client.replaceAndStart(queueRequest(listOf("track-a", "track-b")))
+        val session = assertNotNull(started.startDirective).playbackSessionId
+
+        val playNext = client.enqueue(insertion(listOf("x", "y"), "playNext"))
+        assertNull(playNext.errorKind)
+        assertEquals(listOf("track-a", "x", "y", "track-b"), playNext.snapshot?.entries?.map { it.rawId })
+        assertEquals(session, playNext.snapshot?.currentSession?.playbackSessionId)
+
+        val later = client.enqueue(insertion(listOf("z"), "playLater"))
+        assertEquals("z", later.snapshot?.entries?.last()?.rawId)
+
+        val entries = assertNotNull(later.snapshot).entries
+        val moved = client.moveEntry(entries.last().queueEntryId, 1)
+        assertEquals(listOf("track-a", "z", "x", "y", "track-b"), moved.snapshot?.entries?.map { it.rawId })
+
+        val removed = client.removeEntry(entries[1].queueEntryId)
+        assertEquals(listOf("track-a", "z", "y", "track-b"), removed.snapshot?.entries?.map { it.rawId })
+
+        // Refusals and malformed input are closed error kinds, never an exception.
+        assertEquals("input", client.removeEntry(entries[0].queueEntryId).errorKind)
+        assertEquals("input", client.moveEntry("queue-entry:missing", 0).errorKind)
+        assertEquals("input", client.enqueue(insertion(listOf("q"), "sideways")).errorKind)
+        assertEquals("input", client.enqueue(insertion(emptyList(), "playNext")).errorKind)
+        assertEquals("input", client.jumpTo("queue-entry:missing").errorKind)
+
+        val cleared = client.clearUpcoming()
+        assertEquals(listOf("track-a"), cleared.snapshot?.entries?.map { it.rawId })
+
+        val jumpedBack = client.enqueue(insertion(listOf("w"), "playLater"))
+        val w = assertNotNull(jumpedBack.snapshot).entries.last().queueEntryId
+        val jumped = client.jumpTo(w)
+        assertEquals("w", jumped.startDirective?.rawId)
+        assertNotEquals(session, jumped.startDirective?.playbackSessionId)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun preloadDirectiveIsSeparateFromTheStartDirectiveAndDiscardIsReported() {
+        val fixture = fixture()
+        val client = fixture.client
+        val started = assertNotNull(
+            client.replaceAndStart(queueRequest(listOf("track-a", "track-b"))).startDirective,
+        )
+
+        val preload = client.preloadNextForSession(started.playbackSessionId)
+        assertNull(preload.startDirective, "a preload is never something to start")
+        val directive = assertNotNull(preload.preloadDirective)
+        assertEquals("track-b", directive.rawId)
+        assertNull(preload.discardedPreloadAttemptId)
+
+        val discarded = client.discardPreload(directive.attemptId)
+        assertEquals(directive.attemptId, discarded.discardedPreloadAttemptId)
+        assertNull(client.discardPreload(directive.attemptId).discardedPreloadAttemptId)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun queueEndKeepsTheLastEntryAndStartCurrentReplaysIt() {
+        val fixture = fixture()
+        val client = fixture.client
+        val started = assertNotNull(client.replaceAndStart(queueRequest()).startDirective)
+
+        val ended = client.recordEndedNaturally(started.attemptId, 180_000)
+
+        assertEquals(0, ended.snapshot?.currentIndex)
+        assertNull(ended.snapshot?.currentSession)
+        val replay = assertNotNull(client.startCurrent().startDirective)
+        assertEquals("track-a", replay.rawId)
+        assertNotEquals(started.playbackSessionId, replay.playbackSessionId)
+        fixture.driver.close()
+    }
+
+    private fun insertion(rawIds: List<String>, mode: String) = ApplePlaybackQueueInsertionDto(
+        items = rawIds.map { ApplePlaybackQueueItemDto("server", it, 180_000) },
+        sourceKind = "search",
+        sourceRawId = null,
+        sourceDisplayName = "Search",
+        mode = mode,
+    )
+
     private fun fixture(): FacadeFixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database

@@ -239,6 +239,67 @@ internal class PersistentQueueStore(
         return load(serverId)
     }
 
+    /**
+     * Moves one entry to [toIndex] in the order the listener sees (§14.2). While shuffled only the
+     * playback order moves: the original order is what turning shuffle off restores, and a reorder
+     * made inside a shuffle is not a statement about the album's order. The current entry keeps
+     * its identity, so the current index follows it rather than staying on a number.
+     */
+    fun move(serverId: ServerId, queueEntryId: QueueEntryId, toIndex: Int): QueueState {
+        val state = load(serverId)
+        val shuffled = state.shuffleState == QueueShuffleState.Enabled
+        val active = if (shuffled) {
+            selectByPlaybackPosition(serverId)
+        } else {
+            selectByOriginalPosition(serverId)
+        }
+        val from = active.indexOfFirst { it.entry.queueEntryId == queueEntryId }
+        require(from >= 0) { "Unknown queue entry" }
+        require(toIndex in active.indices) { "Move target outside the queue" }
+        if (from == toIndex) return state
+        val currentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId
+        val reordered = active.toMutableList().apply { add(toIndex, removeAt(from)) }
+        val rewritten = if (shuffled) {
+            val playbackPositions = reordered.mapIndexed { index, row ->
+                row.entry.queueEntryId to index.toLong()
+            }.toMap()
+            selectByOriginalPosition(serverId).map { row ->
+                row.copy(playbackPosition = playbackPositions.getValue(row.entry.queueEntryId))
+            }
+        } else {
+            reordered.mapIndexed { index, row ->
+                row.copy(originalPosition = index.toLong(), playbackPosition = index.toLong())
+            }
+        }
+        rewriteQueue(serverId, rewritten, currentEntryId, state.repeatMode, state.shuffleState)
+        return load(serverId)
+    }
+
+    /**
+     * Removes every entry after the current one in the order the listener sees. With no current
+     * entry everything is upcoming. Entries already played keep their positions (§14.2).
+     */
+    fun removeUpcoming(serverId: ServerId): QueueState {
+        val state = load(serverId)
+        val keep = state.entries.take(state.currentIndex?.plus(1) ?: 0)
+            .map(QueueEntry::queueEntryId)
+            .toSet()
+        if (keep.size == state.entries.size) return state
+        val currentEntryId = state.currentIndex?.let(state.entries::get)?.queueEntryId
+        val original = selectByOriginalPosition(serverId)
+            .filter { it.entry.queueEntryId in keep }
+            .mapIndexed { index, row -> row.copy(originalPosition = index.toLong()) }
+        val playbackPositions = state.entries
+            .filter { it.queueEntryId in keep }
+            .mapIndexed { index, entry -> entry.queueEntryId to index.toLong() }
+            .toMap()
+        val rewritten = original.map { row ->
+            row.copy(playbackPosition = playbackPositions.getValue(row.entry.queueEntryId))
+        }
+        rewriteQueue(serverId, rewritten, currentEntryId, state.repeatMode, state.shuffleState)
+        return load(serverId)
+    }
+
     fun setCurrentIndex(serverId: ServerId, currentIndex: Int?): QueueState {
         val updated = load(serverId).copy(currentIndex = currentIndex)
         database.transaction {

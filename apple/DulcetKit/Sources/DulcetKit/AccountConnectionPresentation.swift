@@ -644,6 +644,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             downloadController?.requestDownload(track)
         case let .playbackControl(intent):
             playbackController?.send(intent)
+        case let .editQueue(intent):
+            (playbackController as? any DulcetQueueEditing)?.edit(intent)
         case let .submitAccountConnection(request):
             submit(request)
         case .cancelAccountConnection:

@@ -13,6 +13,7 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID)
     case downloadTrack(DulcetProviderItemID)
     case playbackControl(DulcetPlaybackControlIntent)
+    case editQueue(DulcetQueueEditIntent)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
     case removeAccount
@@ -126,6 +127,11 @@ public final class DulcetPresentationStore {
 
     public func sendPlaybackControl(_ intent: DulcetPlaybackControlIntent) {
         source.send(.playbackControl(intent))
+    }
+
+    /// Play Next, Play Later, reorder, remove, clear upcoming, and jump to a queue row.
+    public func editQueue(_ intent: DulcetQueueEditIntent) {
+        source.send(.editQueue(intent))
     }
 
     public func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {

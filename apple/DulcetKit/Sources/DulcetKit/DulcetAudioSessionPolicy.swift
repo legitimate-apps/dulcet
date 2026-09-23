@@ -38,6 +38,7 @@ public final class DulcetPlatformAudioSession: DulcetAudioSessionManaging, @unch
         self.session = session
         self.notificationCenter = notificationCenter
         observeSystemPolicy()
+        configureCategory()
     }
 
     deinit {
@@ -50,10 +51,23 @@ public final class DulcetPlatformAudioSession: DulcetAudioSessionManaging, @unch
         lock.unlock()
     }
 
+    /// Declares the category up front, so the system routes this app as a music player (AirPlay,
+    /// the route picker, silent-switch behaviour) before the first play rather than after it.
+    public func configureCategory() {
+        try? Self.applyCategory(to: session)
+    }
+
     public func activate() throws {
-        // `.playback` permits AirPlay by default. No mixing option is supplied deliberately.
-        try session.setCategory(.playback, mode: .default, options: [])
+        try Self.applyCategory(to: session)
         try session.setActive(true)
+    }
+
+    /// `.playback` keeps playing with the silent switch on and in the background (with the audio
+    /// background mode). `.longFormAudio` is Apple's route-sharing policy for music and podcast
+    /// apps: it lets the system route this session to AirPlay 2 speakers the way Music does. No
+    /// mixing option is supplied deliberately -- music takes focus from other audio (spec §12.9).
+    private static func applyCategory(to session: AVAudioSession) throws {
+        try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
     }
 
     public func deactivate() {
@@ -94,6 +108,16 @@ public final class DulcetPlatformAudioSession: DulcetAudioSessionManaging, @unch
               let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
         switch type {
         case .began:
+            // An interruption that only records that the system suspended this app while it was
+            // silent is not a call or Siri taking the audio; pausing on it would stop nothing
+            // and mark the queue interrupted. Apple's guidance is to ignore it.
+            // iOS only: tvOS does not publish the reason key.
+            #if os(iOS)
+            if let rawReason = notification.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt,
+               AVAudioSession.InterruptionReason(rawValue: rawReason) == .appWasSuspended {
+                return
+            }
+            #endif
             publish(.interruptionBegan)
         case .ended:
             let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0

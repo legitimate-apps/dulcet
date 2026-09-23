@@ -649,6 +649,11 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let shuffleEnabled: Bool
     public let canGoNext: Bool
     public let canGoPrevious: Bool
+    /// The queue with its entry identities, aligned with each other: a track may appear twice,
+    /// so an edit must name the entry, never the track. Empty where the source has no identities.
+    public let queueEntries: [DulcetQueueEntry]
+    /// Index of the current entry within `queueEntries`, or nil when none is current.
+    public let currentEntryIndex: Int?
 
     public init(
         sessionID: DulcetPlaybackSessionID? = nil,
@@ -667,7 +672,9 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         repeatMode: DulcetRepeatMode = .off,
         shuffleEnabled: Bool = false,
         canGoNext: Bool = true,
-        canGoPrevious: Bool = true
+        canGoPrevious: Bool = true,
+        queueEntries: [DulcetQueueEntry] = [],
+        currentEntryIndex: Int? = nil
     ) {
         self.sessionID = sessionID
         self.current = current
@@ -686,6 +693,8 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.shuffleEnabled = shuffleEnabled
         self.canGoNext = canGoNext
         self.canGoPrevious = canGoPrevious
+        self.queueEntries = queueEntries
+        self.currentEntryIndex = currentEntryIndex
     }
 
 }
