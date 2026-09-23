@@ -655,9 +655,11 @@ private struct DulcetStateSurface: View {
             )
         case .nowPlaying:
             if snapshot.state == .nowPlaying, let player = snapshot.nowPlaying {
-                DulcetNowPlayingView(player: player) { intent in
-                    store.sendPlaybackControl(intent)
-                }
+                DulcetNowPlayingView(
+                    player: player,
+                    onControl: store.sendPlaybackControl,
+                    onEdit: store.editQueue
+                )
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()
             } else if snapshot.state == .nowPlayingFailed {

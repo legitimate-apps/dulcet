@@ -9,6 +9,11 @@ protocol DulcetCorePlaybackEngine: DulcetApplePlaybackEngine {
         _ capabilities: DulcetRemoteCommandCapabilities,
         for sessionID: DulcetPlaybackSessionID
     ) -> Bool
+    func setNowPlayingArtwork(_ imageData: Data?, for sessionID: DulcetPlaybackSessionID)
+}
+
+extension DulcetCorePlaybackEngine {
+    func setNowPlayingArtwork(_ imageData: Data?, for sessionID: DulcetPlaybackSessionID) {}
 }
 
 extension DulcetAVPlayerEngine: DulcetCorePlaybackEngine {}
@@ -34,14 +39,37 @@ struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
     }
 }
 
+/// A gapless preload in flight (spec §12.8): registered in the core, then resolved, then held by
+/// the engine behind the current item until it reports `AdvancedToPreloaded`.
+private struct DulcetPreloadInFlight {
+    let attemptID: String
+    let sessionID: String
+    let track: DulcetTrack
+    var resolve: (any ApplePlaybackWireOperation)?
+    var corePlan: AppleRemotePlaybackPlanDto?
+    var inEngine = false
+}
+
 @MainActor
-final class DulcetCorePlaybackController: DulcetPlaybackControlling {
+final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueueEditing {
     private let queueClient: ApplePlaybackQueueClient
     private let engine: any DulcetCorePlaybackEngine
     private let downloadController: (any DulcetDownloadControlling)?
+    private let artworkFetcher: (any DulcetArtworkFetching)?
+    private var artworkOperations: [String: any DulcetArtworkFetchOperation] = [:]
+    private var artworkRequestedSessions: Set<String> = []
+    private var preload: DulcetPreloadInFlight?
+    /// Set after a preload met `Server.Busy`: no preload is attempted before this instant, so a
+    /// busy server's own `Retry-After` is honoured rather than re-attacked (spec §12.2, §12.8).
+    private var preloadSuppressedUntil: ContinuousClock.Instant?
+    private var currentPlanIsTranscoded = false
+    private let clock = ContinuousClock()
+    /// Every preload lifecycle step, in order, for tests and diagnostics. Content-free.
+    private(set) var preloadLog: [String] = []
     private var wireClient: ApplePlaybackWireClient?
     private var resolveOperation: (any ApplePlaybackWireOperation)?
     private var account: PlaybackEndpointAccount?
+    private var presentationAccount: DulcetPlaybackAccount?
     private var catalog: [DulcetProviderItemID: DulcetTrack] = [:]
     private var progressingSessions: Set<String> = []
     private var restoredPausedSessions: Set<String> = []
@@ -58,13 +86,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     convenience init(
         databaseName: String = "dulcet.db",
         engine: DulcetAVPlayerEngine = DulcetAVPlayerEngine(),
-        downloadController: (any DulcetDownloadControlling)? = nil
+        downloadController: (any DulcetDownloadControlling)? = nil,
+        artworkFetcher: (any DulcetArtworkFetching)? = nil
     ) {
         self.init(
             queueClient: ApplePlaybackQueueClient(databaseName: databaseName),
             engine: engine,
             catalog: [],
-            downloadController: downloadController
+            downloadController: downloadController,
+            artworkFetcher: artworkFetcher
         )
     }
 
@@ -72,12 +102,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         queueClient: ApplePlaybackQueueClient,
         engine: any DulcetCorePlaybackEngine,
         catalog tracks: [DulcetTrack],
-        downloadController: (any DulcetDownloadControlling)? = nil
+        downloadController: (any DulcetDownloadControlling)? = nil,
+        artworkFetcher: (any DulcetArtworkFetching)? = nil
     ) {
         self.queueClient = queueClient
         self.engine = engine
         catalog = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         self.downloadController = downloadController
+        self.artworkFetcher = artworkFetcher
         engine.setEventListener { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.receiveEngineEvent(event)
@@ -115,6 +147,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     func configure(account presentationAccount: DulcetPlaybackAccount) {
         resolveOperation?.cancel()
         resolveOperation = nil
+        if let preload { discardPreload(preload, reason: "configure", startsHeldEnd: false) }
+        cancelArtwork()
+        preloadSuppressedUntil = nil
         wireClient?.close()
         catalog = [:]
         progressingSessions = []
@@ -129,6 +164,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             allowLocalHttp: presentationAccount.allowLocalHTTP
         )
         account = coreAccount
+        self.presentationAccount = presentationAccount
         wireClient = ApplePlaybackWireClient(account: coreAccount)
         _ = queueClient.configureDelivery(account: coreAccount)
         publish(queueClient.snapshot())
@@ -214,8 +250,24 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
-        guard let snapshot = queueClient.snapshot().snapshot,
-              let session = snapshot.currentSession else { return }
+        guard let snapshot = queueClient.snapshot().snapshot else { return }
+        guard let session = snapshot.currentSession else {
+            // A finished queue keeps its last entry selected with no session (spec §14.3).
+            // Play -- or Previous, which in Music replays -- starts it again as a new session.
+            switch intent {
+            case .play, .toggle, .previous:
+                let transition = queueClient.startCurrent()
+                guard transition.errorKind == nil else { return publishFailure() }
+                start(transition.startDirective)
+            case let .setShuffle(enabled):
+                applyEdit(queueClient.setShuffle(enabled: enabled))
+            case .cycleRepeat:
+                applyEdit(queueClient.cycleRepeatMode())
+            case .pause, .next, .seek:
+                break
+            }
+            return
+        }
         let sessionID = session.playbackSessionId
         switch intent {
         case .play:
@@ -233,9 +285,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         case .toggle:
             send(currentPresentation.nowPlaying?.isPlaying == true ? .pause : .play)
         case .next:
-            start(queueClient.nextForSession(playbackSessionId: sessionID).startDirective)
+            startOrStop(queueClient.nextForSession(playbackSessionId: sessionID))
         case .previous:
-            start(queueClient.previousForSession(playbackSessionId: sessionID).startDirective)
+            startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
         case let .seek(position):
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
@@ -246,15 +298,117 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                 position: position.playbackTimeInterval
             ))
         case let .setShuffle(enabled):
-            publish(queueClient.setShuffle(enabled: enabled))
+            applyEdit(queueClient.setShuffle(enabled: enabled))
         case .cycleRepeat:
-            publish(queueClient.cycleRepeatMode())
+            applyEdit(queueClient.cycleRepeatMode())
         }
+    }
+
+    /// Next past the last entry finalizes the session and starts nothing; the engine must then
+    /// stop too, or the audio would keep playing under a stopped presentation.
+    private func startOrStop(_ transition: ApplePlaybackQueueTransitionDto) {
+        if transition.startDirective == nil, transition.snapshot?.currentSession == nil {
+            abandonPreload(reason: "queue-finished")
+            execute(.stop(commandID: commandID("queue-finished")))
+        }
+        start(transition.startDirective)
+    }
+
+    // MARK: Queue editing (spec §14.1, §14.2)
+
+    func edit(_ intent: DulcetQueueEditIntent) {
+        switch intent {
+        case let .playNext(addition):
+            enqueue(addition, mode: "playNext")
+        case let .playLater(addition):
+            enqueue(addition, mode: "playLater")
+        case let .move(entryID, toIndex):
+            guard let coreIndex = coreIndex(forPresentedIndex: toIndex) else { return }
+            applyEdit(queueClient.moveEntry(queueEntryId: entryID.rawValue, toIndex: Int32(coreIndex)))
+        case let .remove(entryID):
+            applyEdit(queueClient.removeEntry(queueEntryId: entryID.rawValue))
+        case .clearUpcoming:
+            applyEdit(queueClient.clearUpcoming())
+        case let .jump(entryID):
+            let transition = queueClient.jumpTo(queueEntryId: entryID.rawValue)
+            guard transition.errorKind == nil else { return }
+            publishPreparing()
+            start(transition.startDirective)
+        }
+    }
+
+    /// `queueEntries` omits entries the catalog cannot name yet, so a position in it is not a
+    /// position in the core queue. The core position is the one the entry now shown at that
+    /// presented position occupies: moving onto it lands after it when moving down and before it
+    /// when moving up, which is what the presented list shows.
+    private func coreIndex(forPresentedIndex presented: Int) -> Int? {
+        guard let entries = currentPresentation.nowPlaying?.queueEntries,
+              entries.indices.contains(presented),
+              let core = queueClient.snapshot().snapshot?.entries.firstIndex(where: {
+                  $0.queueEntryId == entries[presented].id.rawValue
+              }) else { return nil }
+        return core
+    }
+
+    private func enqueue(_ addition: DulcetQueueAddition, mode: String) {
+        guard account != nil, !addition.tracks.isEmpty else { return }
+        let playInstead = DulcetPlaybackQueueIntent(
+            tracks: addition.tracks,
+            sourceKind: addition.sourceKind,
+            sourceID: addition.sourceID,
+            sourceDisplayName: addition.sourceDisplayName,
+            startIndex: 0,
+            shuffle: false
+        )
+        // "Play Next" into an empty player means "play this": there is no queue to add to. The
+        // core's queue decides emptiness, not the presentation -- a track that is still
+        // preparing presents no now-playing item, and replacing its queue then would throw away
+        // what the person just started.
+        guard let queued = queueClient.snapshot().snapshot, !queued.entries.isEmpty,
+              queued.entries.first?.providerInstanceId == account?.providerInstanceId else {
+            replaceQueueAndPlay(playInstead)
+            return
+        }
+        catalog.merge(
+            Dictionary(addition.tracks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest }),
+            uniquingKeysWith: { _, latest in latest }
+        )
+        applyEdit(queueClient.enqueue(insertion: ApplePlaybackQueueInsertionDto(
+            items: addition.tracks.map { track in
+                ApplePlaybackQueueItemDto(
+                    providerInstanceId: track.id.providerInstanceID,
+                    rawId: track.id.rawID,
+                    durationMilliseconds: track.duration.playbackMilliseconds
+                )
+            },
+            sourceKind: addition.sourceKind.rawValue,
+            sourceRawId: addition.sourceID?.rawID,
+            sourceDisplayName: addition.sourceDisplayName,
+            mode: mode
+        )))
+    }
+
+    /// An edit never starts or stops anything; it republishes the queue and re-checks the
+    /// preload, because the entry that plays next may have changed.
+    private func applyEdit(_ transition: ApplePlaybackQueueTransitionDto) {
+        guard transition.errorKind == nil else { return }
+        handleDiscardedPreload(transition.discardedPreloadAttemptId)
+        if let directive = transition.startDirective {
+            // The edit discarded a preload the core had held a natural end for: the next entry
+            // starts now, or nothing ever would.
+            start(directive)
+            return
+        }
+        publish(transition)
+        requestPreloadIfNeeded()
     }
 
     func disconnect() {
         resolveOperation?.cancel()
         resolveOperation = nil
+        if let preload { discardPreload(preload, reason: "disconnect", startsHeldEnd: false) }
+        cancelArtwork()
+        presentationAccount = nil
         wireClient?.close()
         wireClient = nil
         account = nil
@@ -273,6 +427,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             publish(queueClient.snapshot())
             return
         }
+        // Every start below issues a stop, and the engine's stop removes its preloaded item too;
+        // the core discarded its registration when it began this session.
+        abandonPreload(reason: "start")
         guard let track = catalog[DulcetProviderItemID(
                 providerInstanceID: directive.providerInstanceId,
                 rawID: directive.rawId
@@ -288,6 +445,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
         if let offline = downloadController?.offlinePlaybackAsset(for: track) {
             resolveOperation?.cancel()
             resolveOperation = nil
+            currentPlanIsTranscoded = false
             activeDirectiveIdentity = directive.attemptId
             pendingStarts[directive.attemptId] = PendingStart(
                 shouldAutoPlay: directive.shouldAutoPlay,
@@ -358,6 +516,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                     self.publishFailure()
                     return
                 }
+                self.currentPlanIsTranscoded = corePlan.isTranscoded
                 let plan = DulcetCorePlaybackPlanFactory.makePlan(
                     client: wireClient,
                     corePlan: corePlan,
@@ -394,19 +553,265 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     }
 
     private func receiveEngineEvent(_ event: DulcetPlaybackEvent) {
+        if let preload, event.attemptID.rawValue == preload.attemptID,
+           handlePreloadedAttemptEvent(event, preload: preload) {
+            return
+        }
+        var holdingForPreload = false
+        if case let .endedNaturally(attemptID, _) = event,
+           let preload,
+           queueClient.snapshot().snapshot?.currentSession?.attemptId == attemptID.rawValue {
+            if preload.inEngine {
+                // The engine takes over with `AdvancedToPreloaded`. Between the two events the
+                // outgoing session reads Stopped, and presenting that would flash "Nothing is
+                // playing" between two tracks of one album.
+                holdingForPreload = true
+            } else {
+                // Registered but not yet in the engine: nothing will advance into it, so let the
+                // core start the next entry normally rather than wait for a boundary that is
+                // never coming.
+                discardPreload(preload, reason: "ended-before-delivery")
+            }
+        }
         let transition = record(event)
+        if case let .advancedToPreloaded(_, newAttemptID) = event,
+           preload?.attemptID == newAttemptID.rawValue {
+            preloadLog.append("advanced")
+            currentPlanIsTranscoded = preload?.corePlan?.isTranscoded ?? false
+            preload = nil
+        }
         if case let .playbackProgressBegan(attemptID, _, _) = event,
            let session = transition.snapshot?.currentSession,
            session.attemptId == attemptID.rawValue {
             progressingSessions.insert(session.playbackSessionId)
             restoredPausedSessions.remove(session.playbackSessionId)
         }
-        publish(transition)
+        if !(holdingForPreload && transition.startDirective == nil) {
+            publish(transition)
+        }
         if case let .ready(attemptID, _, seekability) = event {
             completePendingStart(attemptID: attemptID, seekability: seekability)
         }
         if let directive = transition.startDirective {
             start(directive)
+        } else if case let .playbackProgressBegan(attemptID, _, _) = event,
+                  transition.snapshot?.currentSession?.attemptId == attemptID.rawValue {
+            // Current playback is established before its successor may compete for the server
+            // (spec §12.8: current playback > preload).
+            requestPreloadIfNeeded()
+        }
+    }
+
+    // MARK: Gapless preload (spec §12.8)
+
+    /// Events for the preloaded attempt. A failure there must not reach the current session: the
+    /// preload is dropped and the boundary falls back to a normal start. Returns whether the
+    /// event was fully handled.
+    private func handlePreloadedAttemptEvent(
+        _ event: DulcetPlaybackEvent,
+        preload: DulcetPreloadInFlight
+    ) -> Bool {
+        let failure: DulcetPlaybackFailure? = switch event {
+        case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error): error
+        case .sourceRefreshRequired: .transport
+        default: nil
+        }
+        guard let failure else { return false }
+        if case let .serverBusy(retryAfter) = failure {
+            if let corePlan = preload.corePlan {
+                wireClient?.observePreloadFailure(plan: corePlan, errorKind: "serverBusy")
+            }
+            // At least the server's own recovery time; five seconds when it named none, which is
+            // what the reference server sends (CLAUDE.md trap 24).
+            let wait = max(retryAfter ?? Self.defaultBusyBackoff, Self.minimumBusyBackoff)
+            preloadSuppressedUntil = clock.now.advanced(by: .milliseconds(Int64(wait * 1_000)))
+            preloadLog.append("busy")
+        }
+        discardPreload(preload, reason: "failed")
+        return true
+    }
+
+    private func requestPreloadIfNeeded() {
+        guard preload == nil, let wireClient, account != nil else { return }
+        if let until = preloadSuppressedUntil, clock.now < until { return }
+        guard let snapshot = queueClient.snapshot().snapshot,
+              let session = snapshot.currentSession,
+              progressingSessions.contains(session.playbackSessionId) else { return }
+        let transition = queueClient.preloadNextForSession(playbackSessionId: session.playbackSessionId)
+        guard transition.errorKind == nil else { return }
+        handleDiscardedPreload(transition.discardedPreloadAttemptId)
+        guard let directive = transition.preloadDirective else { return }
+        guard let track = catalog[DulcetProviderItemID(
+                providerInstanceID: directive.providerInstanceId,
+                rawID: directive.rawId
+              )],
+              let sourceContainer = track.sourceContainer?.coreContainer else {
+            _ = queueClient.discardPreload(attemptId: directive.attemptId)
+            preloadLog.append("declined-unresolvable")
+            return
+        }
+        var inFlight = DulcetPreloadInFlight(
+            attemptID: directive.attemptId,
+            sessionID: directive.playbackSessionId,
+            track: track
+        )
+        preloadLog.append("registered")
+        let metadata = DulcetNowPlayingMetadata(
+            title: track.title,
+            artist: track.artistNames.joined(separator: ", "),
+            albumTitle: track.albumTitle
+        )
+        if let offline = downloadController?.offlinePlaybackAsset(for: track) {
+            preload = inFlight
+            deliverPreload(DulcetPlaybackPlan(
+                playbackSessionID: DulcetPlaybackSessionID(directive.playbackSessionId),
+                attemptID: DulcetPlaybackAttemptID(directive.attemptId),
+                deliveryProtocol: .httpProgressive,
+                expectedContainer: offline.expectedContainer,
+                resource: offline.resource,
+                metadata: metadata
+            ))
+            return
+        }
+        let request = PlaybackResolveRequest(
+            playbackSessionId: PlaybackSessionId(value: directive.playbackSessionId),
+            attemptId: AttemptId(value: directive.attemptId),
+            itemId: ProviderItemId(
+                providerInstanceId: directive.providerInstanceId,
+                rawId: directive.rawId
+            ),
+            sourceContainer: sourceContainer,
+            supportsTranscodingExtension: false,
+            deviceProfile: Self.deviceProfile,
+            legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil),
+            legacyTimeOffset: nil
+        )
+        inFlight.resolve = wireClient.startResolve(request: request) { [weak self] outcome in
+            Task { @MainActor [weak self] in
+                guard let self, let current = self.preload,
+                      current.attemptID == directive.attemptId else { return }
+                self.preload?.resolve = nil
+                guard let corePlan = outcome.plan else {
+                    self.discardPreload(current, reason: "resolve-failed")
+                    return
+                }
+                // Direct play never consumes a transcode slot; a transcoded preload only while
+                // the learned budget has one beside current playback.
+                guard wireClient.mayPreload(
+                    plan: corePlan,
+                    currentPlaybackIsTranscoded: self.currentPlanIsTranscoded
+                ) else {
+                    self.discardPreload(current, reason: "budget")
+                    return
+                }
+                self.preload?.corePlan = corePlan
+                self.deliverPreload(DulcetCorePlaybackPlanFactory.makePlan(
+                    client: wireClient,
+                    corePlan: corePlan,
+                    metadata: metadata
+                ))
+            }
+        }
+        preload = inFlight
+    }
+
+    private func deliverPreload(_ plan: DulcetPlaybackPlan) {
+        let attemptID = plan.attemptID.rawValue
+        execute(.preloadNext(commandID: commandID("preload"), plan: plan)) { [weak self] outcome in
+            guard let self, let current = self.preload, current.attemptID == attemptID else { return }
+            guard case .accepted = outcome else {
+                self.discardPreload(current, reason: "engine-refused")
+                return
+            }
+            self.preload?.inEngine = true
+            self.preloadLog.append("in-engine")
+            // Only now: the engine drops artwork for a session it does not hold, and a disk-cache
+            // hit can complete before an in-flight preloadNext has reached the engine queue.
+            self.fetchArtwork(for: current.track, sessionID: current.sessionID)
+        }
+    }
+
+    /// Drops a preload from the core and the engine. The core then starts the next entry
+    /// normally at the boundary.
+    private func discardPreload(
+        _ preload: DulcetPreloadInFlight,
+        reason: String,
+        startsHeldEnd: Bool = true
+    ) {
+        preload.resolve?.cancel()
+        if self.preload?.attemptID == preload.attemptID { self.preload = nil }
+        let transition = queueClient.discardPreload(attemptId: preload.attemptID)
+        cancelArtwork(sessionID: preload.sessionID)
+        execute(.discardPreloaded(
+            commandID: commandID("discard-preload"),
+            attemptID: DulcetPlaybackAttemptID(preload.attemptID)
+        ))
+        preloadLog.append("discarded:\(reason)")
+        if false, startsHeldEnd, let directive = transition.startDirective {
+            // The end was already held for this preload; nothing else will advance the queue.
+            preloadLog.append("resumed-held-end")
+            start(directive)
+        }
+    }
+
+    /// The core already discarded it (a queue edit changed what plays next): remove it from the
+    /// engine and forget it here.
+    private func handleDiscardedPreload(_ attemptID: String?) {
+        guard let attemptID, let preload, preload.attemptID == attemptID else { return }
+        preload.resolve?.cancel()
+        self.preload = nil
+        cancelArtwork(sessionID: preload.sessionID)
+        execute(.discardPreloaded(
+            commandID: commandID("discard-preload"),
+            attemptID: DulcetPlaybackAttemptID(attemptID)
+        ))
+        preloadLog.append("discarded:edit")
+    }
+
+    /// Forgets a preload whose engine item is being removed anyway (a stop, a new account).
+    private func abandonPreload(reason: String) {
+        guard let preload else { return }
+        preload.resolve?.cancel()
+        self.preload = nil
+        preloadLog.append("abandoned:\(reason)")
+    }
+
+    // MARK: Now Playing artwork
+
+    /// Loads artwork through the core's validated artwork path and hands the engine bytes, never
+    /// a URL. Keyed by session so a late image for an earlier track cannot land on a later one.
+    private func fetchArtwork(for track: DulcetTrack, sessionID: String) {
+        guard !artworkRequestedSessions.contains(sessionID),
+              let artworkFetcher,
+              let presentationAccount,
+              let reference = track.artwork.remoteReference,
+              reference.serverID == presentationAccount.providerInstanceID else { return }
+        let operation = artworkFetcher.fetch(DulcetArtworkFetchRequest(
+            reference: reference,
+            sizeBucket: .pixels512,
+            normalizedServerURL: presentationAccount.normalizedServerURL,
+            username: presentationAccount.username,
+            password: presentationAccount.password,
+            allowLocalHTTP: presentationAccount.allowLocalHTTP
+        )) { [weak self] outcome in
+            guard let self else { return }
+            self.artworkOperations[sessionID] = nil
+            guard case let .loaded(data) = outcome else { return }
+            self.engine.setNowPlayingArtwork(data, for: DulcetPlaybackSessionID(sessionID))
+        }
+        if artworkRequestedSessions.count > 64 { artworkRequestedSessions = [] }
+        artworkRequestedSessions.insert(sessionID)
+        artworkOperations[sessionID] = operation
+    }
+
+    private func cancelArtwork(sessionID: String? = nil) {
+        if let sessionID {
+            artworkOperations.removeValue(forKey: sessionID)?.cancel()
+            artworkRequestedSessions.remove(sessionID)
+        } else {
+            artworkOperations.values.forEach { $0.cancel() }
+            artworkOperations = [:]
+            artworkRequestedSessions = []
         }
     }
 
@@ -572,16 +977,37 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             return
         }
         guard let session = snapshot.currentSession else {
-            currentPresentation = .unavailable
-            presentationHandler?(currentPresentation)
+            publishWithoutSession(snapshot)
             return
         }
-        if session.phase == "Failed" {
+        // Every PlaybackAttemptPhase is named here, and tools/verify-playback-phase-parity fails
+        // when the Kotlin enum carries a case this switch does not name. This was a four-name
+        // allow-list with an `else` that published `.preparing`, which put FOUR phases behind one
+        // presentation -- and three of them are not "preparing" in any sense a person would
+        // recognise. `Stopped` and `TornDown` mean nothing is playing and nothing is coming, so
+        // the spinner they produced could never resolve.
+        switch session.phase {
+        case "Failed":
             publishFailure()
             return
-        }
-        guard ["Ready", "Progressing", "Buffering", "Paused"].contains(session.phase) else {
+        case "Created", "Preparing":
             publishPreparing()
+            return
+        case "Stopped", "TornDown":
+            // Reached on every stop, including the one `disconnect()` issues itself. The engine
+            // emits `.skipped` from its stop implementation and the event listener delivers it
+            // through `Task { @MainActor }`, so it lands AFTER `disconnect()` has published
+            // `.unavailable` and overwrites it. Mapping the phase correctly removes the harm
+            // rather than ordering around it: both paths now publish the same thing.
+            publishUnavailable()
+            return
+        case "Ready", "Progressing", "Buffering", "Paused":
+            break
+        default:
+            // A phase this shell does not know, which the parity gate exists to make impossible.
+            // `.preparing` is the worst available guess: it is the one presentation that never
+            // resolves on its own, so an unknown phase would strand the person on a spinner.
+            publishUnavailable()
             return
         }
         guard let current = catalog[DulcetProviderItemID(
@@ -597,6 +1023,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                 rawID: entry.rawId
             )]
         }
+        let (queueEntries, currentEntryIndex) = presentedEntries(snapshot)
+        fetchArtwork(for: current, sessionID: session.playbackSessionId)
         let phase: DulcetPlaybackPresentationPhase = switch session.phase {
         case "Progressing": .progressing
         case "Buffering": .buffering
@@ -633,7 +1061,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
                 canGoNext: index >= 0 && (
                     index + 1 < snapshot.entries.count || repeatMode == .all
                 ),
-                canGoPrevious: index > 0 || repeatMode == .all
+                canGoPrevious: index > 0 || repeatMode == .all,
+                queueEntries: queueEntries,
+                currentEntryIndex: currentEntryIndex
             )
         )
         presentationHandler?(currentPresentation)
@@ -644,6 +1074,76 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
             ),
             for: DulcetPlaybackSessionID(session.playbackSessionId)
         )
+    }
+
+    /// Entry identities aligned with the tracks the catalog can speak for. An entry the catalog
+    /// cannot resolve is left out of BOTH lists, so an index into one is never an index into a
+    /// different entry of the other.
+    private func presentedEntries(
+        _ snapshot: ApplePlaybackQueueSnapshotDto
+    ) -> ([DulcetQueueEntry], Int?) {
+        var entries: [DulcetQueueEntry] = []
+        var currentEntryIndex: Int?
+        for (offset, entry) in snapshot.entries.enumerated() {
+            guard let track = catalog[DulcetProviderItemID(
+                providerInstanceID: entry.providerInstanceId,
+                rawID: entry.rawId
+            )] else { continue }
+            if offset == Int(snapshot.currentIndex) { currentEntryIndex = entries.count }
+            entries.append(DulcetQueueEntry(id: DulcetQueueEntryID(entry.queueEntryId), track: track))
+        }
+        return (entries, currentEntryIndex)
+    }
+
+    /// No session. After a queue finishes the core keeps the last entry selected (spec §14.3), so
+    /// this presents that track stopped at its start -- as Music does -- instead of "Nothing is
+    /// playing". With no selection, or a selection the catalog cannot name, nothing is playing.
+    private func publishWithoutSession(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        let index = Int(snapshot.currentIndex)
+        guard snapshot.entries.indices.contains(index),
+              let current = catalog[DulcetProviderItemID(
+                  providerInstanceID: snapshot.entries[index].providerInstanceId,
+                  rawID: snapshot.entries[index].rawId
+              )] else {
+            publishUnavailable()
+            return
+        }
+        let repeatMode = DulcetRepeatMode(rawValue: snapshot.repeatMode) ?? .off
+        let (queueEntries, currentEntryIndex) = presentedEntries(snapshot)
+        currentPresentation = DulcetPlaybackPresentation(
+            status: .ready,
+            nowPlaying: DulcetNowPlaying(
+                sessionID: nil,
+                current: current,
+                queue: queueEntries.map(\.track),
+                currentIndex: currentEntryIndex ?? index,
+                sourceDisplayName: snapshot.entries[index].sourceDisplayName,
+                elapsed: .zero,
+                isPlaying: false,
+                outputName: DulcetPlaybackStrings.thisDevice,
+                volume: 1,
+                audioFormat: DulcetAudioFormat(
+                    codec: current.sourceContainer?.displayName
+                        ?? DulcetPlaybackStrings.unknownAudioFormat,
+                    sampleRateKilohertz: 0
+                ),
+                phase: .paused,
+                seekability: .unknown,
+                progressBegan: false,
+                repeatMode: repeatMode,
+                shuffleEnabled: snapshot.shuffleEnabled,
+                canGoNext: repeatMode == .all,
+                canGoPrevious: true,
+                queueEntries: queueEntries,
+                currentEntryIndex: currentEntryIndex
+            )
+        )
+        presentationHandler?(currentPresentation)
+    }
+
+    private func publishUnavailable() {
+        currentPresentation = .unavailable
+        presentationHandler?(currentPresentation)
     }
 
     private func publishPreparing() {
@@ -686,6 +1186,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling {
     private func commandID(_ purpose: String) -> DulcetPlaybackCommandID {
         DulcetPlaybackCommandID("\(purpose)-\(UUID().uuidString)")
     }
+
+    private static let defaultBusyBackoff: TimeInterval = 5
+    private static let minimumBusyBackoff: TimeInterval = 1
 
     private static func closedFailureKind(_ value: String?) -> String {
         switch value {

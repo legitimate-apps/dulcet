@@ -142,22 +142,3 @@ public enum DulcetPlaybackStartNavigation: Sendable, Hashable {
 #endif
     }
 }
-
-/// Where tracks added to an existing queue go.
-public enum DulcetQueuePlacement: Sendable, Hashable {
-    /// Immediately after the current entry.
-    case next
-    /// After the last entry.
-    case last
-}
-
-/// Optional capability of a playback controller: adding tracks to the live queue without
-/// replacing it.
-///
-/// No controller conforms yet. The presentation layer offers Play Next and Add to Queue only when
-/// the controller does, so the actions stay hidden rather than dead until the queue exposes
-/// insertion.
-@MainActor
-public protocol DulcetQueueInserting: AnyObject {
-    func insert(_ tracks: [DulcetTrack], placement: DulcetQueuePlacement)
-}

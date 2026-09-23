@@ -22,30 +22,6 @@ struct DulcetPlaybackPreparingView: View {
     }
 }
 
-/// Controls the Now Playing surface shows that belong to the system's audio routing rather than
-/// to Dulcet: the AirPlay route picker and the volume slider. The platform shell supplies them;
-/// when it supplies none, the surface names the current output instead.
-public struct DulcetNowPlayingSystemControls {
-    public var routePicker: AnyView?
-    public var volume: AnyView?
-
-    public init(routePicker: AnyView? = nil, volume: AnyView? = nil) {
-        self.routePicker = routePicker
-        self.volume = volume
-    }
-}
-
-public extension EnvironmentValues {
-    @Entry var dulcetNowPlayingSystemControls = DulcetNowPlayingSystemControls()
-}
-
-public extension View {
-    /// Hook for the system playback controls (route picker, volume) on the Now Playing surface.
-    func dulcetNowPlayingSystemControls(_ controls: DulcetNowPlayingSystemControls) -> some View {
-        environment(\.dulcetNowPlayingSystemControls, controls)
-    }
-}
-
 struct DulcetNowPlayingView: View {
     enum Presentation {
         /// A navigation destination: the sidebar's Now Playing on iPad and Mac, the tvOS section.
@@ -55,24 +31,57 @@ struct DulcetNowPlayingView: View {
     }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.dulcetNowPlayingSystemControls) private var systemControls
     @State private var scrubPosition: Double?
     @State private var showingQueue = false
     let player: DulcetNowPlaying
     var presentation: Presentation = .destination
     var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
+    /// Queue edits from Up Next: jump, reorder, remove, clear.
+    var onEdit: (DulcetQueueEditIntent) -> Void = { _ in }
     /// Runs before following a link out of the player, so a sheet can get out of the way.
     var onNavigate: () -> Void = {}
 
     var body: some View {
-        // The reader consumes the proposal before the ScrollView, so the layout decision below
+        // The reader consumes the proposal before any ScrollView, so the layout decision below
         // depends only on the width the surface was given.
         GeometryReader { geometry in
-            ScrollView {
-                content(width: geometry.size.width)
-                    .padding(.horizontal, horizontalPadding(for: geometry.size.width))
+            let width = geometry.size.width
+            let padding = horizontalPadding(for: width)
+            if sideBySide(width: width) {
+                HStack(alignment: .top, spacing: DulcetSpacing.xl) {
+                    ScrollView {
+                        playerPanel(artworkSize: 332, alignment: .center, showsQueueToggle: false)
+                            .padding(.vertical, DulcetSpacing.xl)
+                    }
+                    .frame(maxWidth: 520)
+                    queueColumn
+                        .frame(maxWidth: 390)
+                }
+                .padding(.horizontal, padding)
+                .frame(maxWidth: .infinity)
+            } else if showingQueue {
+                // The queue replaces the artwork, as the system player's does; the footer stays,
+                // so the control that opened it closes it.
+                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    queueColumn
+                    footer(alignment: .leading, showsQueueToggle: true)
+                        .padding(.horizontal, padding)
+                        .padding(.bottom, DulcetSpacing.md)
+                }
+                .frame(maxWidth: 600)
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
+                    playerPanel(
+                        artworkSize: stackedArtworkSize(innerWidth: max(0, width - 2 * padding)),
+                        alignment: presentation == .sheet ? .leading : .center,
+                        showsQueueToggle: true
+                    )
+                    .frame(maxWidth: 560)
+                    .padding(.horizontal, padding)
                     .padding(.vertical, presentation == .sheet ? DulcetSpacing.md : DulcetSpacing.xl)
                     .frame(maxWidth: .infinity)
+                }
             }
         }
         .background(Color.dulcetWindow.ignoresSafeArea())
@@ -86,42 +95,36 @@ struct DulcetNowPlayingView: View {
         !accessibilitySize && width >= 820
     }
 
+    private func sideBySide(width: CGFloat) -> Bool {
+#if os(tvOS)
+        false
+#else
+        presentation == .destination
+            && Self.usesSideBySideLayout(
+                width: width,
+                accessibilitySize: dynamicTypeSize.isAccessibilitySize
+            )
+#endif
+    }
+
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
         width < 500 ? DulcetSpacing.lg : DulcetSpacing.xl
     }
 
+    /// Up Next, editable, when the queue carries entry identities -- a track can be queued twice,
+    /// so edits name entries. A source without identities gets the read-only listing instead.
     @ViewBuilder
-    private func content(width: CGFloat) -> some View {
-        let innerWidth = max(0, width - 2 * horizontalPadding(for: width))
-        if presentation == .destination,
-           Self.usesSideBySideLayout(
-               width: width,
-               accessibilitySize: dynamicTypeSize.isAccessibilitySize
-           ) {
-            HStack(alignment: .top, spacing: DulcetSpacing.xl) {
-                playerPanel(artworkSize: 332, alignment: .center)
-                    .frame(maxWidth: 520)
-                queuePanel
-                    .frame(maxWidth: 390)
-            }
+    private var queueColumn: some View {
+#if os(tvOS)
+        ScrollView { queuePanel.padding(DulcetSpacing.xl) }
+#else
+        if player.queueEntries.isEmpty {
+            ScrollView { queuePanel.padding(DulcetSpacing.lg) }
         } else {
-            VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
-                if presentation == .sheet, showingQueue {
-                    // The footer stays, so the control that opened the queue closes it.
-                    queuePanel
-                    footer(alignment: .leading)
-                } else {
-                    playerPanel(
-                        artworkSize: stackedArtworkSize(innerWidth: innerWidth),
-                        alignment: presentation == .sheet ? .leading : .center
-                    )
-                }
-                if presentation == .destination {
-                    queuePanel
-                }
-            }
-            .frame(maxWidth: 560)
+            DulcetUpNextList(nowPlaying: player, onEdit: onEdit)
+                .scrollContentBackground(.hidden)
         }
+#endif
     }
 
     private func stackedArtworkSize(innerWidth: CGFloat) -> CGFloat {
@@ -129,7 +132,11 @@ struct DulcetNowPlayingView: View {
         return max(120, min(innerWidth, cap))
     }
 
-    private func playerPanel(artworkSize: CGFloat, alignment: HorizontalAlignment) -> some View {
+    private func playerPanel(
+        artworkSize: CGFloat,
+        alignment: HorizontalAlignment,
+        showsQueueToggle: Bool
+    ) -> some View {
         VStack(alignment: alignment, spacing: DulcetSpacing.lg) {
             DulcetArtworkView(artwork: player.current.artwork, size: artworkSize)
                 .shadow(color: .black.opacity(player.isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
@@ -143,7 +150,7 @@ struct DulcetNowPlayingView: View {
 
             transportControls
 
-            footer(alignment: alignment)
+            footer(alignment: alignment, showsQueueToggle: showsQueueToggle)
         }
     }
 
@@ -238,21 +245,23 @@ struct DulcetNowPlayingView: View {
     }
 
     @ViewBuilder
-    private func footer(alignment: HorizontalAlignment) -> some View {
+    private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
         VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
-            if let volume = systemControls.volume {
-                volume
+#if os(tvOS)
+            // tvOS routes and sets volume with the remote and the TV, so it names the output.
+            formatBadge
+            Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
+                .font(.caption)
+                .dulcetForeground(.secondaryTextOnWindow)
+#else
+            if DulcetSystemVolumeSlider.isAvailable {
+                DulcetSystemVolumeSlider()
             }
-            if systemControls.routePicker == nil, presentation == .destination {
-                formatBadge
-            } else {
             HStack(spacing: DulcetSpacing.sm) {
                 formatBadge
                 Spacer(minLength: 0)
-                if let routePicker = systemControls.routePicker {
-                    routePicker
-                }
-                if presentation == .sheet {
+                DulcetAirPlayRoutePicker(tint: .dulcetAccent)
+                if showsQueueToggle {
                     Button {
                         withAnimation(.snappy) { showingQueue.toggle() }
                     } label: {
@@ -266,12 +275,7 @@ struct DulcetNowPlayingView: View {
                     .accessibilityIdentifier("dulcet.now-playing.up-next")
                 }
             }
-            }
-            if systemControls.routePicker == nil {
-                Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
-            }
+#endif
             if let sourceDisplayName = player.sourceDisplayName {
                 Text(DulcetStrings.playingFrom(sourceDisplayName))
                     .font(.caption)
@@ -438,6 +442,7 @@ struct DulcetNowPlayingSheet: View {
                         player: player,
                         presentation: .sheet,
                         onControl: store.sendPlaybackControl,
+                        onEdit: store.editQueue,
                         onNavigate: onClose
                     )
                 } else if store.snapshot.playbackStatus == .failed {
@@ -727,6 +732,14 @@ private struct DulcetSearchResultMenuItems: View {
         switch result.kind {
         case .track:
             Button(DulcetStrings.play, systemImage: "play", action: onActivate)
+            if let track = result.playableTrack {
+                DulcetQueueInsertionMenuItems(addition: DulcetQueueAddition(
+                    tracks: [track],
+                    sourceKind: .search,
+                    sourceID: nil,
+                    sourceDisplayName: DulcetStrings.search
+                ))
+            }
             if let track = result.playableTrack, let albumID = store.libraryAlbumID(for: track) {
                 Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
                     store.showAlbum(albumID)

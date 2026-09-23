@@ -2627,9 +2627,31 @@ func artistAndAlbumLinksResolveOnlyToPagesTheLibraryHolds() {
 }
 
 @Test @MainActor
-func queueInsertionIsHiddenUntilTheControllerCanInsert() {
-    let (store, playback, album, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
-    #expect(!store.queueInsertionEnabled)
-    store.insertIntoQueue(album.tracks, placement: .next)
-    #expect(playback.queueIntents.isEmpty)
+func queueEditingIsOfferedOnlyWhenTheControllerCanEdit() {
+    let (store, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    #expect(!store.queueEditingEnabled)
+
+    let editing = EditingPlaybackController()
+    let editingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    #expect(editingStore.queueEditingEnabled)
+    let album = fixtureLibraryAlbum()
+    let addition = DulcetQueueAddition.album(album)
+    editingStore.editQueue(.playNext(addition))
+    #expect(editing.edits == [.playNext(addition)])
+}
+
+@MainActor
+private final class EditingPlaybackController: DulcetPlaybackControlling, DulcetQueueEditing {
+    private(set) var edits: [DulcetQueueEditIntent] = []
+    let currentPresentation: DulcetPlaybackPresentation = .unavailable
+    func setPresentationHandler(_ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void) {}
+    func configure(account: DulcetPlaybackAccount) {}
+    func restorePersistedQueue(with tracks: [DulcetTrack], catalogCoverage: DulcetLibraryCatalogCoverage) {}
+    func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {}
+    func send(_ intent: DulcetPlaybackControlIntent) {}
+    func disconnect() {}
+    func edit(_ intent: DulcetQueueEditIntent) { edits.append(intent) }
 }

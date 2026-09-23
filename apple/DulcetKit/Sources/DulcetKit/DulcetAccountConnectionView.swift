@@ -395,6 +395,7 @@ struct DulcetAccountConnectionView: View {
                     store.removeAccount()
                 }
                 .buttonStyle(.borderedProminent)
+                .dulcetConnectionProminentLabel()
                 Button(DulcetStrings.keepAccount) {
                     store.dismissAccountRemovalFailure()
                 }
@@ -470,6 +471,7 @@ struct DulcetAccountConnectionView: View {
             )
         }
         .buttonStyle(.borderedProminent)
+        .dulcetConnectionProminentLabel()
         .dulcetDefaultActionShortcut()
         .accessibilityIdentifier("dulcet.account-connect.primary-action")
         .focused($focusedControl, equals: .primaryAction)
@@ -542,6 +544,7 @@ struct DulcetAccountConnectionView: View {
                     store.submitAccountConnection()
                 }
                 .buttonStyle(.borderedProminent)
+                .dulcetConnectionProminentLabel()
                 .dulcetDefaultActionShortcut()
                 .focused($focusedControl, equals: .tryAgain)
 
@@ -656,3 +659,18 @@ extension DulcetCredentialInputKind {
 #endif
 
 #endif
+
+private extension View {
+    /// The form's own foreground is the window's text colour, which a prominent button would
+    /// otherwise inherit: dark text on the accent fill. A phone draws the label in the registered
+    /// on-accent colour instead. Other platforms keep the system's treatment, which this change has
+    /// not measured there.
+    @ViewBuilder
+    func dulcetConnectionProminentLabel() -> some View {
+#if os(iOS)
+        dulcetForeground(.labelOnAccentFill)
+#else
+        self
+#endif
+    }
+}

@@ -661,10 +661,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .showArtist(id):
             cancelSearchRequest()
             openLibrary(reason: .entered, selecting: .artist(id))
-        case let .insertIntoQueue(tracks, placement):
-            guard let inserter = playbackController as? any DulcetQueueInserting,
-                  !tracks.isEmpty else { return }
-            inserter.insert(tracks, placement: placement)
+        case let .editQueue(intent):
+            (playbackController as? any DulcetQueueEditing)?.edit(intent)
         case let .submitAccountConnection(request):
             submit(request)
         case .cancelAccountConnection:
@@ -1887,8 +1885,8 @@ extension DulcetAccountDataSource: DulcetLibraryNavigating {
         return credited.count == 1 ? credited[0].id : nil
     }
 
-    public var queueInsertionEnabled: Bool {
-        playbackController is any DulcetQueueInserting
+    public var queueEditingEnabled: Bool {
+        playbackController is any DulcetQueueEditing
     }
 }
 

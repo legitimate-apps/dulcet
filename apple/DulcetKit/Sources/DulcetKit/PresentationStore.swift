@@ -16,9 +16,8 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case showAlbum(DulcetProviderItemID)
     /// Shows one library artist from anywhere in the app.
     case showArtist(DulcetProviderItemID)
-    /// Adds tracks to the live queue. Sent only when ``DulcetDataSource/queueInsertionEnabled``.
-    case insertIntoQueue([DulcetTrack], DulcetQueuePlacement)
     case playbackControl(DulcetPlaybackControlIntent)
+    case editQueue(DulcetQueueEditIntent)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
     case removeAccount
@@ -49,7 +48,7 @@ public extension DulcetDataSource {
 public protocol DulcetLibraryNavigating: AnyObject {
     func libraryArtistID(for credit: DulcetCredit) -> DulcetProviderItemID?
     func libraryAlbumID(for track: DulcetTrack) -> DulcetProviderItemID?
-    var queueInsertionEnabled: Bool { get }
+    var queueEditingEnabled: Bool { get }
 }
 
 @MainActor
@@ -162,15 +161,10 @@ public final class DulcetPresentationStore {
         source.send(.showArtist(id))
     }
 
-    /// Whether Play Next and Add to Queue have a queue to act on. False until the playback
-    /// controller exposes insertion; the actions are hidden, never shown disabled, until then.
-    public var queueInsertionEnabled: Bool {
-        (source as? any DulcetLibraryNavigating)?.queueInsertionEnabled == true
-    }
-
-    public func insertIntoQueue(_ tracks: [DulcetTrack], placement: DulcetQueuePlacement) {
-        guard queueInsertionEnabled, !tracks.isEmpty else { return }
-        source.send(.insertIntoQueue(tracks, placement))
+    /// Whether the playback controller can edit the live queue. Play Next and Add to Queue are
+    /// offered only then -- hidden, never shown disabled.
+    public var queueEditingEnabled: Bool {
+        (source as? any DulcetLibraryNavigating)?.queueEditingEnabled == true
     }
 
     /// ⌘F on the Mac: go to Search.
@@ -178,6 +172,11 @@ public final class DulcetPresentationStore {
         if selectedDestination != .search {
             selectDestination(.search)
         }
+    }
+
+    /// Play Next, Play Later, reorder, remove, clear upcoming, and jump to a queue row.
+    public func editQueue(_ intent: DulcetQueueEditIntent) {
+        source.send(.editQueue(intent))
     }
 
     public func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {

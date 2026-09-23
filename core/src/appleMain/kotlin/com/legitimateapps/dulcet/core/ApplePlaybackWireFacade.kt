@@ -25,6 +25,8 @@ public class AppleRemotePlaybackPlanDto internal constructor(
     public val attemptId: String get() = corePlan.attemptId.value
     public val deliveryProtocol: String get() = corePlan.deliveryProtocol.name
     public val expectedContainer: String get() = corePlan.expectedContainer.name
+    /** Whether the plan consumes a server transcode slot (§12.8). Direct play never does. */
+    public val isTranscoded: Boolean get() = corePlan.isTranscoded()
 
     override fun toString(): String = "AppleRemotePlaybackPlanDto(<redacted>)"
 }
@@ -280,6 +282,44 @@ public class ApplePlaybackWireClient(
     } catch (_: Throwable) {
         ApplePlaybackRedirectDecisionDto("reject", emptyList())
     }
+
+    /**
+     * §12.8: may this plan be preloaded now? Direct play always may; a transcoded preload only while
+     * the learned per-server budget has a slot beside current playback.
+     */
+    public fun mayPreload(
+        plan: AppleRemotePlaybackPlanDto,
+        currentPlaybackIsTranscoded: Boolean,
+    ): Boolean = try {
+        wireClient.transcodeBudget.maySchedule(
+            purpose = PlaybackWireRequestPurpose.Preload,
+            isTranscoded = plan.corePlan.isTranscoded(),
+            active = ActiveTranscodeCounts(currentPlayback = if (currentPlaybackIsTranscoded) 1 else 0),
+        )
+    } catch (_: Throwable) {
+        false
+    }
+
+    /**
+     * Records that a preload failed. A `serverBusy` on a transcoded preload drops this server's
+     * budget to one for the rest of the client's life, so transcoded preloads stop (§12.8).
+     */
+    public fun observePreloadFailure(plan: AppleRemotePlaybackPlanDto, errorKind: String) {
+        try {
+            if (errorKind != "serverBusy") return
+            wireClient.transcodeBudget.observeFailure(
+                purpose = PlaybackWireRequestPurpose.Preload,
+                isTranscoded = plan.corePlan.isTranscoded(),
+                error = DomainError.Server.Busy(null),
+            )
+        } catch (_: Throwable) {
+            // Budget bookkeeping must never throw across the boundary.
+        }
+    }
+
+    /** The learned per-server transcode budget, for diagnostics and tests. */
+    public val maximumConcurrentTranscodes: Int
+        get() = wireClient.transcodeBudget.maximumConcurrentTranscodes
 
     public fun close() {
         requestClient.close()

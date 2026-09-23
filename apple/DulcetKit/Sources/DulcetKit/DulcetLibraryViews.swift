@@ -1229,7 +1229,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
             if let onPlay, track.availability == .playable {
                 Button(DulcetStrings.play, systemImage: "play", action: onPlay)
             }
-            DulcetQueueInsertionMenuItems(tracks: [track])
+            DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
             if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
                 Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
                     onNavigate()
@@ -1263,7 +1263,7 @@ private struct DulcetAlbumContextMenu: ViewModifier {
                     Button(DulcetStrings.shuffle, systemImage: "shuffle") {
                         store.playAlbum(album.id, shuffle: true)
                     }
-                    DulcetQueueInsertionMenuItems(tracks: album.tracks)
+                    DulcetQueueInsertionMenuItems(addition: .album(album))
                 }
                 DulcetGoToArtistMenuItems(
                     credits: album.credits.filter { $0.role == .albumArtist }
@@ -1277,19 +1277,44 @@ private struct DulcetAlbumContextMenu: ViewModifier {
 }
 
 #if !os(tvOS)
-private struct DulcetQueueInsertionMenuItems: View {
+/// Play Next and Add to Queue, offered only while the playback controller can edit the queue.
+/// Both start playback when nothing is queued, as the edit intents define.
+struct DulcetQueueInsertionMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
-    let tracks: [DulcetTrack]
+    let addition: DulcetQueueAddition
 
     var body: some View {
-        if store.queueInsertionEnabled, !tracks.isEmpty {
+        if store.queueEditingEnabled, !addition.tracks.isEmpty {
             Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
-                store.insertIntoQueue(tracks, placement: .next)
+                store.editQueue(.playNext(addition))
             }
             Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
-                store.insertIntoQueue(tracks, placement: .last)
+                store.editQueue(.playLater(addition))
             }
         }
+    }
+}
+
+extension DulcetQueueAddition {
+    /// One track, attributed to its album when the library can identify it.
+    @MainActor
+    static func track(_ track: DulcetTrack, in store: DulcetPresentationStore) -> Self {
+        let albumID = store.libraryAlbumID(for: track)
+        return DulcetQueueAddition(
+            tracks: [track],
+            sourceKind: albumID == nil ? .library : .album,
+            sourceID: albumID,
+            sourceDisplayName: track.albumTitle ?? DulcetStrings.library
+        )
+    }
+
+    static func album(_ album: DulcetAlbum) -> Self {
+        DulcetQueueAddition(
+            tracks: album.tracks,
+            sourceKind: .album,
+            sourceID: album.id,
+            sourceDisplayName: album.title
+        )
     }
 }
 

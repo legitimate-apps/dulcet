@@ -46,10 +46,11 @@ func everyPlaybackCommandPreservesItsCorrelationIdentity() {
         .setRate(commandID: commandID, rate: 1),
         .replaceCurrent(commandID: commandID, plan: plan),
         .preloadNext(commandID: commandID, plan: plan),
+        .discardPreloaded(commandID: commandID, attemptID: plan.attemptID),
         .release(commandID: commandID),
     ]
 
-    #expect(commands.count == 10)
+    #expect(commands.count == 11)
     #expect(commands.allSatisfy { $0.commandID == commandID })
 }
 

@@ -766,8 +766,12 @@ final class DulcetiOSUITests: XCTestCase {
             compact: false
         ) else { return }
 
+        // A queue restored from an earlier run on this simulator puts the canary in the
+        // now-playing bar at launch, and the bar's label names the track. Every label query here
+        // excludes the bar, or it resolves to the bar and opens the player instead of the album.
         let thresholdAlbum = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "Threshold Boundary")
+            NSPredicate(format: "label CONTAINS %@ AND identifier != %@",
+                        "Threshold Boundary", "dulcet.mini-player.open")
         ).firstMatch
         guard thresholdAlbum.waitForExistence(timeout: 30) else {
             XCTFail("The disposable server must expose the Threshold Boundary album")
@@ -784,7 +788,8 @@ final class DulcetiOSUITests: XCTestCase {
         thresholdAlbum.tap()
 
         let thresholdTrack = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "UI Playback Canary")
+            NSPredicate(format: "label CONTAINS %@ AND identifier != %@",
+                        "UI Playback Canary", "dulcet.mini-player.open")
         ).firstMatch
         guard thresholdTrack.waitForExistence(timeout: 10) else {
             XCTFail("The disposable server must expose the dedicated eligible UI playback canary")

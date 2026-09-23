@@ -10,15 +10,30 @@ Phase filtering and catalog lookup have separate guards. No other phase changes
 behavior, including `Stopped` and `TornDown`; a missing catalog item still maps to
 preparing. No failure view or copy was added.
 
-`Stopped` behavior is deliberately unchanged here and separately suspect. Source
-tracing shows `disconnect()` sends `.stop` and publishes `.unavailable`; the engine
+`Stopped` behavior was deliberately unchanged here and separately suspect. Source
+tracing showed `disconnect()` sends `.stop` and publishes `.unavailable`; the engine
 can then emit `.skipped` for an active attempt, Kotlin records `Stopped`, and the
 controller's unchanged phase fallback publishes `.preparing`. That queued event
 can overwrite the disconnect presentation despite no preparation being underway.
-This is a pre-existing, out-of-scope lifecycle issue, source-traced rather than
+This was a pre-existing, out-of-scope lifecycle issue, source-traced rather than
 reproduced in a running app. See `DulcetCorePlaybackController.disconnect()`,
 `DulcetAVPlayerEngine`'s stop handling, and `PlaybackCoreStateMachine`'s skipped
 handling.
+
+**CLOSED 2026-09-11.** The trace above was correct, and the mechanism was confirmed
+unchanged on `main`: `PlaybackCoreStateMachine` maps `Skipped` to `Stopped` by
+COPYING the current session rather than retiring it, so the queued event carries a
+live `currentSession` and reaches the fallback. The phase mapping is now total —
+`Stopped` and `TornDown` present as `unavailable`, an unrecognised phase presents as
+`unavailable` rather than `preparing`, and `tools/verify-playback-phase-parity` fails
+the build when the Apple shell and the Kotlin enum stop naming the same set. Spec
+§12.2 carries the contract; revision 100 records it.
+
+`DulcetCorePlaybackPresentationTests/testDisconnectIsNotOverwrittenByTheStopItIssued`
+drives the real ordering: a fixture engine that emits `.skipped` from its stop exactly
+as `DulcetAVPlayerEngine` does, through the event listener the production initializer
+installs. It requires the core to have actually recorded `Stopped` before asserting
+the presentation, so a fixture that emitted nothing fails rather than passing.
 
 ## Mapping control (initial coverage)
 

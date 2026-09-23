@@ -219,7 +219,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
 
     public private(set) var currentSnapshot: DulcetSnapshot
     public let downloadsEnabled = true
-    public let queueInsertionEnabled = false
+    public let queueEditingEnabled = false
 
     public init(
         fixture: DulcetDeterministicFixture = DulcetDeterministicFixture(),
@@ -253,7 +253,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
         case .loadMoreSearchResults, .retrySearch, .downloadTrack, .activateSearchResult,
-             .retryAlbumTracks, .insertIntoQueue:
+             .retryAlbumTracks, .editQueue:
             // The fixture's albums always carry their tracks, so there is nothing to re-read.
             break
         case let .playLibrary(shuffle):

@@ -120,7 +120,7 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
-    fun repeatOffNaturalCompletionLeavesThePersistedQueuePausedWithoutACurrentEntry() {
+    fun repeatOffNaturalCompletionKeepsTheLastEntrySelectedWithoutASession() {
         val fixture = fixture()
         val started = fixture.controller.replaceAndStart(request(listOf("a")))
         val first = assertNotNull(started.startDirective)
@@ -129,10 +129,18 @@ class PlaybackQueueControllerTest {
             PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds),
         )
 
+        // §14.3: the finished entry stays selected, so the shell can show the last track
+        // stopped instead of "Nothing is playing"; the session itself is finalized.
         assertNull(completed.startDirective)
-        assertNull(completed.snapshot.currentIndex)
+        assertEquals(0, completed.snapshot.currentIndex)
         assertNull(completed.snapshot.currentSession)
         assertEquals(listOf("a"), completed.snapshot.rawIds())
+
+        // Play after the end replays the selected entry as a NEW session (§12.1).
+        val replay = assertNotNull(fixture.controller.startCurrent().startDirective)
+        assertEquals("a", replay.itemId.rawId)
+        assertEquals(true, replay.shouldAutoPlay)
+        assertNotEquals(first.playbackSessionId, replay.playbackSessionId)
         fixture.driver.close()
     }
 
