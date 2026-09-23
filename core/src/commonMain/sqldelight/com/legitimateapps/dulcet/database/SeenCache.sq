@@ -5,8 +5,8 @@
 -- consistency is the response and the window (§16.12). Per-user fields are nullable because
 -- *unknown is not false* — a row seeded on upgrade (§16.17) knows none of them.
 --
--- `issue_seq` is the order in which the request that wrote a row was ISSUED, taken from
--- `cache_issue_counter` when the request is sent. A response rewrites a row only when its
+-- `issue_seq` is the order in which the request that wrote a row was SENT, taken from
+-- `cache_meta.last_issued` as the request goes out (after any wait for a connection slot). A response rewrites a row only when its
 -- `issue_seq` is higher than the row's, so a slow answer never overwrites a newer one.
 
 CREATE TABLE cache_binding (
@@ -16,9 +16,10 @@ CREATE TABLE cache_binding (
   created_at_wall INTEGER NOT NULL
 );
 
-CREATE TABLE cache_issue_counter (
+CREATE TABLE cache_meta (
   singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
-  last_issued INTEGER NOT NULL CHECK (last_issued >= 0)
+  last_issued INTEGER NOT NULL CHECK (last_issued >= 0),
+  normalization_version INTEGER NOT NULL CHECK (normalization_version >= 0)
 );
 
 CREATE TABLE cache_epoch (
@@ -66,6 +67,7 @@ CREATE TABLE cache_album (
   played TEXT,
   detail_complete INTEGER NOT NULL DEFAULT 0 CHECK (detail_complete IN (0, 1)),
   detail_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (detail_issue_seq >= 0),
+  detail_fetched_epoch TEXT,
   fetched_at_wall INTEGER,
   fetched_epoch TEXT,
   issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
@@ -144,7 +146,7 @@ CREATE TABLE cache_list (
   end_loaded_offset INTEGER NOT NULL CHECK (end_loaded_offset >= first_loaded_offset),
   total INTEGER CHECK (total IS NULL OR total >= 0),
   coverage TEXT NOT NULL CHECK (
-    coverage IN ('complete', 'open', 'unverified_scanning', 'unverified_no_epoch')
+    coverage IN ('complete', 'open', 'unverified_scanning', 'unverified_no_epoch', 'unverified_changing')
   ),
   fetched_at_wall INTEGER,
   last_access_wall INTEGER NOT NULL,
@@ -180,6 +182,7 @@ CREATE INDEX cache_artist_normalized_name ON cache_artist(server_id, normalized_
 CREATE INDEX cache_album_normalized_title ON cache_album(server_id, normalized_title);
 CREATE INDEX cache_track_normalized_title ON cache_track(server_id, normalized_title);
 CREATE INDEX cache_credit_normalized_name ON cache_credit(server_id, normalized_name);
+CREATE INDEX cache_album_detail_access ON cache_album(server_id, detail_complete, last_access_wall);
 
 -- Binding (CONF-80) -------------------------------------------------------------------------------
 
@@ -193,13 +196,19 @@ VALUES (?, ?, ?, ?);
 -- Issue order -------------------------------------------------------------------------------------
 
 initializeIssueCounter:
-INSERT OR IGNORE INTO cache_issue_counter(singleton_id, last_issued) VALUES (1, 0);
+INSERT OR IGNORE INTO cache_meta(singleton_id, last_issued, normalization_version) VALUES (1, 0, 0);
 
 advanceIssueCounter:
-UPDATE cache_issue_counter SET last_issued = last_issued + 1 WHERE singleton_id = 1;
+UPDATE cache_meta SET last_issued = last_issued + 1 WHERE singleton_id = 1;
 
 selectIssueCounter:
-SELECT last_issued FROM cache_issue_counter WHERE singleton_id = 1;
+SELECT last_issued FROM cache_meta WHERE singleton_id = 1;
+
+selectNormalizationVersion:
+SELECT normalization_version FROM cache_meta WHERE singleton_id = 1;
+
+completeNormalization:
+UPDATE cache_meta SET normalization_version = ? WHERE singleton_id = 1;
 
 -- Epoch -------------------------------------------------------------------------------------------
 
@@ -261,14 +270,15 @@ UPDATE cache_album SET
 WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
 
 markAlbumDetail:
-UPDATE cache_album SET detail_complete = 1, detail_issue_seq = :detail_issue_seq, gone = :gone
+UPDATE cache_album SET detail_complete = 1, detail_issue_seq = :detail_issue_seq,
+  detail_fetched_epoch = :detail_fetched_epoch, gone = 0
 WHERE server_id = :server_id AND raw_id = :raw_id AND detail_issue_seq < :detail_issue_seq;
 
 -- A detail read that proves the album gone also outranks every older summary of it, so a slower
 -- list page issued before that read cannot resurrect it.
 markAlbumGoneByDetail:
-UPDATE cache_album SET gone = 1, detail_issue_seq = :detail_issue_seq,
-  issue_seq = max(issue_seq, :detail_issue_seq)
+UPDATE cache_album SET gone = 1, detail_complete = 0, detail_issue_seq = :detail_issue_seq,
+  detail_fetched_epoch = NULL, issue_seq = max(issue_seq, :detail_issue_seq)
 WHERE server_id = :server_id AND raw_id = :raw_id AND detail_issue_seq < :detail_issue_seq;
 
 selectAlbum:
@@ -291,8 +301,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 
 updateTrack:
 UPDATE cache_track SET
-  album_raw_id = coalesce(:album_raw_id, album_raw_id),
-  album_ordinal = CASE WHEN :album_ordinal IS NULL THEN album_ordinal ELSE :album_ordinal END,
+  -- Membership (album_raw_id with album_ordinal) is rewritten only by a successful getAlbum
+  -- (updateTrackMembership); a list or search row may only fill in an album that is unknown.
+  album_raw_id = coalesce(album_raw_id, :album_raw_id),
   title = :title, normalized_title = :normalized_title, album_title = :album_title,
   normalized_album_title = :normalized_album_title, artist_name = :artist_name,
   artist_raw_id = :artist_raw_id, disc_number = :disc_number, track_number = :track_number,
@@ -310,16 +321,22 @@ SELECT * FROM cache_track WHERE server_id = ? AND raw_id = ?;
 selectAlbumTrackIds:
 SELECT raw_id FROM cache_track WHERE server_id = ? AND album_raw_id = ?;
 
--- Gone-ness is itself a read result and is ordered like one: a track written by a read issued
--- AFTER the detail read that omitted it stays present.
-markTrackGone:
-UPDATE cache_track SET gone = 1, album_ordinal = NULL, issue_seq = :issue_seq
-WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+updateTrackMembership:
+UPDATE cache_track SET album_raw_id = :album_raw_id, album_ordinal = :album_ordinal, gone = 0
+WHERE server_id = :server_id AND raw_id = :raw_id;
 
+-- Gone-ness is itself a read result and is ordered like one: a track written by a read issued
+-- AFTER the detail read that omitted it stays present. Either way it is no longer a member.
+markTrackGone:
+UPDATE cache_track SET gone = CASE WHEN issue_seq < :issue_seq THEN 1 ELSE gone END,
+  album_ordinal = NULL, issue_seq = max(issue_seq, :issue_seq)
+WHERE server_id = :server_id AND raw_id = :raw_id;
+
+-- An album's tracks are its MEMBERS: the rows its latest successful getAlbum placed, in that order.
 selectAlbumTracks:
 SELECT * FROM cache_track
-WHERE server_id = ? AND album_raw_id = ? AND gone = 0
-ORDER BY album_ordinal IS NULL, album_ordinal, disc_number, track_number, title COLLATE NOCASE, raw_id;
+WHERE server_id = ? AND album_raw_id = ? AND album_ordinal IS NOT NULL AND gone = 0
+ORDER BY album_ordinal, raw_id;
 
 -- Playlists ---------------------------------------------------------------------------------------
 
@@ -458,6 +475,37 @@ UPDATE cache_album SET last_access_wall = ? WHERE server_id = ? AND raw_id = ?;
 touchAlbumTracks:
 UPDATE cache_track SET last_access_wall = ? WHERE server_id = ? AND album_raw_id = ?;
 
+-- Batched publication reads: one statement per item kind for a whole window ------------------
+
+selectListAlbumRows:
+SELECT m.position, a.* FROM cache_list_member AS m
+JOIN cache_album AS a ON a.server_id = m.server_id AND a.raw_id = m.raw_id
+WHERE m.server_id = ? AND m.list_key = ? AND m.item_kind = 'album' AND a.gone = 0
+ORDER BY m.position;
+
+selectListArtistRows:
+SELECT m.position, r.* FROM cache_list_member AS m
+JOIN cache_artist AS r ON r.server_id = m.server_id AND r.raw_id = m.raw_id
+WHERE m.server_id = ? AND m.list_key = ? AND m.item_kind = 'artist' AND r.gone = 0
+ORDER BY m.position;
+
+selectListTrackRows:
+SELECT m.position, t.* FROM cache_list_member AS m
+JOIN cache_track AS t ON t.server_id = m.server_id AND t.raw_id = m.raw_id
+WHERE m.server_id = ? AND m.list_key = ? AND m.item_kind = 'track' AND t.gone = 0
+ORDER BY m.position;
+
+selectListPlaylistRows:
+SELECT m.position, p.* FROM cache_list_member AS m
+JOIN cache_playlist AS p ON p.server_id = m.server_id AND p.raw_id = m.raw_id
+WHERE m.server_id = ? AND m.list_key = ? AND m.item_kind = 'playlist' AND p.gone = 0
+ORDER BY m.position;
+
+selectListGenreRows:
+SELECT position, raw_id FROM cache_list_member
+WHERE server_id = ? AND list_key = ? AND item_kind = 'genre'
+ORDER BY position;
+
 -- Pins --------------------------------------------------------------------------------------------
 
 insertPin:
@@ -494,39 +542,31 @@ SELECT list_key FROM cache_list WHERE server_id = ?
 ORDER BY last_access_wall, list_key
 LIMIT 1;
 
+-- Candidates are computed against UNCORRELATED sets (pinned ids, window members, albums of
+-- pinned tracks), which SQLite materialises once per statement. The previous correlated form
+-- joined cache_pin to cache_track for every album row: 7.5-13 s at the spec's ceilings.
 selectEvictableAlbums:
 SELECT raw_id FROM cache_album AS a
 WHERE a.server_id = :server_id
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_pin p
-    WHERE p.server_id = a.server_id AND p.item_kind = 'album' AND p.raw_id = a.raw_id
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_list_member m
-    WHERE m.server_id = a.server_id AND m.item_kind = 'album' AND m.raw_id = a.raw_id
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_pin p JOIN cache_track t
-      ON t.server_id = p.server_id AND t.raw_id = p.raw_id
-    WHERE p.server_id = a.server_id AND p.item_kind = 'track' AND t.album_raw_id = a.raw_id
+  AND a.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'album')
+  AND a.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'album')
+  AND a.raw_id NOT IN (
+    SELECT t.album_raw_id FROM cache_pin AS p
+    JOIN cache_track AS t ON t.server_id = p.server_id AND t.raw_id = p.raw_id
+    WHERE p.server_id = :server_id AND p.item_kind = 'track' AND t.album_raw_id IS NOT NULL
   )
 ORDER BY a.last_access_wall, a.raw_id
 LIMIT :limit;
 
+-- A track is referenced by a complete detail only while it is a MEMBER (album_ordinal set).
 selectEvictableTracks:
 SELECT raw_id FROM cache_track AS t
 WHERE t.server_id = :server_id
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_pin p
-    WHERE p.server_id = t.server_id AND p.item_kind = 'track' AND p.raw_id = t.raw_id
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_list_member m
-    WHERE m.server_id = t.server_id AND m.item_kind = 'track' AND m.raw_id = t.raw_id
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_album a
-    WHERE a.server_id = t.server_id AND a.raw_id = t.album_raw_id AND a.detail_complete = 1
+  AND t.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'track')
+  AND t.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'track')
+  AND (
+    t.album_ordinal IS NULL OR t.album_raw_id IS NULL OR
+    t.album_raw_id NOT IN (SELECT raw_id FROM cache_album WHERE server_id = :server_id AND detail_complete = 1)
   )
 ORDER BY t.last_access_wall, t.raw_id
 LIMIT :limit;
@@ -534,16 +574,26 @@ LIMIT :limit;
 selectEvictableArtists:
 SELECT raw_id FROM cache_artist AS r
 WHERE r.server_id = :server_id
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_pin p
-    WHERE p.server_id = r.server_id AND p.item_kind = 'artist' AND p.raw_id = r.raw_id
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM cache_list_member m
-    WHERE m.server_id = r.server_id AND m.item_kind = 'artist' AND m.raw_id = r.raw_id
-  )
+  AND r.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'artist')
+  AND r.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'artist')
 ORDER BY r.last_access_wall, r.raw_id
 LIMIT :limit;
+
+-- Under track pressure the least recently accessed complete details are released (§16.13): the
+-- album keeps its summary, and its tracks stop being members and become evictable orphans.
+selectReleasableDetails:
+SELECT raw_id FROM cache_album
+WHERE server_id = :server_id AND detail_complete = 1
+  AND raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'album')
+ORDER BY last_access_wall, raw_id
+LIMIT :limit;
+
+releaseDetail {
+  UPDATE cache_album SET detail_complete = 0, detail_fetched_epoch = NULL
+  WHERE server_id = :server_id AND raw_id = :raw_id;
+  UPDATE cache_track SET album_ordinal = NULL
+  WHERE server_id = :server_id AND album_raw_id = :raw_id;
+}
 
 deleteAlbum:
 DELETE FROM cache_album WHERE server_id = ? AND raw_id = ?;

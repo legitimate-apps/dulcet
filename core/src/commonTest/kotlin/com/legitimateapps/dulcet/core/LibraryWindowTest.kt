@@ -265,6 +265,19 @@ class LibraryWindowTest {
         )
         assertEquals(LibraryCoverage.Open, pubs.last.coverage)
         assertEquals((100 until 200).map(::albumId), pubs.ids())
+        // The rebased window is open on BOTH sides (review B2): it says where it starts, and the
+        // top of the list is reachable again under the same bracketed check.
+        assertEquals(100, pubs.last.leadingOffset)
+        val beforeTop = env.server.log.size
+        handle.loadBefore()
+        advanceUntilIdle()
+        assertEquals(
+            listOf("getAlbumList2[offset=0][type=alphabeticalByName]", "getScanStatus"),
+            env.server.log.drop(beforeTop).map(Any::toString),
+        )
+        assertEquals((0 until 200).map(::albumId), pubs.ids())
+        assertEquals(0, pubs.last.leadingOffset)
+        assertEquals(LibraryCoverage.Open, pubs.last.coverage)
     }
 
     @Test

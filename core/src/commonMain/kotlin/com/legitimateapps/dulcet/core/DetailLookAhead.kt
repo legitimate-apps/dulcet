@@ -27,7 +27,6 @@ internal class DetailLookAhead(private val reader: LibraryReader) {
     private val permits = Semaphore(reader.config.lookAheadInFlight)
     private var settle: Job? = null
     private var owner: ReaderHandle? = null
-    private var region: Set<String> = emptySet()
     private val running = mutableMapOf<String, Job>()
 
     fun viewportChanged(window: ReaderHandle, items: List<LibraryItem>, firstIndex: Int, lastIndex: Int) {
@@ -51,9 +50,13 @@ internal class DetailLookAhead(private val reader: LibraryReader) {
             delay(reader.config.lookAheadSettleMillis)
             if (!reader.online || reader.networkConstrained) return@launch
             val epochKey = reader.sessionEpoch?.key
+            // The per-viewport cap counts reads still running from an overlapping earlier settle:
+            // every running read is inside this region (leaving it cancels them), so a sequence of
+            // overlapping settles never has more than the cap outstanding (review nit).
+            val budget = (reader.config.lookAheadMaxPerViewport - running.size).coerceAtLeast(0)
             ordered
                 .filter { it !in running && needsDetail(it, epochKey) }
-                .take(reader.config.lookAheadMaxPerViewport)
+                .take(budget)
                 .forEach(::fetch)
         }
     }
@@ -61,14 +64,16 @@ internal class DetailLookAhead(private val reader: LibraryReader) {
     private fun needsDetail(albumRawId: String, epochKey: String?): Boolean {
         val album = reader.cache.album(albumRawId) ?: return true
         if (album.row.gone) return false
-        return !(album.detailComplete && epochKey != null && album.row.fetchedEpoch == epochKey)
+        // Judged by the epoch the track list was read under, not the summary row (review S1); a
+        // list read while the server scanned is never current.
+        return !(album.detailComplete && epochKey != null && album.detailFetchedEpoch == epochKey)
     }
 
     private fun fetch(albumRawId: String) {
         val job = reader.scope.launch {
-            permits.withPermit {
-                if (albumRawId in region) reader.readAlbumDetail(albumRawId)
-            }
+            // No region re-check is needed once the permit is held: leaving the region cancels this
+            // job, and a cancelled job cannot acquire the permit (review M4 — the check was dead).
+            permits.withPermit { reader.readAlbumDetail(albumRawId) }
         }
         running[albumRawId] = job
         job.invokeOnCompletion { if (running[albumRawId] === job) running.remove(albumRawId) }
@@ -76,7 +81,6 @@ internal class DetailLookAhead(private val reader: LibraryReader) {
 
     /** Cancels every look-ahead read whose album is no longer in [next]. */
     private fun leaveRegion(next: Set<String>) {
-        region = next
         running.filterKeys { it !in next }.values.toList().forEach(Job::cancel)
     }
 

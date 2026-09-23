@@ -6,6 +6,9 @@ import com.legitimateapps.dulcet.database.DulcetDatabase
 internal const val DULCET_SCHEMA_VERSION: Long = 6
 internal const val DULCET_CACHE_FORMAT_VERSION: Long = 1
 
+/** Bump to re-run the seen-cache normalization backfill after a change to [normalizeSearchText]. */
+internal const val SEEN_CACHE_NORMALIZATION_VERSION: Long = 1
+
 internal data class DulcetSchemaMetadata(
     val schemaVersion: Long,
     val cacheFormatVersion: Long,
@@ -65,7 +68,12 @@ internal class DulcetDatabaseStore private constructor(
                 // migration carry whatever normalization the mirror had, which may be none; the
                 // shared normalizer runs here, because SQLite cannot NFKD or case-fold text.
                 database.seenCacheQueries.initializeIssueCounter()
-                backfillSeenCacheNormalization(database)
+                // Once, not on every open: the four scans below read every cache row, and every row
+                // written after this ran is normalized as it is written.
+                if (database.seenCacheQueries.selectNormalizationVersion().executeAsOne() < SEEN_CACHE_NORMALIZATION_VERSION) {
+                    backfillSeenCacheNormalization(database)
+                    database.seenCacheQueries.completeNormalization(SEEN_CACHE_NORMALIZATION_VERSION)
+                }
                 store.reconcileVersions(
                     schemaVersion = DulcetDatabase.Schema.version,
                     cacheFormatVersion = DULCET_CACHE_FORMAT_VERSION,

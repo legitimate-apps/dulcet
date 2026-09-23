@@ -110,13 +110,50 @@ class SeenCacheMigrationTest {
         assertFalse(store.database.seenCacheQueries.selectIssueCounter().executeAsList().isEmpty())
     }
 
+    /**
+     * Per account (review nit): the mirror commits one account at a time, so another account's
+     * rows are valid at ITS latest generation, not the globally committed one. A zero-track album
+     * is seeded without a complete detail — "no tracks in the mirror" is not "an album with none".
+     */
+    @Test
+    fun conf81EachAccountIsSeededFromItsOwnLatestVerifiedGeneration() = withMigratedDatabase(
+        stability = "verified",
+        extra = listOf(
+            "INSERT INTO sync_generation VALUES (5, '$OTHER_SERVER', 'verified')",
+            // Generation numbers are global across accounts.
+            "INSERT INTO sync_generation VALUES (3, '$THIRD_SERVER', 'verified')",
+            "INSERT INTO sync_generation VALUES (4, '$THIRD_SERVER', 'unverified')",
+            "INSERT INTO artist(server_id, raw_id, name, media_source_id, content_key, valid_from_generation, valid_to_generation) " +
+                "VALUES ('$THIRD_SERVER', 'artist:third', 'Third', NULL, 'k', 3, NULL)",
+            "INSERT INTO album(server_id, raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds, media_source_id, artwork_key, content_key, valid_from_generation, valid_to_generation) " +
+                "VALUES ('$SERVER', 'album:empty', 'Empty', NULL, NULL, NULL, 0, NULL, NULL, 'k', 7, NULL)",
+        ),
+    ) { store, _ ->
+        val queries = store.database.seenCacheQueries
+        assertNotNull(queries.selectArtist(OTHER_SERVER, "artist:other").executeAsOneOrNull(), "another account was left unseeded")
+        assertNull(
+            queries.selectArtist(THIRD_SERVER, "artist:third").executeAsOneOrNull(),
+            "an account whose latest generation is unverified was seeded from an older one",
+        )
+        val empty = assertNotNull(queries.selectAlbum(SERVER, "album:empty").executeAsOneOrNull())
+        assertEquals(0, empty.detail_complete, "a zero-track album was seeded as a complete, empty membership")
+        // The control: an album WITH tracks in the same generation is complete, with its members ordered.
+        assertEquals(1, queries.selectAlbum(SERVER, "album:one").executeAsOne().detail_complete)
+        assertEquals(
+            listOf("track:one", "track:two"),
+            store.driver.strings("SELECT raw_id FROM cache_track WHERE server_id = '$SERVER' AND album_raw_id = 'album:one' ORDER BY album_ordinal"),
+        )
+    }
+
     private fun withMigratedDatabase(
         stability: String,
+        extra: List<String> = emptyList(),
         block: (DulcetDatabaseStore, LongRange) -> Unit,
     ) {
         val driver = createReleasedSchemaTestDriver(RELEASED_SCHEMA_5_STATEMENTS)
         try {
             seedVersionFive(driver, stability)
+            extra.forEach { driver.execute(null, it, 0) }
             val before = Clock.System.now().toEpochMilliseconds()
             DulcetDatabase.Schema.migrate(driver, 5, DulcetDatabase.Schema.version)
             val after = Clock.System.now().toEpochMilliseconds()
@@ -183,6 +220,7 @@ class SeenCacheMigrationTest {
     private companion object {
         const val SERVER = "server:account"
         const val OTHER_SERVER = "server:other"
+        const val THIRD_SERVER = "server:third"
         val PROTECTED_ROWS = listOf(
             "server:account|track:one|d1|complete|downloads/one.bin|4",
             "server:account|track:missing|d2|queued|downloads/missing.bin|0",

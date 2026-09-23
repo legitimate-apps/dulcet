@@ -6,6 +6,10 @@ import com.legitimateapps.dulcet.database.Cache_list
 import com.legitimateapps.dulcet.database.Cache_playlist
 import com.legitimateapps.dulcet.database.Cache_track
 import com.legitimateapps.dulcet.database.DulcetDatabase
+import com.legitimateapps.dulcet.database.SelectListAlbumRows
+import com.legitimateapps.dulcet.database.SelectListArtistRows
+import com.legitimateapps.dulcet.database.SelectListPlaylistRows
+import com.legitimateapps.dulcet.database.SelectListTrackRows
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -36,6 +40,15 @@ internal class SeenCacheStore(
     private val database: DulcetDatabase get() = store.database
 
     /**
+     * Row counts per namespace, kept in memory so the eviction check after a write is O(1) instead
+     * of four `count(*)` scans (spec §16.13: eviction runs after a write that CROSSES a ceiling).
+     * Counted exactly once per bind and whenever an eviction pass runs; maintained by the inserts
+     * and deletes this store performs. A writer outside the store can only make them stale high,
+     * which costs one pass that recounts and finds nothing to do.
+     */
+    private val counts = mutableMapOf<String, CacheRowCounts>()
+
+    /**
      * Returns the namespace for [binding], purging it first if it was filled from a different
      * server URL or username. A namespace with no binding yet adopts [binding] and keeps its rows:
      * those can only have been seeded on upgrade from this same provider instance's mirror
@@ -54,6 +67,7 @@ internal class SeenCacheStore(
                     "binding purge left rows behind"
                 }
             }
+            if (stored != null && !matches) counts.remove(binding.serverId)
             if (!matches) {
                 queries.insertBinding(
                     binding.serverId,
@@ -64,7 +78,31 @@ internal class SeenCacheStore(
             }
             stored != null && !matches
         }
-        return BoundSeenCache(binding.serverId, database, clock, ceilings, purgedOnBind = purged)
+        return BoundSeenCache(binding.serverId, database, clock, ceilings, purgedOnBind = purged) {
+            counts.getOrPut(binding.serverId) { CacheRowCounts.measure(database, binding.serverId) }
+        }
+    }
+}
+
+/** Row counts of one namespace (see [SeenCacheStore]). */
+internal class CacheRowCounts(var albums: Long, var tracks: Long, var artists: Long, var lists: Long) {
+    fun measureFrom(other: CacheRowCounts) {
+        albums = other.albums
+        tracks = other.tracks
+        artists = other.artists
+        lists = other.lists
+    }
+
+    companion object {
+        fun measure(database: DulcetDatabase, serverId: String): CacheRowCounts {
+            val q = database.seenCacheQueries
+            return CacheRowCounts(
+                q.countAlbums(serverId).executeAsOne(),
+                q.countTracks(serverId).executeAsOne(),
+                q.countArtists(serverId).executeAsOne(),
+                q.countLists(serverId).executeAsOne(),
+            )
+        }
     }
 }
 
@@ -128,7 +166,10 @@ internal enum class CacheCoverage(val wireName: String) {
     Complete("complete"),
     Open("open"),
     UnverifiedScanning("unverified_scanning"),
-    UnverifiedNoEpoch("unverified_no_epoch");
+    UnverifiedNoEpoch("unverified_no_epoch"),
+
+    /** The stamp kept moving across every bounded re-read with no scan reported (§16.12). */
+    UnverifiedChanging("unverified_changing");
 
     companion object {
         fun fromWireName(value: String): CacheCoverage =
@@ -265,6 +306,12 @@ internal data class CachedAlbum(
     val record: CacheAlbumRecord,
     val row: CacheRowState,
     val detailComplete: Boolean,
+    /**
+     * The epoch the album's MEMBERSHIP was read under — never its summary's, which a later list
+     * page refreshes without re-reading the tracks. Null when unknown (seeded) or when the detail
+     * was read while the server was scanning: either way, not current.
+     */
+    val detailFetchedEpoch: String? = null,
 )
 
 internal data class CachedTrack(
@@ -279,6 +326,25 @@ internal data class CachedPlaylist(
     val row: CacheRowState,
     val detailComplete: Boolean,
 )
+
+/** One window member with its entity, as [BoundSeenCache.listRows] returns it. */
+internal data class CachedListRow(
+    val position: Int,
+    val kind: CacheItemKind,
+    val album: CachedAlbum? = null,
+    val artist: CachedArtist? = null,
+    val track: CachedTrack? = null,
+    val playlist: CachedPlaylist? = null,
+    val genre: String? = null,
+) {
+    init {
+        require(listOfNotNull(album, artist, track, playlist, genre).size == 1) { "a row carries exactly one entity" }
+    }
+
+    val rawId: String
+        get() = album?.record?.rawId ?: artist?.record?.rawId ?: track?.rawId ?: playlist?.record?.rawId
+            ?: checkNotNull(genre)
+}
 
 internal data class CachePin(val kind: CacheItemKind, val rawId: String, val reason: CachePinReason)
 
@@ -312,6 +378,7 @@ internal class BoundSeenCache internal constructor(
     private val ceilings: SeenCacheCeilings,
     /** True when [SeenCacheStore.bind] found a different binding and purged this namespace. */
     val purgedOnBind: Boolean,
+    private val rowCounts: () -> CacheRowCounts,
 ) {
     private val queries get() = database.seenCacheQueries
 
@@ -377,6 +444,7 @@ internal class BoundSeenCache internal constructor(
                 state.userRating?.toLong(), stamp.fetchedAtWall, stamp.fetchedEpoch, stamp.issueSeq,
                 now(),
             )
+            rowCounts().artists += 1
             return true
         }
         if (existing >= stamp.issueSeq) return false
@@ -413,6 +481,7 @@ internal class BoundSeenCache internal constructor(
                 state.userRating?.toLong(), state.playCount, state.played, stamp.fetchedAtWall,
                 stamp.fetchedEpoch, stamp.issueSeq, now(),
             )
+            rowCounts().albums += 1
         } else {
             if (existing.issue_seq >= stamp.issueSeq) return false
             queries.updateAlbumSummary(
@@ -461,11 +530,11 @@ internal class BoundSeenCache internal constructor(
                 state.starredAt, state.userRating?.toLong(), state.playCount, state.played,
                 stamp.fetchedAtWall, stamp.fetchedEpoch, stamp.issueSeq, now(),
             )
+            rowCounts().tracks += 1
         } else {
             if (existing >= stamp.issueSeq) return false
             queries.updateTrack(
                 album_raw_id = track.albumRawId,
-                album_ordinal = albumOrdinal?.toLong(),
                 title = track.title,
                 normalized_title = normalizeSearchText(track.title),
                 album_title = track.albumTitle,
@@ -537,13 +606,18 @@ internal class BoundSeenCache internal constructor(
     /**
      * A successful `getAlbum`: the album's complete track list NOW. A cached track of the album
      * that is absent from it is `gone` (rule 1); an album whose list is empty is `gone` (rule 3).
-     * Membership is rewritten in full, in one transaction, and only when [stamp] outranks the
-     * album's previous detail read.
+     *
+     * Two orders apply, deliberately separately (§16.10): each track's SUMMARY fields are rewritten
+     * only when [stamp] outranks that row's `issue_seq`, while the album's MEMBERSHIP — which rows
+     * are its tracks and in what order — is rewritten in full, in one transaction, whenever [stamp]
+     * outranks the album's previous DETAIL read, however recently a search or list touched a row.
+     * [detailEpoch] is the epoch the membership was read under, or null while the server scans.
      */
     fun writeAlbumDetail(
         stamp: CacheWriteStamp,
         album: CacheAlbumRecord,
         tracks: List<CacheTrackRecord>,
+        detailEpoch: String? = stamp.fetchedEpoch,
     ): AlbumDetailWrite = database.transactionWithResult {
         upsertAlbumSummary(stamp, CacheEntitySource.Detail, album)
         val sequences = queries.selectAlbumSequences(serverId, album.rawId).executeAsOne()
@@ -551,19 +625,18 @@ internal class BoundSeenCache internal constructor(
             return@transactionWithResult AlbumDetailWrite(albumGone = false, tracksMarkedGone = emptyList(), membershipApplied = false)
         }
         tracks.forEachIndexed { ordinal, track ->
-            upsertTrack(stamp, CacheEntitySource.Detail, track.copy(albumRawId = album.rawId), ordinal)
+            upsertTrack(stamp, CacheEntitySource.Detail, track.copy(albumRawId = album.rawId), albumOrdinal = null)
+            queries.updateTrackMembership(album.rawId, ordinal.toLong(), serverId, track.rawId)
         }
         val present = tracks.mapTo(mutableSetOf()) { it.rawId }
-        val absent = queries.selectAlbumTrackIds(serverId, album.rawId).executeAsList()
-            .filter { it !in present }
-        val markedGone = absent.filter { rawId ->
-            queries.markTrackGone(issue_seq = stamp.issueSeq, server_id = serverId, raw_id = rawId).value > 0
-        }
+        val absent = queries.selectAlbumTrackIds(serverId, album.rawId).executeAsList().filter { it !in present }
+        absent.forEach { rawId -> queries.markTrackGone(issue_seq = stamp.issueSeq, server_id = serverId, raw_id = rawId) }
+        val markedGone = absent.filter { queries.selectTrack(serverId, it).executeAsOneOrNull()?.gone == 1L }
         val albumGone = tracks.isEmpty()
         if (albumGone) {
             queries.markAlbumGoneByDetail(stamp.issueSeq, serverId, album.rawId)
         } else {
-            queries.markAlbumDetail(detail_issue_seq = stamp.issueSeq, gone = 0, server_id = serverId, raw_id = album.rawId)
+            queries.markAlbumDetail(stamp.issueSeq, detailEpoch, serverId, album.rawId)
         }
         AlbumDetailWrite(albumGone = albumGone, tracksMarkedGone = markedGone, membershipApplied = true)
     }
@@ -588,7 +661,7 @@ internal class BoundSeenCache internal constructor(
 
     fun markPlaylistNotFound(issueSeq: Long, playlistRawId: String) = database.transaction {
         queries.markPlaylistGoneByDetail(issueSeq, serverId, playlistRawId)
-        queries.deleteList(serverId, playlistDetailListKey(playlistRawId))
+        if (queries.deleteList(serverId, playlistDetailListKey(playlistRawId)).value > 0) rowCounts().lists -= 1
     }
 
     fun markPlaylistDetail(issueSeq: Long, playlistRawId: String) {
@@ -644,11 +717,12 @@ internal class BoundSeenCache internal constructor(
 
     private fun saveListInTransaction(state: CachedListState) {
         val folders = state.folderIds?.let(::encodeIdSet)
-        queries.insertListIfAbsent(
+        val inserted = queries.insertListIfAbsent(
             serverId, state.listKey, state.windowEpoch, folders,
             state.firstLoadedOffset.toLong(), state.endLoadedOffset.toLong(), state.total?.toLong(),
             state.coverage.wireName, state.fetchedAtWall, state.lastAccessWall, state.issueSeq,
-        )
+        ).value
+        if (inserted > 0) rowCounts().lists += 1
         queries.updateList(
             window_epoch = state.windowEpoch,
             folder_ids = folders,
@@ -675,7 +749,7 @@ internal class BoundSeenCache internal constructor(
     fun deleteList(listKey: String) = database.transaction { deleteListInTransaction(listKey) }
 
     private fun deleteListInTransaction(listKey: String) {
-        queries.deleteList(serverId, listKey)
+        if (queries.deleteList(serverId, listKey).value > 0) rowCounts().lists -= 1
         playlistRawIdOfDetailKey(listKey)?.let { queries.clearPlaylistDetail(serverId, it) }
     }
 
@@ -711,7 +785,7 @@ internal class BoundSeenCache internal constructor(
 
     /** The album's present tracks in server order (gone tracks excluded). */
     fun albumTracks(albumRawId: String): List<CachedTrack> =
-        queries.selectAlbumTracks(serverId, albumRawId).executeAsList().map { it.toCached(credits("track", it.raw_id)) }
+        queries.selectAlbumTracks(serverId, albumRawId, ::Cache_track).executeAsList().map { it.toCached(credits("track", it.raw_id)) }
 
     /** Every cached album, for the local "Available offline" view (§16.14), sorted locally. */
     fun localAlbums(): List<CachedAlbum> =
@@ -719,6 +793,37 @@ internal class BoundSeenCache internal constructor(
 
     fun localArtists(): List<CachedArtist> =
         queries.selectLocalArtists(serverId).executeAsList().map { it.toCached() }
+
+    /**
+     * A whole window's members with their entities, in server order, in one statement per item
+     * kind — a publication's cost must not grow by statements per item (review finding S7). Gone
+     * entities are excluded. Credits are the row's primary artist, which is all a list row shows.
+     */
+    fun listRows(listKey: String): List<CachedListRow> {
+        val rows = mutableListOf<CachedListRow>()
+        queries.selectListAlbumRows(serverId, listKey).executeAsList().forEach {
+            val table = it.asTable()
+            rows += CachedListRow(it.position.toInt(), CacheItemKind.Album, album = table.toCached(primaryCredit(CreditRole.AlbumArtist, table.artist_name, table.artist_raw_id)))
+        }
+        queries.selectListArtistRows(serverId, listKey).executeAsList().forEach {
+            rows += CachedListRow(it.position.toInt(), CacheItemKind.Artist, artist = it.asTable().toCached())
+        }
+        queries.selectListTrackRows(serverId, listKey).executeAsList().forEach {
+            val table = it.asTable()
+            rows += CachedListRow(it.position.toInt(), CacheItemKind.Track, track = table.toCached(primaryCredit(CreditRole.Artist, table.artist_name, table.artist_raw_id)))
+        }
+        queries.selectListPlaylistRows(serverId, listKey).executeAsList().forEach {
+            rows += CachedListRow(it.position.toInt(), CacheItemKind.Playlist, playlist = it.asTable().toCached())
+        }
+        queries.selectListGenreRows(serverId, listKey).executeAsList().forEach {
+            rows += CachedListRow(it.position.toInt(), CacheItemKind.Genre, genre = it.raw_id)
+        }
+        rows.sortBy { it.position }
+        return rows
+    }
+
+    private fun primaryCredit(role: CreditRole, name: String?, artistRawId: String?): List<CacheCredit> =
+        listOfNotNull(name?.let { CacheCredit(role, it, artistRawId) })
 
     private fun credits(ownerKind: String, rawId: String): List<CacheCredit> =
         queries.selectCredits(serverId, ownerKind, rawId).executeAsList().map {
@@ -751,7 +856,9 @@ internal class BoundSeenCache internal constructor(
      */
     fun pin(kind: CacheItemKind, rawId: String, reason: CachePinReason) = database.transaction {
         require(kind != CacheItemKind.Genre)
-        if (kind == CacheItemKind.Track) queries.insertIdentityOnlyTrack(serverId, rawId, now())
+        if (kind == CacheItemKind.Track && queries.insertIdentityOnlyTrack(serverId, rawId, now()).value > 0) {
+            rowCounts().tracks += 1
+        }
         queries.insertPin(serverId, kind.wireName, rawId, reason.wireName)
     }
 
@@ -766,74 +873,105 @@ internal class BoundSeenCache internal constructor(
     // ---- Eviction (spec §16.13, CONF-78) --------------------------------------------------------
 
     /**
-     * Runs after a write that may have crossed a ceiling, in its own transaction.
+     * Called after writes; cheap unless a ceiling has actually been crossed, because it compares
+     * the in-memory counts first (spec §16.13). A pass then recounts exactly and evicts in one
+     * transaction, in a BATCH down to [SeenCacheCeilings] minus 1%, so the next write does not
+     * trigger another pass.
      *
-     * Order: windows over the window ceiling go first, least-recently-accessed first; then, for each
-     * entity kind over its ceiling, orphaned entities go least-recently-accessed first; and only
-     * when no orphan of that kind is left is another whole window released to create more. An
-     * entity is an orphan when it is unpinned and no window or complete detail references it — the
-     * candidate queries encode that, so a pinned row cannot be selected whatever the ceiling.
+     * Order within a pass: windows over the window ceiling go first, least-recently-accessed first.
+     * Then, per entity kind over its ceiling, orphans of that kind go least-recently-accessed first.
+     * When no orphan remains: under TRACK pressure the least-recently-accessed complete album detail
+     * is released (the album keeps its summary; its tracks stop being members and become orphans);
+     * under album or artist pressure — or when no detail is left to release — a further whole window
+     * is released. An entity is an orphan when it is unpinned and no window or complete detail
+     * references it; the candidate queries encode that, so no ceiling can select a pinned row.
      */
-    fun evictIfNeeded(): EvictionReport = database.transactionWithResult {
+    fun evictIfNeeded(): EvictionReport {
+        val known = rowCounts()
+        if (known.lists <= ceilings.lists && known.albums <= ceilings.albums &&
+            known.tracks <= ceilings.tracks && known.artists <= ceilings.artists
+        ) {
+            return EvictionReport(emptyList(), emptyList(), emptyList(), emptyList())
+        }
+        return database.transactionWithResult { evictInTransaction(known) }
+    }
+
+    private fun evictInTransaction(known: CacheRowCounts): EvictionReport {
+        known.measureFrom(CacheRowCounts.measure(database, serverId))
         val lists = mutableListOf<String>()
         val albums = mutableListOf<String>()
         val tracks = mutableListOf<String>()
         val artists = mutableListOf<String>()
 
-        fun evictOneList(): Boolean {
+        fun target(ceiling: Long): Long = ceiling - maxOf(1L, ceiling / 100)
+
+        fun releaseOneList(): Boolean {
             val key = queries.selectLeastRecentlyAccessedList(serverId).executeAsOneOrNull() ?: return false
             deleteListInTransaction(key)
             lists += key
             return true
         }
 
-        while (queries.countLists(serverId).executeAsOne() > ceilings.lists) {
-            if (!evictOneList()) break
+        fun releaseOneDetail(): Boolean {
+            val album = queries.selectReleasableDetails(serverId, 1).executeAsOneOrNull() ?: return false
+            queries.releaseDetail(serverId, album)
+            return true
         }
 
-        fun reduce(count: () -> Long, ceiling: Long, candidates: (Long) -> List<String>, delete: (String) -> Unit) {
-            while (true) {
-                val excess = count() - ceiling
-                if (excess <= 0) return
-                val evictable = candidates(excess)
-                if (evictable.isNotEmpty()) {
-                    evictable.forEach(delete)
-                } else if (!evictOneList()) {
-                    return
-                }
+        if (known.lists > ceilings.lists) {
+            while (known.lists > target(ceilings.lists) && releaseOneList()) Unit
+        }
+
+        fun reduce(
+            count: () -> Long,
+            ceiling: Long,
+            candidates: (Long) -> List<String>,
+            delete: (String) -> Unit,
+            release: () -> Boolean,
+        ) {
+            if (count() <= ceiling) return
+            while (count() > target(ceiling)) {
+                val evictable = candidates(count() - target(ceiling))
+                if (evictable.isNotEmpty()) evictable.forEach(delete) else if (!release()) return
             }
         }
 
         reduce(
-            count = { queries.countAlbums(serverId).executeAsOne() },
+            count = { known.albums },
             ceiling = ceilings.albums,
             candidates = { queries.selectEvictableAlbums(serverId, it).executeAsList() },
             delete = { rawId ->
                 queries.deleteCredits(serverId, "album", rawId)
                 queries.deleteAlbum(serverId, rawId)
+                known.albums -= 1
                 albums += rawId
             },
+            release = ::releaseOneList,
         )
         reduce(
-            count = { queries.countTracks(serverId).executeAsOne() },
+            count = { known.tracks },
             ceiling = ceilings.tracks,
             candidates = { queries.selectEvictableTracks(serverId, it).executeAsList() },
             delete = { rawId ->
                 queries.deleteCredits(serverId, "track", rawId)
                 queries.deleteTrack(serverId, rawId)
+                known.tracks -= 1
                 tracks += rawId
             },
+            release = { releaseOneDetail() || releaseOneList() },
         )
         reduce(
-            count = { queries.countArtists(serverId).executeAsOne() },
+            count = { known.artists },
             ceiling = ceilings.artists,
             candidates = { queries.selectEvictableArtists(serverId, it).executeAsList() },
             delete = { rawId ->
                 queries.deleteArtist(serverId, rawId)
+                known.artists -= 1
                 artists += rawId
             },
+            release = ::releaseOneList,
         )
-        EvictionReport(lists, albums, tracks, artists)
+        return EvictionReport(lists, albums, tracks, artists)
     }
 
     // ---- Mapping --------------------------------------------------------------------------------
@@ -876,6 +1014,7 @@ internal class BoundSeenCache internal constructor(
         ),
         CacheRowState(fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone == 1L),
         detailComplete = detail_complete == 1L,
+        detailFetchedEpoch = detail_fetched_epoch,
     )
 
     private fun Cache_track.toCached(credits: List<CacheCredit>) = CachedTrack(
@@ -1008,3 +1147,8 @@ internal fun backfillSeenCacheNormalization(database: DulcetDatabase) {
         )
     }
 }
+
+private fun SelectListAlbumRows.asTable() = Cache_album(server_id, raw_id, title, normalized_title, artist_name, artist_raw_id, year, genre, duration_milliseconds, song_count, artwork_key, starred, starred_at, user_rating, play_count, played, detail_complete, detail_issue_seq, detail_fetched_epoch, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone)
+private fun SelectListArtistRows.asTable() = Cache_artist(server_id, raw_id, name, normalized_name, album_count, artwork_key, starred, starred_at, user_rating, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone)
+private fun SelectListTrackRows.asTable() = Cache_track(server_id, raw_id, album_raw_id, album_ordinal, title, normalized_title, album_title, normalized_album_title, artist_name, artist_raw_id, disc_number, track_number, duration_milliseconds, source_container, artwork_key, starred, starred_at, user_rating, play_count, played, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone, metadata_missing)
+private fun SelectListPlaylistRows.asTable() = Cache_playlist(server_id, raw_id, name, song_count, duration_milliseconds, owner, artwork_key, detail_complete, detail_issue_seq, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone)

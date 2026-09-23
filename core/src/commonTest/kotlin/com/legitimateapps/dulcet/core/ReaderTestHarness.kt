@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -16,15 +17,20 @@ internal fun readerTest(
     ceilings: SeenCacheCeilings = SeenCacheCeilings.DEFAULT,
     block: suspend TestScope.(ReaderEnv) -> Unit,
 ) = runTest {
-    val driver = createTestDriver()
+    val driver = CountingSqlDriver(createTestDriver())
+    val uncaught = mutableListOf<Throwable>()
     // Not backgroundScope: advanceUntilIdle does not wait for background work, so reads launched
     // there would never run. A scope on the test scheduler runs under virtual time and is
     // cancelled at the end, so a held response cannot hang the test.
-    val readerScope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
+    // The handler only RECORDS what escapes: a test asserts `uncaught` is empty, because on
+    // Kotlin/Native an exception escaping the reader's scope would terminate the process.
+    val readerScope = CoroutineScope(
+        StandardTestDispatcher(testScheduler) + SupervisorJob() + CoroutineExceptionHandler { _, t -> uncaught += t },
+    )
     try {
         val database = DulcetDatabaseStore.open(driver)
         val clock = ManualWallClock(now = 1_000_000)
-        val env = ReaderEnv(FakeReaderServer(), SeenCacheStore(database, clock, ceilings), clock, readerScope)
+        val env = ReaderEnv(FakeReaderServer(), SeenCacheStore(database, clock, ceilings), clock, readerScope, driver, uncaught)
         block(env)
     } finally {
         readerScope.cancel()
@@ -37,6 +43,8 @@ internal class ReaderEnv(
     val store: SeenCacheStore,
     val clock: ManualWallClock,
     private val readerScope: CoroutineScope,
+    val driver: CountingSqlDriver,
+    val uncaught: List<Throwable>,
 ) {
     /** A new reader is a new session over the same device cache. */
     fun reader(

@@ -1,11 +1,17 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CloseableCoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
@@ -14,9 +20,14 @@ import kotlinx.coroutines.sync.withPermit
  * windows, detail look-ahead and eviction. Every screen is published FROM the cache, online and
  * offline alike; a live response is written through first and never rendered beside a cached one.
  *
- * **Threading — a contract on the caller.** A reader must be confined to one thread: [scope] must
- * dispatch on the thread `open` is called from, and every listener is called on it (the main thread
- * in a shell). Network work suspends. Nothing here locks, so a multi-threaded [scope] is a bug.
+ * **Threading — confined, and enforced (§16.18).** A reader lives on ONE dedicated serial thread
+ * that is never the main thread: production code runs it on [newLibraryReaderDispatcher]. It is
+ * created on that thread, and every entry point — here and on every handle — checks that it is
+ * called there and throws otherwise. All database work, including eviction, therefore happens off
+ * the main thread, and nothing here needs a lock. Listeners are called on the reader's thread; the
+ * platform facade hops each publication to the main thread. Nothing raised inside the reader
+ * escapes [scope]: a handle converts a failure into a publication that says so, and
+ * [uncaughtFailures] records anything that still reaches the backstop handler.
  *
  * **Hooks for other phases**, each a small interface with an inert default:
  * [LibraryMutationOverlay] (R1d: pending stars and ratings overlaid at publish time, §16.20),
@@ -26,15 +37,34 @@ import kotlinx.coroutines.sync.withPermit
 internal class LibraryReader(
     internal val cache: BoundSeenCache,
     private val transport: LibraryEndpointTransport,
-    internal val scope: CoroutineScope,
+    scope: CoroutineScope,
     internal val config: LibraryReaderConfig = LibraryReaderConfig(),
     internal val overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
 ) {
+    private val owner = currentThreadIdentity()
+
+    /** Failures that reached the backstop handler instead of a publication; empty when healthy. */
+    internal val uncaughtFailures = mutableListOf<Throwable>()
+
+    /**
+     * The reader's own scope: the caller's dispatcher (the reader's thread), a supervisor so one
+     * failing read never cancels its siblings, and a handler so nothing escapes to the process.
+     */
+    internal val scope: CoroutineScope = CoroutineScope(
+        scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]) +
+            CoroutineExceptionHandler { _, failure -> uncaughtFailures += failure },
+    )
+
     private val permits = Semaphore(config.serverConcurrency)
     private val handles = mutableListOf<ReaderHandle>()
     internal val lookAhead = DetailLookAhead(this)
+
+    /** One writer per list: two handles on the same list serialize their live operations. */
+    private val listLocks = mutableMapOf<String, Mutex>()
+
+    internal fun listLock(listKey: String): Mutex = listLocks.getOrPut(listKey) { Mutex() }
 
     /** Whether the server is reachable, as the platform reports it. Offline issues no request. */
     var online: Boolean = true
@@ -44,20 +74,47 @@ internal class LibraryReader(
     var networkConstrained: Boolean = false
         private set
 
-    /** The latest epoch reading of this session, or null before the first one. */
+    /**
+     * The latest epoch reading of this session, or null before the first one. Every successful
+     * `getScanStatus` — the two-request reading and each page's *after* — updates it, keeping the
+     * folder set of the last full reading.
+     */
     internal var sessionEpoch: CatalogEpoch? = null
         private set
+
+    /**
+     * Whether the latest successful reading had no stamp at all (absent, or the first-scan
+     * sentinel). This is the account-level fact §16.12 states once per account; a FAILED reading
+     * never sets it, so a transient failure cannot label a server stamp-less.
+     */
+    val serverReportsNoEpoch: Boolean get() = sessionEpoch?.let { it.stamp == null } ?: false
 
     /** Detail rows read live in this session, for the 60-second revalidation rule. */
     internal val liveDetailReads = mutableMapOf<String, Long>()
 
+    /** Albums whose latest detail read ran while the server was scanning: unverified (§16.12). */
+    internal val detailsReadWhileScanning = mutableSetOf<String>()
+
     /** Lists read live in this session, by list key: the wall-clock of the latest live read. */
     internal val liveListReads = mutableMapOf<String, Long>()
+
+    /** When each list last had its last-access refreshed; touches are throttled (review S7). */
+    internal val lastTouches = mutableMapOf<String, Long>()
+
+    /** Throws unless called on the reader's own thread (see the class comment). */
+    internal fun checkConfined() {
+        check(currentThreadIdentity() == owner) {
+            "LibraryReader is confined to its own thread; dispatch onto its dispatcher before calling it"
+        }
+    }
 
     // ---- Lifecycle ----------------------------------------------------------------------------------
 
     /** The connect-time epoch reading (two requests). Returns null when it could not be read. */
-    suspend fun connect(): CatalogEpoch? = readEpoch()
+    suspend fun connect(): CatalogEpoch? {
+        checkConfined()
+        return readEpoch()
+    }
 
     /**
      * Reconnect or return to the foreground online (§16.14), in this order and nothing else:
@@ -66,6 +123,7 @@ internal class LibraryReader(
      * downloads, one at a time. No catch-up walk, no bulk refetch, nothing re-read because it is old.
      */
     suspend fun reconnect() {
+        checkConfined()
         online = true
         outboxes.flush()
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
@@ -80,6 +138,7 @@ internal class LibraryReader(
      * the background. The platform reports foreground transitions; the cadence itself is core policy.
      */
     fun setForeground(foreground: Boolean) {
+        checkConfined()
         periodicEpoch?.cancel()
         periodicEpoch = null
         if (!foreground) return
@@ -98,16 +157,22 @@ internal class LibraryReader(
      * screen (§16.11 policy 3) and re-reads the albums that contain downloads (policy 4).
      */
     suspend fun refreshEpoch() {
+        checkConfined()
         val previous = sessionEpoch
         val epoch = readEpoch() ?: return
         val changed = previous == null || previous.key != epoch.key
         if (changed || previous?.scanning != epoch.scanning) {
             visibleHandles().forEach { it.revalidate(RevalidateCause.EpochChanged) }
+        } else {
+            // A window whose stamp kept moving is re-read at the next quiet reading, or its
+            // `unverified(changing)` label would outlive the change that caused it.
+            visibleHandles().filter { it.awaitsQuietEpoch() }.forEach { it.revalidate(RevalidateCause.EpochChanged) }
         }
         if (changed) recheckDownloadedAlbums()
     }
 
     fun setOnline(reachable: Boolean) {
+        checkConfined()
         if (online == reachable) return
         online = reachable
         if (!reachable) lookAhead.cancelAll()
@@ -115,12 +180,17 @@ internal class LibraryReader(
     }
 
     fun setNetworkConstrained(constrained: Boolean) {
+        checkConfined()
         networkConstrained = constrained
         if (constrained) lookAhead.cancelAll()
     }
 
-    /** R1d's hook: a pending local change to these entities must be in the next publication. */
+    /**
+     * R1d's hook: a pending local change to these entities must be in the next publication. Called
+     * on the reader's thread (enforced), it republishes synchronously, before any request.
+     */
     fun republishPendingChanges(rawIds: Set<String>) {
+        checkConfined()
         visibleHandles().filter { it.mentionsAny(rawIds) }.forEach { it.republish() }
     }
 
@@ -131,6 +201,7 @@ internal class LibraryReader(
      * synchronously, before this returns and therefore before any request is issued (CONF-76).
      */
     fun open(query: LibraryQuery, listener: (LibraryPublication) -> Unit): LibraryWindowHandle {
+        checkConfined()
         val handle: ReaderHandle = when (query) {
             is LibraryQuery.Album -> AlbumDetailWindow(this, query, listener)
             is LibraryQuery.Artist -> CollectionDetailWindow(this, query, listener)
@@ -152,6 +223,7 @@ internal class LibraryReader(
         rows: List<LibraryHomeRow>,
         listener: (rowIndex: Int, LibraryPublication) -> Unit,
     ): LibraryHomeHandle {
+        checkConfined()
         require(rows.isNotEmpty())
         val windows = rows.mapIndexed { index, row ->
             ListWindow(this, row.query, ListRequestSpec.homeRow(row, config.homeRowSize)) { listener(index, it) }
@@ -169,19 +241,24 @@ internal class LibraryReader(
 
     // ---- Requests -----------------------------------------------------------------------------------
 
-    /** Every request goes through the per-server concurrency bound of §16.5 rule 6. */
-    internal suspend fun request(endpoint: String, parameters: Map<String, String> = emptyMap()): LibraryEndpointResponse =
-        permits.withPermit { transport.request(endpoint, parameters) }
+    /**
+     * Every request goes through the per-server concurrency bound of §16.5 rule 6. Its issue
+     * sequence, and the epoch reading it is checked against (its *before*), are both taken once the
+     * request holds a slot and is about to be SENT — never while it waits — so a request that waited
+     * is ordered by when it went out, and its *before* is provably earlier than the request.
+     */
+    internal suspend fun send(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
+        permits.withPermit {
+            val seq = cache.issue()
+            val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
+            SentResponse(seq, before, transport.request(endpoint, parameters))
+        }
 
-    /** A request whose envelope must be `ok`; a failure envelope throws its mapped [DomainError]. */
-    internal suspend fun checked(endpoint: String, parameters: Map<String, String> = emptyMap()): LibraryEndpointResponse {
-        val response = request(endpoint, parameters)
-        // Validate the envelope already in hand: checkedRequest's transport answers with it.
-        LibraryEndpointTransport { _, _ -> response }.checkedRequest(endpoint, parameters)
-        return response
-    }
+    /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
+    internal suspend fun sendChecked(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
+        send(endpoint, parameters).requireOk(endpoint, parameters)
 
-    private val bounded = LibraryEndpointTransport { endpoint, parameters -> request(endpoint, parameters) }
+    private val bounded = LibraryEndpointTransport { endpoint, parameters -> send(endpoint, parameters).response }
 
     internal val epochReader = CatalogEpochReader(bounded)
 
@@ -202,8 +279,9 @@ internal class LibraryReader(
     internal suspend fun ensureEpoch(): CatalogEpoch? = sessionEpoch ?: readEpoch()
 
     /**
-     * A page's *after* reading showed a different stamp. It becomes the session's reading, keeping
-     * the folder set read at window open — which is checked only then (§16.12's recorded exposure).
+     * A page's *after* reading. Every successful one becomes the session's reading — it is the
+     * newest thing known about the server, and it is the next page's *before* — keeping the folder
+     * set of the last full reading, which is checked only at window open (§16.12's recorded exposure).
      */
     internal fun adoptScanStatus(after: ScanStatusReading): CatalogEpoch {
         val folders = sessionEpoch?.folderIds ?: emptySet()
@@ -211,6 +289,7 @@ internal class LibraryReader(
     }
 
     private fun adoptEpoch(epoch: CatalogEpoch) {
+        if (sessionEpoch == epoch) return
         sessionEpoch = epoch
         cache.saveEpoch(StoredCatalogEpoch(epoch.lastScan, epoch.folderIds, epoch.scanning, cache.now()))
     }
@@ -227,21 +306,37 @@ internal class LibraryReader(
         if (albums.isNotEmpty()) visibleHandles().forEach { it.republish() }
     }
 
-    /** One `getAlbum`, written through. Used by the album screen, look-ahead and the recheck. */
+    /**
+     * One `getAlbum`, written through. Used by the album screen, look-ahead and the recheck. A
+     * detail read while the server scans is stored with no detail epoch — never current — and
+     * remembered, so the scan's end re-reads it like a window (§16.12, review finding S2).
+     */
     internal suspend fun readAlbumDetail(albumRawId: String): DetailReadResult {
-        val seq = cache.issue()
-        val epochKey = sessionEpoch?.key
+        var seq = 0L
         return try {
-            val response = checked("getAlbum", mapOf("id" to albumRawId))
-            val (album, tracks) = parseReaderAlbum(response.body, albumRawId)
-            val write = cache.writeAlbumDetail(CacheWriteStamp(seq, cache.now(), epochKey), album, tracks)
+            val parameters = mapOf("id" to albumRawId)
+            val sent = send("getAlbum", parameters)
+            // The sequence is known before the envelope is judged: a not-found is recorded with it.
+            seq = sent.issueSeq
+            sent.requireOk("getAlbum", parameters)
+            val scanning = sent.before?.scanning ?: true
+            val epochKey = sessionEpoch?.key
+            val (album, tracks) = parseReaderAlbum(sent.response.body, albumRawId)
+            val write = cache.writeAlbumDetail(
+                CacheWriteStamp(seq, cache.now(), epochKey),
+                album,
+                tracks,
+                detailEpoch = if (scanning) null else epochKey,
+            )
+            if (scanning) detailsReadWhileScanning += albumRawId else detailsReadWhileScanning -= albumRawId
             liveDetailReads[albumRawId] = cache.now()
+            cache.evictIfNeeded()
             if (write.albumGone) DetailReadResult.Gone else DetailReadResult.Read
         } catch (failure: CancellationException) {
             throw failure
         } catch (failure: Throwable) {
             val error = failure.asReaderError()
-            if (error.isNotFound()) {
+            if (error.isNotFound() && seq > 0) {
                 cache.markAlbumNotFound(seq, albumRawId)
                 liveDetailReads[albumRawId] = cache.now()
                 DetailReadResult.Gone
@@ -251,11 +346,15 @@ internal class LibraryReader(
         }
     }
 
-    /** Whether a detail was read live under the current epoch within the revalidation interval. */
-    internal fun detailIsFresh(rawId: String, fetchedEpoch: String?): Boolean {
+    /**
+     * Whether a detail was read live under the current epoch, with no scan running, within the
+     * revalidation interval — judged by the epoch its MEMBERSHIP was read under (review finding S1).
+     */
+    internal fun detailIsFresh(rawId: String, detailFetchedEpoch: String?): Boolean {
         val readAt = liveDetailReads[rawId] ?: return false
         val current = sessionEpoch ?: return false
-        return fetchedEpoch == current.key && cache.now() - readAt < config.revalidateWithinMillis
+        return detailFetchedEpoch != null && detailFetchedEpoch == current.key &&
+            cache.now() - readAt < config.revalidateWithinMillis
     }
 
     internal fun trackPlayability(rawId: String, downloaded: Set<String>): LibraryPlayability = when {
@@ -264,6 +363,29 @@ internal class LibraryReader(
         else -> LibraryPlayability.UnavailableOffline
     }
 }
+
+/** A response, the issue sequence it was sent with, and the reading that was current as it went. */
+internal class SentResponse(
+    val issueSeq: Long,
+    val before: ScanStatusReading?,
+    val response: LibraryEndpointResponse,
+) {
+    /** Returns this response when its envelope is `ok`; a failure envelope throws its [DomainError]. */
+    suspend fun requireOk(endpoint: String, parameters: Map<String, String>): SentResponse {
+        LibraryEndpointTransport { _, _ -> response }.checkedRequest(endpoint, parameters)
+        return this
+    }
+}
+
+/**
+ * The dispatcher a production reader runs on: one dedicated thread, never the main one. The facade
+ * creates the reader on it and hops publications to the main thread (§16.18).
+ */
+@OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.DelicateCoroutinesApi::class)
+internal fun newLibraryReaderDispatcher(): CloseableCoroutineDispatcher = newSingleThreadContext("dulcet-library-reader")
+
+/** An identity for the calling thread, for [LibraryReader.checkConfined]. */
+internal expect fun currentThreadIdentity(): Long
 
 internal sealed interface DetailReadResult {
     data object Read : DetailReadResult
@@ -288,6 +410,8 @@ internal data class LibraryReaderConfig(
     val maxTearRetries: Int = 3,
     /** The in-foreground epoch cadence while a library screen is visible (ASSUMED, §16.11). */
     val epochIntervalMillis: Long = 5 * 60_000,
+    /** How often showing a list refreshes its rows' last access (LRU needs minutes, not frames). */
+    val touchIntervalMillis: Long = 60_000,
 ) {
     init {
         require(pageSize in 1..500)
@@ -379,6 +503,12 @@ internal data class LibraryPublication(
     val order: LibraryItemsOrder,
     /** After a rebase: where the viewport should be so the first visible item stays first. */
     val anchor: LibraryAnchor? = null,
+    /**
+     * The server position of `items[0]`. Above zero, rows precede the window that are not loaded:
+     * the shell shows a gap there and calls [LibraryWindowHandle.loadBefore] as the person scrolls
+     * up (§16.12: a rebased window is open on both sides of the viewport).
+     */
+    val leadingOffset: Int = 0,
 )
 
 /** The freshness of §16.14, plus [Loading], which is only ever published with nothing cached. */
@@ -401,6 +531,9 @@ internal sealed interface LibraryCachedReason {
     data object Offline : LibraryCachedReason
     data class Failed(val error: DomainError) : LibraryCachedReason
     data object Stale : LibraryCachedReason
+
+    /** The reader itself failed while building or refreshing this screen (a defect, not the server). */
+    data object InternalFailure : LibraryCachedReason
 }
 
 internal sealed interface LibraryUnavailableReason {
@@ -411,9 +544,16 @@ internal sealed interface LibraryUnavailableReason {
     data object Gone : LibraryUnavailableReason
 
     data class Failed(val error: DomainError) : LibraryUnavailableReason
+
+    /** The reader itself failed while building this screen (a defect, not the server). */
+    data object InternalFailure : LibraryUnavailableReason
 }
 
-internal enum class LibraryCoverage { Complete, Open, UnverifiedScanning, UnverifiedNoEpoch }
+/**
+ * Coverage of §16.12. [UnverifiedChanging]: the stamp moved on every re-read within the retry
+ * bound while no scan was reported — the list is shown, and says it may not be one state.
+ */
+internal enum class LibraryCoverage { Complete, Open, UnverifiedScanning, UnverifiedNoEpoch, UnverifiedChanging }
 
 /** For a detail screen: whether its child list is shown, still loading, or cannot be shown. */
 internal enum class LibraryItemsState { Present, Loading, Unavailable }
@@ -493,6 +633,12 @@ internal interface LibraryWindowHandle {
     fun loadMore()
 
     /**
+     * Reads the page before a window that does not start at the top (after a rebase), at most one
+     * page before the viewport — the other half of "open on both sides" (§16.12).
+     */
+    fun loadBefore()
+
+    /**
      * The visible range, as indexes into the latest publication's [LibraryPublication.items].
      * Drives rebasing around the viewport and detail look-ahead.
      */
@@ -505,6 +651,7 @@ internal interface LibraryWindowHandle {
     fun close()
 }
 
+/** Every method is confined to the reader's thread, like the handles it delegates to. */
 internal class LibraryHomeHandle(private val rows: List<LibraryWindowHandle>) {
     fun row(index: Int): LibraryWindowHandle = rows[index]
 

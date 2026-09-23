@@ -2569,20 +2569,32 @@ library — the property is enforced by the store, not remembered by a caller.
 | `cache_list` | list key, window epoch, first and last loaded page, total (nullable), coverage (§16.12), `fetched_at_wall`, `last_access_wall` | `(server_id, list_key)` |
 | `cache_list_member` | the server's order: position → `(item_kind, raw_id)` | `(server_id, list_key, position)` |
 | `cache_pin` | why an entity must not be evicted: `download` \| `queue` \| `playing` | `(server_id, item_kind, raw_id, reason)` |
-| `cache_issue_counter` | the last issued request sequence (below) | singleton |
+| `cache_meta` | the last issued request sequence (below) and the search-normalization version applied (§16.17) | singleton |
 
-`cache_track` also carries `album_ordinal` (the position `getAlbum` returned, so an album's tracks
-are shown in the server's order) and `metadata_missing` (an identity-only row kept for a pin whose
-metadata was never read, §16.17).
+`cache_album` also carries `detail_fetched_epoch`: the epoch its **track membership** was read under,
+which is what detail freshness is judged by — never the summary row's `fetched_epoch`, which any list
+page rewrites (review finding S1 of `d3968e45`: a grid re-read under a new epoch made a detail read
+under the old one look current). A detail read while the server scans is stored with no detail epoch,
+so it is never current (§16.12).
+
+`cache_track` also carries `album_ordinal` (the position `getAlbum` returned) and `metadata_missing`
+(an identity-only row kept for a pin whose metadata was never read, §16.17). **Membership is
+`album_ordinal IS NOT NULL`, and only a successful `getAlbum` writes it**, ordered by the album's
+`detail_issue_seq`: a list or search row that carries a track may fill in an album that is unknown,
+but never moves a member to another album or clears its ordinal (review finding S3). A detail read
+that omits a track clears its ordinal whatever the sequences, since the omission is a fact about the
+album's membership, not about the track row.
 
 - **Entities are normalized, not stored as response blobs.** One album is one row however many lists
   contain it, and a later read never has to be reconciled with an earlier blob.
 - **Writes are ordered by request issue time, not arrival time.** Every request takes a monotonic
-  `issue_seq` when it is *sent*; a response rewrites an entity row only if its `issue_seq` is higher
+  `issue_seq` when it is *sent* — once it holds a slot of the per-server bound, never while it waits
+  for one, so a request that queued behind others is ranked by when it actually went out (review nit
+  of `d3968e45`); a response rewrites an entity row only if its `issue_seq` is higher
   than the row's. A slow response to an earlier request that lands after a faster, later one is
   discarded for the rows the later one already wrote — otherwise a stale answer can overwrite a fresh
   one purely because it was slower.
-  - **The sequence is durable** (`cache_issue_counter`, one row, advanced in a transaction as each
+  - **The sequence is durable** (`cache_meta`, one row, advanced in a transaction as each
     request is issued). A per-process counter restarts at 1 after a relaunch, so every request the new
     process issues would rank *below* the rows the previous process wrote and be discarded — the
     ordering rule would silently freeze the cache. (R1a, `theIssueOrderSurvivesAReopenedStore`.)
@@ -2714,14 +2726,29 @@ first page of any list paints after **one** request.
 not a snapshot (§16.1): a deletion before the cursor silently skips a row, an insertion duplicates one.
 The reader does not pretend otherwise; it **detects** it.
 
-**The check.** Every page read is bracketed by two epoch readings: the one it is checked against
-(*before*) and a `getScanStatus` read issued only **after** the page's response has arrived
-(*after*). A page may join a window only if *after* shows `scanning == false` and a stamp equal to the
-window epoch. A scan that ran at any time between *before* and the page read has either finished (the
-stamp moved) or is still running (`scanning` is true); either way the check fires. The *before* of a
-window's first page may be the most recent foreground epoch reading rather than a fresh request: if a
-scan finished since that reading, the check fires and the page is re-read under the new epoch — a
-spurious re-read, never a missed tear — which is what keeps first paint at one request.
+**The check.** Every page read is bracketed by two epoch readings: the one current when the page
+request was **sent** (*before*) and a `getScanStatus` read issued only **after** the page's response
+has arrived (*after*). A page may join a window only if **both** show `scanning == false` and **both**
+carry a stamp equal to the window epoch — never on *after* alone. A scan that ran at any time between
+*before* and the page read has either finished (the stamp moved) or is still running (`scanning` is
+true); either way the check fires. *Before* is the session's latest reading — the connect-time or
+foreground reading, or the previous page's *after* — and is captured at the moment the request takes
+its slot of the per-server bound and is sent (§16.5 rule 6), so it is provably earlier than the
+request; it costs no request of its own, which is what keeps first paint at one page read and one
+status read. If a scan finished since that reading, the check fires and the page is re-read under the
+new epoch — a spurious re-read, never a missed tear. The outcomes, as the reader distinguishes them:
+
+- **guarded** — both idle, both equal to the window epoch: the page joins the window;
+- **scanning** — *after* shows a scan: the page appends unguarded (below);
+- **scan ended** — *before* showed a scan and *after* does not: the page may predate the scan's
+  change, so the window is rebased under *after*, even when the stamp is unchanged (below);
+- **fired** — the stamps differ, from each other or from the window: the window is torn;
+- **no epoch** — both readings succeeded and neither carries a stamp, for a window that has none;
+- **unread** — either reading **failed**. Nothing is concluded: the page is not used, the window is
+  not relabelled, and the failure is shown beside the cached content until a read succeeds. A failed
+  reading is never "unchanged" (§16.11) and never evidence that the server reports no stamp (review
+  finding S5 of `d3968e45`: one failed status read had labelled a window `unverified(noEpoch)` for
+  good, and another crashed the reader on `after!!`).
 
 **A window is torn by any of three things, and a torn window is never extended:**
 
@@ -2735,7 +2762,20 @@ spurious re-read, never a missed tear — which is what keeps first paint at one
 **Rebasing, bounded.** A torn window is not re-read whole. The pages that intersect the viewport are
 re-read under the current epoch (at bounded concurrency, §16.5 rule 6) and become the new window;
 every other page is dropped from it, and the list is `open` on both sides of the viewport, reloading
-under the check as the person scrolls. The cost of a tear is therefore the one or two visible pages,
+under the check as the person scrolls — **in both directions**: a publication carries its
+`leadingOffset` (the server position of its first item), and the handle's `loadBefore` reads the page
+before it under the same check as `loadMore`. A new screen on a list always opens at the **top**: a
+stored window that starts deeper than offset 0 is rebased around the top at its first live read, so a
+rebase deep in one session can never leave the start of a list unreachable in the next (review
+finding B2 of `d3968e45`).
+
+**The re-reads of a rebase are bounded** (three). A stamp that moves on every re-read with no scan
+reported leaves the window labelled `unverified(changing)` — a statement about what was observed,
+never `unverified(scanning)`, which would claim a scan nobody reported — and the next epoch reading
+whose stamp holds still rebases it again.
+
+**One writer per list.** Two screens on the same list key share one lock, so their live reads and
+rebases of the shared window serialize instead of interleaving writes (review finding S6). The cost of a tear is therefore the one or two visible pages,
 not the depth of the scroll — which matters, because the stamp also moves on no-op, start-up and
 watcher-triggered scans (§16.11). Rows are deduplicated by opaque id within a window in any case.
 
@@ -2771,7 +2811,8 @@ window (§16.2 rule 2). The window never loads more than one page beyond the vie
 
 **Coverage values**, which the shells present (§16.14): `complete`; `open` (not every page loaded —
 normal while scrolling online, stated when offline); `unverified(scanning)` (labelled online and
-offline); `unverified(noEpoch)` (below).
+offline); `unverified(changing)` (the stamp kept moving through every bounded re-read, above);
+`unverified(noEpoch)` (below).
 
 **Measured.**
 
@@ -2809,7 +2850,8 @@ offline); `unverified(noEpoch)` (below).
   that span can be torn without the check firing, until the resumed scan moves the stamp.
 - **Direct edits to the server's database** are invisible to `lastScan` (OBSERVED 2026-09-11).
 - **A folder assignment changed mid-window** is checked only at window open, not per page.
-- **A server with no epoch** (no `lastScan`, or only the sentinel): windows are `unverified(noEpoch)`,
+- **A server with no epoch** (a **successful** reading with no `lastScan`, or only the sentinel — never a
+  failed reading): windows are `unverified(noEpoch)`,
   deduplicated by id and otherwise unguarded, so a deletion during scrolling can skip a row. This is
   not labelled on each list — the label would be on every list of that server — but once, on the
   account's server details: "This server doesn't report library changes, so a long list can
@@ -2839,7 +2881,10 @@ the next viewport-height beyond it, most-central first, subject to all of:
 
 - at most **24** albums per settled viewport, at most **2** in flight, counted inside the per-server
   concurrency bound of §16.5 rule 6;
-- skipped for an album that is `detail_complete` under the current epoch;
+- skipped for an album whose track list was read under the current epoch (`detail_fetched_epoch`,
+  §16.10 — not the summary's epoch);
+- the 24 count includes reads still running from an earlier, overlapping settle, so a sequence of
+  small scrolls never has more than 24 outstanding;
 - online only, and not on a network the platform reports as constrained or expensive (Low Data Mode,
   a metered connection);
 - cancelled as soon as its album leaves the look-ahead region.
@@ -2877,7 +2922,24 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
   above the window ceiling go first, least-recently-accessed first; then, for each entity kind above
   its ceiling, orphans of that kind go least-recently-accessed first; only when no orphan of that kind
   remains is a further whole window released to create more. A track is referenced by its album's
-  complete detail; an album is referenced by a pinned track of it.
+  complete detail **while it is a member of it**; an album is referenced by a pinned track of it.
+- **Under track pressure, album details go before windows.** When no orphan track remains, the pass
+  releases the least-recently-accessed unpinned album's *detail* — `detail_complete` cleared, its
+  members' ordinals cleared, the album summary kept — which turns its tracks into orphans. Only when
+  no detail can be released is a window released (review finding S4: releasing windows first dropped
+  lists the person was using while the tracks of long-closed albums stayed).
+- **Eviction is cheap until a ceiling is crossed.** The store keeps each namespace's row counts in
+  memory, maintained by its own inserts and deletes, so the check after a write is a comparison, not
+  a `count(*)`. A pass recounts, then evicts in **batches** down to the ceiling minus
+  max(1, 1%) — hysteresis, so the next write does not start another pass. The candidate queries use
+  uncorrelated `NOT IN` subqueries over the pin, member and detail sets. OBSERVED 2026-09-23 on a namespace of
+  50,000 albums (10,000 with complete details), 500,000 tracks, 10,000 track pins and 2,000 windows
+  of 100 rows (the `sqlite3` shell, desktop, warm page cache): selecting a batch of 500 album
+  candidates took 87 ms (0.40 s on the first, cold run), a batch of 5,000 track candidates 12 ms,
+  the releasable-details query under 1 ms and a full `count(*)` of the tracks 13 ms — against
+  7.5–13 s and 1.0 s that the review measured for the correlated queries they replace (review
+  finding B3). These are desktop figures; a phone is slower by an unmeasured
+  factor, which is one reason the pass never runs on the main thread (§16.18).
 - Eviction runs after a write that crosses a ceiling, in its own transaction, and never while a
   window it would touch is being written.
 
@@ -2986,17 +3048,24 @@ shown. Search result *lists* are not cached; entities are (§16.13 item 4).
 Two schema steps, because the shells move between them.
 
 1. **Additive (the next schema version, 6 on the current main).** Creates the `cache_*` tables beside
-   the mirror, then **seeds the seen-cache from the committed generation**, so offline browsing works
-   on the first launch after upgrading:
-   - **only if the committed generation is `verified`**; an `unverified` one seeds nothing except
-     the pins below;
+   the mirror, then **seeds the seen-cache per account**, so offline browsing works on the first launch
+   after upgrading. Each account is seeded from **its own** latest generation at or below the
+   committed one: the mirror syncs one account at a time, so another account's rows are valid at its
+   own last generation, and seeding only the globally committed generation would leave every other
+   account empty (review nit of `d3968e45`). Then:
+   - **only if that generation is `verified`**; an account whose latest generation is `unverified`
+     seeds nothing except the pins below — never an older generation of it;
    - its albums, tracks, artists and credits are copied **unpinned** and **stale**: `fetched_epoch`
      empty, `fetched_at_wall` **empty (age unknown)** — `sync_generation` records no commit time, so
      no age can be honestly stated — and `last_access_wall` set to the migration time, so the seeded
      rows are neither the first nor the last evicted;
    - `detail_complete` is set on an album when the generation holds its full membership — which a
-     `verified` generation does for every album, since its songs walk accounted for all of them
-     (§16.5 rules 10–11);
+     `verified` generation does for every album **that has tracks in it**, since its songs walk
+     accounted for all of them (§16.5 rules 10–11), and each seeded track gets the mirror's order
+     within its album as its `album_ordinal`. An album with **no** tracks in the generation is seeded
+     without `detail_complete`: "the mirror holds none" is not "the album has none" (§16.11 rule 3);
+   - the search normalization of §18.1 is backfilled by the **first** open after the migration and
+     recorded in `cache_meta`, never repeated on later opens (review finding S7);
    - **no list windows are created**: the mirror has no server order to rebuild one from, so offline
      the grids show the local "Available offline" views over these rows (§16.14) until each list is
      read live once;
@@ -3036,14 +3105,30 @@ and it carries review findings against machinery this revision deletes. What it 
 
 **Core (KMP).** A `LibraryReader` per account owns the live source, the seen-cache store, the
 epoch, window state, look-ahead, the mutation overlay (§16.20) and eviction. Its public surface is
-expressed as *queries* and *publications*:
+expressed as *queries* and *publications*.
+
+**Threading — one dedicated thread per reader, enforced.** The reader and everything it owns are
+confined to **one dedicated serial thread** that is never the main thread
+(`newLibraryReaderDispatcher()`): every SQLite statement, publication build and eviction pass runs
+there, so neither a large window's publication nor an eviction pass can stall the UI (review finding
+B3 of `d3968e45`). The reader records the thread that created it, and **every** entry point —
+`connect`, `reconnect`, `refreshEpoch`, `setForeground`, `setOnline`, `setNetworkConstrained`,
+`republishPendingChanges`, `open`, `openHome`, and each handle's `loadMore`, `loadBefore`,
+`setViewport`, `refresh` and `close` — throws if called from any other thread: confinement is checked,
+not documented. The **facade** owns the hop in both directions: it dispatches calls onto the reader's
+thread and delivers each publication to the main thread (the Apple listener rule below; the Android
+shell's `StateFlow`). A failure inside the reader never escapes it: its scope is supervised, every live
+operation converts a throw into a publication that says the screen failed
+(`LibraryUnavailableReason.InternalFailure`, or `cached(internalFailure)` over cached content), and an
+exception handler records anything else rather than crashing the process. The public surface:
 
 - `LibraryQuery` — a closed set matching §16.9's rows, including a home screen as a list of row
   queries.
 - `LibraryPublication` — the items as flat value types, `freshness` (§16.14), `coverage`, `total`,
   and per-row playability, with pending mutations already overlaid.
-- A window handle with `loadMore()`, `setViewport(first, last)` (which drives rebasing and
-  look-ahead) and `close()`.
+- A window handle with `loadMore()`, `loadBefore()` (a rebased window is open on both sides,
+  §16.12), `setViewport(first, last)` (which drives rebasing and look-ahead) and `close()`; each
+  publication carries `leadingOffset`, the server position of its first item.
 
 **Apple (ObjC boundary, CORPUS §4 line 8, §7).** A window can publish more than once — cached, then
 live, then after a rebase or a local change — so it is an **event stream**, not a completion: the
@@ -4634,6 +4719,41 @@ fresh disposable server before landing; items 11–14 are what that review chang
     answered code 70 and published `unavailable(gone)`. That run was a local probe, not a committed
     test: no R1b id is declared server-backed, and the server facts it relied on are R0's CONF-70
     and CONF-74.
+17. **An independent review of R1a/R1b (`d3968e45`) found three blockers and seven should-fixes;
+    each has a test that was run red before its fix, and each fix's guard was mutation-checked
+    (ReaderReviewFixesTest).** (a) **B1** — the scan-end path dereferenced a failed status read
+    (`after!!`) and crashed the reader's scope. A failed reading is now its own outcome (*unread*,
+    §16.12) and concludes nothing. The reader's scope is supervised, every live operation turns a
+    throw into an `internalFailure` publication, and a failed store write is caught by the
+    operation itself (§16.18). (b) **B2** — a rebase left a window "open on both sides" with no way to
+    read towards the top, and the stored deep window was reopened as it was. Publications now carry
+    `leadingOffset`, handles gain `loadBefore`, and a new screen always opens at the top (§16.12).
+    `conf82WhileScanning…` had asserted the defect as the expected end state and now continues past
+    it. (c) **B3** — the review measured the eviction candidate queries at 7.5–13 s (albums) and 1.0 s
+    (tracks) on 50,000 albums and 500,000 tracks, with a `count(*)` on every write. They are rewritten
+    as uncorrelated `NOT IN` queries: 87 ms and 12 ms at that scale. The counts are kept in memory, and
+    a pass evicts in batches to the ceiling minus 1%. The reader is confined to one dedicated thread,
+    enforced at every entry point (§16.13, §16.18). (d) **S1** — detail freshness is judged by the new
+    `detail_fetched_epoch`, never by the summary's epoch (§16.10). (e) **S2** — a detail read during a
+    scan is stored unverified and re-read when the scan ends. (f) **S3** — membership is
+    `album_ordinal IS NOT NULL` and is written only by `getAlbum`. A list or search row can no longer
+    move a track to another album (§16.10). (g) **S4** — under track pressure the least-recently-
+    accessed album details are released before any window (§16.13). (h) **S5** — a transient status
+    failure no longer labels a window `unverified(noEpoch)`. That label now needs a successful reading
+    with no stamp (§16.12). (i) **S6** — the screens on one list share one writer. (j) **S7** —
+    publications are built from one batched query per item kind, and last-access updates are
+    throttled. OBSERVED 2026-09-23 on a JVM in-memory database with 3,000 albums loaded in the window:
+    one republish costs **6 statements and 17–31 ms**. The search normalization backfill runs once,
+    recorded in `cache_meta` (formerly `cache_issue_counter`), not on every open (§16.17). (k) R0's
+    measured race (§16.12) is reproduced against a fake transport. A page whose *before* reading showed
+    a scan is re-read even though its *after* reading is idle under the window's stamp. After-only
+    logic accepted it. (l) Nits: the issue sequence is taken when a request is sent, not while it waits
+    for a slot. Exhausted tear retries are labelled `unverified(changing)`, not `scanning`. An album
+    proved gone loses `detail_complete`. Seeding is per account and never marks a zero-track album
+    complete (§16.17). Look-ahead counts reads still running from an earlier settle against its 24.
+    (m) The look-ahead's re-check of its region after taking a permit was dead code: leaving the region
+    cancels the read, and a cancelled read cannot take a permit. The check is removed rather than kept
+    untestable. (n) The 16th item's "one live operation per window" is now one per **list key**.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

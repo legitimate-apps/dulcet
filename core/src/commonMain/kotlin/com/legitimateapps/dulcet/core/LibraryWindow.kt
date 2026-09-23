@@ -15,14 +15,20 @@ import kotlinx.coroutines.sync.withLock
  * The consistency rules, in the order this file enforces them:
  *
  * 1. **A page is one server read**, written in one transaction with its entities.
- * 2. **Every page read ends with a `getScanStatus`** (the *after*). A page joins a guarded window
- *    only when *after* shows no scan running and the window's stamp ([checkPage]).
- * 3. **A window is torn** by a fired check, by a stored epoch that differs from the current one at
+ * 2. **Every page is bracketed**: the reading current when its request was sent (*before*) and a
+ *    `getScanStatus` issued after its response arrived (*after*). It joins a guarded window only
+ *    when both are idle and both carry the window's stamp ([checkPage]) — never on *after* alone.
+ * 3. **A window is torn** by a failed check, by a stored epoch that differs from the current one at
  *    its first live read in this session, or by a changed folder set — and a torn window is never
- *    extended. It is **rebased**: only the pages intersecting the viewport are re-read, under the
- *    current epoch, and every other page is dropped, with the first visible item kept first.
+ *    extended. The check runs BEFORE the write that would advance the window. A torn window is
+ *    **rebased**: only the pages intersecting the viewport are re-read, under the current epoch,
+ *    every other page is dropped, and the first visible item stays first. The rebased window is
+ *    open on both sides: [LibraryPublication.leadingOffset] says where it starts, and
+ *    [LibraryWindowHandle.loadBefore] reads towards the top under the same check.
  * 4. **While the server scans**, pages append unguarded and the window is `unverified(scanning)`;
  *    the first reading with no scan running rebases it.
+ * 5. **A reading that fails concludes nothing**: the page is not used and nothing is relabelled.
+ *    Only a server that answers with no stamp is `unverified(noEpoch)`.
  */
 internal abstract class ReaderHandle(
     protected val reader: LibraryReader,
@@ -36,10 +42,10 @@ internal abstract class ReaderHandle(
     private val jobs = mutableListOf<Job>()
 
     /**
-     * One live operation per window at a time. An open's revalidation and a `loadMore` issued
-     * before it lands would otherwise both see a stale window and rebase it twice.
+     * One live operation at a time. A list window shares its lock with every other handle on the
+     * same list key ([LibraryReader.listLock]), so two screens on one list have one writer.
      */
-    private val lock = Mutex()
+    protected open val lock: Mutex by lazy { Mutex() }
 
     /** In-flight live reads; while positive, cached content is `cached(revalidating)`. */
     protected var inFlight = 0
@@ -53,6 +59,9 @@ internal abstract class ReaderHandle(
     /** The last live read's failure, shown beside the cached content until a read succeeds. */
     protected var failure: DomainError? = null
 
+    /** Set when the reader itself threw while serving this screen; cleared by the next success. */
+    protected var internalFailure = false
+
     /** The last publication's items, which [setViewport] indexes into. */
     protected var published: List<LibraryItem> = emptyList()
 
@@ -65,7 +74,7 @@ internal abstract class ReaderHandle(
      */
     fun start() {
         revalidationPending = reader.online && needsRevalidation()
-        emit(snapshot())
+        emitSnapshot()
         if (revalidationPending) {
             launchRead {
                 try {
@@ -77,10 +86,13 @@ internal abstract class ReaderHandle(
         }
     }
 
-    /** Revalidates under this window's lock; the reader's reconnect calls this. */
+    /** Revalidates under this window's lock; the reader's reconnect and epoch refresh call this. */
     suspend fun revalidate(cause: RevalidateCause) {
-        lock.withLock { performRevalidate(cause) }
+        guarded { lock.withLock { performRevalidate(cause) } }
     }
+
+    /** Whether this window is waiting for a reading with a stamp that holds still. */
+    open fun awaitsQuietEpoch(): Boolean = false
 
     /** Called with the window's lock held. */
     protected abstract suspend fun performRevalidate(cause: RevalidateCause)
@@ -91,19 +103,53 @@ internal abstract class ReaderHandle(
     abstract fun mentionsAny(rawIds: Set<String>): Boolean
 
     fun republish() {
-        if (!closed) emit(snapshot())
+        if (!closed) emitSnapshot()
     }
 
-    protected fun emit(publication: LibraryPublication) {
+    /**
+     * Publishes the cache as it stands. If building that publication itself throws, the screen is
+     * told so with a publication that needs nothing from the cache — never silence, never a crash.
+     */
+    protected fun emitSnapshot() {
+        if (closed) return
+        val publication = try {
+            snapshot()
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (thrown: Throwable) {
+            internalFailure = true
+            LibraryPublication(
+                query, 0, LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure), null, null, null,
+                emptyList(), LibraryItemsState.Unavailable, LibraryItemsOrder.Server,
+            )
+        }
+        emit(publication)
+    }
+
+    private fun emit(publication: LibraryPublication) {
         if (closed) return
         sequence += 1
         published = publication.items
         listener(publication.copy(sequence = sequence))
     }
 
+    /** Converts anything a live operation throws into a publication that says the screen failed. */
+    private suspend fun guarded(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            inFlight = 0
+            revalidationPending = false
+            internalFailure = true
+            emitSnapshot()
+        }
+    }
+
     protected fun launchRead(block: suspend () -> Unit) {
         if (closed) return
-        val job = reader.scope.launch { lock.withLock { block() } }
+        val job = reader.scope.launch { guarded { lock.withLock { block() } } }
         jobs += job
         job.invokeOnCompletion { jobs -= job }
     }
@@ -122,10 +168,12 @@ internal abstract class ReaderHandle(
     }
 
     override fun refresh() {
+        reader.checkConfined()
         if (reader.online) launchRead { performRevalidate(RevalidateCause.Refresh) }
     }
 
     override fun close() {
+        reader.checkConfined()
         if (closed) return
         closed = true
         jobs.toList().forEach { it.cancel() }
@@ -136,44 +184,58 @@ internal abstract class ReaderHandle(
     // ---- Shared presentation ------------------------------------------------------------------------
 
     /** Freshness of content that exists in the cache (§16.14). */
-    protected fun cachedFreshness(asOfWall: Long?, liveUnderCurrentEpoch: Boolean): LibraryFreshness = when {
-        !reader.online -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Offline)
-        inFlight > 0 || revalidationPending -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
-        failure != null -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Failed(failure!!))
-        liveUnderCurrentEpoch -> LibraryFreshness.Live
-        else -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Stale)
-    }
-
-    /** Freshness when nothing is cached. */
-    protected fun emptyFreshness(): LibraryFreshness = when {
-        !reader.online -> LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline)
-        failure != null -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Failed(failure!!))
-        else -> LibraryFreshness.Loading
-    }
-
-    protected fun resolve(members: List<CacheListMember>): List<LibraryItem> {
-        val pending = reader.overlay.pending(cache.serverId, members.mapTo(mutableSetOf()) { it.rawId })
-        val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
-        val seen = mutableSetOf<Pair<CacheItemKind, String>>()
-        return members.mapNotNull { member ->
-            // Deduplicated by opaque id within a window in any case (§16.12). A playlist keeps its
-            // duplicates, and is resolved by the collection detail, not here.
-            if (!seen.add(member.kind to member.rawId)) return@mapNotNull null
-            resolveOne(member, pending, downloaded)
+    protected fun cachedFreshness(asOfWall: Long?, liveUnderCurrentEpoch: Boolean): LibraryFreshness {
+        val error = failure
+        return when {
+            !reader.online -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Offline)
+            inFlight > 0 || revalidationPending -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
+            internalFailure -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.InternalFailure)
+            error != null -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Failed(error))
+            liveUnderCurrentEpoch -> LibraryFreshness.Live
+            else -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Stale)
         }
     }
 
-    protected fun resolveOne(
-        member: CacheListMember,
-        pending: Map<String, PendingUserState>,
-        downloaded: Set<String>,
-    ): LibraryItem? = when (member.kind) {
-        CacheItemKind.Album -> cache.album(member.rawId)?.takeUnless { it.row.gone }?.toItem(pending[member.rawId])
-        CacheItemKind.Artist -> cache.artist(member.rawId)?.takeUnless { it.row.gone }?.toItem(pending[member.rawId])
-        CacheItemKind.Track -> cache.track(member.rawId)?.takeUnless { it.row.gone }
-            ?.toItem(pending[member.rawId], reader.trackPlayability(member.rawId, downloaded))
-        CacheItemKind.Playlist -> cache.playlist(member.rawId)?.takeUnless { it.row.gone }?.toItem()
-        CacheItemKind.Genre -> LibraryItem.Genre(member.rawId)
+    /** Freshness when nothing is cached. */
+    protected fun emptyFreshness(): LibraryFreshness {
+        val error = failure
+        return when {
+            !reader.online -> LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline)
+            internalFailure -> LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure)
+            error != null -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Failed(error))
+            else -> LibraryFreshness.Loading
+        }
+    }
+
+    /** Items for rows read in one batch; per-user state is overlaid, never written back. */
+    protected fun itemsOf(rows: List<CachedListRow>, dedupe: Boolean): Pair<List<LibraryItem>, List<Int>> {
+        val pending = reader.overlay.pending(cache.serverId, rows.mapTo(mutableSetOf()) { it.rawId })
+        val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+        val seen = mutableSetOf<Pair<CacheItemKind, String>>()
+        val items = mutableListOf<LibraryItem>()
+        val positions = mutableListOf<Int>()
+        rows.forEach { row ->
+            // Deduplicated by opaque id within a window in any case (§16.12). A playlist keeps its
+            // duplicate entries (§18.6), so its caller passes dedupe = false.
+            if (dedupe && !seen.add(row.kind to row.rawId)) return@forEach
+            val item: LibraryItem = row.album?.toItem(pending[row.rawId])
+                ?: row.artist?.toItem(pending[row.rawId])
+                ?: row.track?.toItem(pending[row.rawId], reader.trackPlayability(row.rawId, downloaded))
+                ?: row.playlist?.toItem()
+                ?: LibraryItem.Genre(row.rawId)
+            items += item
+            positions += row.position
+        }
+        return items to positions
+    }
+
+    /** Refreshes last access for a shown list, at most once per [LibraryReaderConfig.touchIntervalMillis]. */
+    protected fun touchShown(listKey: String) {
+        val now = cache.now()
+        val last = reader.lastTouches[listKey]
+        if (last != null && now - last < reader.config.touchIntervalMillis) return
+        reader.lastTouches[listKey] = now
+        cache.touchList(listKey)
     }
 }
 
@@ -264,15 +326,19 @@ internal data class ListRequestSpec(
 
 internal data class ParsedList(val members: List<CacheListMember>, val entities: CacheEntities)
 
-/** A page read and its *after* reading. */
+/** A page read, bracketed by its two readings. */
 private data class PageRead(
     val offset: Int,
     val requested: Int,
     val parsed: ParsedList,
     val totalCount: Int?,
+    val before: ScanStatusReading?,
     val after: ScanStatusReading?,
+    val afterError: DomainError?,
     val issueSeq: Long,
 )
+
+private enum class PageMode { Append, Replace, Prepend }
 
 /** One list screen: a paged window, or a single response. */
 internal class ListWindow(
@@ -283,7 +349,13 @@ internal class ListWindow(
 ) : ReaderHandle(reader, query, listener) {
     private val pageSize = reader.config.pageSize
 
-    /** The viewport, in server positions. */
+    override val lock: Mutex get() = reader.listLock(spec.listKey)
+
+    /**
+     * The viewport, in server positions. A new handle opens at the TOP of its list, whatever depth
+     * a previous session's window was left at: a window that starts deeper is rebased around the
+     * top on its first live read, so the start of a list is never unreachable (review finding B2).
+     */
     private var viewport: IntRange = 0..0
 
     /** Positions of the last publication's items, parallel to [published]. */
@@ -300,26 +372,35 @@ internal class ListWindow(
      */
     private val liveThisSession: Boolean get() = spec.listKey in reader.liveListReads
 
-    init {
-        cache.listState(spec.listKey)?.let { viewport = it.firstLoadedOffset..it.firstLoadedOffset }
-    }
-
     override fun needsRevalidation(): Boolean {
         val epoch = reader.sessionEpoch ?: return true
-        val state = cache.listState(spec.listKey)
-        if (state?.coverage == CacheCoverage.UnverifiedScanning && !epoch.scanning) return true
-        return !readRecently(state, epoch)
+        val state = cache.listState(spec.listKey) ?: return true
+        return mustRebase(state, epoch) || !readRecently(state, epoch)
     }
 
     override fun mentionsAny(rawIds: Set<String>): Boolean = published.any { it.rawId in rawIds }
 
+    override fun awaitsQuietEpoch(): Boolean = cache.listState(spec.listKey)?.coverage == CacheCoverage.UnverifiedChanging
+
     // ---- Revalidation -------------------------------------------------------------------------------
+
+    /**
+     * Whether the stored window cannot be revalidated in place: its epoch is not the current one
+     * (tear rules 2 and 3), it holds unguarded pages and the server is no longer scanning, its stamp
+     * kept moving last time, or the viewport lies outside it.
+     */
+    private fun mustRebase(state: CachedListState, epoch: CatalogEpoch): Boolean =
+        state.windowEpoch != epoch.key ||
+            (state.coverage == CacheCoverage.UnverifiedScanning && !epoch.scanning) ||
+            state.coverage == CacheCoverage.UnverifiedChanging ||
+            viewport.first < state.firstLoadedOffset ||
+            (viewport.first >= state.endLoadedOffset && state.endLoadedOffset > state.firstLoadedOffset)
 
     override suspend fun performRevalidate(cause: RevalidateCause) {
         if (closed || !reader.online) return
         if (cause != RevalidateCause.Open && cache.listState(spec.listKey) != null) {
             inFlight += 1
-            republish()
+            emitSnapshot()
             inFlight -= 1
         }
         live {
@@ -333,44 +414,40 @@ internal class ListWindow(
                 return@live
             }
             val state = cache.listState(spec.listKey)
-            val torn = state == null ||
-                state.windowEpoch != epoch.key ||
-                (state.coverage == CacheCoverage.UnverifiedScanning && !epoch.scanning)
+            val torn = state == null || mustRebase(state, epoch)
             // The 60-second rule spares a fresh window a re-read; it never spares a torn one.
-            if (!torn && cause != RevalidateCause.Refresh && readRecently(state, epoch)) return@live
-            if (torn) rebase(epoch, attempt = 0) else revalidateViewport(epoch, state!!)
+            if (!torn && state != null && cause != RevalidateCause.Refresh && readRecently(state, epoch)) return@live
+            if (torn || state == null) rebase(epoch, attempt = 0) else revalidateViewport(epoch)
         }
-        emit(snapshot())
+        emitSnapshot()
     }
 
-    private fun readRecently(state: CachedListState?, epoch: CatalogEpoch): Boolean {
+    private fun readRecently(state: CachedListState, epoch: CatalogEpoch): Boolean {
         val readAt = reader.liveListReads[spec.listKey] ?: return false
-        return state != null && state.windowEpoch == epoch.key &&
-            cache.now() - readAt < reader.config.revalidateWithinMillis
+        return state.windowEpoch == epoch.key && cache.now() - readAt < reader.config.revalidateWithinMillis
     }
 
     private suspend fun readWhole(epoch: CatalogEpoch) {
-        val seq = cache.issue()
         val parameters = spec.parameters + listOfNotNull(spec.singlePageSize?.let { "size" to it.toString() })
-        val response = try {
-            reader.checked(spec.endpoint, parameters)
-        } catch (failure: CancellationException) {
-            throw failure
-        } catch (failure: Throwable) {
-            this.failure = failure.asReaderError()
+        val sent = try {
+            reader.sendChecked(spec.endpoint, parameters)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            failure = thrown.asReaderError()
             return
         }
         val parsed = try {
-            spec.parse(response.body)
-        } catch (failure: LibraryRequestFailure) {
-            this.failure = failure.error
+            spec.parse(sent.response.body)
+        } catch (thrown: LibraryRequestFailure) {
+            failure = thrown.error
             return
         }
         val now = cache.now()
         cache.writeWholeList(
-            CacheWriteStamp(seq, now, epoch.key),
+            CacheWriteStamp(sent.issueSeq, now, epoch.key),
             CacheEntitySource.ListPage,
-            CachedListState(spec.listKey, epoch.key, epoch.folderIds, 0, parsed.members.size, response.totalCount, CacheCoverage.Complete, now, now, seq),
+            CachedListState(spec.listKey, epoch.key, epoch.folderIds, 0, parsed.members.size, sent.response.totalCount, CacheCoverage.Complete, now, now, sent.issueSeq),
             parsed.members,
             parsed.entities,
         )
@@ -378,20 +455,23 @@ internal class ListWindow(
         cache.evictIfNeeded()
     }
 
-    private suspend fun revalidateViewport(epoch: CatalogEpoch, state: CachedListState) {
-        val offsets = viewportPageOffsets(state)
-        for (offset in offsets) {
+    private suspend fun revalidateViewport(epoch: CatalogEpoch) {
+        for (offset in viewportPageOffsets()) {
             val gen = generation
             val read = readPage(offset) ?: return
             if (gen != generation || closed) return
-            when (checkPage(epoch.stamp, read.after)) {
-                PageCheck.Fired -> {
-                    rebase(reader.adoptScanStatus(read.after!!), attempt = 1)
+            when (checkPage(epoch.stamp, read.before, read.after)) {
+                PageCheck.Unread -> {
+                    failure = read.afterError
                     return
                 }
-                PageCheck.Guarded -> writePage(read, CacheCoverage.Open, epoch, replacing = true)
-                PageCheck.Scanning -> writePage(read, CacheCoverage.UnverifiedScanning, epoch, replacing = true)
-                PageCheck.NoEpoch -> writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, replacing = true)
+                PageCheck.Fired, PageCheck.ScanEnded -> {
+                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                    return
+                }
+                PageCheck.Guarded -> writePage(read, CacheCoverage.Open, epoch, PageMode.Replace)
+                PageCheck.Scanning -> writePage(read, CacheCoverage.UnverifiedScanning, epoch, PageMode.Replace)
+                PageCheck.NoEpoch -> writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, PageMode.Replace)
             }
         }
         markLive()
@@ -400,31 +480,39 @@ internal class ListWindow(
     /**
      * Rebase (§16.12): re-read only the pages intersecting the viewport under [epoch], and drop
      * every other page, in one transaction per rebase. The first visible item stays first.
+     *
+     * A page whose stamp moved, or whose scan ended while it was read, is re-read under the newer
+     * reading, up to [LibraryReaderConfig.maxTearRetries] times. If the stamp is still moving after
+     * that with no scan reported, the window is written as `unverified(changing)` — an honest label,
+     * not "scanning" — and the next revalidation rebases it again.
      */
     private suspend fun rebase(epoch: CatalogEpoch, attempt: Int) {
         generation += 1
         val gen = generation
         val anchorBefore = firstVisibleAnchorSource()
-        val state = cache.listState(spec.listKey)
-        val offsets = viewportPageOffsets(state)
+        val offsets = viewportPageOffsets()
         val reads = coroutineScope { offsets.map { offset -> async { readPage(offset) } }.awaitAll() }
         if (gen != generation || closed) return
-        if (reads.any { it == null }) return
         val pages = reads.filterNotNull().sortedBy { it.offset }
-        val checks = pages.map { checkPage(epoch.stamp, it.after) }
-        if (PageCheck.Fired in checks) {
-            val moved = pages[checks.indexOf(PageCheck.Fired)].after!!
-            val next = reader.adoptScanStatus(moved)
-            if (attempt < reader.config.maxTearRetries) {
-                rebase(next, attempt + 1)
-                return
-            }
+        if (pages.size != reads.size) return
+        val checks = pages.map { checkPage(epoch.stamp, it.before, it.after) }
+        if (PageCheck.Unread in checks) {
+            failure = pages[checks.indexOf(PageCheck.Unread)].afterError
+            return
+        }
+        val moved = PageCheck.Fired in checks || PageCheck.ScanEnded in checks
+        val latest = reader.sessionEpoch ?: epoch
+        if (moved && attempt < reader.config.maxTearRetries) {
+            rebase(latest, attempt + 1)
+            return
         }
         val coverage = when {
-            PageCheck.Scanning in checks || PageCheck.Fired in checks -> CacheCoverage.UnverifiedScanning
-            PageCheck.NoEpoch in checks || epoch.key == null -> CacheCoverage.UnverifiedNoEpoch
+            PageCheck.Scanning in checks -> CacheCoverage.UnverifiedScanning
+            moved -> CacheCoverage.UnverifiedChanging
+            PageCheck.NoEpoch in checks -> CacheCoverage.UnverifiedNoEpoch
             else -> CacheCoverage.Open
         }
+        val windowEpoch = if (moved) latest else epoch
         val first = pages.first().offset
         val members = mutableListOf<CacheListMember>()
         val ids = mutableSetOf<Pair<CacheItemKind, String>>()
@@ -439,17 +527,17 @@ internal class ListWindow(
             entities += page.parsed.entities
         }
         val total = pages.lastOrNull { it.totalCount != null }?.totalCount
-        val complete = first == 0 && (lastRows == 0 || (total != null && end >= total))
+        val complete = coverage == CacheCoverage.Open && first == 0 &&
+            (lastRows == 0 || (total != null && end >= total))
         val now = cache.now()
-        val newState = CachedListState(
-            spec.listKey, epoch.key, epoch.folderIds, first, end, total,
-            if (complete && coverage == CacheCoverage.Open) CacheCoverage.Complete else coverage,
-            now, now, pages.maxOf { it.issueSeq },
-        )
+        val seq = pages.maxOf { it.issueSeq }
         cache.writeWindowPage(
-            stamp = CacheWriteStamp(pages.maxOf { it.issueSeq }, now, epoch.key),
+            stamp = CacheWriteStamp(seq, now, windowEpoch.key),
             source = CacheEntitySource.ListPage,
-            state = newState,
+            state = CachedListState(
+                spec.listKey, windowEpoch.key, windowEpoch.folderIds, first, end, total,
+                if (complete) CacheCoverage.Complete else coverage, now, now, seq,
+            ),
             pageStart = first,
             replacedEnd = end,
             members = members,
@@ -461,58 +549,75 @@ internal class ListWindow(
         pendingAnchor = anchorAfterRebase(anchorBefore)
     }
 
+    /**
+     * One page read and its *after* reading. The *before* is the reading that was current when the
+     * page request was SENT ([LibraryReader.send]); every successful *after* becomes the session's
+     * reading, and so the next page's *before*.
+     */
     private suspend fun readPage(offset: Int): PageRead? {
-        val seq = cache.issue()
-        val parameters = spec.parameters + (spec.sizeParameter!! to pageSize.toString()) + ("offset" to offset.toString())
-        val response = try {
-            reader.checked(spec.endpoint, parameters)
-        } catch (failure: CancellationException) {
-            throw failure
-        } catch (failure: Throwable) {
-            this.failure = failure.asReaderError()
+        val sizeParameter = spec.sizeParameter ?: return null
+        val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + ("offset" to offset.toString())
+        val sent = try {
+            reader.sendChecked(spec.endpoint, parameters)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            failure = thrown.asReaderError()
             return null
         }
         val parsed = try {
-            spec.parse(response.body)
-        } catch (failure: LibraryRequestFailure) {
-            this.failure = failure.error
+            spec.parse(sent.response.body)
+        } catch (thrown: LibraryRequestFailure) {
+            failure = thrown.error
             return null
         }
         // The *after* reading is issued only once the page's response has arrived (§16.12).
+        var afterError: DomainError? = null
         val after = try {
             reader.epochReader.readScanStatus()
-        } catch (failure: CancellationException) {
-            throw failure
-        } catch (_: Throwable) {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            afterError = thrown.asReaderError()
             null
         }
-        return PageRead(offset, pageSize, parsed, response.totalCount, after, seq)
+        after?.let(reader::adoptScanStatus)
+        return PageRead(offset, pageSize, parsed, sent.response.totalCount, sent.before, after, afterError, sent.issueSeq)
     }
 
-    /** Appends or replaces one page in an intact window, deduplicating against the rest of it. */
-    private fun writePage(read: PageRead, coverage: CacheCoverage, epoch: CatalogEpoch, replacing: Boolean) {
+    /** Writes one page into an intact window, deduplicating against the rest of it. */
+    private fun writePage(read: PageRead, coverage: CacheCoverage, epoch: CatalogEpoch, mode: PageMode) {
         val state = cache.listState(spec.listKey)
-        val pageEnd = read.offset + read.parsed.members.size
-        val elsewhere = cache.listMembers(spec.listKey)
-            .filter { it.position < read.offset || it.position >= maxOf(pageEnd, read.offset + read.requested) }
+        val rows = read.parsed.members.size
+        val pageRange = read.offset until read.offset + read.requested
+        val existing = cache.listMembers(spec.listKey)
+        val elsewhere = existing
+            .filter { it.position !in pageRange }
             .mapTo(mutableSetOf()) { it.member.kind to it.member.rawId }
         val members = read.parsed.members.filter { elsewhere.add(it.kind to it.rawId) }
-        val previousRows = cache.listMembers(spec.listKey)
-            .count { it.position >= read.offset && it.position < read.offset + read.requested }
+        val previousRows = existing.count { it.position in pageRange }
         val first = minOf(state?.firstLoadedOffset ?: read.offset, read.offset)
-        val end = if (replacing) maxOf(state?.endLoadedOffset ?: pageEnd, pageEnd) else pageEnd
+        val end = when (mode) {
+            PageMode.Append -> read.offset + rows
+            PageMode.Replace -> maxOf(state?.endLoadedOffset ?: (read.offset + rows), read.offset + rows)
+            PageMode.Prepend -> state?.endLoadedOffset ?: (read.offset + rows)
+        }
         val total = read.totalCount ?: state?.total
         val complete = first == 0 && (
-            (read.parsed.members.isEmpty() && !replacing) ||
+            (rows == 0 && mode == PageMode.Append) ||
                 (total != null && end >= total) ||
                 // Re-reading a page of a complete window keeps it complete only if the page kept its size.
-                (replacing && state?.coverage == CacheCoverage.Complete && members.size == previousRows)
+                (mode == PageMode.Replace && state?.coverage == CacheCoverage.Complete && members.size == previousRows)
             )
         val mergedCoverage = when {
             coverage != CacheCoverage.Open -> coverage
-            state?.coverage == CacheCoverage.UnverifiedScanning || state?.coverage == CacheCoverage.UnverifiedNoEpoch -> state.coverage
+            state != null && state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete -> state.coverage
             complete -> CacheCoverage.Complete
             else -> CacheCoverage.Open
+        }
+        val replacedEnd = when (mode) {
+            PageMode.Prepend -> minOf(read.offset + read.requested, state?.firstLoadedOffset ?: Int.MAX_VALUE)
+            else -> read.offset + read.requested
         }
         val now = cache.now()
         cache.writeWindowPage(
@@ -524,25 +629,49 @@ internal class ListWindow(
                 maxOf(state?.issueSeq ?: 0, read.issueSeq),
             ),
             pageStart = read.offset,
-            replacedEnd = read.offset + read.requested,
+            replacedEnd = replacedEnd,
             members = members,
             entities = read.parsed.entities,
         )
+        reader.liveListReads[spec.listKey] = now
         cache.evictIfNeeded()
     }
 
     // ---- Paging -------------------------------------------------------------------------------------
 
     override fun loadMore() {
+        reader.checkConfined()
         if (closed || !reader.online || !spec.paged) return
-        launchRead { appendNext(confirming = false) }
+        launchRead { extend(PageMode.Append, confirming = false) }
     }
 
-    private suspend fun appendNext(confirming: Boolean) {
+    override fun loadBefore() {
+        reader.checkConfined()
+        if (closed || !reader.online || !spec.paged) return
+        launchRead { extend(PageMode.Prepend, confirming = false) }
+    }
+
+    /**
+     * Extends the window by one page at its end ([PageMode.Append]) or its start
+     * ([PageMode.Prepend]). The bracketed check runs BEFORE the write that would advance the
+     * window; anything but [PageCheck.Guarded] on an intact window leaves the window as it was.
+     */
+    private suspend fun extend(mode: PageMode, confirming: Boolean) {
         val state = cache.listState(spec.listKey) ?: return
-        if (state.coverage == CacheCoverage.Complete) return
-        // Never more than one page beyond the viewport (§16.12).
-        if (!confirming && state.endLoadedOffset > viewport.last + pageSize) return
+        val offset = when (mode) {
+            PageMode.Append -> {
+                if (state.coverage == CacheCoverage.Complete) return
+                // Never more than one page beyond the viewport (§16.12).
+                if (!confirming && state.endLoadedOffset > viewport.last + pageSize) return
+                state.endLoadedOffset
+            }
+            PageMode.Prepend -> {
+                if (state.firstLoadedOffset == 0) return
+                if (viewport.first >= state.firstLoadedOffset + pageSize) return
+                maxOf(0, state.firstLoadedOffset - pageSize)
+            }
+            PageMode.Replace -> return
+        }
         val epoch = reader.ensureEpoch() ?: return
         // Tear rule 2: a window not yet read live this session is revalidated, not extended.
         if (!liveThisSession) {
@@ -551,36 +680,34 @@ internal class ListWindow(
         }
         live {
             val gen = generation
-            val read = readPage(state.endLoadedOffset) ?: return@live
+            val read = readPage(offset) ?: return@live
             if (gen != generation || closed) return@live
-            val windowStamp = windowStamp(state)
-            val check = checkPage(windowStamp, read.after)
-            val scanEnded = state.coverage == CacheCoverage.UnverifiedScanning && check != PageCheck.Scanning
-            when {
-                check == PageCheck.Fired || scanEnded -> {
-                    rebase(reader.adoptScanStatus(read.after!!), attempt = 1)
-                }
-                else -> {
-                    val coverage = when (check) {
-                        PageCheck.Scanning -> CacheCoverage.UnverifiedScanning
-                        PageCheck.NoEpoch -> CacheCoverage.UnverifiedNoEpoch
-                        else -> CacheCoverage.Open
-                    }
-                    writePage(read, coverage, epoch, replacing = false)
-                    reader.liveListReads[spec.listKey] = cache.now()
+            val unguardedWindow = state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete
+            when (checkPage(windowStamp(state), read.before, read.after)) {
+                PageCheck.Unread -> failure = read.afterError
+                PageCheck.Fired, PageCheck.ScanEnded -> rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                PageCheck.Scanning -> writePage(read, CacheCoverage.UnverifiedScanning, epoch, mode)
+                PageCheck.NoEpoch -> writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, mode)
+                PageCheck.Guarded -> if (unguardedWindow) {
+                    // The window holds unguarded pages and the server is now idle under one stamp:
+                    // that is the reading that ends scanning mode, so the window is rebased.
+                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                } else {
+                    failure = null
+                    writePage(read, CacheCoverage.Open, epoch, mode)
                     val rows = read.parsed.members.size
                     val after = cache.listState(spec.listKey)
                     // A short page is only a CANDIDATE end: with no total it is confirmed by one
                     // more request, and only an empty page (or the total) completes the window.
-                    if (!confirming && rows in 1 until read.requested && after?.total == null &&
-                        after?.coverage != CacheCoverage.Complete
+                    if (mode == PageMode.Append && !confirming && rows in 1 until read.requested &&
+                        after?.total == null && after?.coverage != CacheCoverage.Complete
                     ) {
-                        appendNext(confirming = true)
+                        extend(PageMode.Append, confirming = true)
                     }
                 }
             }
         }
-        emit(snapshot())
+        emitSnapshot()
     }
 
     private fun windowStamp(state: CachedListState): String? {
@@ -589,6 +716,7 @@ internal class ListWindow(
     }
 
     override fun setViewport(firstIndex: Int, lastIndex: Int) {
+        reader.checkConfined()
         if (closed || publishedPositions.isEmpty()) return
         val first = publishedPositions[firstIndex.coerceIn(0, publishedPositions.lastIndex)]
         val last = publishedPositions[lastIndex.coerceIn(firstIndex.coerceAtLeast(0), publishedPositions.lastIndex)]
@@ -604,29 +732,18 @@ internal class ListWindow(
 
     private fun markLive() {
         failure = null
+        internalFailure = false
         reader.liveListReads[spec.listKey] = cache.now()
     }
 
     override fun snapshot(): LibraryPublication {
         val state = cache.listState(spec.listKey)
-        if (state != null) cache.touchList(spec.listKey)
-        val positions = state?.let { cache.listMembers(spec.listKey) }.orEmpty()
-        if (state == null || (positions.isEmpty() && !liveThisSession && state.coverage != CacheCoverage.Complete)) {
+        if (state == null || (state.endLoadedOffset == state.firstLoadedOffset && !liveThisSession && state.coverage != CacheCoverage.Complete)) {
             return localViewOrEmpty()
         }
-        val items = mutableListOf<LibraryItem>()
-        val itemPositions = mutableListOf<Int>()
-        val pending = reader.overlay.pending(cache.serverId, positions.mapTo(mutableSetOf()) { it.member.rawId })
-        val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
-        val seen = mutableSetOf<Pair<CacheItemKind, String>>()
-        positions.forEach { position ->
-            if (!seen.add(position.member.kind to position.member.rawId)) return@forEach
-            resolveOne(position.member, pending, downloaded)?.let {
-                items += it
-                itemPositions += position.position
-            }
-        }
-        publishedPositions = itemPositions
+        touchShown(spec.listKey)
+        val (items, positions) = itemsOf(cache.listRows(spec.listKey), dedupe = true)
+        publishedPositions = positions
         val current = reader.sessionEpoch
         val liveUnderCurrent = liveThisSession && current != null && state.windowEpoch == current.key
         val anchor = pendingAnchor.also { pendingAnchor = null }
@@ -641,6 +758,7 @@ internal class ListWindow(
             itemsState = LibraryItemsState.Present,
             order = LibraryItemsOrder.Server,
             anchor = anchor,
+            leadingOffset = positions.firstOrNull() ?: state.firstLoadedOffset,
         )
     }
 
@@ -681,11 +799,10 @@ internal class ListWindow(
     // ---- Viewport geometry --------------------------------------------------------------------------
 
     /** Offsets of the pages intersecting the viewport, aligned to the page size. */
-    private fun viewportPageOffsets(state: CachedListState?): List<Int> {
+    private fun viewportPageOffsets(): List<Int> {
         val first = (viewport.first / pageSize) * pageSize
         val last = (viewport.last / pageSize) * pageSize
-        val offsets = (first..last step pageSize).toList()
-        return if (state == null && offsets.isEmpty()) listOf(0) else offsets.ifEmpty { listOf(0) }
+        return (first..last step pageSize).toList().ifEmpty { listOf(0) }
     }
 
     private data class AnchorSource(val firstVisibleIndex: Int, val firstVisiblePosition: Int, val order: List<String>)
@@ -736,6 +853,7 @@ private fun CacheCoverage.toPublic(): LibraryCoverage = when (this) {
     CacheCoverage.Open -> LibraryCoverage.Open
     CacheCoverage.UnverifiedScanning -> LibraryCoverage.UnverifiedScanning
     CacheCoverage.UnverifiedNoEpoch -> LibraryCoverage.UnverifiedNoEpoch
+    CacheCoverage.UnverifiedChanging -> LibraryCoverage.UnverifiedChanging
 }
 
 // ---- Detail screens -----------------------------------------------------------------------------------
@@ -751,9 +869,13 @@ internal class AlbumDetailWindow(
 ) : ReaderHandle(reader, album, listener) {
     private var gone = false
 
+    /** Fresh only when its MEMBERSHIP was read under the current epoch (review finding S1). */
+    private fun fresh(cached: CachedAlbum): Boolean =
+        cached.detailComplete && reader.detailIsFresh(album.rawId, cached.detailFetchedEpoch)
+
     override fun needsRevalidation(): Boolean {
         val cached = cache.album(album.rawId) ?: return true
-        return !(cached.detailComplete && reader.detailIsFresh(album.rawId, cached.row.fetchedEpoch))
+        return !fresh(cached)
     }
 
     override fun mentionsAny(rawIds: Set<String>): Boolean =
@@ -764,17 +886,15 @@ internal class AlbumDetailWindow(
         val cached = cache.album(album.rawId)
         // A detail read live under the current epoch within the interval is not re-read — which is
         // what lets a looked-ahead album open with zero requests (CONF-87).
-        if (cause != RevalidateCause.Refresh && cached != null && cached.detailComplete &&
-            reader.detailIsFresh(album.rawId, cached.row.fetchedEpoch)
-        ) {
+        if (cause != RevalidateCause.Refresh && cached != null && fresh(cached)) {
             revalidationPending = false
-            emit(snapshot())
+            emitSnapshot()
             return
         }
         reader.lookAhead.cancel(album.rawId)
         if (cached != null && cause != RevalidateCause.Open) {
             inFlight += 1
-            republish()
+            emitSnapshot()
             inFlight -= 1
         }
         val result = live {
@@ -782,17 +902,23 @@ internal class AlbumDetailWindow(
             reader.readAlbumDetail(album.rawId)
         }
         when (result) {
-            DetailReadResult.Read -> { failure = null; gone = false }
-            DetailReadResult.Gone -> { failure = null; gone = true }
+            DetailReadResult.Read -> {
+                failure = null
+                internalFailure = false
+                gone = false
+            }
+            DetailReadResult.Gone -> {
+                failure = null
+                internalFailure = false
+                gone = true
+            }
             is DetailReadResult.Failed -> failure = result.error
         }
-        cache.evictIfNeeded()
-        emit(snapshot())
+        emitSnapshot()
     }
 
     override fun snapshot(): LibraryPublication {
         val cached = cache.album(album.rawId)
-        if (cached != null) cache.touchAlbum(album.rawId)
         if (cached == null || cached.row.gone) {
             val freshness = when {
                 gone || cached?.row?.gone == true -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone)
@@ -804,27 +930,38 @@ internal class AlbumDetailWindow(
                 LibraryItemsOrder.Server,
             )
         }
-        val pending = reader.overlay.pending(cache.serverId, setOf(album.rawId))
+        cache.touchAlbum(album.rawId)
+        val tracks = if (cached.detailComplete) cache.albumTracks(album.rawId) else emptyList()
+        val pending = reader.overlay.pending(cache.serverId, tracks.mapTo(mutableSetOf(album.rawId)) { it.rawId })
         val header = cached.toItem(pending[album.rawId])
         val itemsState: LibraryItemsState
         val items: List<LibraryItem>
         if (cached.detailComplete) {
-            val tracks = cache.albumTracks(album.rawId)
-            items = resolve(tracks.map { CacheListMember(CacheItemKind.Track, it.rawId) })
+            val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+            items = tracks.map { it.toItem(pending[it.rawId], reader.trackPlayability(it.rawId, downloaded)) }
             itemsState = LibraryItemsState.Present
         } else {
             items = emptyList()
-            itemsState = if (reader.online && failure == null) LibraryItemsState.Loading else LibraryItemsState.Unavailable
+            itemsState = if (reader.online && failure == null && !internalFailure) LibraryItemsState.Loading else LibraryItemsState.Unavailable
         }
-        val live = reader.liveDetailReads.containsKey(album.rawId) &&
-            cached.row.fetchedEpoch == reader.sessionEpoch?.key && reader.sessionEpoch != null
+        val current = reader.sessionEpoch
+        val live = reader.liveDetailReads.containsKey(album.rawId) && current != null &&
+            cached.detailFetchedEpoch == current.key
+        // A track list read while the server scanned is not a verified membership (review S2).
+        val coverage = if (cached.detailComplete && album.rawId in reader.detailsReadWhileScanning) {
+            LibraryCoverage.UnverifiedScanning
+        } else {
+            null
+        }
         return LibraryPublication(
-            query, 0, cachedFreshness(cached.row.fetchedAtWall, live), null, null, header, items, itemsState,
+            query, 0, cachedFreshness(cached.row.fetchedAtWall, live), coverage, null, header, items, itemsState,
             LibraryItemsOrder.Server,
         )
     }
 
     override fun loadMore() = Unit
+
+    override fun loadBefore() = Unit
 
     override fun setViewport(firstIndex: Int, lastIndex: Int) = Unit
 }
@@ -844,6 +981,7 @@ internal class CollectionDetailWindow(
         is LibraryQuery.Artist -> canonicalListKey("getArtist", mapOf("id" to rawId))
         else -> playlistDetailListKey(rawId)
     }
+    override val lock: Mutex get() = reader.listLock(listKey)
     private var gone = false
     private val liveThisSession: Boolean get() = listKey in reader.liveListReads
 
@@ -859,17 +997,19 @@ internal class CollectionDetailWindow(
         if (closed || !reader.online) return
         if (cache.listState(listKey) != null && cause != RevalidateCause.Open) {
             inFlight += 1
-            republish()
+            emitSnapshot()
             inFlight -= 1
         }
         live {
             val epoch = reader.ensureEpoch()
-            val seq = cache.issue()
-            val now = cache.now()
+            var seq = 0L
             try {
                 if (query is LibraryQuery.Artist) {
-                    val response = reader.checked("getArtist", mapOf("id" to rawId))
-                    val (artist, albums) = parseReaderArtist(response.body, rawId)
+                    val sent = reader.send("getArtist", mapOf("id" to rawId))
+                    seq = sent.issueSeq
+                    sent.requireOk("getArtist", mapOf("id" to rawId))
+                    val now = cache.now()
+                    val (artist, albums) = parseReaderArtist(sent.response.body, rawId)
                     cache.writeWholeList(
                         CacheWriteStamp(seq, now, epoch?.key), CacheEntitySource.Detail,
                         CachedListState(listKey, epoch?.key, epoch?.folderIds, 0, albums.size, null, CacheCoverage.Complete, now, now, seq),
@@ -877,9 +1017,12 @@ internal class CollectionDetailWindow(
                         CacheEntities(artists = listOf(artist), albums = albums),
                     )
                 } else {
-                    val response = reader.checked("getPlaylist", mapOf("id" to rawId))
+                    val sent = reader.send("getPlaylist", mapOf("id" to rawId))
+                    seq = sent.issueSeq
+                    sent.requireOk("getPlaylist", mapOf("id" to rawId))
+                    val now = cache.now()
                     // Entries keep their duplicates (§18.6): positions are distinct, ids may repeat.
-                    val (playlist, entries) = parseReaderPlaylist(response.body, rawId)
+                    val (playlist, entries) = parseReaderPlaylist(sent.response.body, rawId)
                     cache.writeWholeList(
                         CacheWriteStamp(seq, now, epoch?.key), CacheEntitySource.Detail,
                         CachedListState(listKey, epoch?.key, epoch?.folderIds, 0, entries.size, null, CacheCoverage.Complete, now, now, seq),
@@ -889,13 +1032,15 @@ internal class CollectionDetailWindow(
                     cache.markPlaylistDetail(seq, rawId)
                 }
                 failure = null
+                internalFailure = false
                 gone = false
-                reader.liveListReads[listKey] = now
+                reader.liveListReads[listKey] = cache.now()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (thrown: Throwable) {
                 val error = thrown.asReaderError()
-                if (error.isNotFound()) {
+                // A not-found is only a finding once the request was actually sent with a sequence.
+                if (error.isNotFound() && seq > 0) {
                     gone = true
                     failure = null
                     if (query is LibraryQuery.Artist) cache.markArtistNotFound(rawId) else cache.markPlaylistNotFound(seq, rawId)
@@ -905,7 +1050,7 @@ internal class CollectionDetailWindow(
             }
         }
         cache.evictIfNeeded()
-        emit(snapshot())
+        emitSnapshot()
     }
 
     override fun snapshot(): LibraryPublication {
@@ -928,15 +1073,12 @@ internal class CollectionDetailWindow(
                 LibraryItemsOrder.Server,
             )
         }
-        cache.touchList(listKey)
-        val members = cache.listMembers(listKey).map { it.member }
-        val pending = reader.overlay.pending(cache.serverId, members.mapTo(mutableSetOf()) { it.rawId })
-        val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+        touchShown(listKey)
         // A playlist keeps its duplicate entries (§18.6); an artist's albums are distinct anyway.
-        val items = members.mapNotNull { resolveOne(it, pending, downloaded) }
+        val (items, _) = if (state != null) itemsOf(cache.listRows(listKey), dedupe = false) else emptyList<LibraryItem>() to emptyList()
         val itemsState = when {
             state != null -> LibraryItemsState.Present
-            reader.online && failure == null -> LibraryItemsState.Loading
+            reader.online && failure == null && !internalFailure -> LibraryItemsState.Loading
             else -> LibraryItemsState.Unavailable
         }
         val live = liveThisSession && reader.sessionEpoch != null && state?.windowEpoch == reader.sessionEpoch?.key
@@ -947,6 +1089,8 @@ internal class CollectionDetailWindow(
     }
 
     override fun loadMore() = Unit
+
+    override fun loadBefore() = Unit
 
     override fun setViewport(firstIndex: Int, lastIndex: Int) = Unit
 }

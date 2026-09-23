@@ -58,31 +58,43 @@ internal class CatalogEpochReader(private val transport: LibraryEndpointTranspor
 }
 
 /**
- * The outcome of comparing a page's *after* reading with its window (spec §16.12). A page joins a
- * guarded window only as [Guarded].
+ * The outcome of bracketing one page read (spec §16.12): the reading current when the request was
+ * SENT (*before*) and a `getScanStatus` issued after its response arrived (*after*). A page joins a
+ * guarded window only as [Guarded] — both readings idle, both carrying the window's stamp.
+ *
+ * The *before* is load-bearing. OBSERVED by phase R0: a page read during a scan returned the list
+ * as it was BEFORE the scan's change, while its *after* reported the scan's new stamp with no scan
+ * running; judged by *after* alone, one stamp accepted two contents. Its *before* showed the scan.
  */
 internal enum class PageCheck {
-    /** `scanning == false` and the stamp equals the window epoch's. */
+    /** Both readings idle with the window's stamp. */
     Guarded,
 
-    /** The server was scanning: the page appends, unguarded, and the window says so. */
+    /** The server was scanning after the page: it appends, unguarded, and the window says so. */
     Scanning,
+
+    /** A scan was running when the page was sent and has ended since: the page is re-read. */
+    ScanEnded,
 
     /** The stamp moved: the window is torn and is rebased, never extended. */
     Fired,
 
-    /** No stamp (absent, sentinel, or the reading failed): deduplicated and otherwise unguarded. */
+    /** The server reports no stamp at all (absent, or the first-scan sentinel). */
     NoEpoch,
+
+    /** A reading could not be made. Nothing is concluded: the page is not used, and nothing is relabelled. */
+    Unread,
 }
 
-internal fun checkPage(windowStamp: String?, after: ScanStatusReading?): PageCheck {
-    if (after == null) return PageCheck.NoEpoch
+internal fun checkPage(windowStamp: String?, before: ScanStatusReading?, after: ScanStatusReading?): PageCheck {
+    if (before == null || after == null) return PageCheck.Unread
+    if (after.scanning) return PageCheck.Scanning
+    if (before.scanning) return PageCheck.ScanEnded
+    val beforeStamp = before.lastScan?.takeUnless(::isFirstScanSentinel)
     val afterStamp = after.lastScan?.takeUnless(::isFirstScanSentinel)
     return when {
-        after.scanning -> PageCheck.Scanning
-        afterStamp == null -> PageCheck.NoEpoch
-        windowStamp == null -> PageCheck.Fired
-        afterStamp != windowStamp -> PageCheck.Fired
+        afterStamp == null && beforeStamp == null && windowStamp == null -> PageCheck.NoEpoch
+        afterStamp == null || beforeStamp != afterStamp || windowStamp != afterStamp -> PageCheck.Fired
         else -> PageCheck.Guarded
     }
 }

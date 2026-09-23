@@ -151,24 +151,28 @@ class SeenCacheStoreTest {
 
     @Test
     fun conf78EvictsLeastRecentlyAccessedWindowsThenOrphansAndPinsSurviveEveryCeiling() = withSeenCache(
-        ceilings = SeenCacheCeilings(albums = 3, tracks = 1_000, artists = 1_000, lists = 2),
+        // A pass evicts down to the ceiling minus max(1, 1%), so a pass over lists = 3 releases two.
+        ceilings = SeenCacheCeilings(albums = 4, tracks = 1_000, artists = 1_000, lists = 3),
     ) { store, clock ->
         val cache = store.bind(BINDING)
         clock.now = 1_000
         writeWindow(cache, "list:one", listOf("album:a", "album:b"))
         clock.now = 2_000
         writeWindow(cache, "list:two", listOf("album:c"))
+        clock.now = 3_000
+        writeWindow(cache, "list:three", listOf("album:d"))
         clock.now = 5_000
-        cache.touchList("list:one") // shown again: now the most recently accessed
+        cache.touchList("list:one") // shown again: now more recently accessed than two and three
 
         clock.now = 6_000
-        writeWindow(cache, "list:three", listOf("album:d"))
+        writeWindow(cache, "list:four", listOf("album:e"))
         val report = cache.evictIfNeeded()
 
-        assertEquals(listOf("list:two"), report.lists, "the least-recently-ACCESSED window goes first, not the oldest-fetched")
-        assertEquals(listOf("album:c"), report.albums, "then the orphan it released")
-        assertEquals(setOf("album:a", "album:b", "album:d"), cache.localAlbums().map { it.record.rawId }.toSet())
+        assertEquals(listOf("list:two", "list:three"), report.lists, "the least-recently-ACCESSED windows go first, not the oldest-fetched")
+        assertEquals(setOf("album:c", "album:d"), report.albums.toSet(), "then the orphans they released")
+        assertEquals(setOf("album:a", "album:b", "album:e"), cache.localAlbums().map { it.record.rawId }.toSet())
         assertNull(cache.listState("list:two"))
+        assertNotNull(cache.listState("list:one"))
     }
 
     @Test
@@ -213,7 +217,8 @@ class SeenCacheStoreTest {
         cache.unpin(CacheItemKind.Album, "album:summary-pinned", CachePinReason.Queue)
         cache.writeEntities(stamp(cache.issue()), CacheEntitySource.ListPage, CacheEntities(albums = listOf(album("album:new", "New"))))
         cache.evictIfNeeded()
-        assertEquals(1, cache.localAlbums().size)
+        // Nothing is pinned any more, so the pass evicts to the ceiling minus one: zero.
+        assertEquals(0, cache.localAlbums().size)
     }
 
     @Test
