@@ -135,6 +135,9 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
     case transportUnreachable
     case transportTimeout
     case transportCancelled
+    /// The system's local-network privacy stopped the connection: access was refused, or the
+    /// person has not yet answered the prompt asking for it.
+    case localNetworkAccessDenied
     case tlsUntrusted
     case localNetworkPolicyRejected
     case redirectRejected
@@ -155,7 +158,8 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .invalidServerURL:
             .input
-        case .transportUnreachable, .transportTimeout, .transportCancelled:
+        case .transportUnreachable, .transportTimeout, .transportCancelled,
+             .localNetworkAccessDenied:
             .transport
         case .tlsUntrusted, .localNetworkPolicyRejected, .redirectRejected:
             .security

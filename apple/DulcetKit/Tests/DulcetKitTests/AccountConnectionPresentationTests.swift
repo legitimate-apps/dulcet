@@ -2643,6 +2643,67 @@ func queueEditingIsOfferedOnlyWhenTheControllerCanEdit() {
     #expect(editing.edits == [.playNext(addition)])
 }
 
+@Test @MainActor
+func droppingDraggedItemsOntoTheQueueAddsEachResolvableOneToTheEnd() throws {
+    DulcetQueueDragRegistry.removeAll()
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    let album = fixtureLibraryAlbum()
+    let albumAddition = DulcetQueueAddition.album(album)
+    let trackAddition = DulcetQueueAddition.searchResult(try #require(album.tracks.first))
+
+    let albumDrag = DulcetQueueDragRegistry.register(albumAddition)
+    let trackDrag = DulcetQueueDragRegistry.register(trackAddition)
+    let nothing = DulcetQueueDragRegistry.register(nil)
+    let foreign = DulcetQueueDragItem(ticket: UUID())
+
+    // Order is the drop's, and tickets the process never issued, or issued for nothing, add
+    // nothing rather than failing the whole drop.
+    #expect(DulcetQueueDragRegistry.dropOntoQueue([trackDrag, foreign, nothing, albumDrag], store: store))
+    #expect(editing.edits == [.playLater(trackAddition), .playLater(albumAddition)])
+
+    // A drop made only of unresolvable tickets reports that it did nothing.
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([foreign, nothing], store: store))
+    #expect(editing.edits.count == 2)
+}
+
+@Test @MainActor
+func theDragRegistryForgetsAbandonedDragsBeyondItsCapacity() {
+    DulcetQueueDragRegistry.removeAll()
+    let addition = DulcetQueueAddition.album(fixtureLibraryAlbum())
+    let first = DulcetQueueDragRegistry.register(addition)
+    let rest = (0..<DulcetQueueDragRegistry.capacity).map { _ in DulcetQueueDragRegistry.register(addition) }
+    #expect(DulcetQueueDragRegistry.addition(for: first) == nil)
+    #expect(DulcetQueueDragRegistry.addition(for: rest[0]) == addition)
+    #expect(DulcetQueueDragRegistry.addition(for: rest[rest.count - 1]) == addition)
+}
+
+@Test @MainActor
+func aDropCannotEditAQueueTheControllerCannotEdit() {
+    DulcetQueueDragRegistry.removeAll()
+    let (store, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    let drag = DulcetQueueDragRegistry.register(.album(fixtureLibraryAlbum()))
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([drag], store: store))
+}
+
+@Test @MainActor
+func theSearchCommandAsksTheFieldForFocusUntilTheFieldTakesIt() {
+    let (store, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    #expect(!store.searchFocusRequested)
+    store.focusSearch()
+    #expect(store.selectedDestination == .search)
+    #expect(store.searchFocusRequested)
+    // Already on Search: the command still asks, because the field may have lost focus.
+    store.searchFocusRequestHandled()
+    store.focusSearch()
+    #expect(store.searchFocusRequested)
+    store.searchFocusRequestHandled()
+    #expect(!store.searchFocusRequested)
+}
+
 @MainActor
 private final class EditingPlaybackController: DulcetPlaybackControlling, DulcetQueueEditing {
     private(set) var edits: [DulcetQueueEditIntent] = []
@@ -2654,4 +2715,127 @@ private final class EditingPlaybackController: DulcetPlaybackControlling, Dulcet
     func send(_ intent: DulcetPlaybackControlIntent) {}
     func disconnect() {}
     func edit(_ intent: DulcetQueueEditIntent) { edits.append(intent) }
+}
+
+// MARK: Local-network access
+
+@MainActor
+private final class ControlledLocalNetworkAccess: DulcetLocalNetworkAccessProbing {
+    final class Watch: DulcetLocalNetworkAccessWatch {
+        var cancelled = false
+        func cancel() { cancelled = true }
+    }
+
+    private(set) var watchedURLs: [String] = []
+    private(set) var watches: [Watch] = []
+    private var onChange: (@MainActor (DulcetLocalNetworkAccess) -> Void)?
+
+    func watch(
+        serverURL: String,
+        onChange: @escaping @MainActor (DulcetLocalNetworkAccess) -> Void
+    ) -> any DulcetLocalNetworkAccessWatch {
+        watchedURLs.append(serverURL)
+        self.onChange = onChange
+        let watch = Watch()
+        watches.append(watch)
+        return watch
+    }
+
+    func answer(_ access: DulcetLocalNetworkAccess) {
+        onChange?(access)
+    }
+}
+
+@MainActor
+private func localNetworkStore() -> (DulcetPresentationStore, ControlledAccountConnector, ControlledLocalNetworkAccess) {
+    let connector = ControlledAccountConnector()
+    let probe = ControlledLocalNetworkAccess()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        localNetworkAccess: probe
+    ))
+    store.accountServerURL = "http://10.0.0.20:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.accountAllowLocalHTTP = true
+    return (store, connector, probe)
+}
+
+private func accountFailure(_ kind: DulcetAccountFailureKind) -> DulcetAccountFailurePresentation {
+    DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(kind: kind, serverName: "10.0.0.20"))
+}
+
+@MainActor
+private func shownFailureKind(_ store: DulcetPresentationStore) -> DulcetAccountFailureKind? {
+    if case let .failed(failure) = store.snapshot.accountConnection { return failure.kind }
+    return nil
+}
+
+@Test @MainActor
+func aLocalServerBlockedByLocalNetworkPrivacySaysSoAndConnectsOnceAccessIsGranted() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+
+    // The system is asked before the server is blamed, and the spinner stays up meanwhile.
+    #expect(probe.watchedURLs == ["http://10.0.0.20:4533"])
+    #expect(store.snapshot.state == .accountConnecting)
+
+    probe.answer(.denied)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied)
+    #expect(connector.requests.count == 1)
+
+    // Granting access -- answering the prompt, or turning the switch on -- retries by itself.
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+    #expect(store.snapshot.state == .accountConnecting)
+
+    // Once per request: a server still unreachable after the grant is reported, not retried
+    // again every time the permission is toggled.
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+}
+
+@Test @MainActor
+func anUnreachableServerThatPrivacyDidNotBlockKeepsItsOwnFailure() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportTimeout)))
+    probe.answer(.notDenied)
+    #expect(shownFailureKind(store) == .transportTimeout)
+    #expect(connector.requests.count == 1)
+}
+
+@Test @MainActor
+func onlyTransportFailuresConsultLocalNetworkPrivacy() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.invalidCredentials)))
+    #expect(probe.watchedURLs.isEmpty)
+    #expect(shownFailureKind(store) == .invalidCredentials)
+}
+
+@Test @MainActor
+func aNewSubmissionStopsWatchingForTheOldOnesAccess() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.submitAccountConnection()
+    #expect(probe.watches.first?.cancelled == true)
+    // A late grant for the superseded request starts nothing.
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+}
+
+@Test
+func localNetworkDenialHasCatalogedCopy() {
+    let presentation = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
+        kind: .localNetworkAccessDenied,
+        serverName: "10.0.0.20"
+    ))
+    #expect(presentation.title == "Allow Dulcet to find devices on your local network")
+    #expect(presentation.kind.family == .transport)
 }

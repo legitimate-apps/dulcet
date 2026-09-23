@@ -556,6 +556,16 @@ struct DulcetAccountConnectionView: View {
                         .buttonStyle(.bordered)
 #endif
                 }
+
+#if !os(tvOS)
+                // tvOS has no link out to Settings; its recovery text names where to go.
+                if failure.kind == .localNetworkAccessDenied,
+                   let settings = DulcetLinks.localNetworkSettings {
+                    Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("dulcet.account-connect.local-network-settings")
+                }
+#endif
             }
         }
         .padding(DulcetSpacing.md)

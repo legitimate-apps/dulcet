@@ -92,6 +92,9 @@ targets:
         LSApplicationCategoryType: public.app-category.music
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
+        # A server on the local network is the common case for a self-hosted library. Without
+        # this the system refuses local-network access outright where it enforces the privacy.
+        NSLocalNetworkUsageDescription: "Dulcet connects to the music server you choose, which may be on your local network."
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false

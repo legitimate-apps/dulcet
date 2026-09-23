@@ -43,6 +43,12 @@ public enum DulcetAccountErrorPresenter {
                 "Dulcet could not establish a connection to \(context.serverName).",
                 "Check that the server is running and reachable from this device, then try again."
             )
+        case .localNetworkAccessDenied:
+            (
+                "Allow Dulcet to find devices on your local network",
+                "Your server is on your local network, and Dulcet does not have permission to reach it yet.",
+                "Turn on Local Network for Dulcet in Settings. Dulcet connects as soon as access is allowed."
+            )
         case .transportTimeout:
             (
                 "The server took too long to respond",
@@ -459,6 +465,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var accountRemovalID: UUID?
     private var libraryRefreshOperation: (any DulcetLibraryRefreshOperation)?
     private var generation = 0
+    private let localNetworkAccess: (any DulcetLocalNetworkAccessProbing)?
+    /// Watching for local-network access to be granted after a connection it blocked.
+    private var localNetworkWatch: (any DulcetLocalNetworkAccessWatch)?
+    /// Set when a grant has already retried the connection the person asked for, so a server
+    /// that stays unreachable is reported rather than retried again and again.
+    private var localNetworkRetryUsed = false
     private var libraryGeneration = 0
     private var searchGeneration = 0
     private var providerInstanceID: String?
@@ -508,9 +520,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryRefreshScheduler: any DulcetLibraryRefreshScheduling =
             DulcetMonotonicLibraryRefreshScheduler(),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString },
-        playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault
+        playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault,
+        localNetworkAccess: (any DulcetLocalNetworkAccessProbing)? = nil
     ) {
         self.connector = connector
+        self.localNetworkAccess = localNetworkAccess
         self.playbackStartNavigation = playbackStartNavigation
         latestPlaybackPresentation = playbackController?.currentPresentation ?? .unavailable
         self.credentialStore = credentialStore
@@ -664,6 +678,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .editQueue(intent):
             (playbackController as? any DulcetQueueEditing)?.edit(intent)
         case let .submitAccountConnection(request):
+            localNetworkRetryUsed = false
             submit(request)
         case .cancelAccountConnection:
             cancelActiveSubmission()
@@ -676,6 +691,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     private func cancelActiveSubmission() {
         guard currentSnapshot.state == .accountConnecting else { return }
+        cancelLocalNetworkWatch()
         generation += 1
         let operation = activeOperation
         activeOperation = nil
@@ -693,6 +709,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         // surface now, and sending them to settings on success answers a request they did not make:
         // they pressed Reconnect on the library screen to see their library.
         let origin = currentSnapshot.selectedDestination
+        cancelLocalNetworkWatch()
         generation += 1
         let submissionGeneration = generation
         let supersededOperation = activeOperation
@@ -744,6 +761,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 }
             case let .failed(failure) where failure.kind == .transportCancelled:
                 self.publishSavedAccountOrIdle(form: request)
+            case let .failed(failure) where self.localNetworkAccess != nil
+                && (failure.kind == .transportUnreachable || failure.kind == .transportTimeout):
+                // An unreachable local server may only be unreachable because the system has not
+                // been given -- or has not yet been asked for -- local-network access. Ask the
+                // system before blaming the server; the spinner stays up while it answers.
+                self.resolveLocalNetworkAccess(
+                    after: failure,
+                    request: request,
+                    generation: submissionGeneration
+                )
             case let .failed(failure):
                 self.publish(
                     state: failure.kind.family.presentationState,
@@ -757,6 +784,55 @@ public final class DulcetAccountDataSource: DulcetDataSource {
            currentSnapshot.state == .accountConnecting {
             activeOperation = operation
         }
+    }
+
+    private func resolveLocalNetworkAccess(
+        after failure: DulcetAccountFailurePresentation,
+        request: DulcetAccountConnectRequest,
+        generation submissionGeneration: Int
+    ) {
+        guard let localNetworkAccess else { return }
+        var answered = false
+        localNetworkWatch = localNetworkAccess.watch(serverURL: request.serverURL) { [weak self] access in
+            guard let self, self.generation == submissionGeneration else { return }
+            defer { answered = true }
+            switch access {
+            case .denied:
+                let denied = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
+                    kind: .localNetworkAccessDenied,
+                    serverName: failure.serverName
+                ))
+                self.publish(
+                    state: denied.kind.family.presentationState,
+                    destination: .settings,
+                    form: request,
+                    status: .failed(denied)
+                )
+            case .notDenied where !answered:
+                // Privacy was never the obstacle: the original failure stands.
+                self.localNetworkWatch = nil
+                self.publish(
+                    state: failure.kind.family.presentationState,
+                    destination: .settings,
+                    form: request,
+                    status: .failed(failure)
+                )
+            case .notDenied:
+                // Access was granted after it blocked the connection. Retry it once, as the
+                // person would have to, while they are still looking at the explanation.
+                self.localNetworkWatch = nil
+                guard !self.localNetworkRetryUsed,
+                      case let .failed(shown) = self.currentSnapshot.accountConnection,
+                      shown.kind == .localNetworkAccessDenied else { return }
+                self.localNetworkRetryUsed = true
+                self.submit(request)
+            }
+        }
+    }
+
+    private func cancelLocalNetworkWatch() {
+        localNetworkWatch?.cancel()
+        localNetworkWatch = nil
     }
 
     private func publish(
@@ -1590,6 +1666,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     private func removeAccount() {
+        cancelLocalNetworkWatch()
         guard case .connected = currentSnapshot.accountConnection else { return }
         let connectedStatus = currentSnapshot.accountConnection
         accountRemovalStatus = .removing

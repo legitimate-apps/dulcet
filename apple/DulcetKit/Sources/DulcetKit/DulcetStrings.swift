@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 enum DulcetStrings {
     static let appName = text("app.name", "Dulcet")
@@ -26,6 +29,7 @@ enum DulcetStrings {
     static let tryAgain = text("action.tryAgain", "Try Again")
     static let connectionSettings = text("action.connectionSettings", "Review Connection Settings")
     static let openCertificateHelp = text("action.certificateHelp", "Open CA Installation Guide")
+    static let openLocalNetworkSettings = text("action.localNetworkSettings", "Open Settings")
     static let more = text("action.more", "More")
     static let play = text("action.play", "Play")
     static let download = text("action.download", "Download")
@@ -382,4 +386,17 @@ enum DulcetLinks {
     static let certificateInstallationGuide = URL(
         string: "https://support.apple.com/guide/keychain-access/add-certificates-to-a-keychain-kyca2431/mac"
     )!
+
+    /// Where Dulcet's Local Network switch lives: the app's own page in Settings on iOS, the
+    /// Local Network privacy pane on the Mac. ASSUMED for the Mac: the pane URL is not documented
+    /// API, and a wrong one opens System Settings at its top level rather than failing.
+    static let localNetworkSettings: URL? = {
+#if os(iOS)
+        URL(string: UIApplication.openSettingsURLString)
+#elseif os(macOS)
+        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+#else
+        nil
+#endif
+    }()
 }

@@ -19,6 +19,7 @@
 "action.playAll" = "Play All";
 "action.shuffle" = "Shuffle";
 "action.connectServer" = "Connect a Server";
+"action.localNetworkSettings" = "Open Settings";
 "action.reconnect" = "Reconnect";
 "action.browseHelp" = "Learn About Servers";
 "action.tryAgain" = "Try Again";
@@ -156,6 +157,9 @@
 "account.error.transportUnreachable.title" = "The server could not be reached";
 "account.error.transportUnreachable.message" = "Dulcet could not establish a connection to this server.";
 "account.error.transportUnreachable.recovery" = "Check that the server is running and reachable from this device, then try again.";
+"account.error.localNetworkAccessDenied.title" = "Allow Dulcet to find devices on your local network";
+"account.error.localNetworkAccessDenied.message" = "Your server is on your local network, and Dulcet does not have permission to reach it yet.";
+"account.error.localNetworkAccessDenied.recovery" = "Turn on Local Network for Dulcet in Settings. Dulcet connects as soon as access is allowed.";
 "account.error.transportTimeout.title" = "The server took too long to respond";
 "account.error.transportTimeout.message" = "Account setup reached its 30-second request limit.";
 "account.error.transportTimeout.recovery" = "Check the server and network, then try again. You can cancel while Dulcet is waiting.";

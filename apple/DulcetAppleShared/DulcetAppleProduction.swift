@@ -73,7 +73,8 @@ enum DulcetAppleProduction {
                 downloadController: downloads,
                 providerInstanceIDFactory: {
                     credentialStore.activeAccountID ?? UUID().uuidString
-                }
+                },
+                localNetworkAccess: DulcetNetworkLocalNetworkAccessProbe()
             )
         )
     }
