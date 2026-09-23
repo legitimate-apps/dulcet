@@ -131,12 +131,21 @@ disposable server as the Linux conformance job. The required `core-ci` job fails
 pass and verifies their JUnit through `tools/verify-parity-evidence`. The CI emulators are x86 and
 x86_64, and the local runs above were arm64.
 
-**First CI run (workflow_dispatch on this branch):** the phone leg passed on the hosted x86_64
-emulator: 2 of 2 instrumented tests, with the proof reporting `server-plays=0->1` on a freshly
-seeded server (**OBSERVED**). The TV leg failed before any Android step: `test -w /dev/kvm` ran
-before udev had applied the permission rule. With the TV leg red, the required `core-ci` job
-failed, which confirms that the aggregate gate fails when a leg fails. The KVM step now waits
-for udev to settle.
+**CI runs (workflow_dispatch on this branch), all against a freshly seeded server:**
+
+| run | phone leg | TV leg | `core-ci` |
+|---|---|---|---|
+| 1 | pass, `server-plays=0->1` | failed before Android: `/dev/kvm` not yet writable | failed, as it must when a leg fails |
+| 2 | **failed**: background playback continued, but the foreground notification was missing at the check | pass | failed |
+| 3 | pass, `server-plays=0->1` | pass, `server-plays=0->1`, remote pause held 0 ms | **pass**: `executed parity evidence valid … tests=32` |
+| 4 | pass, `server-plays=0->1` | pass, `server-plays=0->1` | **pass** |
+
+The KVM step now waits for udev to settle. The run-2 phone failure is **not explained**, and one failure in four phone runs is too few to put a rate on. Media3
+keeps the service in the foreground for ten minutes after playback disengages, so a real demotion
+means either the notification was removed or a `startForeground` from the background was refused.
+The logcat showed neither. The check now reports the service's foreground record, the
+notification records and the session state when it fails, and fails on the first observation
+without polling.
 
 ## Still assumed or open
 
