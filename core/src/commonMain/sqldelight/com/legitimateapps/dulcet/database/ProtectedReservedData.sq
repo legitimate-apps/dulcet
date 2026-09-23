@@ -31,8 +31,10 @@ CREATE TABLE download (
 -- The mutation outbox (spec §18.3, §16.20) --------------------------------------------------------
 --
 -- One row per pending (target_id, field): a later change to the same field REPLACES the row, which
--- is the compaction rule. `value` is a small JSON object written and read only by MutationOutbox.kt;
--- it never carries a credential, a URL or anything but the target's kind and the values below.
+-- is the compaction rule. `field` is KIND-QUALIFIED (`album.starred`, `artist.rating`): ids of
+-- different kinds may be equal, and this table's schema is protected (§11.4), so the kind rides in
+-- the key's existing column rather than a new one. `value` is a small JSON object of integers written
+-- and read only by MutationOutbox.kt; it never carries a credential or a URL.
 -- `local_sequence` is the seen-cache issue sequence taken when the change was made, so it orders the
 -- change against every live read by when each was issued (never by a clock).
 
@@ -85,11 +87,13 @@ UPDATE cache_album SET starred = :starred,
   starred_at = CASE WHEN :starred = 1 THEN starred_at ELSE NULL END, issue_seq = :issue_seq
 WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
 
+-- An identity-only track (pinned, metadata not yet read) takes the value but keeps its sequence, so
+-- the read that refills its metadata is never rejected; that read's own value then wins, as it should.
 adoptTrackStarred:
 UPDATE cache_track SET starred = :starred,
-  starred_at = CASE WHEN :starred = 1 THEN starred_at ELSE NULL END, issue_seq = :issue_seq
-WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq
-  AND metadata_missing = 0;
+  starred_at = CASE WHEN :starred = 1 THEN starred_at ELSE NULL END,
+  issue_seq = CASE WHEN metadata_missing = 1 THEN issue_seq ELSE :issue_seq END
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
 
 adoptArtistRating:
 UPDATE cache_artist SET user_rating = :user_rating, issue_seq = :issue_seq
@@ -100,6 +104,14 @@ UPDATE cache_album SET user_rating = :user_rating, issue_seq = :issue_seq
 WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
 
 adoptTrackRating:
-UPDATE cache_track SET user_rating = :user_rating, issue_seq = :issue_seq
-WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq
-  AND metadata_missing = 0;
+UPDATE cache_track SET user_rating = :user_rating,
+  issue_seq = CASE WHEN metadata_missing = 1 THEN issue_seq ELSE :issue_seq END
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+-- Rebinding to a different USERNAME discards the account's queued changes in the same transaction
+-- (SeenCacheStore.bind), so no crash can leave them to be sent as another person.
+countMutationsForServer:
+SELECT count(*) FROM mutation_outbox WHERE server_id = ?;
+
+deleteMutationsForServer:
+DELETE FROM mutation_outbox WHERE server_id = ?;

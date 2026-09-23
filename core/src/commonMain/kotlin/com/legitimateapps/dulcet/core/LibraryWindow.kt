@@ -209,7 +209,7 @@ internal abstract class ReaderHandle(
 
     /** Items for rows read in one batch; per-user state is overlaid, never written back. */
     protected fun itemsOf(rows: List<CachedListRow>, dedupe: Boolean): Pair<List<LibraryItem>, List<Int>> {
-        val pending = reader.overlay.pending(cache.serverId, rows.mapTo(mutableSetOf()) { it.rawId })
+        val pending = reader.overlay.pending(cache.serverId, rows.mapTo(mutableSetOf()) { CacheListMember(it.kind, it.rawId) })
         val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
         val seen = mutableSetOf<Pair<CacheItemKind, String>>()
         val items = mutableListOf<LibraryItem>()
@@ -218,9 +218,10 @@ internal abstract class ReaderHandle(
             // Deduplicated by opaque id within a window in any case (§16.12). A playlist keeps its
             // duplicate entries (§18.6), so its caller passes dedupe = false.
             if (dedupe && !seen.add(row.kind to row.rawId)) return@forEach
-            val item: LibraryItem = row.album?.toItem(pending[row.rawId])
-                ?: row.artist?.toItem(pending[row.rawId])
-                ?: row.track?.toItem(pending[row.rawId], reader.trackPlayability(row.rawId, downloaded))
+            val overlay = pending[CacheListMember(row.kind, row.rawId)]
+            val item: LibraryItem = row.album?.toItem(overlay)
+                ?: row.artist?.toItem(overlay)
+                ?: row.track?.toItem(overlay, reader.trackPlayability(row.rawId, downloaded))
                 ?: row.playlist?.toItem()
                 ?: LibraryItem.Genre(row.rawId)
             items += item
@@ -768,10 +769,17 @@ internal class ListWindow(
      */
     private fun localViewOrEmpty(): LibraryPublication {
         val local: List<LibraryItem> = if (!reader.online) {
-            val pending = reader.overlay.pending(cache.serverId, emptySet())
             when (query) {
-                is LibraryQuery.AlbumList -> cache.localAlbums().map { it.toItem(pending[it.record.rawId]) }
-                is LibraryQuery.Artists -> cache.localArtists().map { it.toItem(pending[it.record.rawId]) }
+                is LibraryQuery.AlbumList -> cache.localAlbums().let { albums ->
+                    val members = albums.map { CacheListMember(CacheItemKind.Album, it.record.rawId) }
+                    val pending = reader.overlay.pending(cache.serverId, members.toSet())
+                    albums.zip(members) { album, member -> album.toItem(pending[member]) }
+                }
+                is LibraryQuery.Artists -> cache.localArtists().let { artists ->
+                    val members = artists.map { CacheListMember(CacheItemKind.Artist, it.record.rawId) }
+                    val pending = reader.overlay.pending(cache.serverId, members.toSet())
+                    artists.zip(members) { artist, member -> artist.toItem(pending[member]) }
+                }
                 else -> emptyList()
             }
         } else {
@@ -932,13 +940,17 @@ internal class AlbumDetailWindow(
         }
         cache.touchAlbum(album.rawId)
         val tracks = if (cached.detailComplete) cache.albumTracks(album.rawId) else emptyList()
-        val pending = reader.overlay.pending(cache.serverId, tracks.mapTo(mutableSetOf(album.rawId)) { it.rawId })
-        val header = cached.toItem(pending[album.rawId])
+        val albumMember = CacheListMember(CacheItemKind.Album, album.rawId)
+        val pending = reader.overlay.pending(
+            cache.serverId,
+            tracks.mapTo(mutableSetOf(albumMember)) { CacheListMember(CacheItemKind.Track, it.rawId) },
+        )
+        val header = cached.toItem(pending[albumMember])
         val itemsState: LibraryItemsState
         val items: List<LibraryItem>
         if (cached.detailComplete) {
             val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
-            items = tracks.map { it.toItem(pending[it.rawId], reader.trackPlayability(it.rawId, downloaded)) }
+            items = tracks.map { it.toItem(pending[CacheListMember(CacheItemKind.Track, it.rawId)], reader.trackPlayability(it.rawId, downloaded)) }
             itemsState = LibraryItemsState.Present
         } else {
             items = emptyList()
@@ -1055,7 +1067,9 @@ internal class CollectionDetailWindow(
 
     override fun snapshot(): LibraryPublication {
         val header: LibraryItem? = when (query) {
-            is LibraryQuery.Artist -> cache.artist(rawId)?.takeUnless { it.row.gone }?.toItem(null)
+            is LibraryQuery.Artist -> cache.artist(rawId)?.takeUnless { it.row.gone }?.toItem(
+                CacheListMember(CacheItemKind.Artist, rawId).let { reader.overlay.pending(cache.serverId, setOf(it))[it] },
+            )
             else -> cache.playlist(rawId)?.takeUnless { it.row.gone }?.toItem()
         }
         val state = cache.listState(listKey)
@@ -1139,8 +1153,8 @@ internal fun CachedTrack.toItem(pending: PendingUserState?, playability: Library
         durationMilliseconds = record?.durationMilliseconds,
         sourceContainer = record?.sourceContainer,
         artworkKey = record?.artworkKey,
-        starred = pending?.starred ?: record?.userState?.starred,
-        userRating = pending?.userRating ?: record?.userState?.userRating,
+        starred = pending?.starred ?: userState.starred,
+        userRating = pending?.userRating ?: userState.userRating,
         playCount = record?.userState?.playCount,
         playability = playability,
         metadataMissing = metadataMissing,

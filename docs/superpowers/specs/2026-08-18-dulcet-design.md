@@ -1925,6 +1925,13 @@ One transactional operation with a defined order, resumable if the app dies part
 Undo is available only before step 3. If the app dies mid-removal, the `removing` flag resumes the
 sequence at launch.
 
+**The offer of step 2, stated for the reader (R1d).** The count offered is the outbox's pending
+changes. Online, "submit" is a flush, and a change the server refuses is told like any refusal.
+**Offline, nothing can be submitted**, so the choice is stated as it is: "N favourite and rating
+changes haven't reached your server. Signing out now discards them." — with **Stay signed in** as
+the default and **Sign out and discard** as the other; the removal does not proceed until one is
+chosen, and it never waits silently for a connection.
+
 ---
 
 ## 15. Scrobbling, play reporting, resume position
@@ -2558,6 +2565,15 @@ the `providerInstanceId`; on any difference the namespace is purged in one trans
 is served. A reused or restored `providerInstanceId` therefore cannot surface another server's
 library — the property is enforced by the store, not remembered by a caller.
 
+**The binding and the mutation outbox (R1d).** A different **username** also discards that
+account's unsent favourite and rating changes (§16.20), in the same transaction as the rebinding, so
+no crash between the two can leave them to be sent as another person; the number discarded is
+returned to the shell, which tells the person once. A different **URL** for the same username —
+the same person moving from `http` to `https`, or from a LAN address to a domain — purges the cache
+but keeps the changes: they are that person's, and sent to an id the new address does not know they
+are refused and told like any other refusal. ASSUMED: the same username at a new address is the same
+person.
+
 **Schema intent** (SQLDelight; §11.3 carries the table list):
 
 | table | holds | key |
@@ -3003,12 +3019,7 @@ passes every test that only checks the end.
 
 §18.1 stands — `search3` from two characters, local results from the first, 250 ms debounce, shared
 normalization, one ranker, merge by id — with its local half now defined over the seen-cache rather
-than a committed generation. What changes is that **the result carries an honest scope**: **As implemented (R1c):** the debounce, the two-character minimum and the
-cancellation of an in-flight `search3` by the next keystroke are core policy
-(`LibrarySearchSession`), and an answer to an older query is never published. A `search3` that
-fails as unreachable publishes `deviceOffline`, which is what the table means by it; every other
-failure is `deviceServerFailed(kind)`. Every row names its source (`server` or `device`), and the
-device's rows are ranked with a total order, so rows never reorder by arrival.
+than a committed generation. What changes is that **the result carries an honest scope**:
 
 | scope | when | label |
 |---|---|---|
@@ -3022,6 +3033,17 @@ match *among what this device has seen*". A local-only row — one the server's 
 did not return (CONF-43 measures that divergence) — stays in the merged list and is marked as coming
 from this device, because it may be the match the person wanted; a local row that is `gone` is never
 shown. Search result *lists* are not cached; entities are (§16.13 item 4).
+
+**As implemented (R1c).** The debounce, the two-character minimum and the cancellation of an
+in-flight `search3` by the next keystroke are core policy (`LibrarySearchSession`), and an answer to
+an older query is never published — checked by query generation as well as by cancellation, because
+a transport may not observe cancellation. A `search3` that fails as unreachable publishes
+`deviceOffline`, which is what the table means by it, and later keystrokes keep that label until a
+`search3` succeeds, so it does not alternate; every other failure is `deviceServerFailed(kind)`.
+Every row names its source (`server` or `device`). Within one query rows never move; across a
+keystroke the list is ranked again over everything the device now holds — including rows the
+previous answer wrote through — with a total order (match tier, type, normalized title, id), so rows
+never reorder by arrival.
 
 ### 16.16 The fate of the mirror
 
@@ -3369,16 +3391,27 @@ retry loop.
   successful sync for that item (revision 99: the last successful *live read* of that item — there is
   no sync), in which case the local mutation is sent and the server's echoed value
   is then adopted. Last-writer-wins with an explicit ordering key, not "whatever arrives".
-  **Corrected in R1d (§28, revision 99 item 17):** read literally, a live read issued after the
+  **Corrected in R1d (§28, revision 99 item 18):** read literally, a live read issued after the
   change always wins, so a change whose send failed transiently loses to a read that merely shows
   the value the change was made over — the server never changed, and the person's change is
   silently discarded. The rule as implemented (`decideDelivery`, ordered by the seen-cache issue
   sequence, never a clock): with no read of the item issued after the change, the change is sent; a
   later read showing the change's own value adopts it without a send; a later read showing the
   value the change was made over sends it; a later read showing a **third** value — possible only
-  for a rating — loses to the server, and the person is told. A change whose earlier send lost its
-  answer never loses: the value a later read shows may be its own. ASSUMED, and stated: a value
-  first seen after the change was set after it.
+  for a rating — loses to the server, and the person is told. A value this device may itself have
+  sent — a send whose answer was lost, recorded per value — does not count as another client's,
+  since it may be this device's own; a send that provably never arrived (unreachable, or answered
+  with an error envelope) is not recorded. ASSUMED, and stated: a value first seen after the change
+  was set after it.
+- **The key includes the kind** (R1d, after review): `(server_id, kind, target_id, field)`. Opaque ids
+  of different kinds may be equal — a server numbering artists and albums independently — and a key
+  without the kind put an artist's star on the album of the same id and made the second change a
+  primary-key violation. The protected table's schema is unchanged (§11.4); the kind is carried in
+  `field` as `<kind>.<field>`.
+- **One failing change does not hold the queue.** Changes are sent oldest first; a change the server
+  answers for without applying (a busy error, a malformed answer) stays pending and the flush moves
+  on, and after three such answers in a row (ASSUMED) it is dropped and the person told. Only a
+  server that cannot be reached stops the flush, keeping every change in order.
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
   at-least-once is safe here — unlike scrobbles (§15.3).
 - On logout the outbox is offered for submission (§14.7).
@@ -4801,6 +4834,25 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `setRating` sent. That run was a local probe, not a committed test: `LibraryReader` and its
     session are internal to the core, which the conformance module cannot reach, so the
     server-backed legs of CONF-79 and CONF-84 are the shells' (R2b, R3) to carry in CI.
+19. **Corrected after independent review of R1c/R1d.** The first cut keyed the outbox and its
+    overlay by opaque id alone, so an artist's star showed on the album with the same id and the
+    second change threw a primary-key violation out of an entry point — fatal across the Swift
+    boundary; the kind is now in the key (carried in `field`, the protected schema unchanged) and
+    in the overlay's interface, and no favourites or search entry point can throw. The rebinding
+    purge left the outbox to the session's constructor, so a crash between the two could send one
+    user's stars as another; the discard is now inside the bind transaction, counted for the
+    shell, and limited to a username change (§16.10). "Attempted" was one flag set even for sends
+    that never left the device, which shielded a stale change from another client's newer rating;
+    it is now the set of values whose answers were lost. One failing change stopped the whole flush
+    silently; the flush now moves past per-change failures, caps them and tells the person (§18.3).
+    The generation check in search is not redundant with cancellation — a transport that does not
+    observe cancellation delivers an old answer after a newer keystroke — and a test now proves it.
+    An identity-only track's adopted star was invisible because the cached mapping dropped user
+    state with the missing metadata. §14.7 now defines the sign-out offer offline, and the §16.15
+    note is no longer inside a sentence. Two claims in the first cut's commit messages were wrong
+    and are corrected here: "a rebinding discards changes authored as another account" held only
+    if no crash intervened, and the queue did not hold "the opaque id, the field and a JSON object"
+    sufficient to identify a change — without the kind it could not.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

@@ -105,6 +105,30 @@ class LibrarySearchSessionTest {
     }
 
     @Test
+    fun anUnreachableServerKeepsOneLabelAcrossKeystrokes() = sessionTest { env ->
+        val session = primed(env)
+        env.server.failWithError["search3"] = DomainError.Transport.Unreachable
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        search.updateQuery("Album 002")
+        advanceUntilIdle()
+        assertIs<SearchScope.DeviceOffline>(pubs.last.scope)
+        val mark = pubs.all.size
+        search.updateQuery("Album 0021")
+        advanceUntilIdle()
+        assertTrue(pubs.all.drop(mark).all { it.value.scope is SearchScope.DeviceOffline },
+            "the label must not flip to 'on this device' and back on every keystroke")
+        assertEquals(2, env.server.count("search3"), "the server is still asked")
+        env.server.failWithError.clear()
+        search.updateQuery("Album 002")
+        assertIs<SearchScope.DeviceOffline>(pubs.last.scope, "until an answer arrives")
+        advanceUntilIdle()
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope)
+        search.updateQuery("Album 0021")
+        assertEquals(SearchScope.DeviceWhileServerPending, pubs.last.scope, "a success clears it")
+    }
+
+    @Test
     fun goingOfflineWithASearchOpenRepublishesItsScopeWithoutAKeystroke() = sessionTest { env ->
         val session = primed(env)
         val pubs = Recorder<LibrarySearchPublication>(env.server)

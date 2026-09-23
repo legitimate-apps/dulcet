@@ -55,12 +55,20 @@ internal class SeenCacheStore(
      * (spec §16.17), which carried no binding of its own.
      */
     fun bind(binding: CacheBinding): BoundSeenCache {
+        var discarded = 0L
         val purged = database.transactionWithResult {
             val queries = database.seenCacheQueries
             val stored = queries.selectBinding(binding.serverId).executeAsOneOrNull()
             val matches = stored != null &&
                 stored.normalized_base_url == binding.normalizedBaseUrl &&
                 stored.username == binding.username
+            if (stored != null && stored.username != binding.username) {
+                // Changes queued as another user must never be sent as this one (§16.10, §14.7).
+                // A server-address change for the same username keeps them.
+                val outbox = database.protectedReservedDataQueries
+                discarded = outbox.countMutationsForServer(binding.serverId).executeAsOne()
+                outbox.deleteMutationsForServer(binding.serverId)
+            }
             if (stored != null && !matches) {
                 queries.purgeNamespace(binding.serverId)
                 check(queries.countNamespaceRows(binding.serverId).executeAsOne().sum == 0L) {
@@ -78,7 +86,7 @@ internal class SeenCacheStore(
             }
             stored != null && !matches
         }
-        return BoundSeenCache(binding.serverId, database, clock, ceilings, purgedOnBind = purged) {
+        return BoundSeenCache(binding.serverId, database, clock, ceilings, purgedOnBind = purged, discardedPendingChanges = discarded) {
             counts.getOrPut(binding.serverId) { CacheRowCounts.measure(database, binding.serverId) }
         }
     }
@@ -319,6 +327,8 @@ internal data class CachedTrack(
     val rawId: String,
     val row: CacheRowState,
     val metadataMissing: Boolean,
+    /** Per-user state, carried even for an identity-only row, whose record is null (§16.20 rule 4). */
+    val userState: CacheUserState = record?.userState ?: CacheUserState(),
 )
 
 internal data class CachedPlaylist(
@@ -378,6 +388,8 @@ internal class BoundSeenCache internal constructor(
     private val ceilings: SeenCacheCeilings,
     /** True when [SeenCacheStore.bind] found a different binding and purged this namespace. */
     val purgedOnBind: Boolean,
+    /** Queued favourite and rating changes this bind discarded because the username changed. */
+    val discardedPendingChanges: Long = 0,
     private val rowCounts: () -> CacheRowCounts,
 ) {
     private val queries get() = database.seenCacheQueries
@@ -1036,6 +1048,7 @@ internal class BoundSeenCache internal constructor(
         rawId = raw_id,
         row = CacheRowState(fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone == 1L),
         metadataMissing = metadata_missing == 1L,
+        userState = CacheUserState(starred.asBoolean(), starred_at, user_rating?.toInt(), play_count, played),
     )
 
     private fun Cache_playlist.toCached() = CachedPlaylist(

@@ -672,7 +672,8 @@ internal data class PendingUserState(val starred: Boolean? = null, val userRatin
  * publish time. The cache row keeps what the server last said; the overlay is never written into it.
  */
 internal fun interface LibraryMutationOverlay {
-    fun pending(serverId: String, rawIds: Set<String>): Map<String, PendingUserState>
+    /** Keyed by kind AND id: ids of different kinds may be equal (an artist and an album both `4`). */
+    fun pending(serverId: String, targets: Set<CacheListMember>): Map<CacheListMember, PendingUserState>
 
     companion object {
         val None = LibraryMutationOverlay { _, _ -> emptyMap() }

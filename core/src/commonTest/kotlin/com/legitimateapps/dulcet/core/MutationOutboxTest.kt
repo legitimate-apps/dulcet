@@ -209,16 +209,18 @@ class MutationOutboxTest {
 
     @Test
     fun conflictRuleDecisionTable() {
-        fun change(value: Int, base: Int?, attempted: Boolean = false) =
-            PendingMutation(album4, MutationField.Rating, value, base, attempted, localSequence = 10, wallClock = 0)
+        fun change(value: Int, base: Int?, attempted: Set<Int> = emptySet()) =
+            PendingMutation(album4, MutationField.Rating, value, base, attempted, failures = 0, localSequence = 10, wallClock = 0)
         assertEquals(DeliveryDecision.Send, decideDelivery(change(5, 3), serverValue = 4, serverReadIssueSeq = 9), "read before the change")
         assertEquals(DeliveryDecision.Send, decideDelivery(change(5, 3), serverValue = 4, serverReadIssueSeq = 10))
         assertEquals(DeliveryDecision.ServerWins(4), decideDelivery(change(5, 3), serverValue = 4, serverReadIssueSeq = 11))
         assertEquals(DeliveryDecision.Send, decideDelivery(change(5, 3), serverValue = 3, serverReadIssueSeq = 11))
         assertEquals(DeliveryDecision.AlreadyApplied, decideDelivery(change(5, 3), serverValue = 5, serverReadIssueSeq = 11))
         assertEquals(DeliveryDecision.Send, decideDelivery(change(5, null), serverValue = 4, serverReadIssueSeq = 11), "unknown base never loses")
-        assertEquals(DeliveryDecision.Send, decideDelivery(change(5, 3, attempted = true), serverValue = 4, serverReadIssueSeq = 11),
-            "a possibly-delivered change never loses to what may be its own echo")
+        assertEquals(DeliveryDecision.Send, decideDelivery(change(5, 3, attempted = setOf(4)), serverValue = 4, serverReadIssueSeq = 11),
+            "a value this device may have sent may be its own echo")
+        assertEquals(DeliveryDecision.ServerWins(4), decideDelivery(change(5, 3, attempted = setOf(5)), serverValue = 4, serverReadIssueSeq = 11),
+            "a value this device never sent is another client's, even when this change was attempted")
         assertEquals(DeliveryDecision.Send, decideDelivery(change(5, 3), serverValue = null, serverReadIssueSeq = 11))
     }
 
@@ -326,8 +328,8 @@ class MutationOutboxTest {
         }, 0).value
         assertEquals(
             listOf(
-                listOf("server:session", albumId(4), "starred", """{"kind":"album","value":1,"attempted":false}"""),
-                listOf("server:session", "artist-1", "rating", """{"kind":"artist","value":3,"attempted":false}"""),
+                listOf("server:session", albumId(4), "album.starred", """{"value":1,"attempted":[],"failures":0}"""),
+                listOf("server:session", "artist-1", "artist.rating", """{"value":3,"attempted":[],"failures":0}"""),
             ),
             rows,
         )
@@ -336,13 +338,26 @@ class MutationOutboxTest {
     }
 
     @Test
-    fun aRebindingDiscardsChangesAuthoredAsTheOtherAccount() = sessionTest { env ->
+    fun aRebindingToAnotherUserDiscardsTheirChangesAndSaysHowMany() = sessionTest { env ->
         val first = env.session()
         first.setOnline(false)
         first.favourites.setFavourite(album4, true)
-        assertEquals(1L, first.favourites.pendingCount())
+        first.favourites.setRating(album4, 4)
+        assertEquals(2L, first.favourites.pendingCount())
         val rebound = env.session(binding = CacheBinding(SessionEnv.BINDING.serverId, "https://music.example", "someone-else"))
         assertEquals(0L, rebound.favourites.pendingCount(), "changes are never sent as a different user")
+        assertEquals(2L, rebound.discardedPendingChanges, "the shell is told how many were discarded")
+    }
+
+    @Test
+    fun aNewServerAddressForTheSameUserKeepsTheirChanges() = sessionTest { env ->
+        val first = env.session()
+        first.setOnline(false)
+        first.favourites.setFavourite(album4, true)
+        val moved = env.session(binding = CacheBinding(SessionEnv.BINDING.serverId, "https://music.example.org", "listener"))
+        assertTrue(moved.reader.cache.purgedOnBind, "fixture: the cache namespace itself was purged (CONF-80 unchanged)")
+        assertEquals(1L, moved.favourites.pendingCount(), "http->https or LAN->domain is the same account")
+        assertEquals(0L, moved.discardedPendingChanges)
     }
 
     // ---- The favourites API -------------------------------------------------------------------------

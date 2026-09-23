@@ -293,13 +293,13 @@ class LibraryReaderTest {
 
     @Test
     fun aPendingLocalChangeIsOverlaidOnEveryPublicationAndNeverWrittenIntoTheCache() = readerTest { env ->
-        var pending = emptyMap<String, PendingUserState>()
+        var pending = emptyMap<CacheListMember, PendingUserState>()
         val reader = env.reader(overlay = { _, ids -> pending.filterKeys { it in ids } })
         reader.connect()
         val pubs = Publications(env.server)
         reader.open(grid, pubs)
         advanceUntilIdle()
-        pending = mapOf(albumId(4) to PendingUserState(starred = true))
+        pending = mapOf(CacheListMember(CacheItemKind.Album, albumId(4)) to PendingUserState(starred = true))
         val before = env.server.log.size
         reader.republishPendingChanges(setOf(albumId(4)))
         assertEquals(before, pubs.all.last().requestsIssued, "the change must be in the next publication, before any request")

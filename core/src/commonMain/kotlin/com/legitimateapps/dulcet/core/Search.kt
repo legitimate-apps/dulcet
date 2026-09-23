@@ -249,8 +249,17 @@ internal data class LibrarySearchPublication(
  *   ([mergeSearchResults], unchanged from §18.1). Both halves are built from seen-cache records by
  *   one mapping, so a replaced row changes only where the server's data does. No empty or loading
  *   list is ever published between the device's rows and the merged ones.
- * - **Stable order.** The ranker is total ([rankResultsStably]): match tier, then type, then
- *   normalized title, then id — never the order rows arrived in.
+ * - **Order, precisely.** Within one query rows never move: the device's rows are ranked once, and
+ *   the server's answer replaces in place and appends. Across a keystroke the list is ranked again,
+ *   over everything this device now holds — including rows the previous query's server answer wrote
+ *   through — so a row appended at the bottom for one query takes its ranked place on the next. The
+ *   ranker is total ([rankResultsStably]: match tier, then type, then normalized title, then id), so
+ *   two rows kept across a keystroke keep their relative order unless their match tiers change, and
+ *   never reorder by arrival.
+ * - **One label while the server is unreachable.** Once `search3` has failed as unreachable, the
+ *   device's rows for later keystrokes are published as `deviceOffline` at once rather than
+ *   `deviceWhileServerPending`, so the label does not alternate on every keystroke; the server is
+ *   still asked after the debounce, and its first answer restores the pending scope.
  * - **Write-through.** The server's entities are written into the seen-cache as a search read
  *   ([CacheEntitySource.Search]), so the next keystroke finds them locally. Result lists are not
  *   cached (§16.15).
@@ -274,12 +283,25 @@ internal class LibrarySearchSession(
     private var items: List<SearchResultItem> = emptyList()
     private var serverIds: Set<ProviderItemId> = emptySet()
 
+    /** The last `search3` failed as unreachable, and none has succeeded since. */
+    private var serverUnreachable = false
+
     val query: String get() = text
 
     val isClosed: Boolean get() = closed
 
-    /** One keystroke: publishes the device's rows at once and schedules the server's. */
+    /** One keystroke: publishes the device's rows at once and schedules the server's. Never throws. */
     fun updateQuery(value: String) {
+        try {
+            query(value)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // A database failure: the rows already published stand. The facade must not see it.
+        }
+    }
+
+    private fun query(value: String) {
         if (closed) return
         generation += 1
         serverJob?.cancel()
@@ -294,7 +316,7 @@ internal class LibrarySearchSession(
             publish()
             return
         }
-        scope = SearchScope.DeviceWhileServerPending
+        scope = if (serverUnreachable) SearchScope.DeviceOffline(local.counts()) else SearchScope.DeviceWhileServerPending
         publish()
         if (normalizeSearchText(trimmed).isEmpty() || trimmed.length < config.minimumServerQueryLength) return
         val submitted = generation
@@ -305,11 +327,13 @@ internal class LibrarySearchSession(
             if (submitted != generation || closed) return@launch
             when (outcome) {
                 is ServerOutcome.Read -> {
+                    serverUnreachable = false
                     serverIds = outcome.items.mapTo(mutableSetOf()) { it.id }
                     items = mergeSearchResults(device, outcome.items)
                     scope = SearchScope.ServerAndDevice
                 }
                 is ServerOutcome.Failed -> {
+                    serverUnreachable = outcome.error == DomainError.Transport.Unreachable
                     scope = if (outcome.error == DomainError.Transport.Unreachable || !reader.online) {
                         SearchScope.DeviceOffline(local.counts())
                     } else {
@@ -326,7 +350,15 @@ internal class LibrarySearchSession(
 
     /** A pending favourite or rating changed: republish if any row shows one of [rawIds]. */
     fun republishPendingChanges(rawIds: Set<String>) {
-        if (!closed && items.any { it.id.rawId in rawIds }) publish()
+        if (!closed && items.any { it.id.rawId in rawIds }) {
+            try {
+                publish()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // As in updateQuery: nothing crosses the facade.
+            }
+        }
     }
 
     /** Idempotent; cancels the server request. Nothing is published after it. */
@@ -377,10 +409,10 @@ internal class LibrarySearchSession(
 
     private fun publish() {
         if (closed) return
-        val pending = reader.overlay.pending(cache.serverId, items.mapTo(mutableSetOf()) { it.id.rawId })
+        val pending = reader.overlay.pending(cache.serverId, items.mapTo(mutableSetOf()) { it.member() })
         val rows = items.map { item ->
             val state = userState(item)
-            val overlay = pending[item.id.rawId]
+            val overlay = pending[item.member()]
             LibrarySearchRow(
                 item = item,
                 source = if (item.id in serverIds) SearchResultSource.Server else SearchResultSource.Device,
@@ -392,10 +424,19 @@ internal class LibrarySearchSession(
         listener(LibrarySearchPublication(text, sequence, scope, rows))
     }
 
+    private fun SearchResultItem.member(): CacheListMember = CacheListMember(
+        when (type) {
+            SearchResultType.Artist -> CacheItemKind.Artist
+            SearchResultType.Album -> CacheItemKind.Album
+            SearchResultType.Track -> CacheItemKind.Track
+        },
+        id.rawId,
+    )
+
     private fun userState(item: SearchResultItem): CacheUserState? = when (item.type) {
         SearchResultType.Artist -> cache.artist(item.id.rawId)?.record?.userState
         SearchResultType.Album -> cache.album(item.id.rawId)?.record?.userState
-        SearchResultType.Track -> cache.track(item.id.rawId)?.record?.userState
+        SearchResultType.Track -> cache.track(item.id.rawId)?.userState
     }
 }
 
