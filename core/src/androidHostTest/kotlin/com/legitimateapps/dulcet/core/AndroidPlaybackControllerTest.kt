@@ -249,6 +249,149 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun previousAtTheFirstSongRestartsItAndNeverClearsTheQueue() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 1_000
+            val before = f.controller.state.value
+            assertFalse(before.canGoPrevious, "There is no previous song at the start without repeat-all")
+            assertFalse(before.canRestart, "One second in, Previous would do nothing worth a button")
+            assertTrue(before.canGoNext)
+            f.controller.previous()
+            f.controller.sessionPlayer.seekToPreviousMediaItem()
+            val after = f.controller.state.value
+            assertEquals(0, after.currentIndex, "Previous must not clear the queue")
+            assertEquals(before.queue.map { it.queueEntryId }, after.queue.map { it.queueEntryId })
+            assertEquals(before.playbackSessionId, after.playbackSessionId)
+            assertEquals(listOf(0L, 0L), f.probe.seekCommands, "At the first song, Previous restarts it")
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+            f.controller.cycleRepeatMode() // repeat-all wraps, so Previous now has somewhere to go
+            assertTrue(f.controller.state.value.canGoPrevious)
+        }
+    }
+
+    @Test fun nextAtTheLastSongDoesNothing() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("a", "b"), 1, AndroidQueueSource.Album, "Album", "album-id")
+            assertFalse(f.controller.state.value.canGoNext)
+            val session = f.controller.state.value.playbackSessionId
+            f.controller.next()
+            f.controller.sessionPlayer.seekToNext()
+            assertEquals(1, f.controller.state.value.currentIndex)
+            assertEquals(session, f.controller.state.value.playbackSessionId)
+            assertEquals(listOf("b"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    @Test fun aSystemPauseBecomesTheRequestedStateSoNextDoesNotResumeAloud() {
+        for (reason in listOf(androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY,
+            androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS)) Fixture().use { f ->
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            assertTrue(f.controller.state.value.playWhenReady, "The control requires playback to have been requested")
+            f.probe.systemPause(reason)
+            assertFalse(f.controller.state.value.playWhenReady, "The UI must offer Play once the system paused")
+            f.controller.next()
+            assertEquals(listOf("a", "b"), f.prepared.map { it.itemId.rawId })
+            assertFalse(f.probe.requested, "Next after an unplug must not start playing through the speaker")
+            f.controller.togglePlayPause()
+            assertTrue(f.probe.requested, "The first tap after a system pause must play, not be a no-op")
+        }
+    }
+
+    @Test fun anUnplayableFormatIsTranscodedAndItsStreamIsNotSeekable() {
+        Fixture(loadSong = { id -> song(id, suffix = "wma") }).use { f ->
+            f.controller.playSong(OWNER, "wma-song", "Legacy format")
+            assertNull(f.controller.state.value.error, "A format outside the direct-play list must not be refused")
+            val plan = f.prepared.single()
+            assertEquals(AudioContainer.Mp3, plan.expectedContainer)
+            assertEquals("mp3", plan.parameters["format"], "The profile's transcoding target must be requested")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            assertFalse(f.controller.state.value.seekable, "A transcode is not seekable until server offsets exist")
+            f.controller.seek(10_000)
+            assertTrue(f.probe.seekCommands.isEmpty())
+        }
+        // The control: a direct format through the same path is seekable and requests no format.
+        Fixture(loadSong = { id -> song(id, suffix = "flac") }).use { f ->
+            f.controller.playSong(OWNER, "flac-song", "Direct format")
+            assertNull(f.prepared.single().parameters["format"])
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            assertTrue(f.controller.state.value.seekable)
+        }
+    }
+
+    @Test fun anotherAccountsQueueIsRefusedAtEveryEntryPointBeforeAnyRequest() {
+        val loaded = mutableListOf<String>()
+        Fixture(savedOwner = "different-account", savedSongs = listOf("x", "y", "z"),
+            loadSong = { id -> loaded += id; song(id) }).use { f ->
+            val foreign = PersistentQueueStore(f.store.database).load(ServerId("different-account"))
+            val entry = foreign.entries[1].queueEntryId.value
+            f.controller.play(); f.controller.next(); f.controller.previous(); f.controller.skipToPrevious()
+            f.controller.jumpTo(entry); f.controller.setShuffle(true); f.controller.cycleRepeatMode()
+            f.controller.sessionPlayer.seekToNext(); f.controller.sessionPlayer.play()
+            assertTrue(loaded.isEmpty(), "No request may be made for another account's queue")
+            assertTrue(f.prepared.isEmpty())
+            assertFalse(f.probe.requested)
+            assertEquals(DomainError.Auth.Forbidden, f.controller.state.value.error)
+            assertNull(f.controller.state.value.playbackSessionId, "The foreign queue must not become a session")
+            assertEquals(foreign, PersistentQueueStore(f.store.database).load(ServerId("different-account")),
+                "The other account's queue must be left exactly as it was")
+        }
+    }
+
+    @Test fun aClosedControllerIgnoresEveryVerbInsteadOfCrashing() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.controller.close()
+            f.controller.play(); f.controller.pause(); f.controller.togglePlayPause(); f.controller.next()
+            f.controller.previous(); f.controller.skipToPrevious(); f.controller.seek(1); f.controller.stop()
+            f.controller.jumpTo("anything"); f.controller.setShuffle(true); f.controller.cycleRepeatMode()
+            f.controller.playSong(OWNER, "a", "A"); f.controller.rememberTracks(album("c"))
+            f.controller.sessionPlayer.play(); f.controller.sessionPlayer.seekForward(); f.controller.sessionPlayer.setVolume(0.5f)
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    @Test fun everySystemSeekVerbGoesThroughTheController() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("a"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 10_000
+            val session = f.controller.sessionPlayer
+            session.seekForward()                // 10 s + 15 s
+            session.seekBack()                   // 25 s - 5 s
+            session.seekToDefaultPosition()      // 0
+            session.seekTo(3, 7_000)             // index 3 names nothing in a one-item timeline
+            session.seekToDefaultPosition(2)
+            assertEquals(listOf(25_000L, 20_000L, 0L), f.probe.seekCommands)
+        }
+    }
+
+    @Test fun restoredTitlesComeFromLocalRowsAndAreNeverRereadPerPublication() {
+        val songs = (1..60).map { "s$it" }
+        val loaded = mutableListOf<String>()
+        Fixture(savedOwner = OWNER, savedSongs = songs, loadSong = { id -> loaded += id; song(id) }).use { f ->
+            val afterRestore = loaded.size
+            assertTrue(afterRestore in 2..26, "Restoration reads a bounded window, not the queue: $afterRestore")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            repeat(30) { shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500)); f.probe.events() }
+            assertEquals(afterRestore, loaded.size, "Publications must not issue further metadata requests")
+        }
+        loaded.clear()
+        Fixture(savedOwner = OWNER, savedSongs = songs, loadSong = { id -> loaded += id; song(id) }).use { f ->
+            val before = loaded.size
+            f.controller.rememberTracks(songs.map { AndroidTrack(OWNER, it, "Local $it") })
+            f.controller.next()
+            assertEquals("Local s2", f.controller.state.value.queue[1].track.title)
+            assertTrue(loaded.size - before <= 1, "Titles already held locally must not be requested again")
+        }
+    }
+
     @Test fun productionPlayerConsumesAuthenticatedValidatedBytes() {
         val audio = pcmWave()
         PlaybackResourceReceiver(audio).use { receiver ->
@@ -478,8 +621,8 @@ class AndroidPlaybackControllerTest {
             r.playbackSessionId, r.attemptId, r.itemId, PlaybackDeliveryPath.Legacy, PlaybackDeliveryProtocol.HttpProgressive,
             r.sourceContainer, PlaybackWireTranscodeDecision.LegacyHint(null, null), endpoint = "stream",
             parameters = mapOf("id" to r.itemId.rawId), resolutionRequest = r))
-        private fun song(id: String) = AuthenticatedEndpointResponse(200,
-            """{"subsonic-response":{"status":"ok","song":{"id":"$id","suffix":"wav","duration":40}}}""".toByteArray(),
+        private fun song(id: String, suffix: String = "wav") = AuthenticatedEndpointResponse(200,
+            """{"subsonic-response":{"status":"ok","song":{"id":"$id","suffix":"$suffix","duration":40}}}""".toByteArray(),
             "<redacted-url>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
             RequestTrace.observed("getSong", "GET", "<redacted-url>", AuthenticationLocation.None,
                 emptySet(), emptySet(), emptySet(), AccountConnectionContract.protocolVersion, null))

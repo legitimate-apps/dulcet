@@ -136,14 +136,14 @@ private fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, p
                         color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
                     Spacer(Modifier.height(24.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { playback?.skipToPrevious() }, enabled = playback != null,
+                        IconButton(onClick = { playback?.skipToPrevious() }, enabled = playback != null && (state.canGoPrevious || state.canRestart),
                             modifier = Modifier.testTag("tv.player.previous")) { Icon(DulcetIcons.SkipPrevious, "Previous") }
                         IconButton(onClick = { playback?.togglePlayPause() }, enabled = playback != null,
                             modifier = Modifier.size(64.dp).focusRequester(playFocus).testTag("tv.player.playpause")) {
                             Icon(if (state.playWhenReady) DulcetIcons.Pause else DulcetIcons.Play,
                                 if (state.playWhenReady) "Pause" else "Play", Modifier.size(36.dp))
                         }
-                        IconButton(onClick = { playback?.next() }, enabled = playback != null,
+                        IconButton(onClick = { playback?.next() }, enabled = playback != null && state.canGoNext,
                             modifier = Modifier.testTag("tv.player.next")) { Icon(DulcetIcons.SkipNext, "Next") }
                     }
                     Spacer(Modifier.height(28.dp))

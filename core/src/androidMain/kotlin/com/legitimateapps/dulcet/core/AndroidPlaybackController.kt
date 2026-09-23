@@ -44,6 +44,11 @@ public data class AndroidPlaybackState(
     val repeatMode: AndroidRepeatMode = AndroidRepeatMode.Off,
     val shuffle: Boolean = false,
     val seekable: Boolean = false,
+    /** Next and Previous move within the queue: false at its ends unless repeat-all wraps. */
+    val canGoNext: Boolean = false,
+    val canGoPrevious: Boolean = false,
+    /** Previous would restart the current song: it is seekable and past the restart threshold. */
+    val canRestart: Boolean = false,
 ) {
     val hasSession: Boolean get() = playbackSessionId != null
 }
@@ -118,7 +123,11 @@ public class AndroidPlaybackController internal constructor(
         setHandleAudioBecomingNoisy(true)
         repeatMode = Player.REPEAT_MODE_OFF
     }
-    private val engine = AndroidMedia3Engine(exo, prepareSource = { plan ->
+    private val engine = AndroidMedia3Engine(exo, onSystemPlayWhenReady = { wanted ->
+        // A headphone unplug or a lost focus pauses the player; the requested state must follow,
+        // or Pause would still be offered and the next song would start through the speaker.
+        if (!closed) { wantsPlay = wanted; publish() }
+    }, prepareSource = { plan ->
         val attemptConsumed = AtomicLong()
         consumed = attemptConsumed
         val factory = AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, requests)) { bytes ->
@@ -129,22 +138,34 @@ public class AndroidPlaybackController internal constructor(
         else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(factory).createMediaSource(item))
     })
 
-    /** Every system command takes the same path as an in-app command. Queue edits are private. */
+    /**
+     * Every transport verb a system controller can send takes the same path as an in-app command;
+     * none reaches the player directly. Queue edits and media-item replacement are not offered.
+     */
     public val sessionPlayer: Player = object : ForwardingPlayer(exo) {
         override fun play() { this@AndroidPlaybackController.play() }
         override fun pause() { this@AndroidPlaybackController.pause() }
         override fun setPlayWhenReady(value: Boolean) { if (value) play() else pause() }
         override fun stop() { this@AndroidPlaybackController.stop() }
+        // The controller prepares sources itself; a controller's generic prepare has nothing to add.
+        override fun prepare() = Unit
         override fun seekTo(positionMs: Long) { this@AndroidPlaybackController.seek(positionMs) }
+        // The player timeline holds only the current item, index 0. Any other index names nothing.
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
             if (mediaItemIndex == 0) this@AndroidPlaybackController.seek(positionMs)
         }
+        override fun seekToDefaultPosition() { this@AndroidPlaybackController.seek(0) }
+        override fun seekToDefaultPosition(mediaItemIndex: Int) {
+            if (mediaItemIndex == 0) this@AndroidPlaybackController.seek(0)
+        }
+        override fun seekBack() { this@AndroidPlaybackController.seekBy(-exo.seekBackIncrement) }
+        override fun seekForward() { this@AndroidPlaybackController.seekBy(exo.seekForwardIncrement) }
         override fun seekToNextMediaItem() { next() }
         override fun seekToNext() { next() }
         override fun seekToPreviousMediaItem() { previous() }
         override fun seekToPrevious() { skipToPrevious() }
-        override fun setVolume(volume: Float) { command(PlaybackCommand.SetVolume(id(), volume.toDouble())) }
-        override fun setPlaybackSpeed(speed: Float) { command(PlaybackCommand.SetRate(id(), speed.toDouble())) }
+        override fun setVolume(volume: Float) { if (live()) command(PlaybackCommand.SetVolume(id(), volume.toDouble())) }
+        override fun setPlaybackSpeed(speed: Float) { if (live()) command(PlaybackCommand.SetRate(id(), speed.toDouble())) }
         // Media3 sees one item at a time because the core owns the queue. Skip commands are
         // therefore advertised from the core's queue, not from the one-item player timeline, or
         // the notification and lock screen would never offer next/previous.
@@ -155,8 +176,8 @@ public class AndroidPlaybackController internal constructor(
                 Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
                 Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM).build()
         override fun isCommandAvailable(command: Int): Boolean = availableCommands.contains(command)
-        override fun hasNextMediaItem(): Boolean = queueHasNext()
-        override fun hasPreviousMediaItem(): Boolean = queueHasPrevious()
+        override fun hasNextMediaItem(): Boolean = !closed && queueHasNext()
+        override fun hasPreviousMediaItem(): Boolean = !closed && queueHasPrevious()
     }
 
     init {
@@ -184,19 +205,44 @@ public class AndroidPlaybackController internal constructor(
             }
         }
         scope.launch { drain() }
-        val restored = queue.restoreCurrentPaused()
-        // Restore only this service's account. A prior account's persisted queue is never activated
-        // with newly loaded credentials.
-        restored.startDirective?.takeIf { it.itemId.providerInstanceId == account.providerInstanceId }?.let {
-            // The title arrives with the song's own metadata; nothing is invented meanwhile.
-            start(it)
+        // Restore only this service's account. Another account's persisted queue is not even
+        // opened as a core session: its entries would otherwise be reachable by Next, Previous
+        // and Up Next and requested with this account's credentials.
+        if (ownsActiveQueue()) {
+            queue.restoreCurrentPaused().startDirective?.let {
+                // The title arrives with the song's own metadata; nothing is invented meanwhile.
+                start(it)
+            }
+            fillQueueMetadata()
         }
+    }
+
+    /** True when the core's active queue belongs to this service's account. */
+    private fun ownsActiveQueue(): Boolean = queue.activeServerId() == ServerId(account.providerInstanceId)
+
+    /** Refuses a queue verb on another account's queue before any request is made. */
+    private fun refuseForeignQueue(): Boolean {
+        if (ownsActiveQueue() || queue.activeServerId() == null) return false
+        failure = DomainError.Auth.Forbidden; publish(); return true
+    }
+
+    /** Titles for queue rows from rows the caller already holds, such as the saved library. No request. */
+    public fun rememberTracks(tracks: List<AndroidTrack>) {
+        if (!live()) return
+        var added = false
+        for (track in tracks) {
+            if (track.providerInstanceId != account.providerInstanceId || track.title.isBlank()) continue
+            val known = metadata[ProviderItemId(track.providerInstanceId, track.rawId)]
+            if (known == null || known.title.isBlank()) { remember(track); added = true }
+        }
+        if (added) publish()
     }
 
     /** Resolves an opaque selected song id using this service's saved account, never intent credentials. */
     public fun playSong(providerInstanceId: String, rawId: String, displayTitle: String) {
+        if (!live()) return
         if (providerInstanceId != account.providerInstanceId || rawId.isBlank()) {
-            checkMain(); failure = DomainError.Auth.Forbidden; publish(); return
+            failure = DomainError.Auth.Forbidden; publish(); return
         }
         playQueue(listOf(AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search")
     }
@@ -214,7 +260,7 @@ public class AndroidPlaybackController internal constructor(
         sourceRawId: String? = null,
         shuffle: Boolean = false,
     ) {
-        checkMain()
+        if (!live()) return
         val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
         require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
         if (tracks.isEmpty() || startIndex !in tracks.indices ||
@@ -259,45 +305,84 @@ public class AndroidPlaybackController internal constructor(
     }
 
     public fun play() {
-        checkMain(); wantsPlay = true
+        if (!live()) return
         if (activePlan == null) {
-            if (resolution?.isActive != true && startJob?.isActive != true)
-                transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
-        } else command(PlaybackCommand.Play(id()))
+            if (resolution?.isActive == true || startJob?.isActive == true) { wantsPlay = true; return }
+            if (refuseForeignQueue()) return
+            wantsPlay = true
+            transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
+        } else { wantsPlay = true; command(PlaybackCommand.Play(id())) }
     }
     public fun pause() {
-        checkMain(); wantsPlay = false
+        if (!live()) return
+        wantsPlay = false
         if (activePlan != null) command(PlaybackCommand.Pause(id()))
         else publish()
     }
-    public fun togglePlayPause() { if (wantsPlay && queue.snapshot().currentSession != null) pause() else play() }
-    public fun seek(positionMilliseconds: Long) { command(PlaybackCommand.Seek(id(), positionMilliseconds.milliseconds)) }
+    public fun togglePlayPause() {
+        if (!live()) return
+        if (wantsPlay && queue.snapshot().currentSession != null) pause() else play()
+    }
+    public fun seek(positionMilliseconds: Long) {
+        if (!live()) return
+        command(PlaybackCommand.Seek(id(), positionMilliseconds.coerceAtLeast(0).milliseconds))
+    }
+    private fun seekBy(deltaMilliseconds: Long) {
+        if (!live() || activePlan == null) return
+        val duration = exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 }
+        val target = (exo.currentPosition + deltaMilliseconds).coerceAtLeast(0)
+        seek(duration?.let { target.coerceAtMost(it) } ?: target)
+    }
     public fun stop() {
-        checkMain(); requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
+        if (!live()) return
+        requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
         command(PlaybackCommand.Stop(id()))
     }
-    public fun next() { checkMain(); transition(queue.next()) }
-    public fun previous() { checkMain(); transition(queue.previous()) }
+
+    /** Moves to the next entry. At the end of the queue without repeat-all it does nothing. */
+    public fun next() {
+        if (!live() || refuseForeignQueue() || !queueHasNext()) return
+        transition(queue.next())
+    }
+
+    /**
+     * Moves to the previous entry. At the start of the queue without repeat-all there is none, so
+     * the current song restarts instead; the queue is never cleared by Previous.
+     */
+    public fun previous() {
+        if (!live() || refuseForeignQueue()) return
+        if (queueHasPrevious()) transition(queue.previous()) else restartCurrentSong()
+    }
 
     /** Restarts the current song once it has played a few seconds, as a music player's back button does. */
     public fun skipToPrevious() {
-        checkMain()
+        if (!live()) return
         if (activePlan != null && exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS &&
-            exo.isCurrentMediaItemSeekable) seek(0) else previous()
+            engine.seekability == PlaybackSeekability.Seekable) seek(0) else previous()
+    }
+
+    private fun restartCurrentSong() {
+        if (activePlan == null) return
+        if (engine.seekability == PlaybackSeekability.Seekable) seek(0)
+        // An unseekable stream restarts as a new session of the same entry, which re-requests it.
+        else transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
     }
 
     /** Plays the Up Next entry the user picked. Addressed by entry identity, never by row index. */
     public fun jumpTo(queueEntryId: String) {
-        checkMain(); wantsPlay = true
+        if (!live() || refuseForeignQueue()) return
+        wantsPlay = true
         transition(queue.jumpTo(QueueEntryId(queueEntryId)))
     }
 
     public fun setShuffle(enabled: Boolean) {
-        checkMain(); capture(queue.setShuffle(enabled).effects); publish()
+        if (!live() || refuseForeignQueue()) return
+        capture(queue.setShuffle(enabled).effects); publish()
     }
 
     public fun cycleRepeatMode() {
-        checkMain(); capture(queue.cycleRepeatMode().effects); publish()
+        if (!live() || refuseForeignQueue()) return
+        capture(queue.cycleRepeatMode().effects); publish()
     }
 
     private fun queueHasNext(): Boolean {
@@ -306,7 +391,11 @@ public class AndroidPlaybackController internal constructor(
         return index < snapshot.entries.lastIndex || snapshot.repeatMode == QueueRepeatMode.All
     }
 
-    private fun queueHasPrevious(): Boolean = queue.snapshot().currentIndex != null
+    private fun queueHasPrevious(): Boolean {
+        val snapshot = queue.snapshot()
+        val index = snapshot.currentIndex ?: return false
+        return index > 0 || snapshot.repeatMode == QueueRepeatMode.All
+    }
 
     private fun transition(transition: PlaybackQueueTransition) {
         requestGeneration++; resolution?.cancel(); startJob?.cancel()
@@ -314,9 +403,11 @@ public class AndroidPlaybackController internal constructor(
         capture(transition.effects)
         transition.startDirective?.let { start(it) }
         publish()
+        fillQueueMetadata()
     }
 
-    private data class Song(val container: AudioContainer, val duration: kotlin.time.Duration?, val track: AndroidTrack)
+    /** [container] is null for a format this device cannot play directly; it is then transcoded. */
+    private data class Song(val container: AudioContainer?, val duration: kotlin.time.Duration?, val track: AndroidTrack)
     private suspend fun loadSong(rawId: String): Song {
         val response = boundaries?.loadSong?.invoke(rawId) ?: requests.request("getSong", mapOf("id" to rawId))
         val envelope = parseLibraryEnvelope(response.body.decodeToString())
@@ -333,7 +424,8 @@ public class AndroidPlaybackController internal constructor(
             "ogg", "opus" -> AudioContainer.Ogg
             "wav" -> AudioContainer.Wav
             "aac" -> AudioContainer.AdtsAac
-            else -> throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+            // wma, aiff, ape, dsf, m4b and anything unknown: not refused, transcoded (see start()).
+            else -> null
         }
         val duration = (song["duration"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }?.seconds
         val known = metadata[ProviderItemId(account.providerInstanceId, rawId)]
@@ -390,12 +482,18 @@ public class AndroidPlaybackController internal constructor(
         }
     }
 
-    /** Up Next rows restored from a previous run have identities but no titles yet. */
+    /**
+     * Up Next rows restored from a previous run have identities but no titles. Titles supplied by
+     * [rememberTracks] cost nothing; the rest are read for a window around the current entry, once
+     * per queue position rather than per publication, and each song at most once per process.
+     */
     private fun fillQueueMetadata() {
         if (metadataFill?.isActive == true || closed) return
-        val missing = queue.snapshot().entries.map { it.itemId }
+        val snapshot = queue.snapshot()
+        val from = ((snapshot.currentIndex ?: 0) - 2).coerceAtLeast(0)
+        val missing = snapshot.entries.drop(from).take(METADATA_FILL_LIMIT).map { it.itemId }
             .filter { it.providerInstanceId == account.providerInstanceId && it !in metadata && it !in metadataLoads }
-            .distinct().take(METADATA_FILL_LIMIT)
+            .distinct()
         if (missing.isEmpty()) return
         metadataLoads += missing
         metadataFill = scope.launch {
@@ -409,14 +507,23 @@ public class AndroidPlaybackController internal constructor(
     }
 
     private fun start(directive: PlaybackQueueStartDirective, knownSong: Song? = null) {
+        // The last line of defence: nothing is requested for another account's song.
+        if (directive.itemId.providerInstanceId != account.providerInstanceId) {
+            failure = DomainError.Auth.Forbidden; publish(); return
+        }
         val session = directive.playbackSessionId
         val generation = requestGeneration
         startJob?.cancel()
         startJob = scope.launch {
             try {
                 val song = knownSong ?: loadSong(directive.itemId.rawId)
+                // A format with no direct-play container goes through the profile's transcoding
+                // target on the legacy path (`stream?format=`). That path reads the source container
+                // only when no format is requested, so the target stands in for an unnamed source.
+                val transcode = ANDROID_PROFILE.transcodingProfiles.first().container
                 val request = PlaybackResolveRequest(session, directive.attemptId, directive.itemId,
-                    song.container, false, ANDROID_PROFILE, LegacyPlaybackPreference(null, null))
+                    song.container ?: transcode, false, ANDROID_PROFILE,
+                    LegacyPlaybackPreference(if (song.container == null) transcode else null, null))
                 val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 when (result) {
@@ -496,8 +603,12 @@ public class AndroidPlaybackController internal constructor(
                 QueueRepeatMode.One -> AndroidRepeatMode.One
             },
             shuffle = snapshot.shuffleState == QueueShuffleState.Enabled,
-            seekable = session?.currentAttempt?.seekability == PlaybackSeekability.Seekable)
-        if (entries.any { it.track.title.isBlank() }) fillQueueMetadata()
+            seekable = session?.currentAttempt?.seekability == PlaybackSeekability.Seekable,
+            canGoNext = session != null && queueHasNext(),
+            canGoPrevious = session != null && queueHasPrevious(),
+            canRestart = session != null && activePlan != null &&
+                engine.seekability == PlaybackSeekability.Seekable &&
+                exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS)
     }
 
     override fun close() {
@@ -511,6 +622,12 @@ public class AndroidPlaybackController internal constructor(
     }
 
     private fun checkMain() { check(Looper.myLooper() == Looper.getMainLooper()); check(!closed) }
+
+    /**
+     * Public verbs run on the main thread and are ignored once closed: a screen or a media key can
+     * outlive the service that owned this controller, and must not crash the app by pressing it.
+     */
+    private fun live(): Boolean { check(Looper.myLooper() == Looper.getMainLooper()); return !closed }
     private fun id() = PlaybackCommandId(UUID.randomUUID().toString())
 }
 

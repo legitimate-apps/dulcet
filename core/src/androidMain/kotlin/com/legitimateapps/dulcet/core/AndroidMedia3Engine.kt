@@ -18,6 +18,12 @@ internal class AndroidMedia3Engine(
     private val handler: Handler = Handler(player.applicationLooper),
     private val monotonicMillis: () -> Long = SystemClock::elapsedRealtime,
     private val wallMillis: () -> Long = System::currentTimeMillis,
+    /**
+     * Told when the platform, not the user, changes the play intent: a headphone unplug, a
+     * permanent audio-focus loss, a remote controller. The owner's own requested state must follow,
+     * or its Pause button and its next preparation would still assume playback was wanted.
+     */
+    private val onSystemPlayWhenReady: (Boolean) -> Unit = {},
 ) : PlaybackEngine {
     private var listener: PlaybackEngineEventListener? = null
     private var current: RemotePlaybackWirePlan? = null
@@ -33,7 +39,12 @@ internal class AndroidMedia3Engine(
     private var sampling = false
     private var status = PlaybackObservationStatus.Stopped
     private val position get() = player.currentPosition.coerceAtLeast(0).milliseconds
-    private val seekability get() = if (player.isCurrentMediaItemSeekable)
+    /**
+     * A transcoded stream is never seekable here, whatever the extractor reports: seeking would ask
+     * for a byte range of a transcode the server does not serve by range (the data source rejects
+     * the 200 it answers with), and server-offset seeking is not built. Direct streams follow Media3.
+     */
+    internal val seekability get() = if (current?.isTranscoded() != true && player.isCurrentMediaItemSeekable)
         PlaybackSeekability.Seekable else PlaybackSeekability.NotSeekable
 
     private val sampler = object : Runnable {
@@ -93,6 +104,7 @@ internal class AndroidMedia3Engine(
             if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
                 emit(PlaybackEngineEvent.RouteChanged(id, PlaybackRouteKind.Unknown, PlaybackRouteKind.Unknown, true))
             armSampler()
+            if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) onSystemPlayWhenReady(playWhenReady)
         }
 
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
@@ -107,8 +119,9 @@ internal class AndroidMedia3Engine(
                 emit(PlaybackEngineEvent.SeekCompleted(it.attemptId,
                     oldPosition.positionMs.coerceAtLeast(0).milliseconds,
                     newPosition.positionMs.coerceAtLeast(0).milliseconds))
-                // Reset only the adapter witness. The core retains its old delta anchor to discard
-                // the seek discontinuity rather than counting a forward jump as played time.
+                // SeekCompleted resets the core accumulator's anchor to the destination (§15.2), so
+                // only progress after the destination is credited; the adapter's own witness
+                // follows so the next sample compares against the destination as well.
                 lastPosition = newPosition.positionMs.coerceAtLeast(0)
             }
         }
@@ -192,7 +205,7 @@ internal class AndroidMedia3Engine(
                     armSampler()
                 }
                 is PlaybackCommand.Seek -> {
-                    if (current == null || !player.isCurrentMediaItemSeekable || command.position.isNegative() ||
+                    if (current == null || seekability != PlaybackSeekability.Seekable || command.position.isNegative() ||
                         !command.position.isFinite()) return rejected()
                     player.seekTo(command.position.inWholeMilliseconds)
                 }

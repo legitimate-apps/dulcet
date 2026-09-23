@@ -98,7 +98,7 @@ internal fun MiniPlayer(
                     }
                 }
                 PlayPauseButton(state, playback, filled = false, size = 48)
-                IconButton(onClick = { playback?.next() }, modifier = Modifier.testTag("player.mini.next")) {
+                IconButton(onClick = { playback?.next() }, enabled = state.canGoNext, modifier = Modifier.testTag("player.mini.next")) {
                     Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next))
                 }
             }
@@ -176,11 +176,12 @@ internal fun NowPlayingScreen(
                 ToggleIcon(DulcetIcons.Shuffle, stringResource(R.string.action_shuffle), state.shuffle, "player.shuffle") {
                     playback.setShuffle(!state.shuffle)
                 }
-                IconButton(onClick = playback::skipToPrevious, modifier = Modifier.size(64.dp).testTag("player.previous")) {
+                IconButton(onClick = playback::skipToPrevious, enabled = state.canGoPrevious || state.canRestart,
+                    modifier = Modifier.size(64.dp).testTag("player.previous")) {
                     Icon(DulcetIcons.SkipPrevious, stringResource(R.string.action_previous), Modifier.size(40.dp))
                 }
                 PlayPauseButton(state, playback, filled = true, size = 80)
-                IconButton(onClick = playback::next, modifier = Modifier.size(64.dp).testTag("player.next")) {
+                IconButton(onClick = playback::next, enabled = state.canGoNext, modifier = Modifier.size(64.dp).testTag("player.next")) {
                     Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next), Modifier.size(40.dp))
                 }
                 val repeatLabel = stringResource(when (state.repeatMode) {

@@ -74,6 +74,9 @@ internal class PlaybackQueueController(
 ) {
     private val knownDurations = mutableMapOf<QueueEntryId, Duration?>()
 
+    /** The server whose queue is active, or null when none is. Owners use it to refuse a foreign queue. */
+    fun activeServerId(): ServerId? = queues.activeServerId()
+
     fun replaceAndStart(request: PlaybackQueueRequest): PlaybackQueueTransition {
         val serverId = ServerId(request.items.first().itemId.providerInstanceId)
         val previousRepeatMode = queues.load(serverId).repeatMode

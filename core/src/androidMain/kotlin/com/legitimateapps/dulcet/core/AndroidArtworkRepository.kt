@@ -74,7 +74,8 @@ public class AndroidArtworkRepository internal constructor(
     private fun store(file: File, bytes: ByteArray) {
         try {
             root.mkdirs()
-            val partial = File(root, file.name + ".partial")
+            sweepOrphans()
+            val partial = File(root, file.name + PARTIAL)
             partial.writeBytes(bytes)
             if (!partial.renameTo(file)) partial.delete()
             trim()
@@ -83,9 +84,23 @@ public class AndroidArtworkRepository internal constructor(
         }
     }
 
-    /** Least recently used first, until the directory fits its budget. */
+    /**
+     * A process killed between writing and renaming leaves a `.partial` file no reader will ever
+     * open. Those from earlier processes are removed once, before this process writes its first.
+     */
+    @Volatile private var swept = false
+    private fun sweepOrphans() {
+        if (swept) return
+        swept = true
+        root.listFiles { entry -> entry.isFile && entry.name.endsWith(PARTIAL) }?.forEach { it.delete() }
+    }
+
+    /**
+     * Least recently used first, until the directory fits its budget. Every file counts, a
+     * partial one included, so nothing in the directory escapes the budget.
+     */
     private fun trim() {
-        val files = root.listFiles { entry -> entry.isFile && entry.name.endsWith(".image") } ?: return
+        val files = root.listFiles { entry -> entry.isFile } ?: return
         var total = files.sumOf { it.length() }
         if (total <= budgetBytes) return
         for (entry in files.sortedBy { it.lastModified() }) {
@@ -97,6 +112,7 @@ public class AndroidArtworkRepository internal constructor(
 
     internal companion object {
         const val DEFAULT_BUDGET_BYTES: Long = 64L * 1024 * 1024
+        private const val PARTIAL = ".partial"
 
         internal fun bucketFor(pixels: Int): ArtworkSizeBucket =
             ArtworkSizeBucket.entries.firstOrNull { it.pixels >= pixels } ?: ArtworkSizeBucket.Px1024

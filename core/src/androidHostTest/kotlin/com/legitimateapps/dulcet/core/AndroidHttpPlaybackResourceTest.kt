@@ -24,6 +24,23 @@ import kotlin.test.*
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class AndroidHttpPlaybackResourceTest {
+    @Test fun redirectOriginIsJudgedByTheAccountsNameNotThePinnedAddress() {
+        // A local name resolved and pinned to its address: the connection URL carries the IP and
+        // the Host header carries the name. Judged by the IP, a redirect back to the account's own
+        // name looks cross-origin and one to another name on that IP looks same-origin.
+        val pinned = "http://192.168.1.20:4533/rest/stream.view?id=song&u=U&t=T&s=S"
+        val logical = playbackLogicalUrl(pinned, "music.local:4533")
+        assertEquals("http://music.local:4533/rest/stream.view?id=song&u=U&t=T&s=S", logical)
+        assertEquals(pinned, playbackLogicalUrl(pinned, null))
+        val home = "http://music.local:4533/rest/stream.view?id=song"
+        val elsewhere = "http://192.168.1.20:4533/rest/stream.view?id=song"
+        assertEquals(RedirectPolicyDecision.PreserveCredentials, AccountConnectionContract.redirectDecision(logical, home, 0))
+        assertIs<RedirectPolicyDecision.Reject>(AccountConnectionContract.redirectDecision(logical, elsewhere, 0))
+        // The control: the pinned URL itself gets both answers wrong, which is the defect.
+        assertIs<RedirectPolicyDecision.Reject>(AccountConnectionContract.redirectDecision(pinned, home, 0))
+        assertEquals(RedirectPolicyDecision.PreserveCredentials, AccountConnectionContract.redirectDecision(pinned, elsewhere, 0))
+    }
+
     @Test fun sameOriginRedirectPreservesTheSignedQueryOnTheReceivingSocket() {
         WireServer { request ->
             if (request.path == "/rest/stream.view") WireReply.redirect("/audio?${request.rawQuery}")

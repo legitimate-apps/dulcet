@@ -58,6 +58,27 @@ class AndroidArtworkRepositoryTest {
         assertNotEquals(first.name, remaining.single().name, "The older image must be the one evicted")
     }
 
+    @Test fun aPartialFileOrphanedByAnEarlierProcessIsRemoved() = runBlocking {
+        val dir = File(root, AndroidArtworkRepository.digest(account.providerInstanceId)).apply { mkdirs() }
+        val orphan = File(dir, "orphan.image.partial").apply { writeBytes(ByteArray(4_000)) }
+        assertTrue(orphan.isFile, "The control requires the orphan to exist first")
+        // A budget the orphan fits in, so only the sweep can remove it; the budget has its own test.
+        val repository = repository(budget = 1_000_000) { PNG }
+        assertNotNull(repository.load("fresh", 256))
+        assertFalse(orphan.exists(), "An orphaned partial write must not survive a later write")
+    }
+
+    @Test fun aPartialFileCountsAgainstTheBudget() = runBlocking {
+        val repository = repository(budget = PNG.size + 4L) { PNG }
+        assertNotNull(repository.load("first", 256))
+        val dir = root.walk().first { it.isFile }.parentFile
+        // Written by this process after its sweep, so only the budget can account for it.
+        val stray = File(dir, "stray.image.partial").apply { writeBytes(ByteArray(64)) }
+        stray.setLastModified(System.currentTimeMillis() - 120_000)
+        assertNotNull(repository.load("second", 256))
+        assertFalse(stray.exists(), "A partial file is part of the directory's size")
+    }
+
     private fun repository(budget: Long = 1_000_000, respond: (String) -> ByteArray) =
         AndroidArtworkRepository(context, account, ArtworkFetcher(ArtworkEndpointTransport { parameters ->
             ArtworkEndpointResponse(200, respond(parameters.getValue("id")), "<redacted-url>")

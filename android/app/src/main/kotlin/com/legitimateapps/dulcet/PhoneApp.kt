@@ -94,6 +94,8 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     val libraryState by library.state.collectAsState()
     val index = remember(libraryState.library) { LibraryIndex.from(libraryState.library?.rows.orEmpty()) }
 
+    // Restored Up Next rows take their titles from the saved library first; no request is made.
+    LaunchedEffect(playback, index) { playback?.rememberTracks(index.albums.flatMap { it.playable() }) }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect

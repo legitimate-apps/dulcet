@@ -198,17 +198,82 @@ class AndroidMedia3EngineTest {
         engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
     }
 
+    @Test fun aTranscodedStreamIsNeverSeekableWhateverTheExtractorReports() {
+        for (transcoded in listOf(false, true)) {
+            val fake = PlayerProbe()
+            val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
+            val events = mutableListOf<PlaybackEngineEvent>()
+            engine.setEventListener { events += it }
+            val plan = playbackPlan(container = AudioContainer.Flac, transcodeTo = if (transcoded) AudioContainer.Mp3 else null)
+            engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+            fake.state = Player.STATE_READY
+            fake.events()
+            val ready = events.filterIsInstance<PlaybackEngineEvent.Ready>().single()
+            val seek = engine.executeOnPlayerThread(PlaybackCommand.Seek(commandId(), 5.seconds))
+            if (transcoded) {
+                assertEquals(PlaybackSeekability.NotSeekable, ready.seekability)
+                assertIs<PlaybackCommandOutcome.CommandRejected>(seek)
+                assertTrue(fake.seekCommands.isEmpty(), "A transcoded stream must never be asked for a byte range")
+            } else {
+                // The control: the same fake, direct, is seekable, so the refusal above is the plan's.
+                assertEquals(PlaybackSeekability.Seekable, ready.seekability)
+                assertEquals(listOf(5_000L), fake.seekCommands)
+            }
+            engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
+        }
+    }
+
+    @Test fun onlyAPlatformInitiatedIntentChangeIsReportedToTheOwner() {
+        val fake = PlayerProbe()
+        val reported = mutableListOf<Boolean>()
+        val engine = AndroidMedia3Engine(fake.player, prepareSource = {}, onSystemPlayWhenReady = { reported += it })
+        val plan = playbackPlan()
+        engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+        engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+        engine.executeOnPlayerThread(PlaybackCommand.Pause(commandId()))
+        assertTrue(reported.isEmpty(), "The owner's own commands are user requests and must not echo back")
+        engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+        fake.systemPause(Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
+        fake.systemPause(Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS)
+        assertEquals(listOf(false, false), reported)
+        engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
+    }
+
+    @Test fun suppressedOutputIsAnInterruptionAndAccruesNoProgress() {
+        val fake = PlayerProbe()
+        val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
+        val events = mutableListOf<PlaybackEngineEvent>()
+        engine.setEventListener { events += it }
+        val plan = playbackPlan()
+        engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+        engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+        fake.state = Player.STATE_READY
+        fake.events()
+        fake.position = 1_000; advance(500)
+        assertEquals(1, events.count { it is PlaybackEngineEvent.PositionChanged }, "The control requires progress before suppression")
+        fake.suppress(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+        assertTrue(events.last() is PlaybackEngineEvent.InterruptionBegan)
+        repeat(4) { fake.position += 500; advance(500) }
+        assertEquals(1, events.count { it is PlaybackEngineEvent.PositionChanged }, "Suppressed output must accrue nothing")
+        fake.suppress(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        assertEquals(1, events.count { it is PlaybackEngineEvent.InterruptionEnded })
+        fake.position += 500; advance(500)
+        assertEquals(2, events.count { it is PlaybackEngineEvent.PositionChanged })
+        engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
+    }
+
     private fun advance(millis: Long) = shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(millis))
 }
 
 internal fun commandId() = PlaybackCommandId(java.util.UUID.randomUUID().toString())
-internal fun playbackPlan(session: String = "session:opaque", attempt: String = "attempt:opaque", container: AudioContainer = AudioContainer.Wav): RemotePlaybackWirePlan {
+internal fun playbackPlan(session: String = "session:opaque", attempt: String = "attempt:opaque", container: AudioContainer = AudioContainer.Wav,
+    transcodeTo: AudioContainer? = null): RemotePlaybackWirePlan {
     val request = PlaybackResolveRequest(PlaybackSessionId(session), AttemptId(attempt), ProviderItemId("provider:opaque", "song:opaque"),
         container, false, PlaybackDeviceProfile("Dulcet", "Android", 320000, 320000,
             listOf(DirectPlayAudioProfile(listOf(container), listOf("pcm"), maxAudioChannels = 2)),
             listOf(TranscodingAudioProfile(AudioContainer.Mp3, "mp3", maxAudioChannels = 2))), LegacyPlaybackPreference(null, null))
     return RemotePlaybackWirePlan(request.playbackSessionId, request.attemptId, request.itemId, PlaybackDeliveryPath.Legacy,
-        PlaybackDeliveryProtocol.HttpProgressive, container, PlaybackWireTranscodeDecision.LegacyHint(null, null),
+        PlaybackDeliveryProtocol.HttpProgressive, transcodeTo ?: container, PlaybackWireTranscodeDecision.LegacyHint(transcodeTo, null),
         endpoint = "stream", parameters = mapOf("id" to request.itemId.rawId), resolutionRequest = request)
 }
 
@@ -218,6 +283,8 @@ internal class PlayerProbe {
     var state = Player.STATE_IDLE
     var position = 0L
     var requested = false
+    var suppression = Player.PLAYBACK_SUPPRESSION_REASON_NONE
+    var seekable = true
     val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
         when (method.name) {
             "getApplicationLooper" -> Looper.getMainLooper()
@@ -228,8 +295,10 @@ internal class PlayerProbe {
             "getDuration" -> 40_000L
             "getPlayWhenReady" -> requested
             "isPlaying" -> requested && state == Player.STATE_READY
-            "getPlaybackSuppressionReason" -> Player.PLAYBACK_SUPPRESSION_REASON_NONE
-            "isCurrentMediaItemSeekable" -> true
+            "getPlaybackSuppressionReason" -> suppression
+            "isCurrentMediaItemSeekable" -> seekable
+            "getSeekBackIncrement" -> 5_000L
+            "getSeekForwardIncrement" -> 15_000L
             "getPlaybackParameters" -> PlaybackParameters.DEFAULT
             "play", "pause" -> { requested = method.name == "play"
                 listener?.onPlayWhenReadyChanged(requested, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST); null }
@@ -245,6 +314,13 @@ internal class PlayerProbe {
             else -> throw AssertionError("Unmodeled Player call ${method.name}")
         }
     } as Player
+    /** The platform, not the user, drops the play intent: a headphone unplug or a lost focus. */
+    fun systemPause(reason: Int) {
+        requested = false
+        listener!!.onPlayWhenReadyChanged(false, reason)
+    }
+    /** A transient focus loss: the intent stays, output is suppressed. */
+    fun suppress(reason: Int) { suppression = reason; events() }
     fun adjustSeek(target: Long) = discontinuity(target, Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT)
     private fun discontinuity(target: Long, reason: Int) {
         fun info(value: Long) = Player.PositionInfo(null, 0, null, null, 0, value, value, C.INDEX_UNSET, C.INDEX_UNSET)

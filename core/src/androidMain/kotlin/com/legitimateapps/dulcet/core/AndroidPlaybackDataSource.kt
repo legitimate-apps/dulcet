@@ -201,6 +201,10 @@ internal class AndroidHttpPlaybackResource(
             AuthenticatedEndpointRequestOptions(range = range)) }
         var url = prepared.url
         var hostHeader = prepared.hostHeader
+        // Origins are compared on the address the account names, never on the pinned IP the
+        // connection uses: judged by IP, a redirect to another name on the same address would keep
+        // credentials, and one back to the account's own name would lose them.
+        var logical = playbackLogicalUrl(url, hostHeader)
         var redirects = 0
         while (true) {
             val connection = URL(url).openConnection() as HttpURLConnection
@@ -216,8 +220,8 @@ internal class AndroidHttpPlaybackResource(
                 if (status in listOf(301, 302, 303, 307, 308)) {
                     val location = connection.getHeaderField("Location")
                         ?: throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
-                    var proposed = URL(URL(url), location).toString()
-                    when (val decision = AccountConnectionContract.redirectDecision(url, proposed, redirects)) {
+                    var proposed = URL(URL(logical), location).toString()
+                    when (val decision = AccountConnectionContract.redirectDecision(logical, proposed, redirects)) {
                         RedirectPolicyDecision.PreserveCredentials -> Unit
                         is RedirectPolicyDecision.Reject -> {
                             if (decision.reason != RedirectRejectionReason.CrossOrigin)
@@ -234,6 +238,7 @@ internal class AndroidHttpPlaybackResource(
                     url = Uri.parse(target.url).buildUpon()
                         .encodedQuery(Uri.parse(proposed).encodedQuery).build().toString()
                     hostHeader = target.hostHeader
+                    logical = proposed
                     redirects++
                     connection.disconnect()
                     continue
@@ -257,6 +262,10 @@ internal class AndroidHttpPlaybackResource(
     } catch (error: AndroidPlaybackIOException) { throw error }
     catch (_: Exception) { throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }
 }
+
+/** The URL as the account names it: the pinned connection URL with its logical authority restored. */
+internal fun playbackLogicalUrl(url: String, hostHeader: String?): String =
+    if (hostHeader == null) url else Uri.parse(url).buildUpon().encodedAuthority(hostHeader).build().toString()
 
 // Exhaustive over the client's credential vocabulary: adding an authentication kind forces a
 // redirect-policy decision at compile time. Wire tests separately inventory every emitted key.

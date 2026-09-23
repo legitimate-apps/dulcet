@@ -72,9 +72,11 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     val context = LocalContext.current
     val image by produceState(key?.let { ArtworkImages.cached(account, it, pixels) }, account.providerInstanceId, key, pixels) {
         if (key.isNullOrBlank()) { value = null; return@produceState }
-        value = ArtworkImages.cached(account, key, pixels) ?: runCatching {
+        value = ArtworkImages.cached(account, key, pixels) ?: try {
             ArtworkImages.load(context, account, key, pixels)
-        }.getOrNull()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled // leaving composition cancels the load; that is not a missing cover
+        } catch (_: Exception) { null }
     }
     return image
 }
