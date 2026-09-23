@@ -59,6 +59,9 @@ public final class DulcetPresentationStore {
 
     public private(set) var snapshot: DulcetSnapshot
     public private(set) var selectedDestination: DulcetSidebarDestination
+    /// Set by the search command and cleared by the search field once it has taken focus. A
+    /// request, not a focus state: the field may not exist yet when the command arrives.
+    public private(set) var searchFocusRequested = false
     public var downloadsEnabled: Bool { source.downloadsEnabled }
     public var searchQuery: String {
         didSet {
@@ -167,11 +170,18 @@ public final class DulcetPresentationStore {
         (source as? any DulcetLibraryNavigating)?.queueEditingEnabled == true
     }
 
-    /// ⌘F on the Mac: go to Search.
+    /// ⌘F: go to Search, and ask its field for focus where the platform lets the shell move
+    /// focus into it (iOS; the Mac field deliberately carries no focus binding).
     public func focusSearch() {
         if selectedDestination != .search {
             selectDestination(.search)
         }
+        searchFocusRequested = true
+    }
+
+    /// The search field took the focus a search command asked for.
+    public func searchFocusRequestHandled() {
+        searchFocusRequested = false
     }
 
     /// Play Next, Play Later, reorder, remove, clear upcoming, and jump to a queue row.

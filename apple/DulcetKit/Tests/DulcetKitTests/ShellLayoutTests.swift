@@ -113,4 +113,13 @@ func nowPlayingBarShowsOnlyWhileSomethingIsQueued() {
     store.selectDestination(.search)
     #expect(DulcetNowPlayingBar.isVisible(for: store.snapshot))
 }
+@Test
+func sideBySideNowPlayingArtworkFitsTheWindowItIsGiven() {
+    // iPad 13-inch: the full player column. iPad mini in landscape: smaller artwork, never so
+    // large that the transport is pushed below the window, never smaller than a legible cover.
+    #expect(DulcetNowPlayingView.sideBySideArtworkSize(height: 1_000) == 520)
+    #expect(DulcetNowPlayingView.sideBySideArtworkSize(height: 700) == 320)
+    #expect(DulcetNowPlayingView.sideBySideArtworkSize(height: 500) == 280)
+}
+
 #endif

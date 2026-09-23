@@ -23,11 +23,16 @@ struct DulcetPlaybackPreparingView: View {
 }
 
 struct DulcetNowPlayingView: View {
+    @Environment(DulcetPresentationStore.self) private var store
+
     enum Presentation {
         /// A navigation destination: the sidebar's Now Playing on iPad and Mac, the tvOS section.
         case destination
-        /// The full-screen player presented from the iPhone's now-playing bar.
+        /// The player presented from the iPhone's now-playing bar, as a sheet dragged down to
+        /// dismiss.
         case sheet
+        /// The player covering an iPad's whole window, presented from its now-playing bar.
+        case fullScreen
     }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -40,6 +45,8 @@ struct DulcetNowPlayingView: View {
     var onEdit: (DulcetQueueEditIntent) -> Void = { _ in }
     /// Runs before following a link out of the player, so a sheet can get out of the way.
     var onNavigate: () -> Void = {}
+    /// A full-screen cover has no sheet to drag, so a downward swipe on the artwork closes it.
+    var onDismiss: (() -> Void)?
 
     var body: some View {
         // The reader consumes the proposal before any ScrollView, so the layout decision below
@@ -50,9 +57,21 @@ struct DulcetNowPlayingView: View {
             if sideBySide(width: width) {
                 HStack(alignment: .top, spacing: DulcetSpacing.xl) {
                     ScrollView {
-                        playerPanel(artworkSize: 332, alignment: .center, showsQueueToggle: false)
-                            .padding(.vertical, DulcetSpacing.xl)
+                        playerPanel(
+                            artworkSize: Self.sideBySideArtworkSize(height: geometry.size.height),
+                            alignment: .center,
+                            showsQueueToggle: false
+                        )
+                        .padding(.vertical, DulcetSpacing.xl)
+                        // Centred in the window's height when it fits, as the system player
+                        // sits; it scrolls only when it does not.
+                        .frame(minHeight: geometry.size.height, alignment: .center)
                     }
+                    // A player that fits does not rubber-band, so a downward swipe on the
+                    // artwork reaches the dismissal rather than bouncing the scroll view.
+                    .scrollBounceBehavior(.basedOnSize)
+                    // The artwork's shadow reaches past the column; clipping it drew a band.
+                    .scrollClipDisabled()
                     .frame(maxWidth: 520)
                     queueColumn
                         .frame(maxWidth: 390)
@@ -82,6 +101,7 @@ struct DulcetNowPlayingView: View {
                     .padding(.vertical, presentation == .sheet ? DulcetSpacing.md : DulcetSpacing.xl)
                     .frame(maxWidth: .infinity)
                 }
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .background(Color.dulcetWindow.ignoresSafeArea())
@@ -95,11 +115,20 @@ struct DulcetNowPlayingView: View {
         !accessibilitySize && width >= 820
     }
 
+    /// Artwork as large as the player column allows while the title, scrubber, transport and
+    /// footer still fit beneath it without scrolling: an iPad 13-inch window gets the full
+    /// column, an iPad mini in landscape a smaller cover rather than controls pushed off screen.
+    static func sideBySideArtworkSize(height: CGFloat) -> CGFloat {
+        min(520, max(280, height - 380))
+    }
+
     private func sideBySide(width: CGFloat) -> Bool {
 #if os(tvOS)
         false
 #else
-        presentation == .destination
+        // A phone's sheet stays one column however wide a landscape phone is: its queue is one
+        // tap away, and a split sheet leaves both halves too short to use.
+        presentation != .sheet
             && Self.usesSideBySideLayout(
                 width: width,
                 accessibilitySize: dynamicTypeSize.isAccessibilitySize
@@ -123,6 +152,7 @@ struct DulcetNowPlayingView: View {
         } else {
             DulcetUpNextList(nowPlaying: player, onEdit: onEdit)
                 .scrollContentBackground(.hidden)
+                .dulcetQueueDropTarget(store: store, cornerRadius: 12)
         }
 #endif
     }
@@ -143,6 +173,7 @@ struct DulcetNowPlayingView: View {
                 .scaleEffect(player.isPlaying || presentation == .destination ? 1 : 0.9)
                 .animation(.spring(duration: 0.4), value: player.isPlaying)
                 .frame(maxWidth: .infinity)
+                .modifier(DulcetSwipeDownToDismiss(onDismiss: onDismiss))
 
             trackIdentity(alignment: alignment)
 
@@ -426,12 +457,37 @@ struct DulcetNowPlayingView: View {
     }
 }
 
+/// A downward swipe that closes a presented player. Vertical-dominant only, so a horizontal drag
+/// near the artwork never closes it. Nothing where there is no dismissal or no touch.
+private struct DulcetSwipeDownToDismiss: ViewModifier {
+    let onDismiss: (() -> Void)?
+
+    func body(content: Content) -> some View {
 #if os(iOS)
-/// The iPhone's full-screen player, presented from the now-playing bar as a sheet the person
-/// drags down to dismiss. It reads the store directly, so it follows the queue as tracks change
-/// and says so when playback is still opening or has failed.
+        if let onDismiss {
+            // Simultaneous: the player sits in a scroll view, whose own pan would otherwise take
+            // the drag before this gesture saw it.
+            content.simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
+                let down = value.translation.height
+                guard down > 120, abs(value.translation.width) < down / 2 else { return }
+                onDismiss()
+            })
+        } else {
+            content
+        }
+#else
+        content
+#endif
+    }
+}
+
+#if os(iOS)
+/// The player presented from the now-playing bar: a sheet dragged down to dismiss on a compact
+/// width, a cover over the whole window on a regular one. It reads the store directly, so it
+/// follows the queue as tracks change and says so when playback is still opening or has failed.
 struct DulcetNowPlayingSheet: View {
     @Bindable var store: DulcetPresentationStore
+    var presentation: DulcetNowPlayingView.Presentation = .sheet
     let onClose: () -> Void
 
     var body: some View {
@@ -440,10 +496,11 @@ struct DulcetNowPlayingSheet: View {
                 if let player = store.snapshot.nowPlaying {
                     DulcetNowPlayingView(
                         player: player,
-                        presentation: .sheet,
+                        presentation: presentation,
                         onControl: store.sendPlaybackControl,
                         onEdit: store.editQueue,
-                        onNavigate: onClose
+                        onNavigate: onClose,
+                        onDismiss: presentation == .fullScreen ? onClose : nil
                     )
                 } else if store.snapshot.playbackStatus == .failed {
                     DulcetUnavailableDestinationView(
@@ -485,12 +542,16 @@ struct DulcetSearchView: View {
 #endif
 #if os(iOS)
     @FocusState private var searchFieldFocused: Bool
+    @Environment(DulcetPresentationStore.self) private var store
 #endif
     let snapshot: DulcetSnapshot
     @Binding var searchQuery: String
     let onLoadMore: (DulcetSearchResultKind) -> Void
     let onRetry: () -> Void
     let onActivateResult: (DulcetSearchResult.ID) -> Void
+    /// A search command asked for the field's focus; `onFocusRequestHandled` clears the request.
+    var focusRequested = false
+    var onFocusRequestHandled: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -517,6 +578,8 @@ struct DulcetSearchView: View {
                     .focused($searchFieldFocused)
                     .submitLabel(.search)
                     .onSubmit { searchFieldFocused = false }
+                    .onAppear(perform: takeRequestedFocus)
+                    .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
 #endif
                     // Deliberately no `.focused` binding on the Mac. MEASURED in the hosted
                     // search proof: with one attached -- even never set -- Return on a selected
@@ -545,6 +608,14 @@ struct DulcetSearchView: View {
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.search)
     }
+
+#if os(iOS)
+    private func takeRequestedFocus() {
+        guard focusRequested else { return }
+        searchFieldFocused = true
+        onFocusRequestHandled()
+    }
+#endif
 
     @ViewBuilder
     private var searchContent: some View {
@@ -658,7 +729,20 @@ struct DulcetSearchView: View {
                             DulcetSearchResultMenuItems(result: result) {
                                 onActivateResult(result.id)
                             }
+                        } preview: {
+                            DulcetContextMenuPreview(
+                                store: store,
+                                artwork: result.artwork,
+                                title: result.title,
+                                subtitle: result.subtitle
+                            )
                         }
+                        .dulcetQueueDragSource(
+                            store: store,
+                            artwork: result.artwork,
+                            title: result.title,
+                            isEnabled: result.playableTrack != nil
+                        ) { result.playableTrack.map(DulcetQueueAddition.searchResult) }
 #endif
                     }
                 }
@@ -733,12 +817,7 @@ private struct DulcetSearchResultMenuItems: View {
         case .track:
             Button(DulcetStrings.play, systemImage: "play", action: onActivate)
             if let track = result.playableTrack {
-                DulcetQueueInsertionMenuItems(addition: DulcetQueueAddition(
-                    tracks: [track],
-                    sourceKind: .search,
-                    sourceID: nil,
-                    sourceDisplayName: DulcetStrings.search
-                ))
+                DulcetQueueInsertionMenuItems(addition: .searchResult(track))
             }
             if let track = result.playableTrack, let albumID = store.libraryAlbumID(for: track) {
                 Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {

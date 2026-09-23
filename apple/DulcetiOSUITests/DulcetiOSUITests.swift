@@ -296,6 +296,124 @@ final class DulcetiOSUITests: XCTestCase {
         proveSearchQueryRanksAndActivatesTrack(windowExpectation: .regularWidth)
     }
 
+    /// The iPad shell with a hardware keyboard: Now Playing is not a sidebar place, Space plays
+    /// and pauses, Command-F puts the cursor in Search -- where Space then types a space rather
+    /// than pausing -- and the now-playing bar opens the player over the whole window with Up
+    /// Next beside it.
+    @MainActor
+    func testIPadKeyboardShortcutsAndFullScreenPlayer() {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires an iPad simulator; a physical device is not valid evidence")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url",
+            configuration.serverURL,
+            "-dulcet-debug-account-username",
+            configuration.username,
+            "-dulcet-debug-account-password",
+            configuration.password,
+        ]
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertGreaterThan(
+            window.frame.width,
+            700,
+            "This proof requires a regular-width iPad window; an iPhone is invalid evidence"
+        )
+        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live account connection must succeed first")
+            return
+        }
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
+            return
+        }
+        XCTAssertFalse(
+            app.staticTexts["dulcet.sidebar.nowPlaying"].exists,
+            "Now Playing is presented from the bar on iPad, never listed as a sidebar place"
+        )
+
+        let album = app.buttons.matching(NSPredicate(
+            format: "label CONTAINS %@ AND identifier != %@",
+            "Threshold Boundary", "dulcet.mini-player.open"
+        )).firstMatch
+        guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
+            XCTFail("The disposable server must expose the Threshold Boundary album")
+            return
+        }
+        album.tap()
+        let play = app.buttons["dulcet.album.play"].firstMatch
+        guard play.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must offer Play")
+            return
+        }
+        play.tap()
+
+        // The bar's play/pause names the action it would take: "Pause" while playing.
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard playPause.waitForExistence(timeout: 20),
+              waitForLabel("Pause", of: playPause, timeout: 30) else {
+            XCTFail("Playback must start from the album; play/pause reads \(playPause.label)")
+            return
+        }
+        app.typeKey(" ", modifierFlags: [])
+        XCTAssertTrue(
+            waitForLabel("Play", of: playPause, timeout: 20),
+            "Space must pause; play/pause reads \(playPause.label)"
+        )
+
+        app.typeKey("f", modifierFlags: .command)
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 10) else {
+            XCTFail("Command-F must open Search: " + app.debugDescription)
+            return
+        }
+        let focused = NSPredicate(format: "hasKeyboardFocus == true")
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [expectation(for: focused, evaluatedWith: field)], timeout: 5),
+            .completed,
+            "Command-F must put the cursor in the search field"
+        )
+        app.typeText("Thirty One")
+        XCTAssertEqual(field.value as? String, "Thirty One",
+                       "Space in the search field must type a space")
+        XCTAssertEqual(playPause.label, "Play",
+                       "Space typed into the search field must not resume playback")
+
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 5) else {
+            XCTFail("The bar must remain on Search")
+            return
+        }
+        bar.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        guard title.waitForExistence(timeout: 10) else {
+            XCTFail("The bar must open the player: " + app.debugDescription)
+            return
+        }
+        XCTAssertEqual(title.label, "Twenty Nine Seconds")
+        // Covering the window, not a detail column: the player spans past the sidebar's edge.
+        XCTAssertLessThan(title.frame.minX, 300, "The player must cover the sidebar, not sit beside it")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 5),
+            "A regular-width player shows Up Next beside it"
+        )
+        XCTAssertFalse(
+            app.buttons["dulcet.now-playing.up-next"].exists,
+            "With Up Next already beside the player there is no toggle for it"
+        )
+        app.buttons["dulcet.now-playing.close"].firstMatch.tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 10), "Closing must dismiss the player")
+        XCTAssertTrue(field.exists, "Closing returns to the surface the player was opened from")
+        print("DULCET IPAD KEYBOARD PASS no-now-playing-row=true space-paused=true cmd-f-focused=true"
+            + " space-typed-in-field=true full-screen-player=true up-next-beside=true closed=true")
+    }
+
     @MainActor
     private func proveSearchQueryRanksAndActivatesTrack(
         windowExpectation: SearchUIWindowExpectation

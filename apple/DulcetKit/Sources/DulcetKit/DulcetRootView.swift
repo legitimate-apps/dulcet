@@ -226,39 +226,154 @@ private struct DulcetTVSectionNavigation: View {
 /// The iPhone and iPad shell.
 ///
 /// A compact width -- every iPhone in portrait, and an iPad in a narrow multitasking window --
-/// gets the platform's bottom tab bar with the now-playing bar above it and the full player as a
-/// sheet. A regular width keeps the sidebar, with the now-playing bar floating over the detail.
-/// The size class decides, not the device, so an iPad dragged into Slide Over behaves like a
-/// phone rather than squeezing a sidebar into it.
+/// gets the platform's bottom tab bar. A regular width keeps the sidebar. The size class decides,
+/// not the device, so an iPad window resized in Stage Manager or Split View behaves like a phone
+/// rather than squeezing a sidebar into it.
+///
+/// Now Playing is never a place on either: the now-playing bar sits above the content and opens
+/// the player over it, a sheet on a compact width and a cover over the whole window on a regular
+/// one. The presentation lives here, above both shells, so a window resized across the boundary
+/// keeps the player open and only changes how it is presented.
 private struct DulcetIOSShell: View {
     @Bindable var store: DulcetPresentationStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var playerPresented = false
+    /// The last place the person was, so a Now Playing destination arriving from elsewhere (the
+    /// Show Now Playing command, a restored selection) opens the player over that place.
+    @State private var lastPlace: DulcetSidebarDestination = .library
+
+    static let places: [DulcetSidebarDestination] = [.library, .search, .settings]
+
+    private var compact: Bool { horizontalSizeClass == .compact }
 
     var body: some View {
-        if horizontalSizeClass == .compact {
-            DulcetCompactShell(store: store)
-        } else {
-            ZStack {
-                Color.dulcetWindow.ignoresSafeArea()
-                NavigationSplitView {
-                    DulcetSidebar(store: store)
-                } detail: {
-                    DulcetDestinationStack(
-                        store: store,
-                        barPlacement: .floating,
-                        onOpenPlayer: { store.selectDestination(.nowPlaying) }
-                    )
+        Group {
+            if compact {
+                DulcetCompactShell(store: store, lastTab: $lastPlace, onOpenPlayer: openPlayer)
+            } else {
+                ZStack {
+                    Color.dulcetWindow.ignoresSafeArea()
+                    NavigationSplitView {
+                        DulcetSidebar(store: store, destinations: Self.places)
+                    } detail: {
+                        DulcetDestinationStack(
+                            store: store,
+                            barPlacement: .floating,
+                            onOpenPlayer: openPlayer
+                        )
+                    }
+                    .navigationSplitViewStyle(.balanced)
+                    .dulcetForeground(.primaryTextOnWindow)
                 }
-                .navigationSplitViewStyle(.balanced)
-                .dulcetForeground(.primaryTextOnWindow)
             }
+        }
+        .sheet(isPresented: presented(whenCompact: true)) {
+            DulcetNowPlayingSheet(store: store, presentation: .sheet, onClose: closePlayer)
+        }
+        .fullScreenCover(isPresented: presented(whenCompact: false)) {
+            DulcetNowPlayingSheet(store: store, presentation: .fullScreen, onClose: closePlayer)
+        }
+        .onAppear(perform: absorbNowPlayingDestination)
+        .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
+        .background {
+            DulcetKeyboardShortcuts(store: store, onShowNowPlaying: openPlayer)
+        }
+    }
+
+    private func openPlayer() { playerPresented = true }
+    private func closePlayer() { playerPresented = false }
+
+    private func presented(whenCompact: Bool) -> Binding<Bool> {
+        Binding(
+            get: { playerPresented && compact == whenCompact },
+            set: { isPresented in
+                // Only a dismissal from the style currently in use closes the player; the other
+                // style reporting false while it hands over must not.
+                if !isPresented, compact == whenCompact { playerPresented = false }
+            }
+        )
+    }
+
+    private func absorbNowPlayingDestination() {
+        let destination = store.selectedDestination
+        if Self.places.contains(destination) {
+            lastPlace = destination
+        } else if destination == .nowPlaying {
+            store.selectDestination(lastPlace)
+            playerPresented = true
         }
     }
 }
 
-/// Tabs for the destinations that exist (Library, Search, Connection), the now-playing bar above
-/// the tab bar, and Now Playing as a sheet dragged down to dismiss -- never a tab, because it is
-/// not a place, it is what is playing.
+/// The hardware-keyboard shortcuts of an iPad: Space plays and pauses (away from Search and
+/// Connection, whose text fields own it), Command-arrows skip,
+/// Command-F puts the cursor in Search, Command-L opens the player. Holding Command lists them.
+///
+/// They are shortcut buttons in the shell's own view hierarchy rather than the scene's
+/// `commands`. MEASURED on an iPadOS 26.5 simulator: the same buttons declared as scene commands
+/// never fired from an XCUITest hardware key press -- not Space, not Command-F, not even with
+/// every disabled state removed -- while these are part of the responder chain the key press
+/// reaches. Each is drawn at zero size and hidden from accessibility: it exists for its shortcut.
+private struct DulcetKeyboardShortcuts: View {
+    @Bindable var store: DulcetPresentationStore
+    let onShowNowPlaying: () -> Void
+    /// Space belongs to text entry on a surface that has a text field. A key shortcut is matched
+    /// alongside text input, so Space typed into Search also paused or resumed playback --
+    /// OBSERVED in the iPad keyboard proof: the field read "Thirty One" and playback had resumed.
+    /// Decided by the surface rather than by tracking which field is being edited, so there is no
+    /// editing state that can be left stale by a field leaving the screen.
+    private var spaceBelongsToText: Bool {
+        store.selectedDestination == .search || store.selectedDestination == .settings
+    }
+
+    var body: some View {
+        let state = DulcetPlaybackMenuState(nowPlaying: store.snapshot.nowPlaying)
+        ZStack {
+            shortcut(state.nowPlaying?.isPlaying == true ? DulcetStrings.pause : DulcetStrings.play,
+                     key: .space, modifiers: [], enabled: !spaceBelongsToText && state.isEnabled(.playPause)) {
+                perform(.playPause, in: state)
+            }
+            shortcut(DulcetStrings.next, key: .rightArrow, modifiers: .command,
+                     enabled: state.isEnabled(.next)) {
+                perform(.next, in: state)
+            }
+            shortcut(DulcetStrings.previous, key: .leftArrow, modifiers: .command,
+                     enabled: state.isEnabled(.previous)) {
+                perform(.previous, in: state)
+            }
+            shortcut(DulcetStrings.menuSearch, key: "f", modifiers: .command, enabled: true) {
+                store.focusSearch()
+            }
+            shortcut(DulcetStrings.menuShowNowPlaying, key: "l", modifiers: .command,
+                     enabled: DulcetNowPlayingBar.isVisible(for: store.snapshot)) {
+                onShowNowPlaying()
+            }
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private func shortcut(
+        _ title: String,
+        key: KeyEquivalent,
+        modifiers: EventModifiers,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .keyboardShortcut(key, modifiers: modifiers)
+            .disabled(!enabled)
+    }
+
+    private func perform(_ command: DulcetPlaybackMenuCommand, in state: DulcetPlaybackMenuState) {
+        guard let intent = state.action(for: command) else { return }
+        store.sendPlaybackControl(intent)
+    }
+}
+
+/// Tabs for the destinations that exist (Library, Search, Connection), with the now-playing bar
+/// above the tab bar.
 ///
 /// The bar is a material card in each tab rather than the tab bar's own bottom accessory. The
 /// accessory was tried on iOS 26.5: its glass adapts to the content scrolling beneath it, and
@@ -267,21 +382,17 @@ private struct DulcetIOSShell: View {
 /// fixed contrast relationship and behaves the same on every supported iOS version.
 private struct DulcetCompactShell: View {
     @Bindable var store: DulcetPresentationStore
-    @State private var playerPresented = false
-    /// The last tab the person was on, so a Now Playing destination arriving from elsewhere
-    /// (a size-class change from an iPad sidebar) is shown as the sheet over that tab.
-    @State private var lastTab: DulcetSidebarDestination = .library
-
-    static let tabs: [DulcetSidebarDestination] = [.library, .search, .settings]
+    @Binding var lastTab: DulcetSidebarDestination
+    let onOpenPlayer: () -> Void
 
     var body: some View {
         TabView(selection: tabSelection) {
-            ForEach(Self.tabs) { destination in
+            ForEach(DulcetIOSShell.places) { destination in
                 DulcetDestinationStack(
                     store: store,
                     tab: destination,
                     barPlacement: .floating,
-                    onOpenPlayer: { playerPresented = true }
+                    onOpenPlayer: onOpenPlayer
                 )
                     .tabItem {
                         Label(destination.windowTitle, systemImage: destination.symbolName)
@@ -290,18 +401,13 @@ private struct DulcetCompactShell: View {
                     .tag(destination)
             }
         }
-        .sheet(isPresented: $playerPresented) {
-            DulcetNowPlayingSheet(store: store, onClose: { playerPresented = false })
-        }
-        .onAppear(perform: absorbNowPlayingDestination)
-        .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
     }
 
     private var tabSelection: Binding<DulcetSidebarDestination> {
         Binding(
             get: {
                 let destination = store.selectedDestination
-                return Self.tabs.contains(destination) ? destination : lastTab
+                return DulcetIOSShell.places.contains(destination) ? destination : lastTab
             },
             set: { destination in
                 lastTab = destination
@@ -310,16 +416,6 @@ private struct DulcetCompactShell: View {
                 store.selectDestination(destination)
             }
         )
-    }
-
-    private func absorbNowPlayingDestination() {
-        let destination = store.selectedDestination
-        if Self.tabs.contains(destination) {
-            lastTab = destination
-        } else if destination == .nowPlaying {
-            store.selectDestination(lastTab)
-            playerPresented = true
-        }
     }
 }
 
@@ -497,24 +593,35 @@ private struct DulcetLibraryRouteView: View {
 #if !os(tvOS)
 private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
+    /// The rows to show. The Mac lists Now Playing as a place; iOS presents it over the content
+    /// from the now-playing bar instead, and leaves it out.
+    var destinations: [DulcetSidebarDestination] = [.library, .search, .nowPlaying, .settings]
 
     var body: some View {
         VStack(spacing: 0) {
             List(selection: selection) {
                 Section {
-                    sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
-                    sidebarRow(DulcetStrings.search, symbol: DulcetSidebarDestination.search.symbolName, destination: .search)
-                    sidebarRow(DulcetStrings.nowPlaying, symbol: DulcetSidebarDestination.nowPlaying.symbolName, destination: .nowPlaying)
+                    if destinations.contains(.library) {
+                        sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
+                    }
+                    if destinations.contains(.search) {
+                        sidebarRow(DulcetStrings.search, symbol: DulcetSidebarDestination.search.symbolName, destination: .search)
+                    }
+                    if destinations.contains(.nowPlaying) {
+                        sidebarRow(DulcetStrings.nowPlaying, symbol: DulcetSidebarDestination.nowPlaying.symbolName, destination: .nowPlaying)
+                    }
                 } header: {
                     Text(DulcetStrings.browseSection)
                         .textCase(.uppercase)
                 }
 
-                Section {
-                    sidebarRow(DulcetStrings.settings, symbol: "server.rack", destination: .settings)
-                } header: {
-                    Text(DulcetStrings.accountSection)
-                        .textCase(.uppercase)
+                if destinations.contains(.settings) {
+                    Section {
+                        sidebarRow(DulcetStrings.settings, symbol: "server.rack", destination: .settings)
+                    } header: {
+                        Text(DulcetStrings.accountSection)
+                            .textCase(.uppercase)
+                    }
                 }
             }
             .listStyle(.sidebar)
@@ -651,7 +758,9 @@ private struct DulcetStateSurface: View {
                 searchQuery: $store.searchQuery,
                 onLoadMore: store.loadMoreSearchResults,
                 onRetry: store.retrySearch,
-                onActivateResult: store.activateSearchResult
+                onActivateResult: store.activateSearchResult,
+                focusRequested: store.searchFocusRequested,
+                onFocusRequestHandled: store.searchFocusRequestHandled
             )
         case .nowPlaying:
             if snapshot.state == .nowPlaying, let player = snapshot.nowPlaying {

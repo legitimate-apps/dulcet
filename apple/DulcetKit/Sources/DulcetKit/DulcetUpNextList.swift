@@ -109,6 +109,7 @@ public struct DulcetUpNextSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .dulcetHoverEffect()
         .accessibilityIdentifier("dulcet.upNext.row.\(offset)")
         .contextMenu {
             Button(DulcetQueueStrings.playNow) { onEdit(model.jumpIntent(to: entry)) }

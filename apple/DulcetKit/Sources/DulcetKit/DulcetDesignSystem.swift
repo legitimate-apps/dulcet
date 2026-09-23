@@ -280,12 +280,29 @@ extension View {
 #endif
     }
 
+    /// A plain media control. On iPadOS it answers the pointer as system controls do: artwork
+    /// lifts, rows and text highlight.
     @ViewBuilder
-    func dulcetMediaButtonStyle() -> some View {
+    func dulcetMediaButtonStyle(hover: DulcetHoverEffect = .highlight) -> some View {
 #if os(tvOS)
         buttonStyle(.borderless)
 #else
         buttonStyle(.plain)
+            .dulcetHoverEffect(hover)
+#endif
+    }
+
+    /// The pointer effect for a control whose style draws none of its own. Nothing without a
+    /// pointer interaction to attach it to.
+    @ViewBuilder
+    func dulcetHoverEffect(_ effect: DulcetHoverEffect = .highlight) -> some View {
+#if os(iOS)
+        switch effect {
+        case .highlight: hoverEffect(.highlight)
+        case .lift: hoverEffect(.lift)
+        }
+#else
+        self
 #endif
     }
 
@@ -481,4 +498,12 @@ extension Duration {
         return String(format: "%lld:%02lld", minutes, seconds)
     }
 }
+
+enum DulcetHoverEffect {
+    /// A tint behind a row, a link or an icon control.
+    case highlight
+    /// Artwork rising toward the pointer, for a card that is mostly image.
+    case lift
+}
+
 #endif

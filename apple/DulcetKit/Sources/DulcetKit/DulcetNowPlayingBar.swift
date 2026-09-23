@@ -61,6 +61,7 @@ struct DulcetNowPlayingBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .dulcetHoverEffect()
         .accessibilityIdentifier("\(Self.identifier).open")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(DulcetStrings.openNowPlayingHint)
@@ -150,6 +151,7 @@ struct DulcetNowPlayingBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .dulcetHoverEffect()
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.35)
         .accessibilityLabel(label)
@@ -248,6 +250,8 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.dulcetSeparator.opacity(0.45), lineWidth: 0.5)
                 }
+                // Dropping a track or album on the bar adds it to the end of the queue.
+                .dulcetQueueDropTarget(store: store, cornerRadius: 16)
                 .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
                 .padding(.horizontal, DulcetSpacing.sm)
                 .padding(.bottom, DulcetSpacing.xs)

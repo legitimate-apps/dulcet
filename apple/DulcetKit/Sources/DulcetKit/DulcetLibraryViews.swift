@@ -542,6 +542,7 @@ struct DulcetEqualWidthHStack: Layout {
 
 struct DulcetAlbumShelfItem: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
     let album: DulcetAlbum
     var offline = false
     /// The grid's column width, when the tile should fill its column; otherwise the fixed shelf
@@ -584,7 +585,7 @@ struct DulcetAlbumShelfItem: View {
             .frame(width: width, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .dulcetMediaButtonStyle()
+        .dulcetMediaButtonStyle(hover: .lift)
         .accessibilityLabel(DulcetStrings.albumAccessibility(
             album.title,
             artists: DulcetStrings.artistNames(album.albumArtists),
@@ -592,6 +593,13 @@ struct DulcetAlbumShelfItem: View {
         ))
         .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
         .dulcetAlbumContextMenu(album: album, isEnabled: !offline)
+        // An album whose track list has not been read has nothing to queue yet.
+        .dulcetQueueDragSource(
+            store: store,
+            artwork: album.artwork,
+            title: album.title,
+            isEnabled: !offline && !album.tracks.isEmpty
+        ) { .album(album) }
     }
 }
 
@@ -623,6 +631,7 @@ enum DulcetTrackRowSurface {
 
 struct DulcetTrackRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
     let track: DulcetTrack
     let showAlbum: Bool
     let index: Int
@@ -679,6 +688,12 @@ struct DulcetTrackRow: View {
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityHint(DulcetStrings.play)
+            .dulcetQueueDragSource(
+                store: store,
+                artwork: track.artwork,
+                title: track.title,
+                isEnabled: track.availability == .playable
+            ) { .track(track, in: store) }
         #endif
         }
     }
@@ -1111,6 +1126,7 @@ struct DulcetArtistLink: View {
                 Text(names).font(font)
             }
             .buttonStyle(.plain)
+            .dulcetHoverEffect()
             .dulcetForeground(.accentTextOnWindow)
             .accessibilityAddTraits(.isLink)
             .accessibilityHint(DulcetStrings.goToArtist)
@@ -1127,6 +1143,7 @@ struct DulcetArtistLink: View {
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
+            .dulcetHoverEffect()
             .fixedSize()
             .dulcetForeground(.accentTextOnWindow)
             .accessibilityHint(DulcetStrings.goToArtist)
@@ -1173,6 +1190,7 @@ struct DulcetAlbumLink: View {
                 Text(title).font(.subheadline)
             }
             .buttonStyle(.plain)
+            .dulcetHoverEffect()
             .dulcetForeground(.secondaryTextOnWindow)
             .accessibilityAddTraits(.isLink)
             .accessibilityHint(DulcetStrings.goToAlbum)
@@ -1225,24 +1243,44 @@ private struct DulcetTrackContextMenu: ViewModifier {
 #if os(tvOS)
         content
 #else
+#if os(iOS)
         content.contextMenu {
-            if let onPlay, track.availability == .playable {
-                Button(DulcetStrings.play, systemImage: "play", action: onPlay)
-            }
-            DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
-            if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
-                Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
-                    onNavigate()
-                    store.showAlbum(albumID)
-                }
-            }
-            DulcetGoToArtistMenuItems(
-                credits: track.credits.filter { $0.role == .artist },
-                onNavigate: onNavigate
+            menuItems
+        } preview: {
+            DulcetContextMenuPreview(
+                store: store,
+                artwork: track.artwork,
+                title: track.title,
+                subtitle: DulcetStrings.artistNames(
+                    track.credits.filter { $0.role == .artist }.map(\.name)
+                )
             )
         }
+#else
+        content.contextMenu { menuItems }
+#endif
 #endif
     }
+
+#if !os(tvOS)
+    @ViewBuilder
+    private var menuItems: some View {
+        if let onPlay, track.availability == .playable {
+            Button(DulcetStrings.play, systemImage: "play", action: onPlay)
+        }
+        DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
+        if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
+            Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
+                onNavigate()
+                store.showAlbum(albumID)
+            }
+        }
+        DulcetGoToArtistMenuItems(
+            credits: track.credits.filter { $0.role == .artist },
+            onNavigate: onNavigate
+        )
+    }
+#endif
 }
 
 private struct DulcetAlbumContextMenu: ViewModifier {
@@ -1255,26 +1293,76 @@ private struct DulcetAlbumContextMenu: ViewModifier {
         content
 #else
         if isEnabled {
+#if os(iOS)
             content.contextMenu {
-                if !album.tracks.isEmpty {
-                    Button(DulcetStrings.play, systemImage: "play") {
-                        store.playAlbum(album.id, shuffle: false)
-                    }
-                    Button(DulcetStrings.shuffle, systemImage: "shuffle") {
-                        store.playAlbum(album.id, shuffle: true)
-                    }
-                    DulcetQueueInsertionMenuItems(addition: .album(album))
-                }
-                DulcetGoToArtistMenuItems(
-                    credits: album.credits.filter { $0.role == .albumArtist }
+                menuItems
+            } preview: {
+                DulcetContextMenuPreview(
+                    store: store,
+                    artwork: album.artwork,
+                    title: album.title,
+                    subtitle: DulcetStrings.artistNames(album.albumArtists)
                 )
             }
+#else
+            content.contextMenu { menuItems }
+#endif
         } else {
             content
         }
 #endif
     }
+
+#if !os(tvOS)
+    @ViewBuilder
+    private var menuItems: some View {
+        if !album.tracks.isEmpty {
+            Button(DulcetStrings.play, systemImage: "play") {
+                store.playAlbum(album.id, shuffle: false)
+            }
+            Button(DulcetStrings.shuffle, systemImage: "shuffle") {
+                store.playAlbum(album.id, shuffle: true)
+            }
+            DulcetQueueInsertionMenuItems(addition: .album(album))
+        }
+        DulcetGoToArtistMenuItems(
+            credits: album.credits.filter { $0.role == .albumArtist }
+        )
+    }
+#endif
 }
+
+#if os(iOS)
+/// What a long press lifts: the item's artwork at a size worth recognising, with its name,
+/// rather than the row or tile it came from. The preview is drawn outside the view it belongs
+/// to, so it is handed the store its artwork loads through.
+struct DulcetContextMenuPreview: View {
+    let store: DulcetPresentationStore
+    let artwork: DulcetArtwork
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+            DulcetArtworkView(artwork: artwork, size: 260)
+            Text(title)
+                .font(.headline)
+                .dulcetForeground(.primaryTextOnWindow)
+                .lineLimit(2)
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(2)
+            }
+        }
+        .padding(DulcetSpacing.md)
+        .frame(width: 292, alignment: .leading)
+        .background(Color.dulcetWindow)
+        .environment(store)
+    }
+}
+#endif
 
 #if !os(tvOS)
 /// Play Next and Add to Queue, offered only while the playback controller can edit the queue.
@@ -1295,6 +1383,8 @@ struct DulcetQueueInsertionMenuItems: View {
     }
 }
 
+#endif
+
 extension DulcetQueueAddition {
     /// One track, attributed to its album when the library can identify it.
     @MainActor
@@ -1308,6 +1398,16 @@ extension DulcetQueueAddition {
         )
     }
 
+    /// A track found by search, attributed to the search rather than to an album.
+    static func searchResult(_ track: DulcetTrack) -> Self {
+        DulcetQueueAddition(
+            tracks: [track],
+            sourceKind: .search,
+            sourceID: nil,
+            sourceDisplayName: DulcetStrings.search
+        )
+    }
+
     static func album(_ album: DulcetAlbum) -> Self {
         DulcetQueueAddition(
             tracks: album.tracks,
@@ -1318,6 +1418,7 @@ extension DulcetQueueAddition {
     }
 }
 
+#if !os(tvOS)
 private struct DulcetGoToArtistMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let credits: [DulcetCredit]
