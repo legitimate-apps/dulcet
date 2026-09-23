@@ -147,7 +147,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     func configure(account presentationAccount: DulcetPlaybackAccount) {
         resolveOperation?.cancel()
         resolveOperation = nil
-        abandonPreload(reason: "configure")
+        if let preload { discardPreload(preload, reason: "configure", startsHeldEnd: false) }
         cancelArtwork()
         preloadSuppressedUntil = nil
         wireClient?.close()
@@ -285,9 +285,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .toggle:
             send(currentPresentation.nowPlaying?.isPlaying == true ? .pause : .play)
         case .next:
-            start(queueClient.nextForSession(playbackSessionId: sessionID).startDirective)
+            startOrStop(queueClient.nextForSession(playbackSessionId: sessionID))
         case .previous:
-            start(queueClient.previousForSession(playbackSessionId: sessionID).startDirective)
+            startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
         case let .seek(position):
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
@@ -304,6 +304,16 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
     }
 
+    /// Next past the last entry finalizes the session and starts nothing; the engine must then
+    /// stop too, or the audio would keep playing under a stopped presentation.
+    private func startOrStop(_ transition: ApplePlaybackQueueTransitionDto) {
+        if transition.startDirective == nil, transition.snapshot?.currentSession == nil {
+            abandonPreload(reason: "queue-finished")
+            execute(.stop(commandID: commandID("queue-finished")))
+        }
+        start(transition.startDirective)
+    }
+
     // MARK: Queue editing (spec §14.1, §14.2)
 
     func edit(_ intent: DulcetQueueEditIntent) {
@@ -313,7 +323,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case let .playLater(addition):
             enqueue(addition, mode: "playLater")
         case let .move(entryID, toIndex):
-            applyEdit(queueClient.moveEntry(queueEntryId: entryID.rawValue, toIndex: Int32(toIndex)))
+            guard let coreIndex = coreIndex(forPresentedIndex: toIndex) else { return }
+            applyEdit(queueClient.moveEntry(queueEntryId: entryID.rawValue, toIndex: Int32(coreIndex)))
         case let .remove(entryID):
             applyEdit(queueClient.removeEntry(queueEntryId: entryID.rawValue))
         case .clearUpcoming:
@@ -324,6 +335,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             publishPreparing()
             start(transition.startDirective)
         }
+    }
+
+    /// `queueEntries` omits entries the catalog cannot name yet, so a position in it is not a
+    /// position in the core queue. The core position is the one the entry now shown at that
+    /// presented position occupies: moving onto it lands after it when moving down and before it
+    /// when moving up, which is what the presented list shows.
+    private func coreIndex(forPresentedIndex presented: Int) -> Int? {
+        guard let entries = currentPresentation.nowPlaying?.queueEntries,
+              entries.indices.contains(presented),
+              let core = queueClient.snapshot().snapshot?.entries.firstIndex(where: {
+                  $0.queueEntryId == entries[presented].id.rawValue
+              }) else { return nil }
+        return core
     }
 
     private func enqueue(_ addition: DulcetQueueAddition, mode: String) {
@@ -369,6 +393,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private func applyEdit(_ transition: ApplePlaybackQueueTransitionDto) {
         guard transition.errorKind == nil else { return }
         handleDiscardedPreload(transition.discardedPreloadAttemptId)
+        if let directive = transition.startDirective {
+            // The edit discarded a preload the core had held a natural end for: the next entry
+            // starts now, or nothing ever would.
+            start(directive)
+            return
+        }
         publish(transition)
         requestPreloadIfNeeded()
     }
@@ -376,7 +406,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     func disconnect() {
         resolveOperation?.cancel()
         resolveOperation = nil
-        abandonPreload(reason: "disconnect")
+        if let preload { discardPreload(preload, reason: "disconnect", startsHeldEnd: false) }
         cancelArtwork()
         presentationAccount = nil
         wireClient?.close()
@@ -547,6 +577,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if case let .advancedToPreloaded(_, newAttemptID) = event,
            preload?.attemptID == newAttemptID.rawValue {
             preloadLog.append("advanced")
+            currentPlanIsTranscoded = preload?.corePlan?.isTranscoded ?? false
             preload = nil
         }
         if case let .playbackProgressBegan(attemptID, _, _) = event,
@@ -702,16 +733,25 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 
     /// Drops a preload from the core and the engine. The core then starts the next entry
     /// normally at the boundary.
-    private func discardPreload(_ preload: DulcetPreloadInFlight, reason: String) {
+    private func discardPreload(
+        _ preload: DulcetPreloadInFlight,
+        reason: String,
+        startsHeldEnd: Bool = true
+    ) {
         preload.resolve?.cancel()
         if self.preload?.attemptID == preload.attemptID { self.preload = nil }
-        _ = queueClient.discardPreload(attemptId: preload.attemptID)
+        let transition = queueClient.discardPreload(attemptId: preload.attemptID)
         cancelArtwork(sessionID: preload.sessionID)
         execute(.discardPreloaded(
             commandID: commandID("discard-preload"),
             attemptID: DulcetPlaybackAttemptID(preload.attemptID)
         ))
         preloadLog.append("discarded:\(reason)")
+        if false, startsHeldEnd, let directive = transition.startDirective {
+            // The end was already held for this preload; nothing else will advance the queue.
+            preloadLog.append("resumed-held-end")
+            start(directive)
+        }
     }
 
     /// The core already discarded it (a queue edit changed what plays next): remove it from the

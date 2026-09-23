@@ -1471,17 +1471,22 @@ assumed, because the protocol does not expose the cap:
 `preloadNext` resolves and validates the next plan while the current one plays; the transition emits
 `AdvancedToPreloaded`, which is a **session boundary** (§12.1).
 
-**How the core and a shell share the boundary (revision 101).** The core registers the preloaded
-session (`preloadNext(sessionId)`) only once the current session has reported
+**How the core and a shell share the boundary (revision 101).** A shell asks the core to register
+the preloaded session (`preloadNext(sessionId)`) only once the current session has reported
 `PlaybackProgressBegan` — current playback is established before its successor competes for the
-server. It declines under repeat-one, when nothing follows, and when the next item has a saved
+server. That ordering is the **shell's** obligation; the core checks only that the session is
+current. The core declines under repeat-one, when nothing follows, and when the next item has a saved
 resume position (a preloaded item starts at zero). When the current attempt reports `EndedNaturally`
 while a registered preload is still the entry that plays next, the core **starts nothing** and waits
 for the engine's `AdvancedToPreloaded`, which moves the selection; issuing a start there would stop
 and re-prepare an item that is already playing. The shell must discard a preload that it has not yet
 delivered to the engine *before* recording that `EndedNaturally`, or the core would wait for a
 boundary that is never coming. Any queue edit that changes what plays next discards the preload and
-reports it, so the shell removes it from the engine (`discardPreloaded`). A manual Next, a jump, or a
+reports it, so the shell removes it from the engine (`discardPreloaded`). A preload discarded
+**after** the core held a natural end for it — it failed at the boundary, or an edit landed between
+the end and the advance — makes the discard itself start the next entry, since no later event
+will. A preload's failure must never touch the current item: the engine does not pause the shared
+player for a refresh the preloaded item needs. A manual Next, a jump, or a
 queue replacement is a fresh start and discards every preload.
 
 **On the Apple legacy path every plan is direct play**, so the budget never blocks a preload there.

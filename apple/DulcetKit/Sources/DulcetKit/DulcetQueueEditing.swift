@@ -49,7 +49,9 @@ public enum DulcetQueueEditIntent: Sendable, Hashable {
     case playNext(DulcetQueueAddition)
     /// At the end of the queue. Also starts playback when nothing is queued.
     case playLater(DulcetQueueAddition)
-    /// Moves an entry to `toIndex` in the whole queue's order (`DulcetNowPlaying.queueEntries`).
+    /// Moves an entry to `toIndex` in `DulcetNowPlaying.queueEntries` -- the entries the app can
+    /// show, which may omit ones the library has not read yet. The controller maps it to the
+    /// core queue's position.
     case move(DulcetQueueEntryID, toIndex: Int)
     /// Removes an entry that is not the current one.
     case remove(DulcetQueueEntryID)

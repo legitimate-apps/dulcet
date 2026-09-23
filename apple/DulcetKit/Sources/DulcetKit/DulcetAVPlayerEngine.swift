@@ -46,7 +46,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var cancelAudioSessionGrace: (@Sendable () -> Void)?
     private var activeAudioSessionID: DulcetPlaybackSessionID?
     private var interruptionWasPlaying = false
-    /// Validated artwork bytes per session: at most the current and the preloaded one.
+    /// Validated artwork bytes per session: pruned to the current one at each advance and emptied
+    /// whenever the engine lets go of its items.
     private var artworkBySession: [DulcetPlaybackSessionID: Data] = [:]
     private var resourceLoaderTraceHandler:
         (@Sendable (DulcetPlaybackResourceLoaderTraceEvent) -> Void)?
@@ -409,7 +410,14 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         commandID: DulcetPlaybackCommandID,
         completion: @escaping DulcetPlaybackCommandCompletion
     ) {
-        guard let current, plan.playbackSessionID != current.plan.playbackSessionID else {
+        guard let current, plan.playbackSessionID != current.plan.playbackSessionID,
+              !current.endEmitted else {
+            // An item that already ended cannot be preloaded behind: AVQueuePlayer may have
+            // removed it, and the boundary has passed. The owner falls back to a fresh start.
+            completion(.rejected(commandID: commandID, reason: .invalidState))
+            return
+        }
+        if usesAVFoundationMediaStack, !player.items().contains(where: { $0 === current.item }) {
             completion(.rejected(commandID: commandID, reason: .invalidState))
             return
         }
@@ -518,6 +526,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         preloaded?.invalidate()
         current = nil
         preloaded = nil
+        artworkBySession = [:]
         player.removeAllItems()
         playerObservers.forEach { $0.invalidate() }
         playerObservers.removeAll()
@@ -730,9 +739,14 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard let context = context(for: attemptID), !context.failureEmitted else { return }
         if refreshReason == .unauthorized || refreshReason == .expired {
             context.waitingForRefresh = true
-            context.playRequested = false
-            player.pause()
-            updateSystemTransport(for: context, isPlaying: false)
+            // Only the CURRENT item may pause the shared player. A preloaded item that needs a
+            // refresh is reported and dropped by its owner; pausing here would silence the song
+            // that is playing, with no Paused event, for a failure that is not its own.
+            if context === current {
+                context.playRequested = false
+                player.pause()
+                updateSystemTransport(for: context, isPlaying: false)
+            }
             emit(
                 .sourceRefreshRequired(
                     attemptID: attemptID,
@@ -978,6 +992,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             preloaded?.invalidate()
             self.current = nil
             preloaded = nil
+            artworkBySession = [:]
             player.removeAllItems()
             deactivateAudioSessionImmediately()
             systemMediaControls.clear()

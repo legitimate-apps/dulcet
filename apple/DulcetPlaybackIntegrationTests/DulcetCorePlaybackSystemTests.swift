@@ -114,6 +114,61 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.engine.count("preload"), preloadsBefore)
     }
 
+    /// The engine held the preload, the current item ended, and then the preload FAILED -- so
+    /// no AdvancedToPreloaded is coming. The next entry must start fresh, not leave silence under
+    /// a "playing" presentation.
+    func testAPreloadFailingAtTheBoundaryStartsTheNextEntryFresh() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        fixture.emit(.failedBeforeStart(attemptID: preload.attempt, error: .transport))
+
+        let fresh = try await fixture.waitForPrepare(rawID: "b", after: preparesBefore)
+        XCTAssertNotEqual(fresh, preload.attempt)
+        XCTAssertTrue(fixture.controller.preloadLog.contains("resumed-held-end"),
+                      "the discard must be what restarted playback: \(fixture.controller.preloadLog)")
+    }
+
+    /// Moves are expressed against what the app can SHOW; entries the catalog cannot name are
+    /// absent there but present in the core, so the controller must map the position.
+    func testAMoveAgainstAPresentationThatHidesAnEntryLandsWhereTheListShowsIt() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c", "d"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying != nil }
+        // "hidden" is queued in the core but absent from the catalog, so it is not presented.
+        let inserted = fixture.queue.enqueue(insertion: ApplePlaybackQueueInsertionDto(
+            items: [ApplePlaybackQueueItemDto(
+                providerInstanceId: fixture.tracks[0].id.providerInstanceID,
+                rawId: "hidden",
+                durationMilliseconds: 120_000
+            )],
+            sourceKind: "search", sourceRawId: nil, sourceDisplayName: "Search", mode: "playNext"
+        ))
+        fixture.controller.publish(inserted)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.entries.map(\.rawId), ["a", "hidden", "b", "c", "d"])
+        let presented = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying?.queueEntries)
+        XCTAssertEqual(presented.map(\.track.id.rawID), ["a", "b", "c", "d"], "the setup hides one entry")
+
+        // Move d to presented index 2, where the list shows c. Unmapped, core index 2 would put
+        // d before b (the hidden entry shifts it by one); mapped, it lands where the list shows.
+        fixture.controller.edit(.move(presented[3].id, toIndex: 2))
+
+        XCTAssertEqual(
+            fixture.controller.currentPresentation.nowPlaying?.queueEntries.map(\.track.id.rawID),
+            ["a", "b", "d", "c"],
+            "core after: \(fixture.queue.snapshot().snapshot?.entries.map(\.rawId) ?? [])"
+        )
+    }
+
     /// The preload is registered in the core but the engine has not accepted it yet (resolution
     /// or the engine queue is slow) when the current item ends. Nothing will ever advance into
     /// it, so the core must start the next entry normally rather than wait for a boundary.

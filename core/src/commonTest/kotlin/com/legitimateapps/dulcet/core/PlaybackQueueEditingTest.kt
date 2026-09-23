@@ -314,6 +314,60 @@ class PlaybackQueueEditingTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun aPreloadDiscardedAfterTheHeldEndStartsTheNextEntryItself() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "b", "c")))
+        val first = assertNotNull(started.startDirective)
+        val preload = assertNotNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
+        val held = fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds),
+        )
+        assertNull(held.startDirective, "the end is held for the preload")
+
+        // The preload fails at the boundary: no AdvancedToPreloaded will ever come.
+        val discarded = fixture.controller.discardPreload(preload.attemptId)
+
+        val next = assertNotNull(discarded.startDirective, "otherwise playback silently stops")
+        assertEquals("b", next.itemId.rawId)
+        assertNotEquals(preload.attemptId, next.attemptId)
+        assertEquals(preload.attemptId, discarded.discardedPreloadAttemptId)
+        assertEquals(1, discarded.snapshot.currentIndex)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun anEditBetweenTheHeldEndAndTheAdvanceStartsTheNewNextEntry() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "b", "c")))
+        val first = assertNotNull(started.startDirective)
+        val preload = assertNotNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
+        fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds))
+
+        val moved = fixture.controller.move(started.snapshot.entries[2].queueEntryId, 1)
+
+        assertEquals(preload.attemptId, moved.discardedPreloadAttemptId)
+        assertEquals("c", assertNotNull(moved.startDirective).itemId.rawId)
+        // Without a held end an edit starts nothing; a discard without a hold starts nothing.
+        val again = fixture.controller.discardPreload(preload.attemptId)
+        assertNull(again.startDirective)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun playNextWithoutACurrentEntryKeepsTheGivenOrder() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "missing")))
+        // Restoration clears an unresolvable selection but keeps the queue.
+        PersistentQueueStore(fixture.database).setCurrentIndex(SERVER, null)
+        assertNotNull(started.snapshot)
+
+        val edited = fixture.controller.enqueue(insertion(listOf("x", "y", "z"), QueueInsertionMode.PlayNext))
+
+        assertEquals(listOf("a", "missing", "x", "y", "z"), edited.snapshot.rawIds())
+        fixture.driver.close()
+    }
+
     /** Drives [seconds] of progressing playback and returns every effect the core produced. */
     private fun Fixture.playPast(attemptId: AttemptId, seconds: Int): List<PlaybackCoreEffect> {
         val effects = mutableListOf<PlaybackCoreEffect>()
