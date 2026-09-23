@@ -9,7 +9,6 @@ import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.AccountConnector
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.InvalidServerUrlReason
-import java.net.URI
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -98,43 +97,30 @@ internal class AccountConnectViewModel internal constructor(
         val submittedGeneration = connectionGeneration
         mutableState.update { it.copy(status = AccountConnectStatus.Connecting) }
         connectionJob = viewModelScope.launch {
-            val result = gateway.connect(
+            val outcome = connectAndSaveAccount(
                 AccountConnectionRequest(
                     serverUrl = submitted.serverUrl,
                     username = submitted.username,
                     password = submitted.password,
                     allowLocalHttp = submitted.allowLocalHttp,
                 ),
+                gateway::connect,
+                credentialStore,
+                stillWanted = { submittedGeneration == connectionGeneration },
             )
-            if (submittedGeneration != connectionGeneration) return@launch
+            if (submittedGeneration != connectionGeneration || outcome == AccountConnectOutcome.Superseded) return@launch
             mutableState.update { current ->
-                when (result) {
-                    is AccountConnectionResult.Connected -> {
-                        val serverName = result.account.serverType.ifBlank {
-                            runCatching { URI(result.account.normalizedBaseUrl).host }
-                                .getOrNull()
-                                .orEmpty()
-                                .ifBlank { result.account.normalizedBaseUrl }
-                        }
-                        try {
-                            credentialStore.save(
-                                serverName = serverName,
-                                serverUrl = result.account.normalizedBaseUrl,
-                                username = submitted.username,
-                                password = submitted.password,
-                                allowLocalHttp = submitted.allowLocalHttp,
-                            )
-                            current.copy(
-                                serverUrl = result.account.normalizedBaseUrl,
-                                status = AccountConnectStatus.Connected(serverName),
-                            )
-                        } catch (_: CredentialStoreException) {
-                            current.copy(status = AccountConnectStatus.PersistenceFailed)
-                        }
-                    }
-                    is AccountConnectionResult.Failed -> current.copy(
-                        status = AccountConnectStatus.Failed(result.error.accountFailurePresentation()),
+                when (outcome) {
+                    is AccountConnectOutcome.Connected -> current.copy(
+                        serverUrl = outcome.normalizedBaseUrl,
+                        status = AccountConnectStatus.Connected(outcome.serverName),
                     )
+                    AccountConnectOutcome.PersistenceFailed ->
+                        current.copy(status = AccountConnectStatus.PersistenceFailed)
+                    is AccountConnectOutcome.Failed -> current.copy(
+                        status = AccountConnectStatus.Failed(outcome.error.accountFailurePresentation()),
+                    )
+                    AccountConnectOutcome.Superseded -> current
                 }
             }
             if (submittedGeneration == connectionGeneration) connectionJob = null

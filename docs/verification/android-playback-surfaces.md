@@ -87,11 +87,50 @@ with `adb`; no test harness was involved.
 
 ## Emulator run — TV
 
-Android TV 14 emulator with `leanback_only`. The TV app installs and launches, and its player is not
-exported: starting it from the shell is refused with `SecurityException … not exported`
-(**OBSERVED**). **Playback on TV could not be driven**: the TV app has no way to connect an account
-and shows "Connect an account before searching." That, not the player, is what blocks TV playback
-evidence.
+Android TV 14 emulator with `leanback_only`. The TV player is not exported: starting it from the
+shell is refused with `SecurityException … not exported` (**OBSERVED**). The first run could not
+play because the TV app had no connect flow; it has one now (below).
+
+**Connect by remote, OBSERVED:** the connect screen opens with the server field focused; text was
+entered through the on-screen keyboard, whose Next action moved focus field by field to the HTTP
+switch; select toggled it; Down then select on Connect connected to the disposable server and
+opened TV search. Driving it first exposed a defect: a text field kept Up and Down for its cursor,
+so a remote could never leave the first field and every entry landed in it. Up and Down now move
+focus (host test below).
+
+**Not driven by hand:** search → detail → Play by remote. The emulator image's Google sign-in
+kept taking the foreground, and after I force-stopped Google Play services on it the display
+stayed black. The instrumented test below plays through the same production entry.
+
+## Instrumented emulator proofs
+
+`AndroidEmulatorPlaybackConformanceTest` (phone) and `AndroidTvEmulatorPlaybackConformanceTest`
+(TV) run against the disposable server named by instrumentation arguments. They fail, never skip,
+when it is absent. Each connects through the production connect sequence, starts playback through
+the production play entry, requires media time to advance, sends the app Home, requires time to
+keep advancing under the foreground service, and requires the server play count to rise by
+exactly one and stay there after the queue ends. The TV test also requires the remote's pause key
+to stop media time mid-song within five seconds, and its play key to restart it.
+
+| run | result |
+|---|---|
+| phone, local emulator | **OBSERVED** pass, server 3 → 4 |
+| phone, no server argument | fails: `dulcetServerUrl is required` |
+| phone, scrobble delivery removed | fails: `Timed out waiting for: server play count 5`; the server stayed at 4 |
+| TV, local emulator | **OBSERVED** pass, server 6 → 7; pause held with 0 ms drift |
+| TV, `pause()` disabled | fails: `Timed out waiting for: the remote's pause to take effect` |
+| TV, emulator audio disabled and software GPU (as on CI) | **OBSERVED** pass, server 7 → 8 |
+
+The TV pause check was first written as "no longer wanted", and the disabled-pause mutation
+passed it: the 31-second song simply ended. It now requires the same session, mid-song, within
+five seconds. The remote keys reached the app through the media session (**OBSERVED** in the
+system log), which is how a remote's media keys arrive.
+
+`core-ci` runs both, in its `android-emulator` job (phone and TV legs), against the same pinned
+disposable server as the Linux conformance job. The required `core-ci` job fails unless both legs
+pass and verifies their JUnit through `tools/verify-parity-evidence`. The CI emulators are x86 and
+x86_64, and the local runs above were arm64: that the CI legs pass is **ASSUMED** until a CI run
+shows it.
 
 ## Still assumed or open
 
@@ -100,9 +139,8 @@ evidence.
 - **Audio focus and becoming-noisy**: Media3 requested focus (**OBSERVED** in the log, usage media,
   content music). Loss of focus to another app and a headset unplug were not exercised.
 - **Acoustic output**: never claimed; the corpus is silent and the emulator's audio is virtual.
-- **Citable evidence**: no workflow runs an Android emulator, so none of this reaches a required
-  check. The four Media3 cells stay `partial` until one does.
-- **TV connect**, above.
-- **Phone search** still opens the detail screen when a row is activated, because the cited CONF-41
-  evidence routes that way; a Play button on track rows plays directly.
+- **Citable evidence**: the emulator job exists but no `FEATURES.yml` cell is promoted here; that
+  needs a green CI run of it first.
+- **Phone search**: a row still opens the detail screen, because the cited CONF-41 evidence routes
+  that way; track rows have a Play button that plays directly (`MobileSearchPlayTest`).
 - **Library breadth** (songs, playlists, sort) waits for the library reader.

@@ -1,0 +1,113 @@
+package com.legitimateapps.dulcet.emulator
+
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.SystemClock
+import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.AccountConnectOutcome
+import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.connectAndSaveAccount
+import com.legitimateapps.dulcet.core.AccountConnectionRequest
+import com.legitimateapps.dulcet.core.AccountConnector
+import com.legitimateapps.dulcet.core.AndroidPlaybackState
+import com.legitimateapps.dulcet.playback.PlaybackService
+import kotlinx.coroutines.runBlocking
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+/** Connects the app's saved account through the production connect sequence, as its connect screen does. */
+fun connectSavedAccount(context: Context, probe: DisposableServerProbe) {
+    val store = AndroidAccountCredentialStore(context)
+    check(store.load() == null) { "Emulator playback tests require an app installation with no saved account" }
+    val outcome = runBlocking {
+        connectAndSaveAccount(AccountConnectionRequest(probe.baseUrl, DisposableServerProbe.USER,
+            DisposableServerProbe.PASSWORD, allowLocalHttp = true), AccountConnector()::connect, store)
+    }
+    check(outcome is AccountConnectOutcome.Connected) { "The disposable server refused the production connect: $outcome" }
+}
+
+/**
+ * Reads the playback service's published state from outside the UI. Unbound before the app is
+ * backgrounded, so nothing here can be what keeps the service alive.
+ */
+class PlaybackObserver(private val context: Context) : AutoCloseable {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private var service: PlaybackService? = null
+    private var bound = false
+    private val connected = CountDownLatch(1)
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            service = (binder as PlaybackService.LocalBinder).service; connected.countDown()
+        }
+        override fun onServiceDisconnected(name: ComponentName?) = Unit
+    }
+
+    fun bind() {
+        bound = context.bindService(Intent(context, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+            connection, Context.BIND_AUTO_CREATE)
+        check(bound && connected.await(15, TimeUnit.SECONDS)) { "The playback service did not bind" }
+    }
+
+    fun state(): AndroidPlaybackState {
+        var value: AndroidPlaybackState? = null
+        instrumentation.runOnMainSync { value = service?.playback?.state?.value }
+        return checkNotNull(value) { "The playback service has no controller" }
+    }
+
+    /** Keeps the service reference but drops the binding, so only foreground ownership can keep it alive. */
+    fun unbind() { if (bound) { context.unbindService(connection); bound = false } }
+
+    fun foregroundNotificationPosted(): Boolean = context.getSystemService(NotificationManager::class.java)
+        .activeNotifications.any { it.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 }
+
+    fun stopPlayback() { instrumentation.runOnMainSync { service?.playback?.stop() } }
+
+    override fun close() {
+        unbind()
+        stopPlayback()
+        context.stopService(Intent(context, PlaybackService::class.java))
+        AndroidAccountCredentialStore(context).delete()
+    }
+}
+
+fun await(what: String, timeoutMillis: Long = 60_000, condition: () -> Boolean) {
+    val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+    while (!condition()) {
+        check(SystemClock.elapsedRealtime() < deadline) { "Timed out waiting for: $what" }
+        Thread.sleep(200)
+    }
+}
+
+/**
+ * Media time, sampled twice by the app's own published state, must advance under a progressing
+ * phase. Returns the later position.
+ */
+fun requireMediaTimeAdvances(observer: PlaybackObserver, label: String): Long {
+    await("$label: media time progressing") {
+        observer.state().let { it.phase == "Progressing" && it.positionMilliseconds > 0 }
+    }
+    val first = observer.state().positionMilliseconds
+    Thread.sleep(2_500)
+    val second = observer.state()
+    check(second.positionMilliseconds >= first + 1_500) {
+        "$label: media time did not advance (${first}ms then ${second.positionMilliseconds}ms, phase ${second.phase})"
+    }
+    return second.positionMilliseconds
+}
+
+/**
+ * The server's play record must rise by exactly one, and stay there after the queue has ended —
+ * a second submission would be a duplicate play, and none would be a lost one.
+ */
+fun requireExactlyOneServerPlay(probe: DisposableServerProbe, rawId: String, before: Int, observer: PlaybackObserver) {
+    await("server play count ${before + 1}", timeoutMillis = 120_000) { probe.playCount(rawId) >= before + 1 }
+    await("the one-song queue to end", timeoutMillis = 90_000) { !observer.state().hasSession }
+    Thread.sleep(5_000)
+    val after = probe.playCount(rawId)
+    check(after == before + 1) { "Expected exactly one server play: before=$before after=$after" }
+}

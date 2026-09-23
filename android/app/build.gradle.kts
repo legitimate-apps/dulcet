@@ -95,4 +95,7 @@ tasks.withType<Test>().configureEach {
 }
 extensions.configure<ApplicationExtension> {
     sourceSets.getByName("test").kotlin.srcDir(rootProject.file("android/search-conformance"))
+    // Emulator playback proofs, shared with the TV app. They require the disposable server and
+    // fail, never skip, without it (see DisposableServerProbe).
+    sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("android/emulator-conformance"))
 }
