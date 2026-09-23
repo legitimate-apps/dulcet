@@ -56,10 +56,19 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
 
     fun endpoints(): List<String> = log.map { it.endpoint }
 
+    /** Held requests whose caller was cancelled while waiting: a keystroke cancelling a search. */
+    var cancelledWhileHeld = 0
+        private set
+
     private suspend fun hold() {
         val gate = CompletableDeferred<Unit>()
         held += gate
-        gate.await()
+        try {
+            gate.await()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            cancelledWhileHeld += 1
+            throw cancelled
+        }
     }
 
     override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {

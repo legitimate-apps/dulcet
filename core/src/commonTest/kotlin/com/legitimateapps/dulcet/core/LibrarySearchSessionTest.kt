@@ -148,6 +148,8 @@ class LibrarySearchSessionTest {
         advanceUntilIdle()
         assertEquals(1, env.server.heldCount, "fixture: the first answer is in flight")
         search.updateQuery("Album 002")
+        runCurrent() // the cancelled request observes its cancellation when it next runs
+        assertEquals(1, env.server.cancelledWhileHeld, "a keystroke cancels the in-flight server request")
         env.server.holdAfterAnswer.clear()
         env.server.release()
         advanceUntilIdle()

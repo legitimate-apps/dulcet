@@ -3003,7 +3003,12 @@ passes every test that only checks the end.
 
 §18.1 stands — `search3` from two characters, local results from the first, 250 ms debounce, shared
 normalization, one ranker, merge by id — with its local half now defined over the seen-cache rather
-than a committed generation. What changes is that **the result carries an honest scope**:
+than a committed generation. What changes is that **the result carries an honest scope**: **As implemented (R1c):** the debounce, the two-character minimum and the
+cancellation of an in-flight `search3` by the next keystroke are core policy
+(`LibrarySearchSession`), and an answer to an older query is never published. A `search3` that
+fails as unreachable publishes `deviceOffline`, which is what the table means by it; every other
+failure is `deviceServerFailed(kind)`. Every row names its source (`server` or `device`), and the
+device's rows are ranked with a total order, so rows never reorder by arrival.
 
 | scope | when | label |
 |---|---|---|
@@ -3251,6 +3256,12 @@ about publication, not about the cache:
 - When the send succeeds, the outbox row is removed and the server's echoed value — or the next live
   read — becomes the published value (§18.3's adopt-on-echo). When it fails permanently, the overlay is
   removed, the server's value shows, and the person is told the change did not save.
+  **As implemented (R1d):** `star`, `unstar` and `setRating` answer with an empty `ok`, so the echo
+  is the acknowledgement itself. The sent value is written into the cache row under an issue
+  sequence taken when the answer arrived, so a read answered before the acknowledgement cannot
+  overwrite it; a change back to the value the server last reported, never sent, leaves no outbox
+  row at all (star then unstar sends nothing); a change whose send lost its answer is never
+  compacted away, because the server may already hold it.
 - Offline, the overlay is what the person sees, labelled nowhere: a favourite is a favourite. The
   outbox is flushed first on reconnect (§16.14).
 - The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value and
@@ -3358,6 +3369,16 @@ retry loop.
   successful sync for that item (revision 99: the last successful *live read* of that item — there is
   no sync), in which case the local mutation is sent and the server's echoed value
   is then adopted. Last-writer-wins with an explicit ordering key, not "whatever arrives".
+  **Corrected in R1d (§28, revision 99 item 17):** read literally, a live read issued after the
+  change always wins, so a change whose send failed transiently loses to a read that merely shows
+  the value the change was made over — the server never changed, and the person's change is
+  silently discarded. The rule as implemented (`decideDelivery`, ordered by the seen-cache issue
+  sequence, never a clock): with no read of the item issued after the change, the change is sent; a
+  later read showing the change's own value adopts it without a send; a later read showing the
+  value the change was made over sends it; a later read showing a **third** value — possible only
+  for a rating — loses to the server, and the person is told. A change whose earlier send lost its
+  answer never loses: the value a later read shows may be its own. ASSUMED, and stated: a value
+  first seen after the change was set after it.
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
   at-least-once is safe here — unlike scrobbles (§15.3).
 - On logout the outbox is offered for submission (§14.7).
@@ -4754,6 +4775,32 @@ fresh disposable server before landing; items 11–14 are what that review chang
     (m) The look-ahead's re-check of its region after taking a permit was dead code: leaving the region
     cancels the read, and a cancelled read cannot take a permit. The check is removed rather than kept
     untestable. (n) The 16th item's "one live operation per window" is now one per **list key**.
+18. **Found while implementing R1c and R1d (search over the cache; the mutation outbox).** §18.3's
+    conflict rule, read literally, discards a change whenever any read of the item is issued after
+    it — including a read that shows the server unchanged, which is exactly what a revalidation
+    after a transient send failure returns — so it is refined in place to a three-way comparison
+    against the value the change was made over; a star, having two values, then never loses. The
+    ordering key is the seen-cache issue sequence, which `mutation_outbox.local_sequence` now
+    takes. Adopt-on-echo has no echo to adopt — the three endpoints answer an empty `ok` — so the
+    acknowledgement is the echo, written into the cache under an issue taken when it arrived; the
+    brief's "star then unstar leaves nothing" and §18.3's "sends only unstar" are reconciled by
+    comparing against the server's last value, with a possibly-delivered change never compacted
+    away. §16.15's `deviceOffline` covers a `search3` that fails as unreachable. The reader's
+    search and favourites are assembled per account by `LibraryReaderSession`. OBSERVED 2026-09-23
+    (fixture configuration, `PurgeMissing = "always"`), the production session over the real
+    transport against a private disposable Navidrome 0.63.2 holding 8 albums: one character issued
+    no request and published `deviceWhileServerPending`; `Threshold` issued one `search3` and
+    published two frames, device then `serverAndDevice` (an album and three tracks, each marked
+    `server`), and wrote the three tracks through (seen-cache tracks 0 → 3); offline published
+    `deviceOffline(8 albums, 3 tracks)`; a wrong password published
+    `deviceServerFailed(InvalidCredentials)` with the device's rows kept; a star was in the
+    publication of the tap with zero requests issued, then sent as one `star` and read back
+    starred; an offline unstar-star-unstar and rating 5-then-2 queued two rows holding no
+    credential, and reconnect sent `unstar` and `setRating=2` before the epoch read; and a rating
+    changed to 4 by another client after an offline change to 5 published `superseded` with no
+    `setRating` sent. That run was a local probe, not a committed test: `LibraryReader` and its
+    session are internal to the core, which the conformance module cannot reach, so the
+    server-backed legs of CONF-79 and CONF-84 are the shells' (R2b, R3) to carry in CI.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

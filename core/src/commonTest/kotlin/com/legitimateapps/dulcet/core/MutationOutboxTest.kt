@@ -184,9 +184,12 @@ class MutationOutboxTest {
     @Test
     fun conflictAServerAlreadyHoldingTheValueIsAdoptedWithoutSending() = sessionTest { env ->
         val opened = offlineRatingOver(env, base = 3)
+        val outcomes = mutableListOf<MutationOutcome>()
+        opened.session.favourites.addOutcomeListener { outcomes += it }
         env.server.ratings[albumId(4)] = 5
         readBeforeFlush(opened)
         assertEquals(emptyList(), sends(env))
+        assertEquals(emptyList(), outcomes, "the change took effect: the person is not told it did not save")
         assertEquals(5, opened.pubs.last.album(albumId(4)).userRating)
         assertEquals(0L, opened.session.favourites.pendingCount())
     }
