@@ -97,6 +97,44 @@ class MutationOutboxReviewTest {
         }
     }
 
+    // ---- S4: confinement ----------------------------------------------------------------------------
+
+    @Test
+    fun everyFavouritesAndSearchEntryPointRefusesACallerOffTheReadersThread() = sessionTest { env ->
+        val (session, _) = online(env)
+        val search = session.openSearch { }
+        val favourites = session.favourites
+        val calls: List<Pair<String, suspend () -> Unit>> = listOf(
+            "setFavourite" to { favourites.setFavourite(album4, true) },
+            "toggleFavourite" to { favourites.toggleFavourite(album4) },
+            "setRating" to { favourites.setRating(album4, 3) },
+            "isFavourite" to { favourites.isFavourite(album4) },
+            "rating" to { favourites.rating(album4) },
+            "pendingCount" to { favourites.pendingCount() },
+            "flush" to { favourites.flush() },
+            "addOutcomeListener" to { favourites.addOutcomeListener { } },
+            "addChangeListener" to { favourites.addChangeListener { } },
+            "openSearch" to { session.openSearch { } },
+            "session.setOnline" to { session.setOnline(false) },
+            "updateQuery" to { search.updateQuery("Al") },
+            "refresh" to { search.refresh() },
+            "republishPendingChanges" to { search.republishPendingChanges(setOf(albumId(4))) },
+            "close" to { search.close() },
+        )
+        val refused = mutableListOf<String>()
+        for ((name, call) in calls) {
+            val thrown = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                runCatching { call() }.exceptionOrNull()
+            }
+            if (thrown is IllegalStateException) refused += name
+        }
+        assertEquals(calls.map { it.first }, refused)
+        assertEquals(0L, favourites.pendingCount(), "nothing a refused call did reached the outbox")
+        // The positive control: the same calls on the reader's own thread are accepted.
+        assertEquals(MutationRecord.Pending, favourites.setFavourite(album4, true))
+        search.updateQuery("Al")
+    }
+
     // ---- S3 -----------------------------------------------------------------------------------------
 
     @Test

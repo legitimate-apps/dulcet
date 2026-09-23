@@ -264,8 +264,10 @@ internal data class LibrarySearchPublication(
  *   ([CacheEntitySource.Search]), so the next keystroke finds them locally. Result lists are not
  *   cached (§16.15).
  *
- * Threading follows the reader's contract: every call and every publication is on the reader's
- * thread.
+ * **Threading, enforced.** Every entry point is confined to the reader's own thread and checks it
+ * as the reader does — a call from any other thread throws `IllegalStateException`, a facade bug.
+ * Publications are delivered on the reader's thread; the platform facade hops them to the main
+ * thread (§16.18, trap 17). On the reader's thread nothing throws.
  */
 internal class LibrarySearchSession(
     private val reader: LibraryReader,
@@ -292,6 +294,7 @@ internal class LibrarySearchSession(
 
     /** One keystroke: publishes the device's rows at once and schedules the server's. Never throws. */
     fun updateQuery(value: String) {
+        reader.checkConfined()
         try {
             query(value)
         } catch (cancelled: CancellationException) {
@@ -346,10 +349,14 @@ internal class LibrarySearchSession(
     }
 
     /** Runs the current query again, as if retyped: after reachability changes, or on request. */
-    fun refresh() = updateQuery(text)
+    fun refresh() {
+        reader.checkConfined()
+        updateQuery(text)
+    }
 
     /** A pending favourite or rating changed: republish if any row shows one of [rawIds]. */
     fun republishPendingChanges(rawIds: Set<String>) {
+        reader.checkConfined()
         if (!closed && items.any { it.id.rawId in rawIds }) {
             try {
                 publish()
@@ -363,6 +370,7 @@ internal class LibrarySearchSession(
 
     /** Idempotent; cancels the server request. Nothing is published after it. */
     fun close() {
+        reader.checkConfined()
         closed = true
         serverJob?.cancel()
         serverJob = null
@@ -374,12 +382,12 @@ internal class LibrarySearchSession(
     }
 
     private suspend fun readServer(query: String): ServerOutcome {
-        // Issued before the request is SENT, so a slower answer never overwrites a newer read.
-        val seq = cache.issue()
         val epochKey = reader.sessionEpoch?.key
         return try {
             val size = config.serverPageSize.toString()
-            val response = reader.checked(
+            // The issue sequence is taken as the request is SENT (LibraryReader.send), so a slower
+            // answer never overwrites a newer read.
+            val sent = reader.sendChecked(
                 "search3",
                 linkedMapOf(
                     "query" to query,
@@ -388,8 +396,8 @@ internal class LibrarySearchSession(
                     "songCount" to size, "songOffset" to "0",
                 ),
             )
-            val entities = parseReaderSearch3(response.body)
-            cache.writeEntities(CacheWriteStamp(seq, cache.now(), epochKey), CacheEntitySource.Search, entities)
+            val entities = parseReaderSearch3(sent.response.body)
+            cache.writeEntities(CacheWriteStamp(sent.issueSeq, cache.now(), epochKey), CacheEntitySource.Search, entities)
             cache.evictIfNeeded()
             val provider = cache.serverId
             ServerOutcome.Read(

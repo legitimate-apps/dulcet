@@ -4848,8 +4848,10 @@ fresh disposable server before landing; items 11–14 are what that review chang
     The generation check in search is not redundant with cancellation — a transport that does not
     observe cancellation delivers an old answer after a newer keystroke — and a test now proves it.
     An identity-only track's adopted star was invisible because the cached mapping dropped user
-    state with the missing metadata. §14.7 now defines the sign-out offer offline, and the §16.15
-    note is no longer inside a sentence. Two claims in the first cut's commit messages were wrong
+    state with the missing metadata. Every favourites and search entry point is confined to the
+    reader's thread and checks it, as item 17 made every reader entry point do; outcomes and search
+    publications are delivered there and hopped to the main thread by the facade. §14.7 now defines
+    the sign-out offer offline, and the §16.15 note is no longer inside a sentence. Two claims in the first cut's commit messages were wrong
     and are corrected here: "a rebinding discards changes authored as another account" held only
     if no crash intervened, and the queue did not hold "the opaque id, the field and a JSON object"
     sufficient to identify a change — without the kind it could not.

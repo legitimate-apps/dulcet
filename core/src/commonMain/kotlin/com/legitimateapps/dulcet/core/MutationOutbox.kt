@@ -439,8 +439,18 @@ private fun DomainError.provesNotApplied(): Boolean = when (this) {
 }
 
 /**
- * The shells' favourites and ratings, for one reader. Every entry point runs on the reader's
- * thread (see [LibraryReader]'s threading contract) and returns a value — none throws.
+ * The shells' favourites and ratings, for one reader.
+ *
+ * **Threading, enforced.** Every entry point is confined to the reader's own thread
+ * ([newLibraryReaderDispatcher]) and checks it, exactly as the reader's do: a call from any other
+ * thread — the main thread included — throws `IllegalStateException`, which is a facade bug, never
+ * a runtime condition. So a change is recorded, compacted and read for sending on one thread, and
+ * [MutationOutbox.record] cannot interleave with a flush between reading a change and marking it
+ * attempted (which is also one transaction). Listeners are called on the reader's thread; the
+ * platform facade hops each outcome to the main thread (§16.18, trap 17).
+ *
+ * **Nothing else throws.** On the reader's thread every entry point returns a value: a database
+ * failure is [MutationRecord.NotRecorded], told as [MutationOutcome.NotRecorded].
  */
 internal class LibraryFavourites(
     private val reader: LibraryReader,
@@ -452,23 +462,25 @@ internal class LibraryFavourites(
 
     /** Told how each change ended; every outcome except [MutationOutcome.Saved] needs words. */
     fun addOutcomeListener(listener: (MutationOutcome) -> Unit) {
+        reader.checkConfined()
         outcomeListeners += listener
     }
 
     /** Surfaces outside the reader's windows (search) republish through this. */
     fun addChangeListener(listener: (Set<String>) -> Unit) {
+        reader.checkConfined()
         changeListeners += listener
     }
 
     /** The favourite state a publication shows: the pending change, else the server's last value. */
-    fun isFavourite(target: LibraryEntityRef): Boolean? = guarded(null) {
+    fun isFavourite(target: LibraryEntityRef): Boolean? = confined { guarded(null) {
         (outbox.pendingFor(target, MutationField.Starred)?.value ?: outbox.serverState(target, MutationField.Starred)?.first)
             ?.let { it == 1 }
-    }
+    } }
 
-    fun rating(target: LibraryEntityRef): Int? = guarded(null) {
+    fun rating(target: LibraryEntityRef): Int? = confined { guarded(null) {
         outbox.pendingFor(target, MutationField.Rating)?.value ?: outbox.serverState(target, MutationField.Rating)?.first
-    }
+    } }
 
     /** Makes [target] a favourite or not. Shown at once; sent when online, else on reconnect. */
     fun setFavourite(target: LibraryEntityRef, favourite: Boolean): MutationRecord =
@@ -476,6 +488,7 @@ internal class LibraryFavourites(
 
     /** Flips the favourite state as shown; an unknown state becomes a favourite. Returns the new state. */
     fun toggleFavourite(target: LibraryEntityRef): Boolean {
+        reader.checkConfined()
         val favourite = isFavourite(target) != true
         return if (setFavourite(target, favourite) == MutationRecord.NotRecorded) !favourite else favourite
     }
@@ -484,9 +497,10 @@ internal class LibraryFavourites(
     fun setRating(target: LibraryEntityRef, rating: Int): MutationRecord = change(target, MutationField.Rating, rating)
 
     /** For the sign-out offer of §14.7: changes that have not reached the server. */
-    fun pendingCount(): Long = guarded(0L) { outbox.pendingCount() }
+    fun pendingCount(): Long = confined { guarded(0L) { outbox.pendingCount() } }
 
     private fun change(target: LibraryEntityRef, field: MutationField, value: Int): MutationRecord {
+        reader.checkConfined()
         if (!field.isValid(value)) return MutationRecord.Invalid
         val record = try {
             outbox.record(target, field, value, outbox.serverState(target, field)?.first)
@@ -530,7 +544,7 @@ internal class LibraryFavourites(
      *   for the next flush — the next change made online, or the reconnect of §16.14.
      * - Offline it does nothing.
      */
-    suspend fun flush(): MutationFlushReport = lock.withLock {
+    suspend fun flush(): MutationFlushReport = confined { lock.withLock {
         var sent = 0
         var saved = 0
         var adopted = 0
@@ -557,7 +571,7 @@ internal class LibraryFavourites(
                     val attempted = outbox.markAttempted(change) ?: continue
                     sent += 1
                     val failure = try {
-                        reader.checked(change.endpoint(), change.parameters())
+                        reader.sendChecked(change.endpoint(), change.parameters())
                         null
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -599,6 +613,11 @@ internal class LibraryFavourites(
             }
         }
         MutationFlushReport(sent, saved, adopted, refused, superseded, deferred.size, stoppedBy, outbox.pendingCount().toInt())
+    } }
+
+    private inline fun <T> confined(block: () -> T): T {
+        reader.checkConfined()
+        return block()
     }
 
     private fun emit(outcome: MutationOutcome) = outcomeListeners.toList().forEach { listener -> guarded(Unit) { listener(outcome) } }
@@ -679,6 +698,7 @@ internal class LibraryReaderSession(
         config: LibrarySearchConfig = LibrarySearchConfig(),
         listener: (LibrarySearchPublication) -> Unit,
     ): LibrarySearchSession {
+        reader.checkConfined()
         val session = LibrarySearchSession(reader, config, listener)
         favourites.addChangeListener(session::republishPendingChanges)
         searches += session
@@ -691,6 +711,7 @@ internal class LibraryReaderSession(
      * for a keystroke.
      */
     fun setOnline(reachable: Boolean) {
+        reader.checkConfined()
         val changed = reader.online != reachable
         reader.setOnline(reachable)
         searches.removeAll { it.isClosed }
