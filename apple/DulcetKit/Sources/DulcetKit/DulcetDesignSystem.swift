@@ -343,6 +343,12 @@ struct DulcetArtworkView: View {
     @State private var loadedData: Data?
     @State private var operation: (any DulcetArtworkFetchOperation)?
     @State private var loadGeneration = 0
+    @State private var retryTask: Task<Void, Never>?
+
+    /// Waits before each retry of a transient failure. A cover fetched while the network was
+    /// briefly unusable -- the local-network prompt still up, a Wi-Fi handover -- otherwise stays
+    /// a placeholder until the view happens to leave the screen and come back.
+    static let transientRetryDelays: [Duration] = [.seconds(2), .seconds(8)]
 
     var body: some View {
         ZStack {
@@ -417,20 +423,37 @@ struct DulcetArtworkView: View {
     private func startLoading() {
         cancelLoading()
         loadedData = nil
+        load(attempt: 0)
+    }
+
+    private func load(attempt: Int) {
         guard let reference = artwork.remoteReference else { return }
         loadGeneration += 1
         let generation = loadGeneration
         operation = store.loadArtwork(reference, sizeBucket: sizeBucket) { outcome in
             guard generation == loadGeneration else { return }
             operation = nil
-            if case let .loaded(data) = outcome {
+            switch outcome {
+            case let .loaded(data):
                 loadedData = data
+            case .failed where attempt < Self.transientRetryDelays.count:
+                // Only a transient failure is retried; `.unavailable` means there is no cover.
+                let delay = Self.transientRetryDelays[attempt]
+                retryTask = Task { @MainActor in
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled, generation == loadGeneration else { return }
+                    load(attempt: attempt + 1)
+                }
+            case .failed, .unavailable, .cancelled:
+                break
             }
         }
     }
 
     private func cancelLoading() {
         loadGeneration += 1
+        retryTask?.cancel()
+        retryTask = nil
         operation?.cancel()
         operation = nil
     }

@@ -330,9 +330,20 @@ struct DulcetNowPlayingView: View {
             .background(.regularMaterial, in: Capsule())
     }
 
+    /// The scrubber, once media time has advanced -- and whenever the player is paused, which
+    /// includes a finished queue: its last track stays shown, stopped, with Play replaying it, so
+    /// the scrubber says where it is rather than a bare "Paused". Opening and buffering keep
+    /// their words; a scrubber there would imply progress that has not happened.
+    static func showsProgressIndicator(
+        progressBegan: Bool,
+        phase: DulcetPlaybackPresentationPhase
+    ) -> Bool {
+        progressBegan || phase == .paused
+    }
+
     private var playbackProgress: some View {
         VStack(spacing: DulcetSpacing.xxs) {
-            if player.progressBegan {
+            if Self.showsProgressIndicator(progressBegan: player.progressBegan, phase: player.phase) {
                 playbackProgressIndicator
                     .accessibilityLabel(DulcetStrings.nowPlaying)
                     .accessibilityValue(DulcetStrings.playbackProgress(

@@ -122,4 +122,14 @@ func sideBySideNowPlayingArtworkFitsTheWindowItIsGiven() {
     #expect(DulcetNowPlayingView.sideBySideArtworkSize(height: 500) == 280)
 }
 
+@Test
+func aPausedOrFinishedPlayerShowsWhereItIsNotABareWord() {
+    // A finished queue presents its last track paused with no progress in this session.
+    #expect(DulcetNowPlayingView.showsProgressIndicator(progressBegan: false, phase: .paused))
+    #expect(DulcetNowPlayingView.showsProgressIndicator(progressBegan: true, phase: .progressing))
+    // Opening and buffering before any progress keep their words.
+    #expect(!DulcetNowPlayingView.showsProgressIndicator(progressBegan: false, phase: .buffering))
+    #expect(!DulcetNowPlayingView.showsProgressIndicator(progressBegan: false, phase: .ready))
+}
+
 #endif
