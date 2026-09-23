@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Leave exactly one simulator booted (or none) before an apple-ci phase that talks to loopback fixtures.
+
+apple-ci's simulator legs each boot a device and nothing shut them down, and the conformance suites
+create and boot fresh ones. On a 3-CPU, 7 GB hosted runner, three idle booted simulators held ~2 GB
+of swap where none held none, and the stalls concentrate next to a freshly booted device: the same
+conformance sources fail on iosSimulatorArm64 and pass on the host
+(docs/investigations/2026-09-22-apple-ci-host-contention.md). This tool is the sequencing half
+of that finding: shut every other device down, boot the one the next phase needs, and wait for
+CoreSimulator to report boot complete before the phase starts its clocks.
+
+Usage:
+  isolate-simulator --phase NAME --none
+  isolate-simulator --phase NAME --keep UDID
+  isolate-simulator --phase NAME --keep-name "iPhone 17 Pro"     # newest runtime, as OS=latest does
+  isolate-simulator --devices-json FILE --plan ...               # offline: print the plan, touch nothing
+
+Prints `SIMULATOR ISOLATION phase=... keep=... shut_down=N booted_after=[...] isolated=true|false`.
+The marker is evidence the step ran and what it left behind; `isolated=false` is reported, not
+raised, because a leftover device only restores today's behaviour. Failing to boot the device the
+phase needs IS raised: that phase cannot run.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+BOOT_TIMEOUT_SECONDS = 300
+
+
+def simctl(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(["xcrun", "simctl", *args], capture_output=True, text=True, timeout=timeout)
+
+
+def devices(devices_json: str | None) -> dict:
+    if devices_json:
+        return json.load(open(devices_json, encoding="utf-8"))["devices"]
+    return json.loads(simctl("list", "devices", "-j").stdout)["devices"]
+
+
+def runtime_version(runtime: str) -> list[int]:
+    return [int(n) for n in re.findall(r"\d+", runtime.rsplit(".", 1)[-1])]
+
+
+def resolve_name(all_devices: dict, name: str) -> str:
+    found = [(runtime, d["udid"]) for runtime, ds in all_devices.items() for d in ds
+             if d["name"] == name and d.get("isAvailable", True)]
+    if not found:
+        raise SystemExit(f"SIMULATOR ISOLATION no available simulator named {name!r}")
+    return max(found, key=lambda item: runtime_version(item[0]))[1]
+
+
+def booted(all_devices: dict) -> list[str]:
+    return sorted(d["udid"] for ds in all_devices.values() for d in ds if d.get("state") == "Booted")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--phase", required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--keep")
+    target.add_argument("--keep-name")
+    target.add_argument("--none", action="store_true")
+    parser.add_argument("--devices-json", help="offline device list (simctl list devices -j)")
+    parser.add_argument("--plan", action="store_true", help="print the plan and change nothing")
+    args = parser.parse_args()
+
+    started = time.monotonic()
+    before = devices(args.devices_json)
+    keep = args.keep or (resolve_name(before, args.keep_name) if args.keep_name else None)
+    to_shut = [udid for udid in booted(before) if udid != keep]
+    if args.plan:
+        print(f"SIMULATOR ISOLATION PLAN phase={args.phase} keep={keep or 'none'} "
+              f"shut_down={','.join(to_shut) or 'none'}")
+        return 0
+
+    for udid in to_shut:
+        simctl("shutdown", udid)
+    if keep:
+        simctl("boot", keep)  # "already booted" is fine; bootstatus below is the actual check
+        status = simctl("bootstatus", keep, "-b", timeout=BOOT_TIMEOUT_SECONDS)
+        if status.returncode != 0:
+            print(f"SIMULATOR ISOLATION FAILED phase={args.phase} keep={keep} "
+                  f"bootstatus_exit={status.returncode}: {status.stderr.strip()[-300:]}")
+            return 1
+    after = booted(devices(None))
+    expected = [keep] if keep else []
+    print(f"SIMULATOR ISOLATION phase={args.phase} keep={keep or 'none'} shut_down={len(to_shut)} "
+          f"booted_after={after} isolated={'true' if after == expected else 'false'} "
+          f"seconds={time.monotonic() - started:.1f}", flush=True)
+    log = os.environ.get("DULCET_HOST_PRESSURE_LOG")
+    if log:
+        subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "host-pressure"),
+                        "mark", log, args.phase], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

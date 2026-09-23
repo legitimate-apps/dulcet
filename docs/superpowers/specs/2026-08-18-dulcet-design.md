@@ -3068,7 +3068,8 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci`, 5 `parity-gate`, 60
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 since
+2026-09-06, with per-step caps on the heavy steps — see §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
@@ -3172,6 +3173,58 @@ that is doing anything else; serialise them rather than fanning out locally.
 
 **Maintainers building on a shared or managed machine follow that machine's own operational rules,
 which are deliberately not reproduced in this repository.**
+
+### 21.5 apple-ci reliability: sequencing, fail-fast, and what gates a pull request — 2026-09-22
+
+`main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the
+head pull request, and a red run costs a full re-run. **MEASURED 2026-09-08..09-22** (every attempt,
+classified at test identity; `docs/investigations/2026-09-22-apple-ci-host-contention.md`): **47 of
+111 attempts passed (42.3%)**; passes took median 91.6 and max 118.8 minutes against the 120-minute
+job cap. The largest single class, **28 of 63 failures**, is one host-contention stall reported by
+whichever client's budget it crossed first; the restart-sequencing experiment located it next to a
+freshly booted simulator (SUPPORTED, n=23).
+
+**Normative, and each rule names the failure it answers:**
+
+1. **Deterministic environment checks run before any build.** The Homebrew closure install and its
+   drift check run immediately after Xcode selection. A pin drift fails every run by construction
+   (§20, CLAUDE.md trap 36) and used to be discovered after ~55 minutes of builds.
+2. **At most one simulator is booted while a phase talks to the loopback fixtures, and it is fully
+   booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
+   does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
+   composite starts with that call. This is sequencing, not a budget: no timeout was raised for it.
+3. **A test binary is linked by a Gradle invocation that exits before the suite runs**, so the
+   compiler's JVM is not resident while the tests execute on a 7 GB runner.
+4. **Every run records host pressure** (`tools/ci/host-pressure`, per phase, green or red). A stall
+   claim about memory or CPU cites those numbers or says ASSUMED.
+5. **Timeouts are not the remedy for this class.** The proxy observation's 10 s bound fired on a
+   genuine host-wide stall in which the fixture answered 200 six seconds in and the client could not
+   read it; a larger bound converts a named stall into an unnamed one.
+
+**Considered and NOT adopted — with the condition under which each becomes right.**
+
+- **Splitting `apple-ci` into parallel hosted jobs** (platform legs | conformance composite, behind a
+  required `apple-ci` aggregator as `core-ci` already does). Estimated from the median step times of
+  26 green runs: wall time ~92 -> ~65 minutes (the composite and its own builds become the critical
+  path), at ~+25% runner-minutes because each job repeats the framework build and the conformance
+  job must build the app schemes its `test-without-building` legs reuse today. Runner-minutes are free
+  on this public repository (§21.1), but **hosted macOS concurrency is not**: each pull-request run
+  would hold two slots. Under strict up-to-date protection only the head pull request's run can lead
+  to a merge, so shorter head-of-queue latency is worth more than concurrency — which argues *for* the
+  split. It is deferred rather than rejected because rules 2–3 attack the same contention at no slot
+  cost, and their effect must be measured first (§21.5 soak, then 30 post-merge runs). **Adopt it if,
+  after rules 1–4, pass rate is at or above 80% and median wall time is still above 75 minutes**;
+  if the pass rate is still low, the split's isolation benefit is the stronger argument and it should
+  be adopted regardless. Either way it is a change to §21.1's "one serial job" and lands here first.
+- **Moving legs off the pull-request gate to a scheduled or dispatch-only soak.** Every leg except
+  two carries `FEATURES.yml` evidence or a product assertion, and the corpus rule is that CI fails on
+  an undeclared regression; moving those would let a regression merge. The two measurement-only
+  candidates — the §12.4 resource-loader recording (~1.5 min, 1 failure in 63) and the
+  non-deterministic macOS shipping reference (~0.9 min, 0 failures) — would save ~2.5 minutes and one
+  failure in 63. **Not worth weakening the gate for; not adopted.** A scheduled workflow is also
+  standing automation, which this project adds only by explicit maintainer decision. Soaks remain
+  `workflow_dispatch` instruments (`capture-soak`, `apple-contention-soak`) for measuring flake
+  rates, never a place to move an assertion.
 
 ---
 
@@ -3688,14 +3741,14 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 100 (2026-09-22)** — §8 records how the Android session relates to the core queue. Media3
+**Revision 101 (2026-09-22)** — §8 records how the Android session relates to the core queue. Media3
 holds one item at a time, so skip commands are advertised from the core queue, in-app player UI
 reads the controller's state rather than `media3-ui-compose` state holders, and cover art is handed
 to the session as validated bytes, never a signed URL. The queue controller gains `jumpTo`, which
 addresses an Up Next entry by `QueueEntryId`: a row index goes stale when the queue changes, and a
 song queued twice would make a song-addressed jump ambiguous. No existing contract changes.
 
-**Revision 99 (2026-09-08)** — explicit seek observations exclude small forward jumps from scrobbling.
+**Revision 100 (2026-09-08)** — explicit seek observations exclude small forward jumps from scrobbling.
 
 The §15.2 heuristic previously preserved the pre-seek anchor even after `SeekCompleted`, crediting
 3.5 seconds for a 10 → 13 → 13.5 second sequence. **OBSERVED** in
@@ -3703,6 +3756,17 @@ The §15.2 heuristic previously preserved the pre-seek anchor even after `SeekCo
 pre-fix reducer credits 3.5 seconds instead of 0.5. Explicit destinations now reset the media anchor;
 the existing four-second fallback remains for unobserved discontinuities. Submission thresholds,
 identities, at-least-once delivery and clock persistence are unchanged.
+
+**Revision 99 (2026-09-22)** — §21.5 added; §21.1's apple-ci timeout corrected in place.
+
+1. §21.1 said `apple-ci` is capped at 30 minutes. It has been 120 since 2026-09-06, with per-step caps
+   on the heavy steps. Corrected in place.
+2. §21.5 records the measured failure classification (47/111 attempts passed 2026-09-08..09-22; 28 of
+   63 failures are one host-contention stall) and four normative rules: deterministic environment
+   checks first, at most one fully booted simulator per loopback phase, links in their own JVM, and a
+   host-pressure record in every run. It also records two considered-and-deferred changes (splitting
+   the job, moving legs off the pull-request gate), each with its adoption condition.
+3. The restart-sequencing experiment is closed SUPPORTED against its pre-registered table (n=23).
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

@@ -25,7 +25,7 @@ source set.
 | Media3 | 1.11.0 | Apache-2.0 | reserved, not declared |
 | Navidrome reference server | 0.63.2 | GPL-3.0 | CI service only; not linked, copied, or distributed in Dulcet |
 | Linux ffmpeg in Navidrome image | 6.1.1 | GPL-3.0-or-later build | CI tool only; not linked, copied, or distributed in Dulcet |
-| Darwin ffmpeg Homebrew bottle | 9.0.1 | GPL-3.0-or-later build | CI tool only; not linked, copied, or distributed in Dulcet |
+| Darwin ffmpeg Homebrew bottle | 9.0.2 | GPL-3.0-or-later build | CI tool only; not linked, copied, or distributed in Dulcet |
 | checkout / setup-java / setup-android / setup-gradle Actions | 7.0.1 / 5.7.0 / 4.0.1 / 6.3.0 | MIT | CI automation only |
 
 The GPL-licensed server and transcoder are separate test processes. No GPL code is incorporated into
