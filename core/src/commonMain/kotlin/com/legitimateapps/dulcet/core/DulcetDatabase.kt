@@ -3,7 +3,7 @@ package com.legitimateapps.dulcet.core
 import app.cash.sqldelight.db.SqlDriver
 import com.legitimateapps.dulcet.database.DulcetDatabase
 
-internal const val DULCET_SCHEMA_VERSION: Long = 5
+internal const val DULCET_SCHEMA_VERSION: Long = 6
 internal const val DULCET_CACHE_FORMAT_VERSION: Long = 1
 
 internal data class DulcetSchemaMetadata(
@@ -61,6 +61,11 @@ internal class DulcetDatabaseStore private constructor(
                     backfillSearchIndex(database)
                     database.libraryQueries.completeSearchIndexBackfill()
                 }
+                // The seen-cache (spec §16.10). Rows seeded from the mirror by the additive
+                // migration carry whatever normalization the mirror had, which may be none; the
+                // shared normalizer runs here, because SQLite cannot NFKD or case-fold text.
+                database.seenCacheQueries.initializeIssueCounter()
+                backfillSeenCacheNormalization(database)
                 store.reconcileVersions(
                     schemaVersion = DulcetDatabase.Schema.version,
                     cacheFormatVersion = DULCET_CACHE_FORMAT_VERSION,

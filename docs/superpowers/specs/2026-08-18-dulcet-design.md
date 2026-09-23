@@ -1070,7 +1070,10 @@ resume tables are unchanged.
   trigger changes, column reinterpretation and failed conversions while the name is preserved. The
   real gate: CI keeps a set of **fixture databases** from every released schema version, each seeded
   with protected rows and matching files on disk; every PR migrates all of them and asserts row-level
-  semantic preservation plus file reconciliation.
+  semantic preservation plus file reconciliation. From schema 6, `tools/migration_gate.py` also
+  asserts that every `download` and `queue_entry` row has its pin and that every pin names a cached
+  row, and compares `cache_pin` rows as protected data for fixtures that already carry them — each
+  with a destructive negative control that must be rejected for the stated reason.
 - A cache rebuild is permitted when a migration is genuinely hard, but only through the tested path in
   §11.5, never as a silent `DROP`.
 
@@ -2565,6 +2568,11 @@ library — the property is enforced by the store, not remembered by a caller.
 | `cache_list` | list key, window epoch, first and last loaded page, total (nullable), coverage (§16.12), `fetched_at_wall`, `last_access_wall` | `(server_id, list_key)` |
 | `cache_list_member` | the server's order: position → `(item_kind, raw_id)` | `(server_id, list_key, position)` |
 | `cache_pin` | why an entity must not be evicted: `download` \| `queue` \| `playing` | `(server_id, item_kind, raw_id, reason)` |
+| `cache_issue_counter` | the last issued request sequence (below) | singleton |
+
+`cache_track` also carries `album_ordinal` (the position `getAlbum` returned, so an album's tracks
+are shown in the server's order) and `metadata_missing` (an identity-only row kept for a pin whose
+metadata was never read, §16.17).
 
 - **Entities are normalized, not stored as response blobs.** One album is one row however many lists
   contain it, and a later read never has to be reconciled with an earlier blob.
@@ -2573,6 +2581,16 @@ library — the property is enforced by the store, not remembered by a caller.
   than the row's. A slow response to an earlier request that lands after a faster, later one is
   discarded for the rows the later one already wrote — otherwise a stale answer can overwrite a fresh
   one purely because it was slower.
+  - **The sequence is durable** (`cache_issue_counter`, one row, advanced in a transaction as each
+    request is issued). A per-process counter restarts at 1 after a relaunch, so every request the new
+    process issues would rank *below* the rows the previous process wrote and be discarded — the
+    ordering rule would silently freeze the cache. (R1a, `theIssueOrderSurvivesAReopenedStore`.)
+  - **Gone-ness is ordered like any other read result.** A detail read that omits a track stamps the
+    track with its own sequence when it marks it `gone`, so a slower list page issued *before* that
+    detail cannot resurrect the track, while one issued after it can.
+  - **An album and a playlist carry two sequences**: `issue_seq` for their summary fields and
+    `detail_issue_seq` for their membership. A list page and a detail read of the same album write
+    different fields, so neither may block the other; each is ordered only against its own kind.
 - **Upserts are field-complete per source.** A list page carries album *summaries* and never a track
   list; writing a summary never clears `detail_complete` or deletes cached tracks. Only a successful
   `getAlbum` rewrites an album's track membership, and it rewrites all of it in one transaction.
@@ -2847,7 +2865,11 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
   entity or window is *shown*, so evicting oldest-fetched first would delete exactly what the person
   keeps coming back to — the contract undoing itself.
 - **Windows go first, then orphaned entities.** A list window is evicted whole; an entity is evictable
-  only when it is unpinned and no remaining window or detail references it.
+  only when it is unpinned and no remaining window or detail references it. Precisely (R1a): windows
+  above the window ceiling go first, least-recently-accessed first; then, for each entity kind above
+  its ceiling, orphans of that kind go least-recently-accessed first; only when no orphan of that kind
+  remains is a further whole window released to create more. A track is referenced by its album's
+  complete detail; an album is referenced by a pinned track of it.
 - Eviction runs after a write that crosses a ceiling, in its own transaction, and never while a
   window it would touch is being written.
 
@@ -4574,6 +4596,15 @@ fresh disposable server before landing; items 11–14 are what that review chang
     production reader) are amended where they assumed a sync.
 14. **Every 2026-09-22 OBSERVED marker names its server configuration**: the conformance fixture's
     `PurgeMissing = "always"` unless the marker says otherwise (§16.9).
+15. **Found while implementing R1a (the cache store).** Three rules the design needed and did not
+    state, each now in §16.10: the issue sequence must be **durable**, or every request after a
+    relaunch ranks below the previous process's rows and is discarded; gone-ness must be **ordered**
+    like any read, or an older list page resurrects a track a newer detail read omitted; and an album's
+    summary and membership need **separate** sequences. §16.13's eviction order is stated precisely,
+    and §11.4 records that the migration gate now asserts pin coverage from schema 6 and protects
+    `cache_pin` rows once a fixture carries them. The additive migration's pins read `queue_entry`,
+    which released schema 2 already shipped; `DulcetDriverFactoryTest`'s hand-built v2 fixture had
+    omitted it and now carries the released DDL verbatim.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

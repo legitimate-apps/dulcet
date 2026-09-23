@@ -1,0 +1,649 @@
+-- The seen-cache of spec §16.10: a read-through record of what this account was shown.
+--
+-- Every row is scoped by `server_id`, the provider instance (one user on one server), because the
+-- catalog payloads carry per-user state. Nothing here is versioned by generation: the unit of
+-- consistency is the response and the window (§16.12). Per-user fields are nullable because
+-- *unknown is not false* — a row seeded on upgrade (§16.17) knows none of them.
+--
+-- `issue_seq` is the order in which the request that wrote a row was ISSUED, taken from
+-- `cache_issue_counter` when the request is sent. A response rewrites a row only when its
+-- `issue_seq` is higher than the row's, so a slow answer never overwrites a newer one.
+
+CREATE TABLE cache_binding (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  normalized_base_url TEXT NOT NULL,
+  username TEXT NOT NULL,
+  created_at_wall INTEGER NOT NULL
+);
+
+CREATE TABLE cache_issue_counter (
+  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+  last_issued INTEGER NOT NULL CHECK (last_issued >= 0)
+);
+
+CREATE TABLE cache_epoch (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  last_scan TEXT,
+  folder_ids TEXT NOT NULL,
+  scanning INTEGER NOT NULL CHECK (scanning IN (0, 1)),
+  read_at_wall INTEGER NOT NULL
+);
+
+CREATE TABLE cache_artist (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  normalized_name TEXT,
+  album_count INTEGER,
+  artwork_key TEXT,
+  starred INTEGER CHECK (starred IS NULL OR starred IN (0, 1)),
+  starred_at TEXT,
+  user_rating INTEGER,
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_album (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  normalized_title TEXT,
+  artist_name TEXT,
+  artist_raw_id TEXT,
+  year INTEGER,
+  genre TEXT,
+  duration_milliseconds INTEGER CHECK (duration_milliseconds IS NULL OR duration_milliseconds >= 0),
+  song_count INTEGER CHECK (song_count IS NULL OR song_count >= 0),
+  artwork_key TEXT,
+  starred INTEGER CHECK (starred IS NULL OR starred IN (0, 1)),
+  starred_at TEXT,
+  user_rating INTEGER,
+  play_count INTEGER,
+  played TEXT,
+  detail_complete INTEGER NOT NULL DEFAULT 0 CHECK (detail_complete IN (0, 1)),
+  detail_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (detail_issue_seq >= 0),
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_track (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  album_raw_id TEXT,
+  album_ordinal INTEGER CHECK (album_ordinal IS NULL OR album_ordinal >= 0),
+  title TEXT,
+  normalized_title TEXT,
+  album_title TEXT,
+  normalized_album_title TEXT,
+  artist_name TEXT,
+  artist_raw_id TEXT,
+  disc_number INTEGER,
+  track_number INTEGER,
+  duration_milliseconds INTEGER CHECK (duration_milliseconds IS NULL OR duration_milliseconds >= 0),
+  source_container TEXT,
+  artwork_key TEXT,
+  starred INTEGER CHECK (starred IS NULL OR starred IN (0, 1)),
+  starred_at TEXT,
+  user_rating INTEGER,
+  play_count INTEGER,
+  played TEXT,
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  metadata_missing INTEGER NOT NULL DEFAULT 0 CHECK (metadata_missing IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id),
+  CHECK (metadata_missing = 1 OR title IS NOT NULL)
+);
+
+CREATE TABLE cache_playlist (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  song_count INTEGER CHECK (song_count IS NULL OR song_count >= 0),
+  duration_milliseconds INTEGER CHECK (duration_milliseconds IS NULL OR duration_milliseconds >= 0),
+  owner TEXT,
+  artwork_key TEXT,
+  detail_complete INTEGER NOT NULL DEFAULT 0 CHECK (detail_complete IN (0, 1)),
+  detail_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (detail_issue_seq >= 0),
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_credit (
+  server_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('album', 'track')),
+  owner_raw_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('artist', 'album_artist')),
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+  name TEXT NOT NULL,
+  artist_raw_id TEXT,
+  normalized_name TEXT,
+  PRIMARY KEY (server_id, owner_kind, owner_raw_id, role, ordinal)
+);
+
+CREATE TABLE cache_list (
+  server_id TEXT NOT NULL,
+  list_key TEXT NOT NULL,
+  window_epoch TEXT,
+  folder_ids TEXT,
+  first_loaded_offset INTEGER NOT NULL CHECK (first_loaded_offset >= 0),
+  end_loaded_offset INTEGER NOT NULL CHECK (end_loaded_offset >= first_loaded_offset),
+  total INTEGER CHECK (total IS NULL OR total >= 0),
+  coverage TEXT NOT NULL CHECK (
+    coverage IN ('complete', 'open', 'unverified_scanning', 'unverified_no_epoch')
+  ),
+  fetched_at_wall INTEGER,
+  last_access_wall INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  PRIMARY KEY (server_id, list_key)
+);
+
+CREATE TABLE cache_list_member (
+  server_id TEXT NOT NULL,
+  list_key TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track', 'playlist', 'genre')),
+  raw_id TEXT NOT NULL,
+  PRIMARY KEY (server_id, list_key, position),
+  FOREIGN KEY (server_id, list_key) REFERENCES cache_list(server_id, list_key) ON DELETE CASCADE
+);
+
+CREATE TABLE cache_pin (
+  server_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track', 'playlist')),
+  raw_id TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('download', 'queue', 'playing')),
+  PRIMARY KEY (server_id, item_kind, raw_id, reason)
+);
+
+CREATE INDEX cache_track_album ON cache_track(server_id, album_raw_id);
+CREATE INDEX cache_list_member_item ON cache_list_member(server_id, item_kind, raw_id);
+CREATE INDEX cache_list_access ON cache_list(server_id, last_access_wall);
+CREATE INDEX cache_album_access ON cache_album(server_id, last_access_wall);
+CREATE INDEX cache_track_access ON cache_track(server_id, last_access_wall);
+CREATE INDEX cache_artist_access ON cache_artist(server_id, last_access_wall);
+CREATE INDEX cache_artist_normalized_name ON cache_artist(server_id, normalized_name);
+CREATE INDEX cache_album_normalized_title ON cache_album(server_id, normalized_title);
+CREATE INDEX cache_track_normalized_title ON cache_track(server_id, normalized_title);
+CREATE INDEX cache_credit_normalized_name ON cache_credit(server_id, normalized_name);
+
+-- Binding (CONF-80) -------------------------------------------------------------------------------
+
+selectBinding:
+SELECT normalized_base_url, username FROM cache_binding WHERE server_id = ?;
+
+insertBinding:
+INSERT OR REPLACE INTO cache_binding(server_id, normalized_base_url, username, created_at_wall)
+VALUES (?, ?, ?, ?);
+
+-- Issue order -------------------------------------------------------------------------------------
+
+initializeIssueCounter:
+INSERT OR IGNORE INTO cache_issue_counter(singleton_id, last_issued) VALUES (1, 0);
+
+advanceIssueCounter:
+UPDATE cache_issue_counter SET last_issued = last_issued + 1 WHERE singleton_id = 1;
+
+selectIssueCounter:
+SELECT last_issued FROM cache_issue_counter WHERE singleton_id = 1;
+
+-- Epoch -------------------------------------------------------------------------------------------
+
+selectEpoch:
+SELECT last_scan, folder_ids, scanning, read_at_wall FROM cache_epoch WHERE server_id = ?;
+
+saveEpoch:
+INSERT OR REPLACE INTO cache_epoch(server_id, last_scan, folder_ids, scanning, read_at_wall)
+VALUES (?, ?, ?, ?, ?);
+
+-- Artists -----------------------------------------------------------------------------------------
+
+selectArtistIssueSeq:
+SELECT issue_seq FROM cache_artist WHERE server_id = ? AND raw_id = ?;
+
+insertArtist:
+INSERT INTO cache_artist(
+  server_id, raw_id, name, normalized_name, album_count, artwork_key, starred, starred_at,
+  user_rating, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0);
+
+updateArtist:
+UPDATE cache_artist SET
+  name = :name, normalized_name = :normalized_name, album_count = :album_count,
+  artwork_key = :artwork_key, starred = :starred, starred_at = :starred_at,
+  user_rating = :user_rating, fetched_at_wall = :fetched_at_wall, fetched_epoch = :fetched_epoch,
+  issue_seq = :issue_seq, gone = 0
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+selectArtist:
+SELECT * FROM cache_artist WHERE server_id = ? AND raw_id = ?;
+
+-- Albums ------------------------------------------------------------------------------------------
+
+selectAlbumSequences:
+SELECT issue_seq, detail_issue_seq FROM cache_album WHERE server_id = ? AND raw_id = ?;
+
+insertAlbum:
+INSERT INTO cache_album(
+  server_id, raw_id, title, normalized_title, artist_name, artist_raw_id, year, genre,
+  duration_milliseconds, song_count, artwork_key, starred, starred_at, user_rating, play_count,
+  played, detail_complete, detail_issue_seq, fetched_at_wall, fetched_epoch, issue_seq,
+  last_access_wall, gone
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 0);
+
+-- A summary never clears `detail_complete` and never touches track membership (§16.10:
+-- upserts are field-complete per source).
+updateAlbumSummary:
+UPDATE cache_album SET
+  title = :title, normalized_title = :normalized_title, artist_name = :artist_name,
+  artist_raw_id = :artist_raw_id, year = :year, genre = :genre,
+  duration_milliseconds = :duration_milliseconds, song_count = :song_count,
+  artwork_key = :artwork_key, starred = :starred, starred_at = :starred_at,
+  user_rating = :user_rating, play_count = :play_count, played = :played,
+  fetched_at_wall = :fetched_at_wall, fetched_epoch = :fetched_epoch, issue_seq = :issue_seq,
+  gone = CASE WHEN :clears_gone = 1 THEN 0 ELSE gone END
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+markAlbumDetail:
+UPDATE cache_album SET detail_complete = 1, detail_issue_seq = :detail_issue_seq, gone = :gone
+WHERE server_id = :server_id AND raw_id = :raw_id AND detail_issue_seq < :detail_issue_seq;
+
+-- A detail read that proves the album gone also outranks every older summary of it, so a slower
+-- list page issued before that read cannot resurrect it.
+markAlbumGoneByDetail:
+UPDATE cache_album SET gone = 1, detail_issue_seq = :detail_issue_seq,
+  issue_seq = max(issue_seq, :detail_issue_seq)
+WHERE server_id = :server_id AND raw_id = :raw_id AND detail_issue_seq < :detail_issue_seq;
+
+selectAlbum:
+SELECT * FROM cache_album WHERE server_id = ? AND raw_id = ?;
+
+-- Tracks ------------------------------------------------------------------------------------------
+
+selectTrackIssueSeq:
+SELECT issue_seq FROM cache_track WHERE server_id = ? AND raw_id = ?;
+
+insertTrack:
+INSERT INTO cache_track(
+  server_id, raw_id, album_raw_id, album_ordinal, title, normalized_title, album_title,
+  normalized_album_title, artist_name, artist_raw_id, disc_number, track_number,
+  duration_milliseconds, source_container, artwork_key, starred, starred_at, user_rating,
+  play_count, played, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone,
+  metadata_missing
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0);
+
+updateTrack:
+UPDATE cache_track SET
+  album_raw_id = coalesce(:album_raw_id, album_raw_id),
+  album_ordinal = CASE WHEN :album_ordinal IS NULL THEN album_ordinal ELSE :album_ordinal END,
+  title = :title, normalized_title = :normalized_title, album_title = :album_title,
+  normalized_album_title = :normalized_album_title, artist_name = :artist_name,
+  artist_raw_id = :artist_raw_id, disc_number = :disc_number, track_number = :track_number,
+  duration_milliseconds = :duration_milliseconds, source_container = :source_container,
+  artwork_key = :artwork_key, starred = :starred, starred_at = :starred_at,
+  user_rating = :user_rating, play_count = :play_count, played = :played,
+  fetched_at_wall = :fetched_at_wall, fetched_epoch = :fetched_epoch, issue_seq = :issue_seq,
+  metadata_missing = 0,
+  gone = CASE WHEN :clears_gone = 1 THEN 0 ELSE gone END
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+selectTrack:
+SELECT * FROM cache_track WHERE server_id = ? AND raw_id = ?;
+
+selectAlbumTrackIds:
+SELECT raw_id FROM cache_track WHERE server_id = ? AND album_raw_id = ?;
+
+-- Gone-ness is itself a read result and is ordered like one: a track written by a read issued
+-- AFTER the detail read that omitted it stays present.
+markTrackGone:
+UPDATE cache_track SET gone = 1, album_ordinal = NULL, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+selectAlbumTracks:
+SELECT * FROM cache_track
+WHERE server_id = ? AND album_raw_id = ? AND gone = 0
+ORDER BY album_ordinal IS NULL, album_ordinal, disc_number, track_number, title COLLATE NOCASE, raw_id;
+
+-- Playlists ---------------------------------------------------------------------------------------
+
+selectPlaylistSequences:
+SELECT issue_seq, detail_issue_seq FROM cache_playlist WHERE server_id = ? AND raw_id = ?;
+
+insertPlaylist:
+INSERT INTO cache_playlist(
+  server_id, raw_id, name, song_count, duration_milliseconds, owner, artwork_key,
+  detail_complete, detail_issue_seq, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall,
+  gone
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 0);
+
+updatePlaylist:
+UPDATE cache_playlist SET
+  name = :name, song_count = :song_count, duration_milliseconds = :duration_milliseconds,
+  owner = :owner, artwork_key = :artwork_key, fetched_at_wall = :fetched_at_wall,
+  fetched_epoch = :fetched_epoch, issue_seq = :issue_seq, gone = 0
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+markPlaylistDetail:
+UPDATE cache_playlist SET detail_complete = 1, detail_issue_seq = :detail_issue_seq, gone = 0
+WHERE server_id = :server_id AND raw_id = :raw_id AND detail_issue_seq < :detail_issue_seq;
+
+markPlaylistGoneByDetail:
+UPDATE cache_playlist SET gone = 1, detail_complete = 0, detail_issue_seq = :detail_issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND detail_issue_seq < :detail_issue_seq;
+
+clearPlaylistDetail:
+UPDATE cache_playlist SET detail_complete = 0 WHERE server_id = ? AND raw_id = ?;
+
+markArtistGone:
+UPDATE cache_artist SET gone = 1 WHERE server_id = ? AND raw_id = ?;
+
+selectPlaylist:
+SELECT * FROM cache_playlist WHERE server_id = ? AND raw_id = ?;
+
+-- Credits -----------------------------------------------------------------------------------------
+
+deleteCredits:
+DELETE FROM cache_credit WHERE server_id = ? AND owner_kind = ? AND owner_raw_id = ?;
+
+insertCredit:
+INSERT OR REPLACE INTO cache_credit(
+  server_id, owner_kind, owner_raw_id, role, ordinal, name, artist_raw_id, normalized_name
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+selectCredits:
+SELECT role, name, artist_raw_id FROM cache_credit
+WHERE server_id = ? AND owner_kind = ? AND owner_raw_id = ?
+ORDER BY role, ordinal;
+
+-- Lists and windows -------------------------------------------------------------------------------
+
+selectList:
+SELECT * FROM cache_list WHERE server_id = ? AND list_key = ?;
+
+saveList:
+INSERT OR REPLACE INTO cache_list(
+  server_id, list_key, window_epoch, folder_ids, first_loaded_offset, end_loaded_offset, total,
+  coverage, fetched_at_wall, last_access_wall, issue_seq
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteListMembers:
+DELETE FROM cache_list_member WHERE server_id = ? AND list_key = ?;
+
+deleteListMembersInRange:
+DELETE FROM cache_list_member
+WHERE server_id = :server_id AND list_key = :list_key
+  AND position >= :from_position AND position < :to_position;
+
+deleteListMembersOutside:
+DELETE FROM cache_list_member
+WHERE server_id = :server_id AND list_key = :list_key
+  AND (position < :from_position OR position >= :to_position);
+
+insertListMember:
+INSERT OR REPLACE INTO cache_list_member(server_id, list_key, position, item_kind, raw_id)
+VALUES (?, ?, ?, ?, ?);
+
+selectListMembers:
+SELECT position, item_kind, raw_id FROM cache_list_member
+WHERE server_id = ? AND list_key = ?
+ORDER BY position;
+
+deleteList:
+DELETE FROM cache_list WHERE server_id = ? AND list_key = ?;
+
+touchList:
+UPDATE cache_list SET last_access_wall = ? WHERE server_id = ? AND list_key = ?;
+
+touchListAlbums:
+UPDATE cache_album SET last_access_wall = :now
+WHERE server_id = :server_id AND raw_id IN (
+  SELECT raw_id FROM cache_list_member
+  WHERE server_id = :server_id AND list_key = :list_key AND item_kind = 'album'
+);
+
+touchListArtists:
+UPDATE cache_artist SET last_access_wall = :now
+WHERE server_id = :server_id AND raw_id IN (
+  SELECT raw_id FROM cache_list_member
+  WHERE server_id = :server_id AND list_key = :list_key AND item_kind = 'artist'
+);
+
+touchListTracks:
+UPDATE cache_track SET last_access_wall = :now
+WHERE server_id = :server_id AND raw_id IN (
+  SELECT raw_id FROM cache_list_member
+  WHERE server_id = :server_id AND list_key = :list_key AND item_kind = 'track'
+);
+
+touchListPlaylists:
+UPDATE cache_playlist SET last_access_wall = :now
+WHERE server_id = :server_id AND raw_id IN (
+  SELECT raw_id FROM cache_list_member
+  WHERE server_id = :server_id AND list_key = :list_key AND item_kind = 'playlist'
+);
+
+touchAlbum:
+UPDATE cache_album SET last_access_wall = ? WHERE server_id = ? AND raw_id = ?;
+
+touchAlbumTracks:
+UPDATE cache_track SET last_access_wall = ? WHERE server_id = ? AND album_raw_id = ?;
+
+-- Pins --------------------------------------------------------------------------------------------
+
+insertPin:
+INSERT OR IGNORE INTO cache_pin(server_id, item_kind, raw_id, reason) VALUES (?, ?, ?, ?);
+
+deletePin:
+DELETE FROM cache_pin WHERE server_id = ? AND item_kind = ? AND raw_id = ? AND reason = ?;
+
+selectPins:
+SELECT item_kind, raw_id, reason FROM cache_pin WHERE server_id = ? ORDER BY item_kind, raw_id, reason;
+
+insertIdentityOnlyTrack:
+INSERT OR IGNORE INTO cache_track(
+  server_id, raw_id, issue_seq, last_access_wall, gone, metadata_missing
+)
+VALUES (?, ?, 0, ?, 0, 1);
+
+-- Eviction (§16.13, CONF-78) ----------------------------------------------------------------------
+
+countLists:
+SELECT count(*) FROM cache_list WHERE server_id = ?;
+
+countAlbums:
+SELECT count(*) FROM cache_album WHERE server_id = ?;
+
+countTracks:
+SELECT count(*) FROM cache_track WHERE server_id = ?;
+
+countArtists:
+SELECT count(*) FROM cache_artist WHERE server_id = ?;
+
+selectLeastRecentlyAccessedList:
+SELECT list_key FROM cache_list WHERE server_id = ?
+ORDER BY last_access_wall, list_key
+LIMIT 1;
+
+selectEvictableAlbums:
+SELECT raw_id FROM cache_album AS a
+WHERE a.server_id = :server_id
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_pin p
+    WHERE p.server_id = a.server_id AND p.item_kind = 'album' AND p.raw_id = a.raw_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_list_member m
+    WHERE m.server_id = a.server_id AND m.item_kind = 'album' AND m.raw_id = a.raw_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_pin p JOIN cache_track t
+      ON t.server_id = p.server_id AND t.raw_id = p.raw_id
+    WHERE p.server_id = a.server_id AND p.item_kind = 'track' AND t.album_raw_id = a.raw_id
+  )
+ORDER BY a.last_access_wall, a.raw_id
+LIMIT :limit;
+
+selectEvictableTracks:
+SELECT raw_id FROM cache_track AS t
+WHERE t.server_id = :server_id
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_pin p
+    WHERE p.server_id = t.server_id AND p.item_kind = 'track' AND p.raw_id = t.raw_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_list_member m
+    WHERE m.server_id = t.server_id AND m.item_kind = 'track' AND m.raw_id = t.raw_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_album a
+    WHERE a.server_id = t.server_id AND a.raw_id = t.album_raw_id AND a.detail_complete = 1
+  )
+ORDER BY t.last_access_wall, t.raw_id
+LIMIT :limit;
+
+selectEvictableArtists:
+SELECT raw_id FROM cache_artist AS r
+WHERE r.server_id = :server_id
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_pin p
+    WHERE p.server_id = r.server_id AND p.item_kind = 'artist' AND p.raw_id = r.raw_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM cache_list_member m
+    WHERE m.server_id = r.server_id AND m.item_kind = 'artist' AND m.raw_id = r.raw_id
+  )
+ORDER BY r.last_access_wall, r.raw_id
+LIMIT :limit;
+
+deleteAlbum:
+DELETE FROM cache_album WHERE server_id = ? AND raw_id = ?;
+
+deleteTrack:
+DELETE FROM cache_track WHERE server_id = ? AND raw_id = ?;
+
+deleteArtist:
+DELETE FROM cache_artist WHERE server_id = ? AND raw_id = ?;
+
+-- Local views and local search over the seen-cache (§16.14, §16.15) --------------------------------
+
+selectLocalAlbums:
+SELECT * FROM cache_album WHERE server_id = ? AND gone = 0
+ORDER BY title COLLATE NOCASE, raw_id;
+
+selectLocalArtists:
+SELECT * FROM cache_artist WHERE server_id = ? AND gone = 0
+ORDER BY name COLLATE NOCASE, raw_id;
+
+countSearchableAlbums:
+SELECT count(*) FROM cache_album WHERE server_id = ? AND gone = 0;
+
+countSearchableTracks:
+SELECT count(*) FROM cache_track WHERE server_id = ? AND gone = 0 AND metadata_missing = 0;
+
+countSearchableArtists:
+SELECT count(*) FROM cache_artist WHERE server_id = ? AND gone = 0;
+
+searchCachedArtists:
+SELECT raw_id, name FROM cache_artist
+WHERE server_id = :server_id AND gone = 0 AND instr(normalized_name, :query) > 0
+ORDER BY name COLLATE NOCASE, raw_id;
+
+searchCachedAlbums:
+SELECT raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds, artwork_key
+FROM cache_album
+WHERE server_id = :server_id AND gone = 0
+  AND (instr(normalized_title, :query) > 0 OR EXISTS (
+    SELECT 1 FROM cache_credit c WHERE c.server_id = cache_album.server_id
+      AND c.owner_kind = 'album' AND c.owner_raw_id = cache_album.raw_id
+      AND instr(c.normalized_name, :query) > 0
+  ))
+ORDER BY title COLLATE NOCASE, raw_id;
+
+searchCachedTracks:
+SELECT raw_id, album_raw_id, title, artist_name, artist_raw_id, album_title, disc_number,
+  track_number, duration_milliseconds, source_container, artwork_key
+FROM cache_track
+WHERE server_id = :server_id AND gone = 0 AND metadata_missing = 0
+  AND (instr(normalized_title, :query) > 0 OR instr(normalized_album_title, :query) > 0 OR EXISTS (
+    SELECT 1 FROM cache_credit c WHERE c.server_id = cache_track.server_id
+      AND c.owner_kind = 'track' AND c.owner_raw_id = cache_track.raw_id
+      AND instr(c.normalized_name, :query) > 0
+  ))
+ORDER BY album_title COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE, raw_id;
+
+-- Normalization backfill for rows seeded on upgrade (§16.17) ---------------------------------------
+
+selectArtistsMissingNormalization:
+SELECT server_id, raw_id, name FROM cache_artist WHERE normalized_name IS NULL;
+
+updateArtistNormalization:
+UPDATE cache_artist SET normalized_name = ? WHERE server_id = ? AND raw_id = ?;
+
+selectAlbumsMissingNormalization:
+SELECT server_id, raw_id, title FROM cache_album WHERE normalized_title IS NULL;
+
+updateAlbumNormalization:
+UPDATE cache_album SET normalized_title = ? WHERE server_id = ? AND raw_id = ?;
+
+selectTracksMissingNormalization:
+SELECT server_id, raw_id, title, album_title FROM cache_track
+WHERE metadata_missing = 0 AND (normalized_title IS NULL OR normalized_album_title IS NULL);
+
+updateTrackNormalization:
+UPDATE cache_track SET normalized_title = ?, normalized_album_title = ? WHERE server_id = ? AND raw_id = ?;
+
+selectCreditsMissingNormalization:
+SELECT server_id, owner_kind, owner_raw_id, role, ordinal, name FROM cache_credit
+WHERE normalized_name IS NULL;
+
+updateCreditNormalization:
+UPDATE cache_credit SET normalized_name = ?
+WHERE server_id = ? AND owner_kind = ? AND owner_raw_id = ? AND role = ? AND ordinal = ?;
+
+-- Binding purge (CONF-80): the whole namespace, in one transaction ---------------------------------
+
+purgeNamespace {
+  DELETE FROM cache_list_member WHERE server_id = :server_id;
+  DELETE FROM cache_list WHERE server_id = :server_id;
+  DELETE FROM cache_credit WHERE server_id = :server_id;
+  DELETE FROM cache_track WHERE server_id = :server_id;
+  DELETE FROM cache_album WHERE server_id = :server_id;
+  DELETE FROM cache_artist WHERE server_id = :server_id;
+  DELETE FROM cache_playlist WHERE server_id = :server_id;
+  DELETE FROM cache_pin WHERE server_id = :server_id;
+  DELETE FROM cache_epoch WHERE server_id = :server_id;
+  DELETE FROM cache_binding WHERE server_id = :server_id;
+}
+
+countNamespaceRows:
+SELECT sum(row_count) FROM (
+  SELECT count(*) AS row_count FROM cache_list_member WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_list WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_credit WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_track WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_album WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_artist WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_playlist WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_pin WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_epoch WHERE server_id = :server_id
+);

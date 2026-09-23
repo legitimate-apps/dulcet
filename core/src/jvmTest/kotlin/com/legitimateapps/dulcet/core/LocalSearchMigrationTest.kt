@@ -24,7 +24,7 @@ class LocalSearchMigrationTest {
             repeat(2) {
                 val store = DulcetDriverFactory(path.toString()).openDulcetDatabase()
                 try {
-                    assertEquals(5, store.metadata().schemaVersion)
+                    assertEquals(DULCET_SCHEMA_VERSION, store.metadata().schemaVersion)
                     assertEquals(7, store.metadata().committedGeneration)
                     assertEquals(listOf("opaque:legacy/not-int"),
                         LocalLibrarySearch(store).search("account", "ecole strasse").map { it.id.rawId })
