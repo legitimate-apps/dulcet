@@ -205,9 +205,12 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             timeout: .seconds(10),
             failureMessage: "Return on dulcet.search.result.\(canaryRank): queueReplacements=\(playback.queueReplacementCount) state=\(store.snapshot.state) nowPlaying=\(String(describing: store.snapshot.nowPlaying?.current.title)); expected one search queue and \(canaryTitle)"
         ) {
-            store.snapshot.state == .nowPlaying
-                && store.snapshot.nowPlaying?.current.title == canaryTitle
+            store.snapshot.nowPlaying?.current.title == canaryTitle
         }
+        // Playing leaves the results showing; the docked now-playing bar says what is playing.
+        XCTAssertEqual(store.snapshot.selectedDestination, .search,
+            "Return on a result must play it without navigating away from the results")
+        XCTAssertEqual(store.snapshot.state, .searchResults, "Results stay on screen while playing")
 
         XCTAssertEqual(playback.queueReplacementCount, 1,
             "Return on rank \(canaryRank) must replace/play exactly one queue")
@@ -230,6 +233,27 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         XCTAssertEqual(startedTrack.id, canaryID, "Queue identity at the start index must be the pressed row")
         XCTAssertEqual(startedTrack.title, canaryTitle, "Activated queue start title")
+        hostingView.layoutSubtreeIfNeeded()
+        let barElement = try await accessibilityElement(
+            identifiedBy: "dulcet.mini-player.open",
+            in: hostingView,
+            timeout: .seconds(5)
+        )
+        XCTAssertTrue(accessibilityLabel(barElement)?.contains(canaryTitle) == true,
+            "dulcet.mini-player.open label=\(String(describing: accessibilityLabel(barElement)))")
+        // SwiftUI's AX nodes are NSObjects answering the informal NSAccessibility protocol.
+        let press = #selector(NSAccessibilityProtocol.accessibilityPerformPress)
+        let bar = try XCTUnwrap(barElement as? NSObject,
+            "dulcet.mini-player.open is not an AX object: \(type(of: barElement))")
+        XCTAssertTrue(bar.responds(to: press),
+            "dulcet.mini-player.open \(type(of: barElement)) does not answer AXPress")
+        _ = bar.perform(press)
+        try await waitUntil(
+            timeout: .seconds(5),
+            failureMessage: "AXPress on the now-playing bar: destination=\(store.selectedDestination) state=\(store.snapshot.state)"
+        ) {
+            store.snapshot.state == .nowPlaying
+        }
         hostingView.layoutSubtreeIfNeeded()
         let nowPlayingTitle = try await accessibilityElement(
             identifiedBy: "dulcet.now-playing.title",

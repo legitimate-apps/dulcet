@@ -49,104 +49,199 @@ final class DulcetiOSUITests: XCTestCase {
         }
     }
 
-    /// A compact iPhone window shows one column at a time, so reaching a destination, using the
-    /// navigation bar's back control, and choosing that same destination again is an ordinary
-    /// path -- and it was a dead end. OBSERVED on an iPhone 17 Pro simulator before the fix, and
-    /// repeatably: the second choice left the detail unpushed, the row highlighted, and the only
-    /// way forward was choosing some other destination.
+    /// The compact shell on the deterministic layout fixture -- no server, so nothing here can
+    /// fail for a reason that belongs to one. It proves, on an iPhone-width window:
     ///
-    /// MEASURED mechanism: the sidebar list's selection binding reports the store's destination,
-    /// which the back control does not change, so the second choice reads back as an unchanged
-    /// value and SwiftUI infers no push. The binding's setter does still run for that choice --
-    /// established by the fix, which is one line inside that setter asking for the detail column.
-    /// What SwiftUI writes into the selection on the way back was NOT measured, and a first
-    /// attempt built on assuming a `nil` there was measured not to carry the fix.
-    ///
-    /// This uses the deterministic layout fixture rather than the disposable server: the contract
-    /// under test is navigation, and a fixture makes the run independent of any server state.
+    /// 1. The album page is not blank: its artwork, title and Play/Shuffle lie inside the window
+    ///    with real width, the two actions are equal-width single-line buttons, and the first
+    ///    track row is on screen without scrolling. The audit that motivated this measured the
+    ///    title at width 0 and the first row about three screens down.
+    /// 2. Playing a track leaves the album page showing and brings up the now-playing bar,
+    ///    whose play/pause reaches the store (its label flips), and which stays on screen on
+    ///    another tab.
+    /// 3. The bar opens the full player as a sheet showing the track that was played, and the
+    ///    sheet closes back to the tab with the bar still there.
     @MainActor
-    func testCompactSidebarRestoresTheDetailForTheSameDestination() {
+    func testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar() {
+        XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         app.launchArguments.append("-dulcet-account-connect-layout-fixture")
         app.launch()
 
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        // Checks the experiment before the product: a regular-width window has no tab bar.
         XCTAssertLessThan(
             window.frame.width,
             700,
-            "This proof requires a compact-width iPhone window; a regular-width window shows both"
-                + " columns at once and cannot express the defect"
+            "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
         )
 
-        let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
-        let searchField = app.textFields["dulcet.search.field"].firstMatch
-
-        // Reveals the sidebar the way a person does, and reports which control it used so a
-        // failure names the control rather than only its effect. Returns whether the back control
-        // was needed: on a compact window the detail is showing at both call sites, so a run that
-        // found the sidebar already open did not exercise the path this proof is about, and the
-        // caller asserts that rather than accepting a pass that skipped it.
-        func revealSidebar(_ phase: String) -> (reached: Bool, usedBackControl: Bool) {
-            var usedBackControl = false
-            if !searchRow.isHittable {
-                let backControl = app.navigationBars.buttons.firstMatch
-                guard backControl.waitForExistence(timeout: 5) else {
-                    XCTFail("\(phase): a compact window must expose the sidebar through a back"
-                        + " control: " + app.debugDescription)
-                    return (false, false)
-                }
-                print("DULCET COMPACT NAV \(phase) back-control=\(backControl.identifier)")
-                backControl.tap()
-                usedBackControl = true
-            }
-            guard searchRow.waitForExistence(timeout: 5), searchRow.isHittable else {
-                XCTFail("\(phase): the Search row must be reachable in the sidebar: "
-                    + app.debugDescription)
-                return (false, usedBackControl)
-            }
-            return (true, usedBackControl)
+        let libraryTab = app.tabBars.buttons["Library"].firstMatch
+        guard libraryTab.waitForExistence(timeout: 10) else {
+            XCTFail("A compact window must present a tab bar with Library: " + app.debugDescription)
+            return
         }
-
-        let firstReveal = revealSidebar("first")
-        guard firstReveal.reached else { return }
-        XCTAssertTrue(
-            firstReveal.usedBackControl,
-            "A compact window opens on the detail column, so reaching the sidebar must have gone"
-                + " through the back control; a run that skipped it did not set up this proof"
-        )
-        searchRow.tap()
-        XCTAssertTrue(
-            searchField.waitForExistence(timeout: 5),
-            "Choosing Search must show the Search detail: " + app.debugDescription
-        )
-
-        let secondReveal = revealSidebar("second")
-        guard secondReveal.reached else { return }
-        XCTAssertTrue(
-            secondReveal.usedBackControl,
-            "The Search detail must have been showing before the back control was used; without"
-                + " that, the re-selection below is not the case this proof is about"
-        )
-        // The store's selected destination is still Search here. That is the whole point: the
-        // second choice must push the detail again even though the value does not change.
         XCTAssertFalse(
-            searchField.exists,
-            "The back control must leave the sidebar showing, not the Search detail: "
-                + app.debugDescription
+            app.staticTexts["dulcet.sidebar.library"].firstMatch.exists,
+            "A compact window must not fall back to the sidebar list"
         )
-        searchRow.tap()
-        let reselectPushed = searchField.waitForExistence(timeout: 5)
-        // Print the observed value, not a verdict: a bare "PASS" line printed after an assertion
-        // that already failed is a claim nothing checked.
-        print("DULCET COMPACT NAV OBSERVED"
-            + " first-back=\(firstReveal.usedBackControl) second-back=\(secondReveal.usedBackControl)"
-            + " reselect-push=\(reselectPushed)")
+        // The fixture opens on the Connection tab. A compact window must not raise the keyboard
+        // there on its own: it would cover the tab bar this proof (and a person) needs.
+        XCTAssertFalse(app.keyboards.firstMatch.exists,
+                       "The Connection tab must not raise the keyboard over the tab bar on arrival")
+        libraryTab.tap()
+        XCTAssertTrue(libraryTab.isSelected, "The Library tab must be selected after tapping it")
+
+        let album = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
+        ).firstMatch
+        guard album.waitForExistence(timeout: 10),
+              scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
+            XCTFail("The fixture's Double Lines album must be reachable in the grid: "
+                + app.debugDescription)
+            return
+        }
+        album.tap()
+
+        let title = app.staticTexts["dulcet.album.title"].firstMatch
+        guard title.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must render its title: " + app.debugDescription)
+            return
+        }
+        let play = app.buttons["dulcet.album.play"].firstMatch
+        let shuffle = app.buttons["dulcet.album.shuffle"].firstMatch
+        let firstTrack = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Disc 1 Track 1")
+        ).firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 5), "The album page must offer Play")
+        XCTAssertTrue(shuffle.exists, "The album page must offer Shuffle")
+        XCTAssertTrue(firstTrack.waitForExistence(timeout: 5), "The first track row must exist")
+
+        let frame = window.frame
+        print("DULCET COMPACT ALBUM OBSERVED window=\(frame) title=\(title.frame)"
+            + " play=\(play.frame) shuffle=\(shuffle.frame) first-track=\(firstTrack.frame)")
+        for (name, element) in [("title", title), ("play", play), ("shuffle", shuffle),
+                                ("first track", firstTrack)] {
+            XCTAssertGreaterThan(element.frame.width, 1, "\(name) must have visible width")
+            XCTAssertTrue(
+                frame.contains(element.frame),
+                "\(name) frame \(element.frame) must lie inside the window \(frame) without scrolling"
+            )
+        }
+        XCTAssertTrue(firstTrack.isHittable, "The first track must be on screen without scrolling")
+        XCTAssertEqual(play.frame.width, shuffle.frame.width, accuracy: 1,
+                       "Play and Shuffle must be equal-width buttons")
+        XCTAssertEqual(play.frame.minY, shuffle.frame.minY, accuracy: 1,
+                       "Play and Shuffle must sit side by side at the default text size")
+        XCTAssertLessThan(play.frame.height, 70,
+                          "A one-line button; a label wrapping letter by letter is far taller")
+
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        XCTAssertFalse(bar.exists, "Nothing is queued yet, so there must be no now-playing bar")
+
+        firstTrack.tap()
+        guard bar.waitForExistence(timeout: 10) else {
+            XCTFail("Playing a track must bring up the now-playing bar: " + app.debugDescription)
+            return
+        }
+        XCTAssertTrue(bar.label.contains("Disc 1 Track 1"),
+                      "The bar must name the track that was played; label=\(bar.label)")
+        XCTAssertTrue(title.exists && title.isHittable,
+                      "Playing must leave the album page showing, not navigate away from it")
+
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(playPause.waitForExistence(timeout: 5), "The bar must offer play/pause")
+        XCTAssertEqual(playPause.label, "Pause", "A playing queue offers Pause")
+        playPause.tap()
         XCTAssertTrue(
-            reselectPushed,
-            "Choosing the destination already selected must show its detail again, not strand the"
-                + " person on the sidebar: " + app.debugDescription
+            waitForLabel("Play", of: playPause, timeout: 5),
+            "Pause on the bar must reach playback; label stayed \(playPause.label)"
         )
+        XCTAssertTrue(app.buttons["dulcet.mini-player.next"].firstMatch.exists,
+                      "The bar must offer Next")
+
+        app.tabBars.buttons["Search"].firstMatch.tap()
+        XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
+                      "The Search tab must show search")
+        XCTAssertTrue(bar.waitForExistence(timeout: 5) && bar.isHittable,
+                      "The now-playing bar must stay on screen on another tab")
+
+        bar.tap()
+        let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        guard nowPlayingTitle.waitForExistence(timeout: 10) else {
+            XCTFail("The bar must open the full player: " + app.debugDescription)
+            return
+        }
+        XCTAssertEqual(nowPlayingTitle.label, "Disc 1 Track 1",
+                       "The full player must show the track that is playing")
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "The full player must offer a close control")
+        close.tap()
+        XCTAssertTrue(
+            nowPlayingTitle.waitForNonExistence(timeout: 10),
+            "Closing must dismiss the full player"
+        )
+        XCTAssertTrue(bar.waitForExistence(timeout: 5), "The bar must remain after the player closes")
+        print("DULCET COMPACT SHELL PASS album-fits=true bar-appeared=true stayed-on-album=true"
+            + " pause-reached-store=true bar-on-search=true sheet-opened=true sheet-closed=true")
+    }
+
+    /// Reaches a top-level destination the way a person does on the window's size class: the tab
+    /// bar on a compact window, the sidebar on a regular one.
+    @MainActor
+    private func openDestination(
+        _ tabTitle: String,
+        sidebarIdentifier: String,
+        in app: XCUIApplication,
+        compact: Bool
+    ) -> Bool {
+        if compact {
+            let tab = app.tabBars.buttons[tabTitle].firstMatch
+            guard tab.waitForExistence(timeout: 5) else {
+                XCTFail("A compact window must present the \(tabTitle) tab: " + app.debugDescription)
+                return false
+            }
+            tab.tap()
+            return true
+        }
+        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
+        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
+        let row = app.staticTexts[sidebarIdentifier].firstMatch
+        guard row.waitForExistence(timeout: 5), row.isHittable else {
+            XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
+            return false
+        }
+        row.tap()
+        return true
+    }
+
+    /// Playing leaves the person where they were; the full player is one tap on the bar away.
+    /// Asserting the bar first separates "playback never started" from "the bar never opened".
+    @MainActor
+    private func openNowPlayingFromBar(in app: XCUIApplication, expectingTitle title: String) -> Bool {
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 15) else {
+            XCTFail("Activation must bring up the now-playing bar: " + app.debugDescription)
+            return false
+        }
+        // Preparing shows a placeholder title; wait for the playing track's own name.
+        let deadline = Date().addingTimeInterval(20)
+        while !bar.label.contains(title), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
+        bar.tap()
+        return true
+    }
+
+    @MainActor
+    private func waitForLabel(_ label: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while element.label != label, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return element.label == label
     }
 
     private enum BlockingSystemDialogProbeResult {
@@ -265,44 +360,17 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
-        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
-        let searchRow = app.staticTexts["dulcet.sidebar.search"].firstMatch
-        if !searchRow.isHittable {
-            // Compact width opens on the detail column; the sidebar sits behind the detail's
-            // back control, exactly as a person reaches it on an iPhone.
-            let backControl = app.navigationBars.buttons.firstMatch
-            guard backControl.waitForExistence(timeout: 5) else {
-                XCTFail(
-                    "A compact-width window must expose the sidebar through a back control: "
-                        + app.debugDescription
-                )
-                return
-            }
-            backControl.tap()
-        }
-        // Existence and hittability are separate outcomes and were previously reported by one
-        // message, so a run could not distinguish "the back control never revealed the sidebar"
-        // from "the row is on screen but covered". MEASURED over 39 CI executions of this test:
-        // every successful run satisfied this wait on its FIRST poll, about 1.0 s into a 5 s
-        // budget, and the one failure consumed all five polls. The budget is not marginal, so a
-        // failure here means the navigation did not happen -- never that the wait was too short.
-        guard searchRow.waitForExistence(timeout: 5) else {
-            XCTFail("The Search row must exist in the sidebar: " + app.debugDescription)
-            return
-        }
-        guard searchRow.isHittable else {
-            XCTFail(
-                "The Search row must be visible in the sidebar; frame=\(searchRow.frame)"
-                    + " window=\(window.frame): " + app.debugDescription
-            )
-            return
-        }
-        searchRow.tap()
+        guard openDestination(
+            "Search",
+            sidebarIdentifier: "dulcet.sidebar.search",
+            in: app,
+            compact: windowExpectation == .compactWidth
+        ) else { return }
 
         let searchField = app.textFields["dulcet.search.field"].firstMatch
-        // Same measurement as above: 38 of 38 successful CI executions resolved this on the first
-        // poll. Exhausting the budget means the Search destination never rendered.
+        // MEASURED before the tab bar replaced the compact sidebar: 38 of 38 successful CI
+        // executions resolved this on the first poll. Exhausting the budget means the Search
+        // destination never rendered.
         guard searchField.waitForExistence(timeout: 5) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
@@ -452,6 +520,10 @@ final class DulcetiOSUITests: XCTestCase {
         }
 
         canaryResult.tap()
+
+        // Activation plays without leaving the results; the bar is the way to the full player
+        // (a sheet on the iPhone, the Now Playing destination on the iPad).
+        guard openNowPlayingFromBar(in: app, expectingTitle: canaryTitle) else { return }
 
         let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
         // Successful CI executions resolve this in one to four polls of the fifteen available,
@@ -687,13 +759,12 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // staticTexts avoids the duplicate Image/StaticText identifier carried by sidebar Labels.
-        let library = app.staticTexts["dulcet.sidebar.library"].firstMatch
-        guard library.waitForExistence(timeout: 5) else {
-            XCTFail("The Library row must exist in the iPad sidebar")
-            return
-        }
-        library.tap()
+        guard openDestination(
+            "Library",
+            sidebarIdentifier: "dulcet.sidebar.library",
+            in: app,
+            compact: false
+        ) else { return }
 
         let thresholdAlbum = app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "Threshold Boundary")
@@ -728,6 +799,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         thresholdTrack.tap()
+        guard openNowPlayingFromBar(in: app, expectingTitle: "UI Playback Canary") else { return }
 
         let progress = app.sliders["Now Playing"].firstMatch
         guard progress.waitForExistence(timeout: 30) else {
