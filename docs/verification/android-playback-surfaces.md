@@ -129,8 +129,14 @@ system log), which is how a remote's media keys arrive.
 `core-ci` runs both, in its `android-emulator` job (phone and TV legs), against the same pinned
 disposable server as the Linux conformance job. The required `core-ci` job fails unless both legs
 pass and verifies their JUnit through `tools/verify-parity-evidence`. The CI emulators are x86 and
-x86_64, and the local runs above were arm64: that the CI legs pass is **ASSUMED** until a CI run
-shows it.
+x86_64, and the local runs above were arm64.
+
+**First CI run (workflow_dispatch on this branch):** the phone leg passed on the hosted x86_64
+emulator: 2 of 2 instrumented tests, with the proof reporting `server-plays=0->1` on a freshly
+seeded server (**OBSERVED**). The TV leg failed before any Android step: `test -w /dev/kvm` ran
+before udev had applied the permission rule. With the TV leg red, the required `core-ci` job
+failed, which confirms that the aggregate gate fails when a leg fails. The KVM step now waits
+for udev to settle.
 
 ## Still assumed or open
 

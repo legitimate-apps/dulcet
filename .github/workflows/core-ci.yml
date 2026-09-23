@@ -218,11 +218,14 @@ jobs:
           packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       # Standard Linux runners expose /dev/kvm to root only; the emulator needs it as the runner user.
+      # `udevadm trigger` returns before the rule is applied: MEASURED, one leg of the first run
+      # found /dev/kvm still unwritable. `settle` waits for the event queue to drain.
       - name: Enable KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
           test -w /dev/kvm
       # Built before the emulator boots, so emulator time is spent only on the proof.
       - name: Build the app and its instrumented tests
