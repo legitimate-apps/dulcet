@@ -9,6 +9,7 @@ import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
 import com.legitimateapps.dulcet.emulator.await
+import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import com.legitimateapps.dulcet.emulator.requireExactlyOneServerPlay
 import com.legitimateapps.dulcet.emulator.requireMediaTimeAdvances
@@ -32,6 +33,7 @@ class AndroidTvEmulatorPlaybackConformanceTest {
         val probe = DisposableServerProbe.fromInstrumentation()
         val rawId = probe.songId(DisposableServerProbe.CANARY_TITLE)
         val before = probe.playCount(rawId)
+        awaitQueuedBroadcastsDelivered()
         connectSavedAccount(context, probe)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
         PlaybackObserver(context).use { observer ->

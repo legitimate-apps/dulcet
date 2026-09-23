@@ -12,6 +12,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.PlaybackService
 import org.junit.Assert.*
@@ -33,6 +34,7 @@ class PlaybackBackgroundTest {
         val context = instrumentation.targetContext
         val credentials = AndroidAccountCredentialStore(context)
         check(credentials.load() == null) { "This test requires an empty disposable app installation" }
+        awaitQueuedBroadcastsDelivered()
         LoopbackAudio().use { fixture ->
             val account = credentials.save("Fixture", fixture.url, "USER_CANARY", "PASSWORD_CANARY", true)
             val connected = CountDownLatch(1)

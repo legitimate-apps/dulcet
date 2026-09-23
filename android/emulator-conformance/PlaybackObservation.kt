@@ -20,6 +20,41 @@ import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+/**
+ * Returns once the system has delivered every broadcast queued before the call — above all this
+ * installation's own `PACKAGE_ADDED`.
+ *
+ * The notification service answers `PACKAGE_ADDED` by cancelling every notification the package
+ * holds, foreground-service notifications included, and the service stays in the foreground
+ * without one. The instrumentation installs the app immediately before the test, and on a freshly
+ * booted emulator that broadcast can still be queued many seconds into the test, so a test that
+ * reads the notification after it lands is measuring the installation, not the app. Waiting here,
+ * before anything plays, leaves every later notification check observing only the app.
+ *
+ * The command's own "passed" line is required, so a device that ignored the command cannot read
+ * as one whose queue was drained. Returns how long the wait took.
+ */
+fun awaitQueuedBroadcastsDelivered(timeoutSeconds: Long = 120): Long {
+    val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+    val started = SystemClock.elapsedRealtime()
+    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    val output = try {
+        executor.submit<String> {
+            automation.executeShellCommand("am wait-for-broadcast-barrier --flush-broadcast-loopers").use { descriptor ->
+                java.io.FileInputStream(descriptor.fileDescriptor).bufferedReader().readText()
+            }
+        }.get(timeoutSeconds, TimeUnit.SECONDS)
+    } catch (timeout: java.util.concurrent.TimeoutException) {
+        error("Queued broadcasts were still undelivered after ${timeoutSeconds}s")
+    } finally {
+        executor.shutdownNow()
+    }
+    check("Test barrier passed" in output) { "The broadcast barrier did not report passing: ${output.trim().take(400)}" }
+    val elapsed = SystemClock.elapsedRealtime() - started
+    println("QUEUED BROADCASTS DELIVERED after ${elapsed}ms")
+    return elapsed
+}
+
 /** Connects the app's saved account through the production connect sequence, as its connect screen does. */
 fun connectSavedAccount(context: Context, probe: DisposableServerProbe) {
     val store = AndroidAccountCredentialStore(context)
