@@ -653,9 +653,11 @@ private fun PendingMutation.parameters(): Map<String, String> = when (field) {
 }
 
 /**
- * One account's reader with its favourites wired in: the outbox is the reader's overlay, and its
- * flush runs first on reconnect, before [otherOutboxes] (the scrobble outbox) and before the epoch
- * read (§16.14 step 1). This is the assembly the shells' facades construct (R2a, R3).
+ * One account's reader with its favourites and playlist editing wired in: the outbox is the
+ * reader's overlay for both, and their flushes run first on reconnect — favourites, then playlist
+ * changes, then [otherOutboxes] (the scrobble outbox) — before the epoch read (§16.14 step 1). This
+ * is the assembly the shells' facades construct (R2a, R3). [formPost]: the account's server
+ * advertises the OpenSubsonic `formPost` extension (§18.6).
  */
 internal class LibraryReaderSession(
     database: DulcetDatabase,
@@ -665,9 +667,11 @@ internal class LibraryReaderSession(
     config: LibraryReaderConfig = LibraryReaderConfig(),
     downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+    formPost: Boolean = false,
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
+    private lateinit var playlistsRef: PlaylistEditor
 
     /**
      * Pending changes the bind that produced this session discarded because the account's USERNAME
@@ -685,11 +689,22 @@ internal class LibraryReaderSession(
         downloads = downloads,
         outboxes = ReconnectOutboxes {
             favouritesRef.flush()
+            playlistsRef.flush()
             otherOutboxes.flush()
+        },
+        playlistOverlay = object : LibraryPlaylistOverlay {
+            override fun resolve(rawId: String) = playlistsRef.resolve(rawId)
+            override fun isLocal(rawId: String) = playlistsRef.isLocal(rawId)
+            override fun overlayList(items: List<LibraryItem>) = playlistsRef.overlayList(items)
+            override fun overlayDetail(rawId: String, header: LibraryItem.Playlist?, entries: List<LibraryItem>?) =
+                playlistsRef.overlayDetail(rawId, header, entries)
         },
     )
 
     val favourites = LibraryFavourites(reader, outbox).also { favouritesRef = it }
+
+    /** Playlist editing (§18.6): create, rename, add, remove, reorder, delete — shown at once. */
+    val playlists = PlaylistEditor(database, { reader }, formPost).also { playlistsRef = it }
 
     private val searches = mutableListOf<LibrarySearchSession>()
 

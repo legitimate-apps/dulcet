@@ -11,8 +11,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlin.time.Duration
@@ -130,6 +130,21 @@ internal data class LibraryEndpointResponse(
 
 internal fun interface LibraryEndpointTransport {
     suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse
+
+    /**
+     * A request whose parameters may repeat a name, in order — playlist edits (spec §18.6). With
+     * [formPost] the parameters travel as a form body (the OpenSubsonic `formPost` extension). A
+     * transport that cannot repeat a parameter fails such a request; it never drops a value.
+     */
+    suspend fun requestRepeated(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): LibraryEndpointResponse {
+        val single = parameters.toMap()
+        check(single.size == parameters.size) { "this transport cannot repeat a request parameter" }
+        return request(endpoint, single)
+    }
 }
 
 /**
@@ -420,6 +435,15 @@ internal class KtorLibraryEndpointTransport(
             response.redactedUrl,
             totalCount = response.headers.totalCount?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
         )
+    }
+
+    override suspend fun requestRepeated(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): LibraryEndpointResponse {
+        val response = client.requestRepeated(endpoint, parameters, formPost)
+        return LibraryEndpointResponse(response.statusCode, response.body.decodeToString(), response.redactedUrl)
     }
 
     override fun close() {
@@ -796,7 +820,14 @@ private fun JsonObject.readerPlaylist(): CachePlaylistRecord = CachePlaylistReco
     durationMilliseconds = optionalDuration()?.inWholeMilliseconds,
     owner = string("owner"),
     artworkKey = optionalOpaqueId("coverArt"),
+    comment = string("comment"),
+    isPublic = readerBoolean("public"),
+    readonly = readerBoolean("readonly"),
 )
+
+/** A JSON boolean; a string or number spelling is not one (null: "not stated"). */
+private fun JsonObject.readerBoolean(name: String): Boolean? =
+    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
 
 private fun JsonObject.readerCredits(role: CreditRole): List<CacheCredit> =
     credit("reader", role).map { CacheCredit(it.role, it.name, it.id?.rawId) }

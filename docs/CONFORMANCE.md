@@ -83,6 +83,10 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-85 | download enqueue pins metadata atomically; downloaded albums rechecked after an epoch change |
 | CONF-86 | multi-list screen rows publish independently |
 | CONF-87 | bounded detail look-ahead |
+| CONF-88 | reference-server playlist writes: positional removal, replace by `playlistId`, the stale-index hazard reproduced |
+| CONF-89 | every playlist operation through the production editor is read back as meant |
+| CONF-90 | a playlist edit whose base changed elsewhere is refused with nothing written; unchanged-list control |
+| CONF-91 | another user's playlist is not editable to the reader, the editor or the server; own-playlist control |
 
 ## Account-connect evidence boundary (CONF-09b)
 

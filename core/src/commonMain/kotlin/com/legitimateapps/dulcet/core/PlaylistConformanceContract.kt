@@ -1,0 +1,577 @@
+package com.legitimateapps.dulcet.core
+
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlin.time.Clock
+
+/**
+ * Playlist conformance against a real, disposable server (spec §18.6, §20.4 CONF-88..91). The
+ * reader and its playlist editor are internal to the core, so the conformance module reaches them
+ * through this contract — the pattern [LibrarySyncContract] set: the PRODUCTION session, over the
+ * production transport, returns plain observations, and the tests assert on them.
+ *
+ * Every edit is read back with a raw `getPlaylist` that shares nothing with the editor but the
+ * server. Every playlist a control creates is deleted in `finally`; a control never touches a
+ * playlist it did not create.
+ */
+public data class PlaylistConformanceRequest(
+    val normalizedBaseUrl: String,
+    val username: String,
+    val password: String,
+    /** A second, NON-admin user of the same server, for the permission controls. */
+    val otherUsername: String,
+    val otherPassword: String,
+    val allowLocalHttp: Boolean,
+) {
+    override fun toString(): String = "PlaylistConformanceRequest(<redacted>)"
+}
+
+/** CONF-88: what the server does with playlist writes, observed over raw `/rest`. */
+public data class PlaylistServerFacts(
+    /** `createPlaylist` answered with the playlist, and its entries kept a duplicate in order. */
+    val createAnsweredWithPlaylist: Boolean,
+    val createdEntriesKeptDuplicates: Boolean,
+    /** Removing indices 1 and 3 of five in ONE request: the entries left (as indices of the five). */
+    val removalOfOneAndThreeLeft: List<Int>,
+    /** An index past the end: the answer was `ok`, and the entries were unchanged. */
+    val outOfRangeRemovalAnsweredOk: Boolean,
+    val outOfRangeRemovalChangedNothing: Boolean,
+    /** The stale-index hazard: the song removed by an index computed before another client's removal. */
+    val staleIndexIntended: String,
+    val staleIndexRemoved: String?,
+    /** `createPlaylist` with `playlistId`: the id, name, comment and visibility after a replace. */
+    val replaceKeptId: Boolean,
+    val replaceKeptHeader: Boolean,
+    val replaceEntriesAsSent: Boolean,
+    /** The same replace sent as a form body (OpenSubsonic `formPost`). */
+    val formPostReplaceEntriesAsSent: Boolean,
+    /** A replace with no `songId`: the entries after it equal the entries before it. */
+    val emptyReplaceChangedNothing: Boolean,
+    val emptyNameIgnored: Boolean,
+    val emptyCommentCleared: Boolean,
+    val lastScanUnmovedByEdits: Boolean,
+    /** Code of `getPlaylist` after `deletePlaylist`. */
+    val codeAfterDelete: Int?,
+)
+
+/** One edit made through the production editor and read back raw. */
+public data class PlaylistEditObservation(
+    val edit: String,
+    /** How the editor told it: `Saved`, `Created`, `ChangedElsewhere`, `Diverged`, `NotSaved`, … */
+    val outcome: String,
+    val expectedEntries: List<String>,
+    val readBackEntries: List<String>?,
+    val expectedHeader: String?,
+    val readBackHeader: String?,
+    /** The editor's write requests for this edit, as `endpoint` names in order. */
+    val writes: List<String>,
+)
+
+/** CONF-89: the production editor's round trip; every edit read back. */
+public data class PlaylistRoundTripResult(
+    val observations: List<PlaylistEditObservation>,
+    /** Edits recorded offline were published before any request and replayed as one whole list. */
+    val offlineEditsPublishedWithoutRequests: Boolean,
+    val offlineReplayWrites: List<String>,
+    val codeAfterDelete: Int?,
+)
+
+/** CONF-90: the hazard demonstrated raw, then the editor refusing it; and the positive control. */
+public data class PlaylistStaleIndexResult(
+    val rawStaleRemovalRemovedTheWrongSong: Boolean,
+    val editorOutcome: String,
+    val editorWritesAfterConcurrentChange: List<String>,
+    val serverEntriesAfterRefusal: List<String>,
+    val entriesAfterConcurrentChange: List<String>,
+    val controlOutcome: String,
+    val controlExpected: List<String>,
+    val controlReadBack: List<String>,
+)
+
+/** CONF-91: another user's playlists. */
+public data class PlaylistPermissionResult(
+    /** As the non-admin user: the admin's public playlist as the reader publishes it. */
+    val othersPublicEditable: Boolean?,
+    val othersPublicReadonlyOnServer: Boolean?,
+    val editorRecordForOthersPublic: String,
+    /** Raw writes by the non-admin to the admin's public playlist: the codes answered. */
+    val rawRenameCode: Int?,
+    val rawReplaceCode: Int?,
+    val rawDeleteCode: Int?,
+    val othersPublicUnchanged: Boolean,
+    /** The admin's PRIVATE playlist, read by the non-admin: the code answered. */
+    val othersPrivateReadCode: Int?,
+    /** The non-admin's own playlist, renamed through the editor and read back. */
+    val ownRenameOutcome: String,
+    val ownRenameReadBack: String?,
+    /** As the admin: another user's playlist as published, and whether the server lets the admin edit it. */
+    val adminSeesOthersEditable: Boolean?,
+    val adminRawRenameOfOthersCode: Int?,
+)
+
+public object PlaylistConformanceContract {
+    public suspend fun serverFacts(request: PlaylistConformanceRequest): PlaylistServerFacts = withRaw(request) { raw, songs, cleanup ->
+        val scanBefore = raw.lastScan()
+        val (createBody, created) = raw.create("CONF-88 facts", listOf(songs[0], songs[1], songs[0], songs[2]))
+        cleanup += created
+        val createAnswered = createdPlaylistIdOf(createBody) == created
+        val keptDuplicates = raw.entries(created) == listOf(songs[0], songs[1], songs[0], songs[2])
+
+        raw.replace(created, songs.take(5))
+        raw.write("updatePlaylist", listOf("playlistId" to created, "songIndexToRemove" to "1", "songIndexToRemove" to "3"))
+        val afterRemoval = raw.entries(created).orEmpty().map { songs.indexOf(it) }
+
+        val beforeOutOfRange = raw.entries(created)
+        val outOfRange = raw.write("updatePlaylist", listOf("playlistId" to created, "songIndexToRemove" to "99"))
+        val outOfRangeUnchanged = raw.entries(created) == beforeOutOfRange
+
+        // The hazard: a view read, another client's removal, then a removal by the stale index.
+        raw.replace(created, songs.take(4))
+        val view = raw.entries(created).orEmpty()
+        raw.write("updatePlaylist", listOf("playlistId" to created, "songIndexToRemove" to "0"))
+        val staleBefore = raw.entries(created).orEmpty()
+        raw.write("updatePlaylist", listOf("playlistId" to created, "songIndexToRemove" to "2"))
+        val staleAfter = raw.entries(created).orEmpty()
+        val removed = staleBefore.toMutableList().also { list -> staleAfter.forEach { list.remove(it) } }.singleOrNull()
+
+        raw.write("updatePlaylist", listOf("playlistId" to created, "name" to "CONF-88 kept", "comment" to "kept comment", "public" to "true"))
+        val headerBefore = raw.header(created)
+        val (replaceBody, _) = raw.writeBody("createPlaylist", listOf("playlistId" to created, "songId" to songs[3], "songId" to songs[1]))
+        val replaceKeptId = createdPlaylistIdOf(replaceBody) == created
+        val replaceKeptHeader = raw.header(created) == headerBefore
+        val replaceEntries = raw.entries(created) == listOf(songs[3], songs[1])
+        raw.writeBody("createPlaylist", listOf("playlistId" to created, "songId" to songs[4], "songId" to songs[0]), formPost = true)
+        val formPostEntries = raw.entries(created) == listOf(songs[4], songs[0])
+        val beforeEmpty = raw.entries(created)
+        raw.write("createPlaylist", listOf("playlistId" to created))
+        val emptyReplaceUnchanged = raw.entries(created) == beforeEmpty
+        raw.write("updatePlaylist", listOf("playlistId" to created, "name" to ""))
+        val emptyNameIgnored = raw.header(created)?.name == "CONF-88 kept"
+        raw.write("updatePlaylist", listOf("playlistId" to created, "comment" to ""))
+        val commentCleared = raw.header(created)?.comment == null
+        val scanAfter = raw.lastScan()
+        raw.write("deletePlaylist", listOf("id" to created))
+        val afterDelete = raw.code("getPlaylist", listOf("id" to created))
+        cleanup -= created
+
+        PlaylistServerFacts(
+            createAnsweredWithPlaylist = createAnswered,
+            createdEntriesKeptDuplicates = keptDuplicates,
+            removalOfOneAndThreeLeft = afterRemoval,
+            outOfRangeRemovalAnsweredOk = outOfRange == null,
+            outOfRangeRemovalChangedNothing = outOfRangeUnchanged,
+            staleIndexIntended = view[2],
+            staleIndexRemoved = removed,
+            replaceKeptId = replaceKeptId,
+            replaceKeptHeader = replaceKeptHeader,
+            replaceEntriesAsSent = replaceEntries,
+            formPostReplaceEntriesAsSent = formPostEntries,
+            emptyReplaceChangedNothing = emptyReplaceUnchanged,
+            emptyNameIgnored = emptyNameIgnored,
+            emptyCommentCleared = commentCleared,
+            lastScanUnmovedByEdits = scanBefore != null && scanBefore == scanAfter,
+            codeAfterDelete = afterDelete,
+        )
+    }
+
+    public suspend fun editorRoundTrip(request: PlaylistConformanceRequest): PlaylistRoundTripResult = withSession(request) { env ->
+        val songs = env.songs
+        val observations = mutableListOf<PlaylistEditObservation>()
+        suspend fun step(edit: String, expectedEntries: List<String>, expectedHeader: String?, id: () -> String, act: () -> Unit) {
+            val before = env.writes.size
+            env.outcomes.clear()
+            act()
+            env.session.playlists.flush()
+            val readBack = env.raw.entries(id())
+            val header = env.raw.header(id())
+            observations += PlaylistEditObservation(
+                edit, env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none", expectedEntries, readBack,
+                expectedHeader, header?.describe(), env.writes.drop(before),
+            )
+        }
+        // Online edits: each recorded then flushed at once (the flush a tap would start).
+        env.session.setOnline(false)
+        var localId = ""
+        var id = ""
+        step("create", listOf(songs[0], songs[1], songs[0]), "CONF-89 round trip|made here|public", { env.session.reader.playlistOverlay.resolve(localId) }) {
+            localId = env.session.playlists.create("CONF-89 round trip", listOf(songs[0], songs[1], songs[0]), "made here", true).localId!!
+            env.session.setOnline(true)
+        }
+        id = env.session.reader.playlistOverlay.resolve(localId)
+        env.cleanup += id
+        val detail = env.open(LibraryQuery.Playlist(id))
+        env.awaitLive(detail)
+        fun view() = detail().items.map { it.rawId }
+        step("rename", listOf(songs[0], songs[1], songs[0]), "CONF-89 renamed|made here|public", { id }) { env.session.playlists.rename(id, "CONF-89 renamed") }
+        step("comment", listOf(songs[0], songs[1], songs[0]), "CONF-89 renamed|changed|public", { id }) { env.session.playlists.setComment(id, "changed") }
+        step("private", listOf(songs[0], songs[1], songs[0]), "CONF-89 renamed|changed|private", { id }) { env.session.playlists.setPublic(id, false) }
+        step("append", listOf(songs[0], songs[1], songs[0], songs[2], songs[2]), null, { id }) { env.session.playlists.append(id, listOf(songs[2], songs[2])) }
+        step("insert", listOf(songs[0], songs[3], songs[1], songs[0], songs[2], songs[2]), null, { id }) {
+            env.session.playlists.insert(id, listOf(songs[3]), 1, view())
+        }
+        step("move", listOf(songs[2], songs[0], songs[3], songs[1], songs[0], songs[2]), null, { id }) {
+            env.session.playlists.move(id, 5, 0, view())
+        }
+        step("remove", listOf(songs[2], songs[3], songs[1], songs[2]), null, { id }) {
+            env.session.playlists.remove(id, setOf(1, 4), view())
+        }
+        // Offline: three edits, shown with no request, replayed on reconnect as one whole list.
+        env.session.setOnline(false)
+        val requestsBefore = env.requests.size
+        env.session.playlists.move(id, 0, 3, view())
+        env.session.playlists.remove(id, setOf(0), view())
+        env.session.playlists.append(id, listOf(songs[4]))
+        val offlineView = view()
+        val publishedOffline = env.requests.size == requestsBefore && offlineView == listOf(songs[1], songs[2], songs[2], songs[4])
+        val writesBefore = env.writes.size
+        env.outcomes.clear()
+        env.session.setOnline(true)
+        env.session.reader.reconnect()
+        env.session.playlists.flush()
+        observations += PlaylistEditObservation(
+            "offline replay", env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none", offlineView, env.raw.entries(id), null, null,
+            env.writes.drop(writesBefore),
+        )
+        val offlineWrites = env.writes.drop(writesBefore)
+        step("empty", emptyList(), null, { id }) { env.session.playlists.remove(id, view().indices.toSet(), view()) }
+        step("delete", emptyList(), null, { id }) { env.session.playlists.delete(id) }
+        env.cleanup -= id
+        PlaylistRoundTripResult(observations, publishedOffline, offlineWrites, env.raw.code("getPlaylist", listOf("id" to id)))
+    }
+
+    public suspend fun staleIndex(request: PlaylistConformanceRequest): PlaylistStaleIndexResult = withSession(request) { env ->
+        val songs = env.songs
+        // The hazard, raw, as CONF-88 pins it.
+        val (_, rawId) = env.raw.create("CONF-90 raw", songs.take(4))
+        env.cleanup += rawId
+        env.raw.write("updatePlaylist", listOf("playlistId" to rawId, "songIndexToRemove" to "0"))
+        env.raw.write("updatePlaylist", listOf("playlistId" to rawId, "songIndexToRemove" to "2"))
+        val rawWrong = env.raw.entries(rawId) == listOf(songs[1], songs[2])
+
+        // The editor: a removal of songs[2] recorded on a view, then another client removes index 0.
+        val (_, id) = env.raw.create("CONF-90 editor", songs.take(4))
+        env.cleanup += id
+        val detail = env.open(LibraryQuery.Playlist(id))
+        env.awaitLive(detail)
+        env.session.setOnline(false)
+        val view = detail().items.map { it.rawId }
+        env.session.playlists.remove(id, setOf(view.indexOf(songs[2])), view)
+        env.raw.write("updatePlaylist", listOf("playlistId" to id, "songIndexToRemove" to "0"))
+        val afterConcurrent = env.raw.entries(id).orEmpty()
+        val writesBefore = env.writes.size
+        env.outcomes.clear()
+        env.session.setOnline(true)
+        env.session.playlists.flush()
+        val refusal = env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none"
+        val editorWrites = env.writes.drop(writesBefore)
+        val serverAfter = env.raw.entries(id).orEmpty()
+
+        // Positive control: the same edit on an unchanged list is written and read back.
+        val (_, control) = env.raw.create("CONF-90 control", songs.take(4))
+        env.cleanup += control
+        val controlDetail = env.open(LibraryQuery.Playlist(control))
+        env.awaitLive(controlDetail)
+        val controlView = controlDetail().items.map { it.rawId }
+        env.outcomes.clear()
+        env.session.playlists.remove(control, setOf(controlView.indexOf(songs[2])), controlView)
+        env.session.playlists.flush()
+        PlaylistStaleIndexResult(
+            rawStaleRemovalRemovedTheWrongSong = rawWrong,
+            editorOutcome = refusal,
+            editorWritesAfterConcurrentChange = editorWrites,
+            serverEntriesAfterRefusal = serverAfter,
+            entriesAfterConcurrentChange = afterConcurrent,
+            controlOutcome = env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none",
+            controlExpected = controlView.filter { it != songs[2] },
+            controlReadBack = env.raw.entries(control).orEmpty(),
+        )
+    }
+
+    public suspend fun permissions(request: PlaylistConformanceRequest): PlaylistPermissionResult {
+        val other = request.copy(username = request.otherUsername, password = request.otherPassword)
+        // The non-admin's own playlist outlives that user's session: the admin reads it afterwards.
+        val otherRaw = RawPlaylistClient(other)
+        var ownPlaylist: String? = null
+        try {
+            return permissions(request, other) { ownPlaylist = it }
+        } finally {
+            ownPlaylist?.let { runCatching { otherRaw.write("deletePlaylist", listOf("id" to it)) } }
+            otherRaw.close()
+        }
+    }
+
+    private suspend fun permissions(
+        request: PlaylistConformanceRequest,
+        other: PlaylistConformanceRequest,
+        created: (String) -> Unit,
+    ): PlaylistPermissionResult {
+        return withSession(request) { admin ->
+            val (_, publicId) = admin.raw.create("CONF-91 admin public", admin.songs.take(2))
+            admin.cleanup += publicId
+            admin.raw.write("updatePlaylist", listOf("playlistId" to publicId, "public" to "true"))
+            val (_, privateId) = admin.raw.create("CONF-91 admin private", admin.songs.take(1))
+            admin.cleanup += privateId
+            withSession(other) { user ->
+                val list = user.open(LibraryQuery.Playlists)
+                user.awaitLive(list)
+                val published = list().items.filterIsInstance<LibraryItem.Playlist>().firstOrNull { it.rawId == publicId }
+                val detail = user.open(LibraryQuery.Playlist(publicId))
+                user.awaitLive(detail)
+                val record = user.session.playlists.rename(publicId, "hijacked")
+                val renameCode = user.raw.code("updatePlaylist", listOf("playlistId" to publicId, "name" to "hijacked"))
+                val replaceCode = user.raw.code("createPlaylist", listOf("playlistId" to publicId, "songId" to user.songs[3]))
+                val deleteCode = user.raw.code("deletePlaylist", listOf("id" to publicId))
+                val unchanged = admin.raw.header(publicId)?.name == "CONF-91 admin public" &&
+                    admin.raw.entries(publicId) == admin.songs.take(2)
+                val privateCode = user.raw.code("getPlaylist", listOf("id" to privateId))
+                // The non-admin's own playlist is editable, through the editor, read back.
+                val (_, ownId) = user.raw.create("CONF-91 own", user.songs.take(1))
+                created(ownId)
+                val ownDetail = user.open(LibraryQuery.Playlist(ownId))
+                user.awaitLive(ownDetail)
+                user.outcomes.clear()
+                user.session.playlists.rename(ownId, "CONF-91 own renamed")
+                user.session.playlists.flush()
+                val ownOutcome = user.outcomes.lastOrNull()?.let(::outcomeName) ?: "none"
+                val ownReadBack = user.raw.header(ownId)?.name
+                Triple(ownId, ownOutcome, ownReadBack).let { (own, outcome, readBack) ->
+                    PermissionsSeenByUser(published?.editable, user.raw.header(publicId)?.readonly, record.name, renameCode, replaceCode, deleteCode, unchanged, privateCode, own, outcome, readBack)
+                }
+            }.let { seen ->
+                // As the admin, on the admin's own reader thread: that playlist is another user's.
+                val adminList = admin.open(LibraryQuery.Playlists)
+                admin.awaitLive(adminList)
+                val adminView = adminList().items.filterIsInstance<LibraryItem.Playlist>().firstOrNull { it.rawId == seen.ownId }
+                val adminRenameCode = admin.raw.code("updatePlaylist", listOf("playlistId" to seen.ownId, "comment" to "admin was here"))
+                PlaylistPermissionResult(
+                    othersPublicEditable = seen.othersPublicEditable,
+                    othersPublicReadonlyOnServer = seen.othersPublicReadonly,
+                    editorRecordForOthersPublic = seen.record,
+                    rawRenameCode = seen.renameCode,
+                    rawReplaceCode = seen.replaceCode,
+                    rawDeleteCode = seen.deleteCode,
+                    othersPublicUnchanged = seen.unchanged,
+                    othersPrivateReadCode = seen.privateCode,
+                    ownRenameOutcome = seen.ownOutcome,
+                    ownRenameReadBack = seen.ownReadBack,
+                    adminSeesOthersEditable = adminView?.editable,
+                    adminRawRenameOfOthersCode = adminRenameCode,
+                )
+            }
+        }
+    }
+
+    private data class PermissionsSeenByUser(
+        val othersPublicEditable: Boolean?,
+        val othersPublicReadonly: Boolean?,
+        val record: String,
+        val renameCode: Int?,
+        val replaceCode: Int?,
+        val deleteCode: Int?,
+        val unchanged: Boolean,
+        val privateCode: Int?,
+        val ownId: String,
+        val ownOutcome: String,
+        val ownReadBack: String?,
+    )
+
+    // ---- Machinery ------------------------------------------------------------------------------
+
+    private fun outcomeName(outcome: PlaylistEditOutcome): String = when (outcome) {
+        is PlaylistEditOutcome.Saved -> "Saved"
+        is PlaylistEditOutcome.Created -> "Created"
+        is PlaylistEditOutcome.NotSaved -> "NotSaved(${outcome.error})"
+        is PlaylistEditOutcome.ChangedElsewhere -> "ChangedElsewhere"
+        is PlaylistEditOutcome.Diverged -> "Diverged"
+        is PlaylistEditOutcome.Superseded -> "Superseded"
+        is PlaylistEditOutcome.NotRecorded -> "NotRecorded"
+    }
+
+    private suspend fun <T> withRaw(
+        request: PlaylistConformanceRequest,
+        block: suspend (RawPlaylistClient, List<String>, MutableSet<String>) -> T,
+    ): T {
+        val raw = RawPlaylistClient(request)
+        val cleanup = mutableSetOf<String>()
+        try {
+            return block(raw, raw.songIds(), cleanup)
+        } finally {
+            cleanup.forEach { runCatching { raw.write("deletePlaylist", listOf("id" to it)) } }
+            raw.close()
+        }
+    }
+
+    private class SessionEnv(
+        val session: LibraryReaderSession,
+        val raw: RawPlaylistClient,
+        val songs: List<String>,
+        val requests: List<String>,
+        val writes: List<String>,
+        val outcomes: MutableList<PlaylistEditOutcome>,
+        val cleanup: MutableSet<String>,
+    ) {
+        private val publications = mutableListOf<MutableList<LibraryPublication>>()
+
+        fun open(query: LibraryQuery): () -> LibraryPublication {
+            val seen = mutableListOf<LibraryPublication>()
+            publications += seen
+            session.reader.open(query) { seen += it }
+            return { seen.last() }
+        }
+
+        suspend fun awaitLive(last: () -> LibraryPublication) {
+            repeat(AWAIT_POLLS) {
+                if (last().freshness == LibraryFreshness.Live) return
+                delay(AWAIT_POLL_MILLIS)
+            }
+            error("the screen never published live: ${last().freshness}")
+        }
+    }
+
+    /**
+     * A production session on its own dedicated reader thread (the production dispatcher, so the
+     * confinement is real), over the production transport and a fresh disposable database.
+     */
+    private suspend fun <T> withSession(request: PlaylistConformanceRequest, block: suspend (SessionEnv) -> T): T {
+        val dispatcher = newLibraryReaderDispatcher()
+        val database = createLibrarySyncControlDatabase()
+        val raw = RawPlaylistClient(request)
+        val cleanup = mutableSetOf<String>()
+        val transport = KtorLibraryEndpointTransport(
+            LibraryBrowseRequest("conformance-playlists", request.normalizedBaseUrl, request.username, request.password, request.allowLocalHttp),
+            null, null, systemHostResolver(),
+        )
+        val requests = mutableListOf<String>()
+        val writes = mutableListOf<String>()
+        val recording = object : LibraryEndpointTransport {
+            override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
+                requests += endpoint
+                if (endpoint in WRITES) writes += endpoint
+                return transport.request(endpoint, parameters)
+            }
+
+            override suspend fun requestRepeated(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean): LibraryEndpointResponse {
+                requests += endpoint
+                if (endpoint in WRITES) writes += endpoint
+                return transport.requestRepeated(endpoint, parameters, formPost)
+            }
+        }
+        try {
+            return withContext(dispatcher) {
+                val scope = CoroutineScope(coroutineContext + SupervisorJob())
+                try {
+                    val store = SeenCacheStore(database.primary, SeenCacheWallClock { Clock.System.now().toEpochMilliseconds() })
+                    val session = LibraryReaderSession(
+                        database.primary.database,
+                        store.bind(CacheBinding("conformance:${request.username}", request.normalizedBaseUrl, request.username)),
+                        recording,
+                        scope,
+                        LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+                        formPost = true,
+                    )
+                    val outcomes = mutableListOf<PlaylistEditOutcome>()
+                    session.playlists.addOutcomeListener(outcomes::add)
+                    session.reader.connect()
+                    block(SessionEnv(session, raw, raw.songIds(), requests, writes, outcomes, cleanup))
+                } finally {
+                    scope.cancel()
+                }
+            }
+        } finally {
+            cleanup.forEach { runCatching { raw.write("deletePlaylist", listOf("id" to it)) } }
+            raw.close()
+            transport.close()
+            database.close()
+            dispatcher.close()
+        }
+    }
+
+    private val WRITES = setOf("createPlaylist", "updatePlaylist", "deletePlaylist")
+    private const val AWAIT_POLLS = 200
+    private const val AWAIT_POLL_MILLIS = 50L
+}
+
+private fun createdPlaylistIdOf(body: String): String? {
+    val playlist = parseLibraryEnvelope(body)?.payload?.get("playlist") as? JsonObject ?: return null
+    return (playlist["id"] as? JsonPrimitive)?.content
+}
+
+/** A playlist's header as a raw read reports it. */
+private data class RawPlaylistHeader(val name: String, val comment: String?, val isPublic: Boolean, val readonly: Boolean?) {
+    fun describe(): String = "$name|${comment.orEmpty()}|${if (isPublic) "public" else "private"}"
+}
+
+/**
+ * Raw `/rest`, sharing nothing with the editor but the server: the independent witness every edit
+ * is read back through, and the "other client" of the concurrency controls.
+ */
+private class RawPlaylistClient(request: PlaylistConformanceRequest) {
+    private val transport = KtorLibraryEndpointTransport(
+        LibraryBrowseRequest("conformance-raw", request.normalizedBaseUrl, request.username, request.password, request.allowLocalHttp),
+        null, null, systemHostResolver(),
+    )
+
+    fun close() = transport.close()
+
+    /** Six song ids from the server's first albums, in album order. */
+    suspend fun songIds(): List<String> {
+        val albums = parseReaderAlbumList(transport.checkedRequest("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "20")))
+        val songs = mutableListOf<String>()
+        for (album in albums) {
+            songs += parseReaderAlbum(transport.checkedRequest("getAlbum", mapOf("id" to album.rawId)), album.rawId).second.map { it.rawId }
+            if (songs.distinct().size >= 6) break
+        }
+        val distinct = songs.distinct()
+        check(distinct.size >= 6) { "the conformance corpus must hold at least six songs; found ${distinct.size}" }
+        return distinct.take(6)
+    }
+
+    suspend fun lastScan(): String? {
+        val payload = parseLibraryEnvelope(transport.checkedRequest("getScanStatus"))?.payload
+        return ((payload?.get("scanStatus") as? JsonObject)?.get("lastScan") as? JsonPrimitive)?.content
+    }
+
+    suspend fun create(name: String, songs: List<String>): Pair<String, String> {
+        val (body, _) = writeBody("createPlaylist", listOf("name" to name) + songs.map { "songId" to it })
+        return body to (createdPlaylistIdOf(body) ?: error("createPlaylist answered without a playlist"))
+    }
+
+    suspend fun replace(id: String, songs: List<String>) {
+        writeBody("createPlaylist", listOf("playlistId" to id) + songs.map { "songId" to it })
+    }
+
+    /** A write; returns the error code, or null for `ok`. */
+    suspend fun write(endpoint: String, parameters: List<Pair<String, String>>): Int? = code(endpoint, parameters)
+
+    suspend fun writeBody(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean = false): Pair<String, Int?> {
+        val body = transport.requestRepeated(endpoint, parameters, formPost).body
+        return body to errorCode(body)
+    }
+
+    suspend fun code(endpoint: String, parameters: List<Pair<String, String>>): Int? =
+        errorCode(transport.requestRepeated(endpoint, parameters, false).body)
+
+    suspend fun entries(id: String): List<String>? {
+        val body = transport.request("getPlaylist", mapOf("id" to id)).body
+        if (errorCode(body) != null) return null
+        return parseReaderPlaylist(body, id).second.map { it.rawId }
+    }
+
+    suspend fun header(id: String): RawPlaylistHeader? {
+        val body = transport.request("getPlaylist", mapOf("id" to id)).body
+        if (errorCode(body) != null) return null
+        val record = parseReaderPlaylist(body, id).first
+        return RawPlaylistHeader(record.name, record.comment, record.isPublic == true, record.readonly)
+    }
+
+    private fun errorCode(body: String): Int? {
+        val envelope = parseLibraryEnvelope(body) ?: return -1
+        if (envelope.status == "ok") return null
+        return ((envelope.payload["error"] as? JsonObject)?.get("code") as? JsonPrimitive)?.content?.toIntOrNull() ?: -1
+    }
+}

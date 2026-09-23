@@ -31,8 +31,9 @@ import kotlinx.coroutines.sync.withPermit
  *
  * **Hooks for other phases**, each a small interface with an inert default:
  * [LibraryMutationOverlay] (R1d: pending stars and ratings overlaid at publish time, §16.20),
- * [DownloadedTrackSource] (R4: playability and the downloaded-album recheck), and
- * [ReconnectOutboxes] (the outbox flush that comes first on reconnect, §16.14).
+ * [DownloadedTrackSource] (R4: playability and the downloaded-album recheck),
+ * [ReconnectOutboxes] (the outbox flush that comes first on reconnect, §16.14), and
+ * [LibraryPlaylistOverlay] (pending playlist edits overlaid on the playlist screens, §18.6).
  */
 internal class LibraryReader(
     internal val cache: BoundSeenCache,
@@ -42,6 +43,7 @@ internal class LibraryReader(
     internal val overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+    internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
 ) {
     private val owner = currentThreadIdentity()
 
@@ -194,6 +196,32 @@ internal class LibraryReader(
         visibleHandles().filter { it.mentionsAny(rawIds) }.forEach { it.republish() }
     }
 
+    /**
+     * Playlist editing's hook (§18.6): a pending playlist edit must be in the next publication of
+     * the playlist list — which may not yet show the playlist at all (a create) — and of every screen
+     * mentioning [rawIds]. Synchronous, before any request.
+     */
+    fun republishPlaylists(rawIds: Set<String>) {
+        checkConfined()
+        visibleHandles().filter { it.query == LibraryQuery.Playlists || it.mentionsAny(rawIds) }.forEach { it.republish() }
+    }
+
+    /**
+     * Re-reads a one-response list live after the device itself changed it on the server (a
+     * playlist created or deleted), so the cached list and every open screen on it show the server's
+     * new answer: through an open handle when there is one — which shares the list's lock — else
+     * through a detached window that is never published.
+     */
+    internal suspend fun rereadList(query: LibraryQuery) {
+        val open = visibleHandles().filter { it.query == query }
+        if (open.isNotEmpty()) {
+            open.first().revalidate(RevalidateCause.Refresh)
+            open.drop(1).forEach { it.republish() }
+            return
+        }
+        ListWindow(this, query, ListRequestSpec.of(query)) { }.revalidate(RevalidateCause.Refresh)
+    }
+
     // ---- Opening ------------------------------------------------------------------------------------
 
     /**
@@ -257,6 +285,17 @@ internal class LibraryReader(
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
         send(endpoint, parameters).requireOk(endpoint, parameters)
+
+    /** [sendChecked] for parameters that repeat a name, in order (playlist edits, §18.6). */
+    internal suspend fun sendRepeatedChecked(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): SentResponse = permits.withPermit {
+        val seq = cache.issue()
+        val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
+        SentResponse(seq, before, transport.requestRepeated(endpoint, parameters, formPost))
+    }.requireOk(endpoint, emptyMap())
 
     private val bounded = LibraryEndpointTransport { endpoint, parameters -> send(endpoint, parameters).response }
 
@@ -619,6 +658,18 @@ internal sealed interface LibraryItem {
         val durationMilliseconds: Long?,
         val owner: String?,
         val artworkKey: String?,
+        val comment: String? = null,
+        /** Null when the server did not say; Navidrome omits a `false`. */
+        val isPublic: Boolean? = null,
+        /**
+         * Whether this account may edit it: the server said `readonly: false`, or — for a server that
+         * does not say — the account owns it. Never true for another user's playlist (§18.6).
+         */
+        val editable: Boolean = false,
+        /** Edits made on this device that the server has not yet confirmed are shown (§18.6). */
+        val pendingChanges: Boolean = false,
+        /** Created on this device and not yet on the server: its id is a local one, never sent. */
+        val local: Boolean = false,
     ) : LibraryItem
 
     data class Genre(override val rawId: String) : LibraryItem
@@ -679,6 +730,40 @@ internal fun interface LibraryMutationOverlay {
         val None = LibraryMutationOverlay { _, _ -> emptyMap() }
     }
 }
+
+/**
+ * Playlist editing (§18.6) implements this over `mutation_outbox`: pending creates, deletes, header
+ * and entry changes, overlaid on the playlist screens at publish time. Like [LibraryMutationOverlay]
+ * it is never written into the cache.
+ */
+internal interface LibraryPlaylistOverlay {
+    /** The id a playlist screen reads: a playlist created here resolves to its server id once known. */
+    fun resolve(rawId: String): String = rawId
+
+    /** Whether [rawId] names a playlist not yet created on the server — an id that is never sent. */
+    fun isLocal(rawId: String): Boolean = false
+
+    /** The playlist list with pending creates, deletes and header changes applied. */
+    fun overlayList(items: List<LibraryItem>): List<LibraryItem> = items
+
+    /**
+     * One playlist: its header and entries with pending changes applied. [entries] is null when the
+     * server's entries are not cached; the result's entries are null when still unknown.
+     */
+    fun overlayDetail(rawId: String, header: LibraryItem.Playlist?, entries: List<LibraryItem>?): PlaylistOverlayView =
+        PlaylistOverlayView(header, entries, deletedLocally = false)
+
+    companion object {
+        val None: LibraryPlaylistOverlay = object : LibraryPlaylistOverlay {}
+    }
+}
+
+internal data class PlaylistOverlayView(
+    val header: LibraryItem.Playlist?,
+    val entries: List<LibraryItem>?,
+    /** Deleted on this device: the screen says the playlist is gone before the server confirms it. */
+    val deletedLocally: Boolean,
+)
 
 /** R4 implements this over the `download` table: the tracks whose files are complete. */
 internal fun interface DownloadedTrackSource {

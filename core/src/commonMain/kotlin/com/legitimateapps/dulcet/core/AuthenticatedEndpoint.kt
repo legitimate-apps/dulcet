@@ -7,11 +7,13 @@ import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
+import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.Parameters
 import io.ktor.http.URLBuilder
 import io.ktor.http.contentType
 import io.ktor.utils.io.readAvailable
@@ -127,6 +129,25 @@ internal class AuthenticatedEndpointClient(
         jsonBody = null,
     )
 
+    /**
+     * A request whose parameters repeat a name, in order (`songId`, `songIdToAdd`,
+     * `songIndexToRemove` — spec §18.6). [formPost] sends every parameter, credentials included, as
+     * an `application/x-www-form-urlencoded` body — the OpenSubsonic `formPost` extension — so a
+     * long list never meets a proxy's URL-length limit and nothing rides in the URL at all.
+     */
+    suspend fun requestRepeated(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): AuthenticatedEndpointResponse = execute(
+        endpoint = endpoint,
+        parameters = emptyMap(),
+        options = AuthenticatedEndpointRequestOptions(),
+        jsonBody = null,
+        repeated = parameters,
+        formPost = formPost,
+    )
+
     suspend fun postJson(
         endpoint: String,
         parameters: Map<String, String>,
@@ -156,7 +177,10 @@ internal class AuthenticatedEndpointClient(
         parameters: Map<String, String>,
         options: AuthenticatedEndpointRequestOptions,
         jsonBody: String?,
+        repeated: List<Pair<String, String>> = emptyList(),
+        formPost: Boolean = false,
     ): AuthenticatedEndpointResponse {
+        require(!formPost || jsonBody == null)
         val common = authenticatedParameters(parameters)
         var currentUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
         var redirects = 0
@@ -164,14 +188,14 @@ internal class AuthenticatedEndpointClient(
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
             val snapshot = try {
                 if (
-                    jsonBody == null &&
+                    jsonBody == null && !formPost &&
                     options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
                     options.range == null
                 ) {
                     var completedSnapshot: AuthenticatedEndpointHttpSnapshot? = null
                     try {
                         client.prepareGet(target.url) {
-                            applyRequestParts(target.hostHeader, common, options)
+                            applyRequestParts(target.hostHeader, common, options, repeated)
                         }.execute { response ->
                             response.toSnapshot(
                                 body = if (response.status.value in 200..299) {
@@ -188,9 +212,21 @@ internal class AuthenticatedEndpointClient(
                         } ?: throw failure
                     }
                 } else {
-                    val response = if (jsonBody == null) {
+                    val response = if (formPost) {
+                        client.post(target.url) {
+                            target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                            setBody(
+                                FormDataContent(
+                                    Parameters.build {
+                                        common.forEach { (name, value) -> append(name, value) }
+                                        repeated.forEach { (name, value) -> append(name, value) }
+                                    },
+                                ),
+                            )
+                        }
+                    } else if (jsonBody == null) {
                         client.get(target.url) {
-                            applyRequestParts(target.hostHeader, common, options)
+                            applyRequestParts(target.hostHeader, common, options, repeated)
                         }
                     } else {
                         client.post(target.url) {
@@ -351,9 +387,11 @@ internal class AuthenticatedEndpointClient(
         hostHeader: String?,
         parameters: Map<String, String>,
         options: AuthenticatedEndpointRequestOptions,
+        repeated: List<Pair<String, String>> = emptyList(),
     ) {
         hostHeader?.let { header(HttpHeaders.Host, it) }
         parameters.forEach { (key, value) -> parameter(key, value) }
+        repeated.forEach { (key, value) -> parameter(key, value) }
         options.range?.let { header(HttpHeaders.Range, it) }
     }
 

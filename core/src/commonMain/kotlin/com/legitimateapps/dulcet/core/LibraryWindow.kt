@@ -743,7 +743,10 @@ internal class ListWindow(
             return localViewOrEmpty()
         }
         touchShown(spec.listKey)
-        val (items, positions) = itemsOf(cache.listRows(spec.listKey), dedupe = true)
+        val (read, readPositions) = itemsOf(cache.listRows(spec.listKey), dedupe = true)
+        // Pending playlist creates, deletes and renames are overlaid like a pending star (§18.6).
+        val items = if (query == LibraryQuery.Playlists) reader.playlistOverlay.overlayList(read) else read
+        val positions = if (items === read) readPositions else items.indices.toList()
         publishedPositions = positions
         val current = reader.sessionEpoch
         val liveUnderCurrent = liveThisSession && current != null && state.windowEpoch == current.key
@@ -780,6 +783,8 @@ internal class ListWindow(
                     val pending = reader.overlay.pending(cache.serverId, members.toSet())
                     artists.zip(members) { artist, member -> artist.toItem(pending[member]) }
                 }
+                // Never read, offline: only playlists created on this device can be shown.
+                LibraryQuery.Playlists -> reader.playlistOverlay.overlayList(emptyList())
                 else -> emptyList()
             }
         } else {
@@ -984,29 +989,44 @@ internal class CollectionDetailWindow(
     query: LibraryQuery,
     listener: (LibraryPublication) -> Unit,
 ) : ReaderHandle(reader, query, listener) {
-    private val rawId = when (query) {
+    private val queriedId = when (query) {
         is LibraryQuery.Artist -> query.rawId
         is LibraryQuery.Playlist -> query.rawId
         else -> error("not a collection detail")
     }
-    private val listKey = when (query) {
-        is LibraryQuery.Artist -> canonicalListKey("getArtist", mapOf("id" to rawId))
-        else -> playlistDetailListKey(rawId)
-    }
+
+    /**
+     * The id read: a playlist created on this device is opened under its local id and, once the
+     * server has created it, reads as the server's id (§18.6). A local id is never sent.
+     */
+    private val rawId: String
+        get() = if (query is LibraryQuery.Playlist) reader.playlistOverlay.resolve(queriedId) else queriedId
+    private val isLocalPlaylist: Boolean get() = query is LibraryQuery.Playlist && reader.playlistOverlay.isLocal(rawId)
+    private val listKey: String
+        get() = when (query) {
+            is LibraryQuery.Artist -> canonicalListKey("getArtist", mapOf("id" to rawId))
+            else -> playlistDetailListKey(rawId)
+        }
     override val lock: Mutex get() = reader.listLock(listKey)
     private var gone = false
     private val liveThisSession: Boolean get() = listKey in reader.liveListReads
 
     override fun needsRevalidation(): Boolean {
+        if (isLocalPlaylist) return false
         val readAt = reader.liveListReads[listKey] ?: return true
         val state = cache.listState(listKey) ?: return true
         return state.windowEpoch != reader.sessionEpoch?.key || cache.now() - readAt >= reader.config.revalidateWithinMillis
     }
 
-    override fun mentionsAny(rawIds: Set<String>): Boolean = rawId in rawIds || published.any { it.rawId in rawIds }
+    override fun mentionsAny(rawIds: Set<String>): Boolean =
+        rawId in rawIds || queriedId in rawIds || published.any { it.rawId in rawIds }
 
     override suspend fun performRevalidate(cause: RevalidateCause) {
         if (closed || !reader.online) return
+        if (isLocalPlaylist) {
+            emitSnapshot()
+            return
+        }
         if (cache.listState(listKey) != null && cause != RevalidateCause.Open) {
             inFlight += 1
             emitSnapshot()
@@ -1029,19 +1049,7 @@ internal class CollectionDetailWindow(
                         CacheEntities(artists = listOf(artist), albums = albums),
                     )
                 } else {
-                    val sent = reader.send("getPlaylist", mapOf("id" to rawId))
-                    seq = sent.issueSeq
-                    sent.requireOk("getPlaylist", mapOf("id" to rawId))
-                    val now = cache.now()
-                    // Entries keep their duplicates (§18.6): positions are distinct, ids may repeat.
-                    val (playlist, entries) = parseReaderPlaylist(sent.response.body, rawId)
-                    cache.writeWholeList(
-                        CacheWriteStamp(seq, now, epoch?.key), CacheEntitySource.Detail,
-                        CachedListState(listKey, epoch?.key, epoch?.folderIds, 0, entries.size, null, CacheCoverage.Complete, now, now, seq),
-                        entries.map { CacheListMember(CacheItemKind.Track, it.rawId) },
-                        CacheEntities(playlists = listOf(playlist), tracks = entries.distinctBy { it.rawId }),
-                    )
-                    cache.markPlaylistDetail(seq, rawId)
+                    reader.readPlaylistDetail(rawId, epoch) { seq = it }
                 }
                 failure = null
                 internalFailure = false
@@ -1073,6 +1081,7 @@ internal class CollectionDetailWindow(
             else -> cache.playlist(rawId)?.takeUnless { it.row.gone }?.toItem()
         }
         val state = cache.listState(listKey)
+        if (query is LibraryQuery.Playlist) return playlistSnapshot(header as LibraryItem.Playlist?, state)
         if (gone) {
             return LibraryPublication(
                 query, 0, LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone), null, null, null,
@@ -1102,11 +1111,77 @@ internal class CollectionDetailWindow(
         )
     }
 
+    /**
+     * A playlist: the cached header and entries with pending edits overlaid (§18.6). A playlist the
+     * server no longer has — told by this window's read, or by an edit's read of the same row — is
+     * `gone`; so is one deleted on this device, before the server confirms it.
+     */
+    private fun playlistSnapshot(cachedHeader: LibraryItem.Playlist?, state: CachedListState?): LibraryPublication {
+        val goneOnServer = gone || cache.playlist(rawId)?.row?.gone == true
+        val entries = if (state != null) itemsOf(cache.listRows(listKey), dedupe = false).first else null
+        val view = reader.playlistOverlay.overlayDetail(rawId, cachedHeader, entries)
+        if (view.deletedLocally || (goneOnServer && view.header?.local != true)) {
+            return LibraryPublication(
+                query, 0, LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone), null, null, null,
+                emptyList(), LibraryItemsState.Unavailable, LibraryItemsOrder.Server,
+            )
+        }
+        if (view.header == null && view.entries == null) {
+            val freshness = emptyFreshness()
+            return LibraryPublication(
+                query, 0, freshness, null, null, null, emptyList(),
+                if (freshness == LibraryFreshness.Loading) LibraryItemsState.Loading else LibraryItemsState.Unavailable,
+                LibraryItemsOrder.Server,
+            )
+        }
+        if (state != null) touchShown(listKey)
+        val itemsState = when {
+            view.entries != null -> LibraryItemsState.Present
+            reader.online && failure == null && !internalFailure -> LibraryItemsState.Loading
+            else -> LibraryItemsState.Unavailable
+        }
+        val live = liveThisSession && reader.sessionEpoch != null && state?.windowEpoch == reader.sessionEpoch?.key
+        return LibraryPublication(
+            query, 0, cachedFreshness(state?.fetchedAtWall, live), null, null, view.header, view.entries.orEmpty(), itemsState,
+            LibraryItemsOrder.Server,
+        )
+    }
+
     override fun loadMore() = Unit
 
     override fun loadBefore() = Unit
 
     override fun setViewport(firstIndex: Int, lastIndex: Int) = Unit
+}
+
+/**
+ * One `getPlaylist`, written through: the playlist and its ordered entries (duplicates kept, §18.6)
+ * in one transaction. The playlist screen and playlist editing both read through this; the caller
+ * holds the playlist's list lock (one writer per list). [issued] learns the request's sequence
+ * before the envelope is judged, so a not-found can be recorded with it.
+ */
+internal suspend fun LibraryReader.readPlaylistDetail(
+    rawId: String,
+    epoch: CatalogEpoch?,
+    issued: (Long) -> Unit = {},
+): List<CacheTrackRecord> {
+    val parameters = mapOf("id" to rawId)
+    val sent = send("getPlaylist", parameters)
+    issued(sent.issueSeq)
+    sent.requireOk("getPlaylist", parameters)
+    val now = cache.now()
+    val listKey = playlistDetailListKey(rawId)
+    // Entries keep their duplicates (§18.6): positions are distinct, ids may repeat.
+    val (playlist, entries) = parseReaderPlaylist(sent.response.body, rawId)
+    cache.writeWholeList(
+        CacheWriteStamp(sent.issueSeq, now, epoch?.key), CacheEntitySource.Detail,
+        CachedListState(listKey, epoch?.key, epoch?.folderIds, 0, entries.size, null, CacheCoverage.Complete, now, now, sent.issueSeq),
+        entries.map { CacheListMember(CacheItemKind.Track, it.rawId) },
+        CacheEntities(playlists = listOf(playlist), tracks = entries.distinctBy { it.rawId }),
+    )
+    cache.markPlaylistDetail(sent.issueSeq, rawId)
+    liveListReads[listKey] = cache.now()
+    return entries
 }
 
 // ---- Item mapping -------------------------------------------------------------------------------------
@@ -1168,4 +1243,9 @@ internal fun CachedPlaylist.toItem() = LibraryItem.Playlist(
     durationMilliseconds = record.durationMilliseconds,
     owner = record.owner,
     artworkKey = record.artworkKey,
+    comment = record.comment,
+    isPublic = record.isPublic,
+    // Only the server's own `readonly: false`; a server that does not say is decided by the
+    // playlist overlay, which knows the account (§18.6).
+    editable = record.readonly == false,
 )

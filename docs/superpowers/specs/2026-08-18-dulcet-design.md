@@ -3099,7 +3099,7 @@ person.
 |---|---|---|
 | `cache_binding` | normalized URL, username, created wall-clock | `server_id` |
 | `cache_epoch` | the last catalog epoch read (§16.11): raw `lastScan` string, folder-id set, `scanning`, read wall-clock | `server_id` |
-| `cache_artist` / `cache_album` / `cache_track` / `cache_playlist` | the latest-seen fields of each entity, including per-user state (nullable: *unknown* is not *false*); `fetched_at_wall` (nullable: *unknown*), `fetched_epoch` (nullable), `issue_seq`, `last_access_wall`, `gone`; albums and playlists also `detail_complete` | `(server_id, raw_id)` |
+| `cache_artist` / `cache_album` / `cache_track` / `cache_playlist` | the latest-seen fields of each entity, including per-user state (nullable: *unknown* is not *false*); `fetched_at_wall` (nullable: *unknown*), `fetched_epoch` (nullable), `issue_seq`, `last_access_wall`, `gone`; albums and playlists also `detail_complete`; playlists also `comment`, `is_public` and `readonly` (nullable: a server that omits `readonly` has not said the playlist is editable, §18.6) | `(server_id, raw_id)` |
 | `cache_credit` | credits of cached albums/tracks (§9.5 invariant 3) | `(server_id, owner_kind, owner_raw_id, role, ordinal)` |
 | `cache_list` | list key, window epoch, first and last loaded page, total (nullable), coverage (§16.12), `fetched_at_wall`, `last_access_wall` | `(server_id, list_key)` |
 | `cache_list_member` | the server's order: position → `(item_kind, raw_id)` | `(server_id, list_key, position)` |
@@ -3569,7 +3569,7 @@ or "sync".
 | the queue | always resolvable for display: every entry's metadata is pinned |
 | a home screen | each row its own cached page with its own label (§16.9) |
 | search | local search over the seen-cache, scope-labelled (§16.15) |
-| mutations | favourites and ratings apply instantly and queue in the outbox (§16.20); playlist editing is disabled (§18.6) |
+| mutations | favourites, ratings and playlist edits apply instantly and queue in the outbox (§16.20, §18.6); a queued playlist edit that meets a list changed elsewhere is refused on reconnect, with words, never written over it |
 
 **No spinner before a cached paint — online included.** When an open has anything cached, the first
 publication is that cached content, delivered **before any network request is issued and before any
@@ -3818,6 +3818,10 @@ server's behaviour and are R0's; *reader* ids drive the production code.
 | CONF-85 | a download enqueue pins its metadata in the same transaction; downloaded albums are re-read after an epoch change and nowhere else | reader | R4 |
 | CONF-86 | a home screen's rows publish independently, each with its own freshness; one row failing leaves the others live | reader | R1b, R2b, R3 |
 | CONF-87 | detail look-ahead never exceeds 24 per settled viewport or 2 in flight, fetches nothing during an unsettled fling or on a constrained network, and a looked-ahead album opens with zero requests | reader | R1b |
+| CONF-88 | the reference server's playlist writes: positional removal against the list as found, silent past the end; a replace by `playlistId` keeps the playlist and cannot empty it; empty name ignored, empty comment clears; the stale-index hazard reproduced; `lastScan` unmoved | server fact | playlists (§18.6) |
+| CONF-89 | every playlist operation through the production editor is read back raw as meant; appends are appends, positional edits one whole list, offline edits one replay | reader | playlists |
+| CONF-90 | a removal recorded on a view that another client then changes is refused with nothing written and no song removed; the unchanged-list control removes exactly the intended entry | reader | playlists |
+| CONF-91 | another user's playlist is published not editable, refused by the editor and (code 50/70) by the server; the admin override is recorded; the user's own playlist is edited as the control | reader | playlists |
 
 ### 16.19 What the reader gives up, stated honestly
 
@@ -3860,8 +3864,9 @@ about publication, not about the cache:
   compacted away, because the server may already hold it.
 - Offline, the overlay is what the person sees, labelled nowhere: a favourite is a favourite. The
   outbox is flushed first on reconnect (§16.14).
-- The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value and
-  stay online-only (§18.6).
+- The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value;
+  they use the same outbox and the same publish-time overlay with a verified delivery of their own
+  (§18.6).
 
 ---
 
@@ -3995,7 +4000,9 @@ retry loop.
   of different kinds may be equal — a server numbering artists and albums independently — and a key
   without the kind put an artist's star on the album of the same id and made the second change a
   primary-key violation. The protected table's schema is unchanged (§11.4); the kind is carried in
-  `field` as `<kind>.<field>`.
+  `field` as `<kind>.<field>`. Playlist changes share the table under `playlist.create`,
+  `playlist.details`, `playlist.entries` and `playlist.delete` (§18.6); the favourites delivery
+  ignores those rows and the username rebinding of §16.10 discards them with the rest.
 - **One failing change does not hold the queue.** Changes are sent oldest first; a change the server
   answers for without applying (a busy error, a malformed answer) stays pending and the flush moves
   on, and after three such answers in a row (ASSUMED) it is dropped and the person told. Only a
@@ -4018,19 +4025,120 @@ not needed before browse, play and offline are correct.
 
 ### 18.6 Playlists
 
-`mutatePlaylist` takes an explicit operation, not a whole playlist: `Add(items, atIndex?)`,
-`Remove(indices)`, `Move(from, to)`, `Rename`, `SetComment`, `SetPublic`, `Delete`.
+`mutatePlaylist` takes an explicit operation, not a whole playlist: `Create(name, items?)`,
+`Add(items)` (append), `Insert(items, atIndex)`, `Remove(indices)`, `Move(from, to)`, `Rename`,
+`SetComment`, `SetPublic`, `Delete`. **As implemented** (`PlaylistEditing.kt`, reached through
+`LibraryReaderSession.playlists`): `create`, `append`, `appendAlbum`, `insert`, `remove`, `move`,
+`rename`, `setComment`, `setPublic`, `delete`, `flush`, `pendingCount`, and an outcome listener.
 
-- **Ordering is by explicit index**, never implied.
+- **Ordering is by explicit index**, never implied — and the index is resolved **on the device**,
+  against the view the person acted on, never sent to the server as a position (below).
 - **Duplicates are permitted** — a playlist may legitimately contain a track twice — so operations are
   index-based, never id-based.
-- **Lost-update handling:** each mutation carries the playlist's last-known entry count and a hash of
-  its id sequence. If the server's current state does not match, the mutation is **rejected locally**,
-  the playlist is refetched, and the user is told it changed elsewhere. We do not blind-write over
-  another client.
-- A playlist that has become `readonly` since it was cached rejects mutations with a clear reason.
-- **Offline playlist mutation is not supported in v1** — the operation needs the server's current state,
-  so the UI disables editing while offline rather than queuing something that will be rejected.
+- **Reading.** The playlist list and one playlist are reader windows (§16.9): `getPlaylists` and
+  `getPlaylist`, one response each, cached as seen with the entries in the server's order. A
+  playlist's header carries its owner, song count, duration, cover art, comment, visibility, and
+  whether this account may edit it.
+
+**What the reference server does with a playlist write** — OBSERVED 2026-09-23 against a private
+disposable Navidrome 0.63.2 (fixture configuration), pinned by CONF-88:
+
+| request | behaviour |
+|---|---|
+| `createPlaylist?name=&songId=…` | creates it and answers with the playlist (entries in order, duplicates kept) |
+| `createPlaylist?playlistId=&songId=…` | **replaces the entries** and keeps the id, name, comment and visibility; a `name` beside `playlistId` is ignored |
+| `createPlaylist?playlistId=` with no `songId` | changes nothing, answers `ok` — a replace cannot empty a playlist |
+| `updatePlaylist?songIndexToRemove=i&songIndexToRemove=j` | removes by **position**, every index applied to the list as the request found it; a repeated index removes once |
+| `songIndexToRemove` past the end, negative, or not a number | **silently ignored**, answers `ok` |
+| `updatePlaylist?songIdToAdd=…` | appends; an unknown song id is silently dropped (so is one in `createPlaylist`) |
+| `updatePlaylist?comment=` | clears the comment; `name=` (empty) is ignored; `createPlaylist` with an empty name fails with code 0 |
+| `updatePlaylist` | answers an empty `ok` — no echo of the playlist |
+| any edit | moves the playlist's `changed` stamp; never moves `lastScan` |
+| `deletePlaylist`, then `getPlaylist` | code 70 |
+| another user's PUBLIC playlist, as a non-admin | listed, `readonly: true`; every edit and the delete answer **code 50** |
+| another user's PRIVATE playlist, as a non-admin | not listed; `getPlaylist` and every edit answer **code 70** |
+| another user's playlist, as the ADMIN | listed with `readonly: true`, **and the server accepts the admin's edits** |
+| a `false` visibility | the `public` field is omitted, not `false` |
+| `formPost` | advertised; the repeated parameters above work as a form body |
+
+**The hazard.** Because removal is positional, silent past the end, and unacknowledged, an index
+computed from a view another client has since changed removes whichever song now sits at that
+index, and nothing reports it. CONF-88 reproduces it: a view `[a, b, c, d]`, another client
+removes index 0, and a removal of index 2 — aimed at `c` — removes `d`.
+
+**The strategy — chosen for the smallest risk of removing the wrong song:**
+
+1. **An entry edit names the view it was made on.** The shell passes the entry ids of the
+   publication the person acted on; if that is not the view the core now publishes, the edit is
+   refused at the tap (`StaleView`) and the shell re-renders. Indices outside the view, and a move
+   onto itself, are `Invalid`.
+2. **Entry edits of one playlist compact into one outbox row**: the server's entries when the first
+   edit was made (`base`) and the entries the person now wants (`target`). An edit that returns the
+   list to `base`, with no send in doubt, leaves no row.
+3. **Sending re-reads the playlist first** (`getPlaylist`, written through to the cache). Then:
+   - the server holds `target` already → saved, nothing sent (a lost answer, or the same edit
+     elsewhere);
+   - the change only **adds at the end** → `updatePlaylist?songIdToAdd=`, sent whatever the server now
+     holds, because an append is not positional;
+   - the server still holds exactly `base` → the **whole desired list** in one
+     `createPlaylist?playlistId=` — or, when the desired list is empty, `songIndexToRemove` for
+     **every** index of the list just verified, the one positional write, since a replace cannot
+     empty a playlist;
+   - anything else → **not written**: the outbox row goes, the person sees the server's list and is
+     told it changed elsewhere (`ChangedElsewhere`). This is the §18.6 lost-update rule, with the
+     whole id sequence as the check rather than a count and a hash.
+4. **Every write is read back** and compared with what was meant; a difference is told (`Diverged`)
+   — another client wrote in between, or the server dropped a song id it does not know.
+
+**The exposure that remains, stated honestly.** Subsonic has no conditional write. A change another
+client makes in the moment between step 3's read and its write is overwritten by the whole-list
+write — that client's edit is lost, and step 4 cannot always see it. The alternative — sending the
+verified position — has the same window, and its failure in that window deletes a song the person
+saw and meant to keep. A whole list never removes a song the person's view held; that is why it was
+chosen. Reordering has no other expression in the protocol anyway.
+
+**Header fields** (`rename`, `setComment`, `setPublic`) are set-to-value and follow §18.3: one row per
+playlist with a per-field value, the value the server last reported, and the values whose sends may
+have landed; a live read issued after the change that shows a third value wins, and the person is told
+(`Superseded`). An empty name is refused locally, because the server would ignore it.
+
+**Create.** Shown at once under a local id (`dulcet-local-playlist:<n>`) that is never sent; edits of a
+playlist not yet created fold into its create row, so an offline create-then-edit sends one
+`createPlaylist`. The comment and visibility follow as an `updatePlaylist`, since `createPlaylist`
+takes neither. The shell is told the server's id (`Created`); a screen opened on the local id keeps
+working and reads the new id. Deleting a playlist not yet created sends nothing — unless a send of its
+create is in doubt, in which case what that send made is looked for and deleted.
+
+**Offline — decided in this revision, reversing the earlier "disabled offline".** Every edit queues
+with the base it was made on, so replaying it is exactly as safe as sending it online: written only if
+the server still holds that base, refused with words otherwise. Appends need no base. The overlay of
+§16.20 shows pending playlist changes in every publication — a created playlist in the list, a deleted
+one gone from it and its screen `gone`, a renamed one renamed, the entries as the person arranged
+them — and is never written into the cache. Reconnect flushes favourites, then playlist changes, then
+scrobbles (§16.14 step 1).
+
+**At least once.** A write is marked attempted before it is sent; a lost answer leaves it pending, and
+the re-read before the retry shows whether it landed. An append whose answer was lost is taken as
+landed when the server's list ends with it (ASSUMED: those are this device's own songs). A create whose
+answer was lost is looked for before it is sent again: exactly one playlist this account owns, of that
+name and song count, never seen by the device, is adopted (ASSUMED); otherwise it is sent again — a lost
+answer may cost a duplicate playlist, never a lost one. A delete answered code 70 is already done.
+
+**Permissions (§10.4).** Editing needs the server's `readonly: false`, or — from a server that does not
+send `readonly` — ownership by this account. Dulcet follows `readonly` even for an admin, whom the
+reference server would let edit other users' playlists: editing someone else's playlist is not a
+feature Dulcet offers. The shells hide the controls for a playlist whose `editable` is false; the core
+refuses an edit of one (`NotEditable`); the server's code 50 is told like any refusal.
+
+**Large playlists.** A whole-list write is about 30 bytes per song. When the server advertises
+`formPost` the session sends every repeated-parameter write as a form body, credentials included, so no
+proxy URL limit applies; otherwise it is a query string, and a proxy that refuses a long one is told as
+a failed save. OBSERVED: a 2,000-entry replace succeeded both ways against the reference server.
+
+**Pinned by** CONF-88 (the table above), CONF-89 (every operation through the production editor, read
+back raw), CONF-90 (the hazard reproduced raw, then refused by the editor with nothing written, and a
+positive control), CONF-91 (another user's playlist is published not editable, refused locally and by
+the server, the admin override recorded, and the same user's own playlist edited as a control).
 
 ### 18.7 Podcasts and audiobooks
 
@@ -4551,6 +4659,10 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-85 | a download enqueue pins its metadata in the same transaction; downloaded albums are re-read after an epoch change and nowhere else (§16.13) |
 | CONF-86 | a multi-list screen's rows publish independently with their own freshness; one failing row leaves the others live (§16.9) |
 | CONF-87 | detail look-ahead stays within 24 per settled viewport and 2 in flight, fetches nothing during an unsettled fling or on a constrained network, and a looked-ahead album opens with zero requests (§16.13) |
+| CONF-88 | playlist writes on the reference server: removal by position against the list as found and silent past the end, the stale-index hazard reproduced, replace by `playlistId` keeping the playlist and unable to empty it, empty-name and empty-comment handling, `formPost`, `lastScan` unmoved — server fact (§18.6) |
+| CONF-89 | every playlist operation through the production editor, including an offline replay, is read back raw as meant (§18.6) |
+| CONF-90 | a positional edit whose base another client changed is refused with no write and no song removed; the unchanged-list control removes exactly the intended entry (§18.6) |
+| CONF-91 | another user's playlist is not editable to the reader, the editor or the server (code 50/70); the admin override recorded; the own-playlist control saved (§18.6, §10.4) |
 | CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
 
 ### 20.5 Facade header review
@@ -5986,6 +6098,33 @@ fresh disposable server before landing; items 11–14 are what that review chang
     rejected 12–16 pages, accepted 5 stamps and 2 distinct contents, and had 8–12 samples whose
     *after* reading showed a scan, with zero bracketed and zero after-only violations in 3,975
     samples.
+21. **Playlists in the reader (W9, core).**
+    §18.6 is rewritten from measurement. Removal by `songIndexToRemove` is positional, applied to
+    the list as the request finds it, silently ignored past the end and answered with an empty
+    `ok`, so an index computed from a stale view removes another song and nothing says so — CONF-88
+    reproduces exactly that. The earlier rule (compare an entry count and a hash of the id
+    sequence, then reject) did not say how an accepted edit is sent, and sent as a position it keeps
+    a race between the check and the write that removes the wrong song; the editor never sends a
+    position of the person's choosing: an entry edit names the view it was
+    made on, compacts to `(base, target)`, re-reads before sending, and writes the whole list by
+    `createPlaylist?playlistId=` — which OBSERVED keeps the playlist — or an append, or, to empty a
+    playlist (a replace cannot), every index of the verified list; every write is read back. The
+    residual exposure — a concurrent write in the moment between the re-read and the write is
+    overwritten — is stated in §18.6 and chosen over the positional alternative's, which removes a
+    song the person saw. **Offline playlist editing reverses from "disabled" to queued** (§16.14,
+    §16.20): the base travels with the edit, so a replay is as safe as a live send, and a replay
+    that meets a changed list is refused with words. Playlist rows share `mutation_outbox` under
+    `playlist.<kind>` (schema unchanged). **Schema 6 gains `cache_playlist.comment`, `is_public` and
+    `readonly`**, appended last, in place: schema 6 is not on `main` and has shipped in no build, so
+    amending it costs no migration step; the v6 fixture was altered to match and the migration gate
+    passes. The reader gained named hooks — `LibraryPlaylistOverlay`, `republishPlaylists`,
+    `rereadList`, `readPlaylistDetail`, `sendRepeatedChecked` — and the transport a
+    repeated-parameter request, sent as a form body when the server advertises `formPost`. Dulcet
+    follows `readonly` even for an admin, whom the reference server lets edit other users'
+    playlists (CONF-91 records the override). CONF-88..91 run in `core-conformance` through
+    `PlaylistConformanceContract`, the public contract that reaches the internal editor as
+    `LibrarySyncContract` reaches the sync engine; it borrows the sync controls' disposable-database
+    factory, which R5 must keep (renamed) when it deletes the mirror.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
