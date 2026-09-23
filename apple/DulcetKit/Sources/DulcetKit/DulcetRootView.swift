@@ -9,9 +9,6 @@ public enum DulcetRenderVariant: Sendable {
 public struct DulcetRootView: View {
     @Bindable private var store: DulcetPresentationStore
     private let variant: DulcetRenderVariant
-#if os(iOS)
-    @State private var preferredCompactColumn: NavigationSplitViewColumn = .detail
-#endif
 
     public init(
         store: DulcetPresentationStore,
@@ -32,10 +29,18 @@ public struct DulcetRootView: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store)
                     } detail: {
-                        DulcetStateSurface(store: store)
+                        DulcetDestinationStack(store: store)
                     }
                     .navigationSplitViewStyle(.balanced)
                     .dulcetForeground(.primaryTextOnWindow)
+                    // The Mac's now-playing bar docks along the whole window's bottom edge, under
+                    // both columns, as a music player's transport does.
+                    .modifier(DulcetNowPlayingBarPlacement(
+                        store: store,
+                        placement: .docked,
+                        isSuppressed: store.selectedDestination == .nowPlaying,
+                        onOpen: { store.selectDestination(.nowPlaying) }
+                    ))
                 }
             }
         }
@@ -47,16 +52,7 @@ public struct DulcetRootView: View {
             if variant == .deliberatelyBadControl {
                 DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
             } else {
-                ZStack {
-                    Color.dulcetWindow.ignoresSafeArea()
-                    NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-                        DulcetSidebar(store: store, compactColumn: $preferredCompactColumn)
-                    } detail: {
-                        DulcetStateSurface(store: store)
-                    }
-                    .navigationSplitViewStyle(.balanced)
-                    .dulcetForeground(.primaryTextOnWindow)
-                }
+                DulcetIOSShell(store: store)
             }
         }
         .environment(store)
@@ -226,22 +222,289 @@ private struct DulcetTVSectionNavigation: View {
 }
 #endif
 
+#if os(iOS)
+/// The iPhone and iPad shell.
+///
+/// A compact width -- every iPhone in portrait, and an iPad in a narrow multitasking window --
+/// gets the platform's bottom tab bar with the now-playing bar above it and the full player as a
+/// sheet. A regular width keeps the sidebar, with the now-playing bar floating over the detail.
+/// The size class decides, not the device, so an iPad dragged into Slide Over behaves like a
+/// phone rather than squeezing a sidebar into it.
+private struct DulcetIOSShell: View {
+    @Bindable var store: DulcetPresentationStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    var body: some View {
+        if horizontalSizeClass == .compact {
+            DulcetCompactShell(store: store)
+        } else {
+            ZStack {
+                Color.dulcetWindow.ignoresSafeArea()
+                NavigationSplitView {
+                    DulcetSidebar(store: store)
+                } detail: {
+                    DulcetDestinationStack(
+                        store: store,
+                        barPlacement: .floating,
+                        onOpenPlayer: { store.selectDestination(.nowPlaying) }
+                    )
+                }
+                .navigationSplitViewStyle(.balanced)
+                .dulcetForeground(.primaryTextOnWindow)
+            }
+        }
+    }
+}
+
+/// Tabs for the destinations that exist (Library, Search, Connection), the now-playing bar above
+/// the tab bar, and Now Playing as a sheet dragged down to dismiss -- never a tab, because it is
+/// not a place, it is what is playing.
+///
+/// The bar is a material card in each tab rather than the tab bar's own bottom accessory. The
+/// accessory was tried on iOS 26.5: its glass adapts to the content scrolling beneath it, and
+/// OBSERVED in the simulator it rendered the track title white on a light backdrop, illegible,
+/// with the system's default foreground as well as with ours. A regular-material card has a
+/// fixed contrast relationship and behaves the same on every supported iOS version.
+private struct DulcetCompactShell: View {
+    @Bindable var store: DulcetPresentationStore
+    @State private var playerPresented = false
+    /// The last tab the person was on, so a Now Playing destination arriving from elsewhere
+    /// (a size-class change from an iPad sidebar) is shown as the sheet over that tab.
+    @State private var lastTab: DulcetSidebarDestination = .library
+
+    static let tabs: [DulcetSidebarDestination] = [.library, .search, .settings]
+
+    var body: some View {
+        TabView(selection: tabSelection) {
+            ForEach(Self.tabs) { destination in
+                DulcetDestinationStack(
+                    store: store,
+                    tab: destination,
+                    barPlacement: .floating,
+                    onOpenPlayer: { playerPresented = true }
+                )
+                    .tabItem {
+                        Label(destination.windowTitle, systemImage: destination.symbolName)
+                            .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                    }
+                    .tag(destination)
+            }
+        }
+        .sheet(isPresented: $playerPresented) {
+            DulcetNowPlayingSheet(store: store, onClose: { playerPresented = false })
+        }
+        .onAppear(perform: absorbNowPlayingDestination)
+        .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
+    }
+
+    private var tabSelection: Binding<DulcetSidebarDestination> {
+        Binding(
+            get: {
+                let destination = store.selectedDestination
+                return Self.tabs.contains(destination) ? destination : lastTab
+            },
+            set: { destination in
+                lastTab = destination
+                // Choosing the tab already showing returns it to its root, as tab bars do: for
+                // Library that is the grid, out of whichever album or artist was open.
+                store.selectDestination(destination)
+            }
+        )
+    }
+
+    private func absorbNowPlayingDestination() {
+        let destination = store.selectedDestination
+        if Self.tabs.contains(destination) {
+            lastTab = destination
+        } else if destination == .nowPlaying {
+            store.selectDestination(lastTab)
+            playerPresented = true
+        }
+    }
+}
+
+#endif
+
+#if !os(tvOS)
+/// Where a library page can be pushed. Derived from the snapshot, never stored beside it: the
+/// store's state names the page, and this only lets the navigation stack show it as a push, with
+/// a back button and the edge swipe.
+enum DulcetLibraryRoute: Hashable {
+    case album(DulcetProviderItemID)
+    case artist(DulcetProviderItemID)
+
+    static func path(for snapshot: DulcetSnapshot) -> [DulcetLibraryRoute] {
+        guard snapshot.selectedDestination == .library else { return [] }
+        switch snapshot.state {
+        case .albumDetailMultiDisc:
+            return snapshot.selectedAlbum.map { [.album($0.id)] } ?? []
+        case .artistDetail:
+            return snapshot.selectedArtist.map { [.artist($0.id)] } ?? []
+        default:
+            return []
+        }
+    }
+}
+
+/// One navigation stack showing a destination, with library pages pushed onto it.
+///
+/// In a tab, `tab` names the destination this stack belongs to, and the stack draws nothing while
+/// another destination is selected -- the snapshot describes one destination at a time.
+struct DulcetDestinationStack: View {
+    @Bindable var store: DulcetPresentationStore
+    var tab: DulcetSidebarDestination?
+    /// Where this stack shows the now-playing bar, if it shows one. It is applied to the root and
+    /// to every pushed page, inside the stack: OBSERVED on an iPad, a stack that is a split
+    /// view's detail is adopted into the column's own navigation, and a bar applied around the
+    /// stack drew on the root but vanished once an album was pushed.
+    var barPlacement: DulcetNowPlayingBarPlacement.Placement?
+    var onOpenPlayer: () -> Void = {}
+
+    var body: some View {
+        let showing = tab.map { $0 == store.selectedDestination } ?? true
+        NavigationStack(path: libraryPath) {
+            Group {
+                if showing {
+                    DulcetStateSurface(store: store, libraryAsStackRoot: true)
+                } else {
+                    Color.dulcetWindow.ignoresSafeArea()
+                }
+            }
+            .modifier(bar)
+            .navigationDestination(for: DulcetLibraryRoute.self) { route in
+                DulcetLibraryRouteView(store: store, route: route)
+                    .modifier(bar)
+            }
+        }
+        // A different destination is a different stack: switching from an open album to Search
+        // must not animate as a pop.
+        .id(tab ?? store.selectedDestination)
+    }
+
+    private var bar: DulcetOptionalNowPlayingBar {
+        DulcetOptionalNowPlayingBar(
+            store: store,
+            placement: barPlacement,
+            isSuppressed: store.selectedDestination == .nowPlaying,
+            onOpen: onOpenPlayer
+        )
+    }
+
+    private var libraryPath: Binding<[DulcetLibraryRoute]> {
+        Binding(
+            get: { DulcetLibraryRoute.path(for: store.snapshot) },
+            set: { path in
+                // The back button and the edge swipe pop to the grid. Nothing pushes through
+                // this setter: pages are pushed by the store selecting them.
+                if path.isEmpty, !DulcetLibraryRoute.path(for: store.snapshot).isEmpty {
+                    store.selectDestination(.library)
+                }
+            }
+        )
+    }
+}
+
+private struct DulcetOptionalNowPlayingBar: ViewModifier {
+    @Bindable var store: DulcetPresentationStore
+    let placement: DulcetNowPlayingBarPlacement.Placement?
+    let isSuppressed: Bool
+    let onOpen: () -> Void
+
+    func body(content: Content) -> some View {
+#if os(tvOS)
+        content
+#else
+        if let placement {
+            content.modifier(DulcetNowPlayingBarPlacement(
+                store: store,
+                placement: placement,
+                isSuppressed: isSuppressed,
+                onOpen: onOpen
+            ))
+        } else {
+            content
+        }
+#endif
+    }
+}
+
+/// A pushed library page. It keeps the last value it showed, so the page stays drawn while it
+/// animates away after the store has already moved back to the grid.
+private struct DulcetLibraryRouteView: View {
+    @Bindable var store: DulcetPresentationStore
+    let route: DulcetLibraryRoute
+    @State private var retainedAlbum: DulcetAlbum?
+    @State private var retainedArtist: DulcetArtist?
+
+    var body: some View {
+        Group {
+            switch route {
+            case let .album(id):
+                if let album = currentAlbum(id) ?? retainedAlbum {
+                    DulcetAlbumDetailView(
+                        album: album,
+                        tracksFailure: currentAlbum(id) == nil
+                            ? nil
+                            : store.snapshot.selectedAlbumTracksFailure,
+                        onPlay: { store.playAlbum(album.id, shuffle: false) },
+                        onShuffle: { store.playAlbum(album.id, shuffle: true) },
+                        onActivateTrack: { track in
+                            store.activateTrack(albumID: album.id, trackID: track.id)
+                        },
+                        onDownloadTrack: store.downloadsEnabled
+                            ? { track in store.downloadTrack(track.id) }
+                            : nil,
+                        onRetryTracks: { store.retryAlbumTracks() }
+                    )
+                }
+            case let .artist(id):
+                if let artist = currentArtist(id) ?? retainedArtist {
+                    DulcetArtistDetailView(
+                        artist: artist,
+                        albums: store.snapshot.albums.filter { $0.belongs(to: artist) },
+                        onSelectAlbum: { album in store.selectAlbum(album.id) }
+                    )
+                }
+            }
+        }
+        .onAppear(perform: retain)
+        .onChange(of: store.snapshot) { _, _ in retain() }
+    }
+
+    private func currentAlbum(_ id: DulcetProviderItemID) -> DulcetAlbum? {
+        store.snapshot.state == .albumDetailMultiDisc && store.snapshot.selectedAlbum?.id == id
+            ? store.snapshot.selectedAlbum
+            : nil
+    }
+
+    private func currentArtist(_ id: DulcetProviderItemID) -> DulcetArtist? {
+        store.snapshot.state == .artistDetail && store.snapshot.selectedArtist?.id == id
+            ? store.snapshot.selectedArtist
+            : nil
+    }
+
+    private func retain() {
+        switch route {
+        case let .album(id):
+            if let album = currentAlbum(id) { retainedAlbum = album }
+        case let .artist(id):
+            if let artist = currentArtist(id) { retainedArtist = artist }
+        }
+    }
+}
+#endif
+
 #if !os(tvOS)
 private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
-#if os(iOS)
-    /// Which column the compact layout is showing. Owned by ``DulcetRootView``; SwiftUI writes it
-    /// itself when the person uses the navigation bar's back control.
-    @Binding var compactColumn: NavigationSplitViewColumn
-#endif
 
     var body: some View {
         VStack(spacing: 0) {
             List(selection: selection) {
                 Section {
-                    sidebarRow(DulcetStrings.library, symbol: "rectangle.grid.2x2", destination: .library)
-                    sidebarRow(DulcetStrings.search, symbol: "magnifyingglass", destination: .search)
-                    sidebarRow(DulcetStrings.nowPlaying, symbol: "waveform", destination: .nowPlaying)
+                    sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
+                    sidebarRow(DulcetStrings.search, symbol: DulcetSidebarDestination.search.symbolName, destination: .search)
+                    sidebarRow(DulcetStrings.nowPlaying, symbol: DulcetSidebarDestination.nowPlaying.symbolName, destination: .nowPlaying)
                 } header: {
                     Text(DulcetStrings.browseSection)
                         .textCase(.uppercase)
@@ -286,21 +549,6 @@ private struct DulcetSidebar: View {
             set: { destination in
                 guard let destination else { return }
                 store.selectDestination(destination)
-#if os(iOS)
-                // Ask for the detail column explicitly instead of leaving SwiftUI to infer a push
-                // from a changed selection. A compact window shows one column at a time, so
-                // reaching a destination, using the back control, and choosing that same
-                // destination again reads back an unchanged selection -- and without this line
-                // the detail is never pushed again. OBSERVED twice on an iPhone 17 Pro simulator
-                // (26.5): the second choice left the person on the sidebar, and the only way
-                // forward was choosing a different destination. This setter does still run for
-                // that second choice, which is why one line here is enough.
-                //
-                // Regular-width windows show both columns at once. The iPadOS split-layout and
-                // search proofs were re-run with this line present and were unchanged; what has
-                // NOT been measured is whether SwiftUI reads the value at all in that class.
-                compactColumn = .detail
-#endif
             }
         )
     }
@@ -382,6 +630,9 @@ private struct DulcetSidebar: View {
 private struct DulcetStateSurface: View {
     @Bindable var store: DulcetPresentationStore
     var allowsProgrammaticFocus = true
+    /// Inside a navigation stack, album and artist pages are pushed on top of the grid rather
+    /// than replacing it, so the grid stays the stack's root in those states.
+    var libraryAsStackRoot = false
 
     private var snapshot: DulcetSnapshot { store.snapshot }
 
@@ -455,13 +706,10 @@ private struct DulcetStateSurface: View {
             }
             .navigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryBrowse:
-            DulcetLibraryBrowseView(
-                snapshot: snapshot,
-                onSelectAlbum: { album in store.selectAlbum(album.id) },
-                onPlayAll: { store.playLibrary(shuffle: false) },
-                onShuffle: { store.playLibrary(shuffle: true) }
-            )
-            .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+            libraryBrowse
+        case .albumDetailMultiDisc where libraryAsStackRoot,
+             .artistDetail where libraryAsStackRoot:
+            libraryBrowse
         case .albumDetailMultiDisc:
             if let album = snapshot.selectedAlbum {
                 DulcetAlbumDetailView(
@@ -510,7 +758,29 @@ private struct DulcetStateSurface: View {
     }
 }
 
+private extension DulcetStateSurface {
+    var libraryBrowse: some View {
+        DulcetLibraryBrowseView(
+            snapshot: snapshot,
+            onSelectAlbum: { album in store.selectAlbum(album.id) },
+            onSelectArtist: { artist in store.showArtist(artist.id) },
+            onPlayAll: { store.playLibrary(shuffle: false) },
+            onShuffle: { store.playLibrary(shuffle: true) }
+        )
+        .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+    }
+}
+
 extension DulcetSidebarDestination {
+    var symbolName: String {
+        switch self {
+        case .library: "rectangle.grid.2x2"
+        case .search: "magnifyingglass"
+        case .nowPlaying: "waveform"
+        case .settings: "server.rack"
+        }
+    }
+
     var windowTitle: String {
         switch self {
         case .library: DulcetStrings.library

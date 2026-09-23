@@ -141,6 +141,12 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case primaryTextOnRegularMaterial = "primary-text/regular-material"
     case secondaryTextOnRegularMaterial = "secondary-text/regular-material"
     case accentIconOnWindow = "accent-icon/window"
+    /// Text links: an artist or album name that navigates.
+    case accentTextOnWindow = "accent-text/window"
+    /// A prominent button's label on the accent fill. The label takes the window colour, so it
+    /// is light on the dark accent of light mode and dark on the light accent of dark mode --
+    /// the ancestor's primary-text style would otherwise paint it black on blue.
+    case labelOnAccentFill = "label/accent-fill"
     case accentIconOnTint = "accent-icon/accent-tint"
     case offlineLabelOnControl = "offline-label/control"
     case primaryTextOnOfflineTint = "primary-text/offline-tint"
@@ -156,8 +162,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
         case .secondaryTextOnWindow, .secondaryTextOnControl, .secondaryTextOnOfflineTint,
              .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial:
             .dulcetSecondaryText
-        case .accentIconOnWindow, .accentIconOnTint:
+        case .accentIconOnWindow, .accentIconOnTint, .accentTextOnWindow:
             .dulcetAccent
+        case .labelOnAccentFill:
+            .dulcetWindow
         case .offlineLabelOnControl, .offlineIconOnTint:
             .dulcetOffline
         case .dangerIconOnTint:
@@ -168,7 +176,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     /// Ordered back-to-front to match the pixels under the rendered foreground.
     var backgroundLayers: [AnyShapeStyle] {
         switch self {
-        case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow:
+        case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow,
+             .accentTextOnWindow:
             [AnyShapeStyle(Color.dulcetWindow)]
         case .primaryTextOnControl, .secondaryTextOnControl, .offlineLabelOnControl:
             [
@@ -181,6 +190,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(.regularMaterial)]
         case .accentIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent.opacity(0.10))]
+        case .labelOnAccentFill:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent)]
         case .offlineIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
         case .primaryTextOnOfflineTint, .secondaryTextOnOfflineTint:

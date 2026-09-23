@@ -22,149 +22,281 @@ struct DulcetPlaybackPreparingView: View {
     }
 }
 
+/// Controls the Now Playing surface shows that belong to the system's audio routing rather than
+/// to Dulcet: the AirPlay route picker and the volume slider. The platform shell supplies them;
+/// when it supplies none, the surface names the current output instead.
+public struct DulcetNowPlayingSystemControls {
+    public var routePicker: AnyView?
+    public var volume: AnyView?
+
+    public init(routePicker: AnyView? = nil, volume: AnyView? = nil) {
+        self.routePicker = routePicker
+        self.volume = volume
+    }
+}
+
+public extension EnvironmentValues {
+    @Entry var dulcetNowPlayingSystemControls = DulcetNowPlayingSystemControls()
+}
+
+public extension View {
+    /// Hook for the system playback controls (route picker, volume) on the Now Playing surface.
+    func dulcetNowPlayingSystemControls(_ controls: DulcetNowPlayingSystemControls) -> some View {
+        environment(\.dulcetNowPlayingSystemControls, controls)
+    }
+}
+
 struct DulcetNowPlayingView: View {
+    enum Presentation {
+        /// A navigation destination: the sidebar's Now Playing on iPad and Mac, the tvOS section.
+        case destination
+        /// The full-screen player presented from the iPhone's now-playing bar.
+        case sheet
+    }
+
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.dulcetNowPlayingSystemControls) private var systemControls
     @State private var scrubPosition: Double?
+    @State private var showingQueue = false
     let player: DulcetNowPlaying
+    var presentation: Presentation = .destination
     var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
+    /// Runs before following a link out of the player, so a sheet can get out of the way.
+    var onNavigate: () -> Void = {}
 
     var body: some View {
-        ZStack {
-            Color.dulcetWindow.ignoresSafeArea()
-
+        // The reader consumes the proposal before the ScrollView, so the layout decision below
+        // depends only on the width the surface was given.
+        GeometryReader { geometry in
             ScrollView {
-                Group {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
-                            playerPanel
-                            queuePanel
-                        }
-                    } else {
-                        HStack(alignment: .top, spacing: DulcetSpacing.xl) {
-                            playerPanel
-                                .frame(maxWidth: 520)
-                            queuePanel
-                                .frame(maxWidth: 390)
-                        }
-                    }
-                }
-                .padding(DulcetSpacing.xl)
-                .frame(maxWidth: .infinity)
+                content(width: geometry.size.width)
+                    .padding(.horizontal, horizontalPadding(for: geometry.size.width))
+                    .padding(.vertical, presentation == .sheet ? DulcetSpacing.md : DulcetSpacing.xl)
+                    .frame(maxWidth: .infinity)
             }
         }
+        .background(Color.dulcetWindow.ignoresSafeArea())
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.nowPlaying)
     }
 
-    private var playerPanel: some View {
-        VStack(spacing: DulcetSpacing.lg) {
-            DulcetArtworkView(
-                artwork: player.current.artwork,
-                size: dynamicTypeSize.isAccessibilitySize ? 220 : 332
-            )
+    /// Side by side only when both panels fit at their natural widths; otherwise one column.
+    /// Dynamic Type at accessibility sizes always gets one column, whatever the width.
+    static func usesSideBySideLayout(width: CGFloat, accessibilitySize: Bool) -> Bool {
+        !accessibilitySize && width >= 820
+    }
 
-            VStack(spacing: DulcetSpacing.xs) {
-                Text(player.current.title)
-                    .font(.largeTitle.weight(.bold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(nil)
-                    .accessibilityIdentifier("dulcet.now-playing.title")
-                Text(DulcetStrings.artistNames(player.current.artistNames))
-                    .font(.title3)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(nil)
-                if let album = player.current.albumTitle {
-                    Text(album)
-                        .font(.subheadline)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(nil)
+    private func horizontalPadding(for width: CGFloat) -> CGFloat {
+        width < 500 ? DulcetSpacing.lg : DulcetSpacing.xl
+    }
+
+    @ViewBuilder
+    private func content(width: CGFloat) -> some View {
+        let innerWidth = max(0, width - 2 * horizontalPadding(for: width))
+        if presentation == .destination,
+           Self.usesSideBySideLayout(
+               width: width,
+               accessibilitySize: dynamicTypeSize.isAccessibilitySize
+           ) {
+            HStack(alignment: .top, spacing: DulcetSpacing.xl) {
+                playerPanel(artworkSize: 332, alignment: .center)
+                    .frame(maxWidth: 520)
+                queuePanel
+                    .frame(maxWidth: 390)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
+                if presentation == .sheet, showingQueue {
+                    // The footer stays, so the control that opened the queue closes it.
+                    queuePanel
+                    footer(alignment: .leading)
+                } else {
+                    playerPanel(
+                        artworkSize: stackedArtworkSize(innerWidth: innerWidth),
+                        alignment: presentation == .sheet ? .leading : .center
+                    )
+                }
+                if presentation == .destination {
+                    queuePanel
                 }
             }
+            .frame(maxWidth: 560)
+        }
+    }
+
+    private func stackedArtworkSize(innerWidth: CGFloat) -> CGFloat {
+        let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 360
+        return max(120, min(innerWidth, cap))
+    }
+
+    private func playerPanel(artworkSize: CGFloat, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: DulcetSpacing.lg) {
+            DulcetArtworkView(artwork: player.current.artwork, size: artworkSize)
+                .shadow(color: .black.opacity(player.isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
+                .scaleEffect(player.isPlaying || presentation == .destination ? 1 : 0.9)
+                .animation(.spring(duration: 0.4), value: player.isPlaying)
+                .frame(maxWidth: .infinity)
+
+            trackIdentity(alignment: alignment)
 
             playbackProgress
 
-            HStack(spacing: DulcetSpacing.lg) {
-                Button {
-                    onControl(.setShuffle(!player.shuffleEnabled))
-                } label: {
-                    Image(systemName: player.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
-                }
-                    .dulcetMediaButtonStyle()
-                    .accessibilityLabel(DulcetStrings.shuffle)
-                    .accessibilityValue(player.shuffleEnabled
-                        ? DulcetStrings.controlOn : DulcetStrings.controlOff)
-                Button {
-                    onControl(.previous)
-                } label: {
-                    Image(systemName: "backward.fill")
-                }
-                    .dulcetMediaButtonStyle()
-                    .font(.title2)
-                    .accessibilityLabel(DulcetStrings.previous)
-                    .disabled(!player.canGoPrevious)
-                Button(
-                    player.isPlaying ? DulcetStrings.pause : DulcetStrings.play,
-                    systemImage: player.isPlaying ? "pause.fill" : "play.fill"
-                ) {
-                    onControl(player.isPlaying ? .pause : .play)
-                }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .font(.title2)
-                    .accessibilityLabel(player.isPlaying ? DulcetStrings.pause : DulcetStrings.play)
-                Button {
-                    onControl(.next)
-                } label: {
-                    Image(systemName: "forward.fill")
-                }
-                    .dulcetMediaButtonStyle()
-                    .font(.title2)
-                    .accessibilityLabel(DulcetStrings.next)
-                    .disabled(!player.canGoNext)
-                Button {
-                    onControl(.cycleRepeat)
-                } label: {
-                    Image(systemName: repeatSymbol)
-                }
-                    .dulcetMediaButtonStyle()
-                    .accessibilityLabel(DulcetStrings.repeatMode)
-                    .accessibilityValue(repeatAccessibilityValue)
-            }
+            transportControls
 
-            if player.audioFormat.sampleRateKilohertz > 0 {
-                Text(DulcetStrings.audioFormat(
-                        codec: player.audioFormat.codec,
-                        sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
-                    ))
-                    .font(.caption.monospaced())
-                    .dulcetForeground(.secondaryTextOnRegularMaterial)
-                    .padding(.horizontal, DulcetSpacing.xs)
-                    .padding(.vertical, DulcetSpacing.xxs)
-                    .background(.regularMaterial, in: Capsule())
+            footer(alignment: alignment)
+        }
+    }
+
+    private func trackIdentity(alignment: HorizontalAlignment) -> some View {
+        let textAlignment: TextAlignment = alignment == .leading ? .leading : .center
+        return VStack(alignment: alignment, spacing: DulcetSpacing.xxs) {
+            Text(player.current.title)
+                .font(presentation == .sheet ? .title2.weight(.bold) : .largeTitle.weight(.bold))
+                .multilineTextAlignment(textAlignment)
+                .lineLimit(nil)
+                .accessibilityIdentifier("dulcet.now-playing.title")
+            DulcetArtistLink(
+                credits: player.current.credits.filter { $0.role == .artist },
+                font: .title3,
+                onNavigate: onNavigate
+            )
+            .multilineTextAlignment(textAlignment)
+            if let album = player.current.albumTitle {
+                DulcetAlbumLink(track: player.current, title: album, onNavigate: onNavigate)
+                    .multilineTextAlignment(textAlignment)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: 0) {
+            controlButton(
+                symbol: player.shuffleEnabled ? "shuffle.circle.fill" : "shuffle",
+                font: .title3,
+                label: DulcetStrings.shuffle,
+                value: player.shuffleEnabled ? DulcetStrings.controlOn : DulcetStrings.controlOff
+            ) {
+                onControl(.setShuffle(!player.shuffleEnabled))
+            }
+            Spacer(minLength: DulcetSpacing.xs)
+            controlButton(symbol: "backward.fill", font: .title, label: DulcetStrings.previous) {
+                onControl(.previous)
+            }
+            .disabled(!player.canGoPrevious)
+            Spacer(minLength: DulcetSpacing.xs)
+            controlButton(
+                symbol: player.isPlaying ? "pause.circle.fill" : "play.circle.fill",
+                font: .system(size: 56),
+                label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
+            ) {
+                onControl(player.isPlaying ? .pause : .play)
+            }
+            .dulcetForeground(.accentIconOnWindow)
+            Spacer(minLength: DulcetSpacing.xs)
+            controlButton(symbol: "forward.fill", font: .title, label: DulcetStrings.next) {
+                onControl(.next)
+            }
+            .disabled(!player.canGoNext)
+            Spacer(minLength: DulcetSpacing.xs)
+            controlButton(
+                symbol: repeatSymbol,
+                font: .title3,
+                label: DulcetStrings.repeatMode,
+                value: repeatAccessibilityValue
+            ) {
+                onControl(.cycleRepeat)
+            }
+        }
+        .frame(maxWidth: 420)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func controlButton(
+        symbol: String,
+        font: Font,
+        label: String,
+        value: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        let button = Button(action: action) {
+            Image(systemName: symbol)
+                .font(font)
+                .symbolRenderingMode(.hierarchical)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .dulcetMediaButtonStyle()
+        .accessibilityLabel(label)
+        if let value {
+            button.accessibilityValue(value)
+        } else {
+            button
+        }
+    }
+
+    @ViewBuilder
+    private func footer(alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
+            if let volume = systemControls.volume {
+                volume
+            }
+            if systemControls.routePicker == nil, presentation == .destination {
+                formatBadge
             } else {
-                Text(player.audioFormat.codec)
-                    .font(.caption.monospaced())
-                    .dulcetForeground(.secondaryTextOnRegularMaterial)
-                    .padding(.horizontal, DulcetSpacing.xs)
-                    .padding(.vertical, DulcetSpacing.xxs)
-                    .background(.regularMaterial, in: Capsule())
+            HStack(spacing: DulcetSpacing.sm) {
+                formatBadge
+                Spacer(minLength: 0)
+                if let routePicker = systemControls.routePicker {
+                    routePicker
+                }
+                if presentation == .sheet {
+                    Button {
+                        withAnimation(.snappy) { showingQueue.toggle() }
+                    } label: {
+                        Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
+                            .font(.title3)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .dulcetMediaButtonStyle()
+                    .accessibilityLabel(showingQueue ? DulcetStrings.hideUpNext : DulcetStrings.showUpNext)
+                    .accessibilityIdentifier("dulcet.now-playing.up-next")
+                }
             }
-
-            Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
-                .font(.caption)
-                .dulcetForeground(.secondaryTextOnWindow)
-
+            }
+            if systemControls.routePicker == nil {
+                Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+            }
             if let sourceDisplayName = player.sourceDisplayName {
                 Text(DulcetStrings.playingFrom(sourceDisplayName))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
         }
+        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+    }
+
+    private var formatBadge: some View {
+        Text(player.audioFormat.sampleRateKilohertz > 0
+            ? DulcetStrings.audioFormat(
+                codec: player.audioFormat.codec,
+                sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
+            )
+            : player.audioFormat.codec)
+            .font(.caption.monospaced())
+            .dulcetForeground(.secondaryTextOnRegularMaterial)
+            .padding(.horizontal, DulcetSpacing.xs)
+            .padding(.vertical, DulcetSpacing.xxs)
+            .background(.regularMaterial, in: Capsule())
     }
 
     private var playbackProgress: some View {
-        VStack(spacing: DulcetSpacing.xs) {
+        VStack(spacing: DulcetSpacing.xxs) {
             if player.progressBegan {
                 playbackProgressIndicator
                     .accessibilityLabel(DulcetStrings.nowPlaying)
@@ -175,8 +307,12 @@ struct DulcetNowPlayingView: View {
 
                 HStack {
                     Text(displayedElapsed.dulcetDuration)
+                        .accessibilityLabel(DulcetStrings.elapsedTime)
+                        .accessibilityValue(displayedElapsed.dulcetDuration)
                     Spacer()
-                    Text(player.current.duration.dulcetDuration)
+                    Text(DulcetStrings.remaining(displayedRemaining.dulcetDuration))
+                        .accessibilityLabel(DulcetStrings.remainingTime)
+                        .accessibilityValue(displayedRemaining.dulcetDuration)
                 }
                 .font(.caption.monospacedDigit())
                 .dulcetForeground(.secondaryTextOnWindow)
@@ -185,6 +321,7 @@ struct DulcetNowPlayingView: View {
                     .font(.subheadline)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .accessibilityLabel(playbackPhaseLabel)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -221,6 +358,10 @@ struct DulcetNowPlayingView: View {
         .milliseconds(Int64((displayedSeconds * 1_000).rounded()))
     }
 
+    private var displayedRemaining: Duration {
+        max(.zero, player.current.duration - displayedElapsed)
+    }
+
     private var durationSeconds: Double {
         max(1, player.current.duration.dulcetSeconds)
     }
@@ -237,7 +378,7 @@ struct DulcetNowPlayingView: View {
         switch player.repeatMode {
         case .off: "repeat"
         case .all: "repeat.circle.fill"
-        case .one: "repeat.1"
+        case .one: "repeat.1.circle.fill"
         }
     }
 
@@ -264,6 +405,7 @@ struct DulcetNowPlayingView: View {
                         surface: .regularMaterial,
                         isCurrent: index == player.currentIndex
                     )
+                    .dulcetTrackContextMenu(track: track, onNavigate: onNavigate)
                     if track.id != player.queue.last?.id {
                         Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
                     }
@@ -276,8 +418,61 @@ struct DulcetNowPlayingView: View {
                     .stroke(Color.dulcetSeparator.opacity(0.55), lineWidth: 1)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+#if os(iOS)
+/// The iPhone's full-screen player, presented from the now-playing bar as a sheet the person
+/// drags down to dismiss. It reads the store directly, so it follows the queue as tracks change
+/// and says so when playback is still opening or has failed.
+struct DulcetNowPlayingSheet: View {
+    @Bindable var store: DulcetPresentationStore
+    let onClose: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let player = store.snapshot.nowPlaying {
+                    DulcetNowPlayingView(
+                        player: player,
+                        presentation: .sheet,
+                        onControl: store.sendPlaybackControl,
+                        onNavigate: onClose
+                    )
+                } else if store.snapshot.playbackStatus == .failed {
+                    DulcetUnavailableDestinationView(
+                        symbol: "exclamationmark.triangle",
+                        title: DulcetStrings.nowPlayingFailedTitle,
+                        message: DulcetStrings.nowPlayingFailedBody
+                    )
+                } else if store.snapshot.playbackStatus == .preparing {
+                    DulcetPlaybackPreparingView()
+                } else {
+                    DulcetUnavailableDestinationView(
+                        symbol: "waveform",
+                        title: DulcetStrings.nowPlayingUnavailableTitle,
+                        message: DulcetStrings.nowPlayingUnavailableBody
+                    )
+                }
+            }
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: onClose) {
+                        Image(systemName: "chevron.down")
+                            .font(.body.weight(.semibold))
+                    }
+                    .accessibilityLabel(DulcetStrings.closeNowPlaying)
+                    .accessibilityIdentifier("dulcet.now-playing.close")
+                }
+            }
+        }
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color.dulcetWindow)
+    }
+}
+#endif
 
 struct DulcetSearchView: View {
 #if os(macOS)
@@ -295,9 +490,12 @@ struct DulcetSearchView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+#if !os(iOS)
+                // On iOS the navigation bar's title already says it.
                 Text(DulcetStrings.searchTitle)
                     .font(.title.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
+#endif
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .dulcetSearchFieldStyle()
 #if os(macOS)
@@ -315,6 +513,10 @@ struct DulcetSearchView: View {
                     .submitLabel(.search)
                     .onSubmit { searchFieldFocused = false }
 #endif
+                    // Deliberately no `.focused` binding on the Mac. MEASURED in the hosted
+                    // search proof: with one attached -- even never set -- Return on a selected
+                    // result row stopped reaching the table's primary action, so activating a
+                    // result from the keyboard silently did nothing.
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
                 Text(DulcetStrings.searchSummary)
@@ -403,8 +605,14 @@ struct DulcetSearchView: View {
                 .width(min: 72, ideal: 90, max: 120)
             }
             .alternatingRowBackgrounds(.disabled)
-            .contextMenu(forSelectionType: DulcetSearchResult.ID.self) { _ in
-                EmptyView()
+            .contextMenu(forSelectionType: DulcetSearchResult.ID.self) { selection in
+                if let id = selection.first,
+                   let result = snapshot.searchResults.first(where: { $0.id == id }) {
+                    DulcetSearchResultMenuItems(result: result) {
+                        selectedResultID = id
+                        onActivateResult(id)
+                    }
+                }
             } primaryAction: { selection in
                 guard let id = selection.first else { return }
                 selectedResultID = id
@@ -440,6 +648,13 @@ struct DulcetSearchView: View {
                             subtitle: result.subtitle,
                             kind: result.kind.displayTitle
                         ))
+#if os(iOS)
+                        .contextMenu {
+                            DulcetSearchResultMenuItems(result: result) {
+                                onActivateResult(result.id)
+                            }
+                        }
+#endif
                     }
                 }
             }
@@ -499,6 +714,52 @@ struct DulcetSearchView: View {
         .frame(maxWidth: 440)
     }
 }
+
+#if os(iOS) || os(macOS)
+/// A search result's context menu: its own activation (play a track, open an album or artist),
+/// then Go to Album and Go to Artist where the library has those pages.
+private struct DulcetSearchResultMenuItems: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let result: DulcetSearchResult
+    let onActivate: () -> Void
+
+    var body: some View {
+        switch result.kind {
+        case .track:
+            Button(DulcetStrings.play, systemImage: "play", action: onActivate)
+            if let track = result.playableTrack, let albumID = store.libraryAlbumID(for: track) {
+                Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
+                    store.showAlbum(albumID)
+                }
+            }
+        case .album:
+            Button(DulcetStrings.goToAlbum, systemImage: "square.stack", action: onActivate)
+        case .artist:
+            Button(DulcetStrings.goToArtist, systemImage: "music.mic", action: onActivate)
+        }
+        if result.kind != .artist {
+            ForEach(artistTargets, id: \.id) { target in
+                Button(
+                    artistTargets.count == 1 ? DulcetStrings.goToArtist : target.name,
+                    systemImage: "music.mic"
+                ) {
+                    store.showArtist(target.id)
+                }
+            }
+        }
+    }
+
+    private var artistTargets: [(name: String, id: DulcetProviderItemID)] {
+        var seen = Set<DulcetProviderItemID>()
+        return result.credits.compactMap { credit in
+            guard let id = store.libraryArtistID(for: credit), seen.insert(id).inserted else {
+                return nil
+            }
+            return (credit.name, id)
+        }
+    }
+}
+#endif
 
 private extension View {
     @ViewBuilder

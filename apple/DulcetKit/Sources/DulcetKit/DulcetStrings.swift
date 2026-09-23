@@ -152,6 +152,30 @@ enum DulcetStrings {
     static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t finish signing out")
     static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
     static let keepAccount = text("account.remove.keep", "Keep Account")
+    static let playNext = text("action.playNext", "Play Next")
+    static let addToQueue = text("action.addToQueue", "Add to Queue")
+    static let goToAlbum = text("action.goToAlbum", "Go to Album")
+    static let goToArtist = text("action.goToArtist", "Go to Artist")
+    static let upNext = text("player.upNext", "Up Next")
+    static let showUpNext = text("player.upNext.show", "Show Up Next")
+    static let hideUpNext = text("player.upNext.hide", "Hide Up Next")
+    static let closeNowPlaying = text("player.close", "Close Now Playing")
+    static let openNowPlayingHint = text("player.open.hint", "Opens the full player")
+    static let playbackLoading = text("player.loading", "Loading…")
+    static let playbackFailedShort = text("player.failed.short", "Couldn\u{2019}t play this track")
+    static let remainingTime = text("player.remaining", "Remaining")
+    static let elapsedTime = text("player.elapsed", "Elapsed")
+    static let menuSearch = text("menu.search", "Search Library")
+    static let menuShowNowPlaying = text("menu.showNowPlaying", "Show Now Playing")
+    static let menuGo = text("menu.go", "Go")
+
+    static func remaining(_ value: String) -> String {
+        formatted("player.remainingValue", "\u{2212}%@", value)
+    }
+
+    static func miniPlayerAccessibility(title: String, artists: String) -> String {
+        formatted("player.mini.accessibility", "Now Playing, %1$@, %2$@", title, artists)
+    }
 
     static func albumCount(_ count: Int) -> String {
         pluralized("library.albumCount", fallback: "%d albums", count: count)
