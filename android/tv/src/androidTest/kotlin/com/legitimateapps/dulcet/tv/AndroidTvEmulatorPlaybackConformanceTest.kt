@@ -61,7 +61,7 @@ class AndroidTvEmulatorPlaybackConformanceTest {
                 instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME").close()
                 await("the player to be backgrounded") { activity.state == Lifecycle.State.CREATED }
                 val background = requireMediaTimeAdvances(observer, "background")
-                check(observer.foregroundNotificationPosted()) { "Background playback lost its foreground service" }
+                observer.requireForegroundNotification("background")
                 requireExactlyOneServerPlay(probe, rawId, before, observer)
                 println("ANDROID TV EMULATOR PLAYBACK OBSERVED leanback=true remote-pause-held-ms=${stillPaused - paused} " +
                     "resumed-ms=$resumed background-ms=$background server-plays=${before}->${before + 1}")

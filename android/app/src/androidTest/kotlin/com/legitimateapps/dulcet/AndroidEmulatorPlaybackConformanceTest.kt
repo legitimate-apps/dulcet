@@ -40,7 +40,7 @@ class AndroidEmulatorPlaybackConformanceTest {
                 instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME").close()
                 await("the activity to be backgrounded") { activity.state == Lifecycle.State.CREATED }
                 val background = requireMediaTimeAdvances(observer, "background")
-                check(observer.foregroundNotificationPosted()) { "Background playback lost its foreground notification" }
+                observer.requireForegroundNotification("background")
                 requireExactlyOneServerPlay(probe, rawId, before, observer)
                 println("ANDROID EMULATOR PLAYBACK OBSERVED entry=production media3=true " +
                     "foreground-ms=$foreground background-ms=$background server-plays=${before}->${before + 1}")

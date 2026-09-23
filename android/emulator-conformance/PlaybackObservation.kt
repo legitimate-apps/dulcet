@@ -65,6 +65,28 @@ class PlaybackObserver(private val context: Context) : AutoCloseable {
     fun foregroundNotificationPosted(): Boolean = context.getSystemService(NotificationManager::class.java)
         .activeNotifications.any { it.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 }
 
+    /**
+     * Fails with what the system says about the service, its notification and its session, so a
+     * red run names whether the service left the foreground, the notification was removed, or the
+     * session stopped playing — three different defects that read identically as "no notification".
+     */
+    fun requireForegroundNotification(label: String) {
+        if (foregroundNotificationPosted()) return
+        val state = state()
+        fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
+            java.io.FileInputStream(descriptor.fileDescriptor).bufferedReader().readText()
+        }
+        val service = shell("dumpsys activity services ${context.packageName}").lines()
+            .filter { "ServiceRecord" in it || "isForeground" in it || "startRequested" in it }.joinToString(" | ") { it.trim() }
+        val notification = shell("dumpsys notification --noredact").lines()
+            .filter { "pkg=${context.packageName}" in it }.joinToString(" | ") { it.trim().take(200) }
+        val session = shell("dumpsys media_session").lines().dropWhile { "package=${context.packageName}" !in it }
+            .take(14).filter { "state=" in it || "active=" in it }.joinToString(" | ") { it.trim().take(160) }
+        error("$label: no foreground notification. app phase=${state.phase} position=${state.positionMilliseconds} " +
+            "wanted=${state.playWhenReady} session=${state.hasSession} || service: $service || notifications: " +
+            "${notification.ifEmpty { "none" }} || media session: $session")
+    }
+
     fun stopPlayback() { instrumentation.runOnMainSync { service?.playback?.stop() } }
 
     override fun close() {
