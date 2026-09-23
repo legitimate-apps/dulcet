@@ -7,11 +7,6 @@ name: apple-ci contention soak
 # It takes TWO hosted macOS runners (one per arm) from the same account-wide pool apple-ci uses, for
 # roughly 90 minutes. Dispatch it when pull requests are not waiting on apple-ci.
 on:
-  # TEMPORARY, branch-only: `workflow_dispatch` cannot fire for a workflow that does not yet exist on
-  # the default branch, so the soak that measures this branch is triggered by a push carrying
-  # `[soak]` in the head commit message. Removed before merge; the merged workflow is dispatch-only.
-  push:
-    branches: [fix/apple-ci-reliability]
   workflow_dispatch:
     inputs:
       iterations:
@@ -23,15 +18,14 @@ permissions:
   contents: read
 
 concurrency:
-  # Keyed on the commit as well as the ref: a soak is N accumulated samples, and a later push to the
-  # same branch must not cancel one that is still drawing them. Same-commit dispatches still supersede.
+  # Keyed on the commit as well as the ref: a soak is N accumulated samples, and a dispatch for a
+  # newer commit on the same ref must not cancel one still drawing them. Same-commit dispatches supersede.
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
   soak:
     name: contention-soak (${{ matrix.arm }})
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[soak]') }}
     runs-on: macos-latest
     timeout-minutes: 150
     strategy:
@@ -91,7 +85,7 @@ jobs:
         timeout-minutes: 125
         env:
           ARM: ${{ matrix.arm }}
-          ITERATIONS: ${{ inputs.iterations || '10' }}
+          ITERATIONS: ${{ inputs.iterations }}
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
           export OUT="$RUNNER_TEMP/soak-$ARM" PRESSURE_LOG="$RUNNER_TEMP/host-pressure-$ARM.jsonl"

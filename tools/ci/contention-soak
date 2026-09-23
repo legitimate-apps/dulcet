@@ -18,6 +18,9 @@ set -uo pipefail
 : "${ARM:?}" "${ITERATIONS:?}" "${ROOT:?}" "${OUT:?}" "${PRESSURE_LOG:?}"
 case "$ARM" in current|isolated) ;; *) echo "unknown ARM=$ARM" >&2; exit 2 ;; esac
 mkdir -p "$OUT"
+# apple-ci sets this in the composite step's env; reset-transcode-cache refuses to run without it.
+# Its absence made the first soak (run 35804385105) stop Navidrome and never restart it.
+export DULCET_CONFORMANCE_DISPOSABLE=true
 mark() { python3 tools/ci/host-pressure mark "$PRESSURE_LOG" "$1"; echo "SOAK PHASE $1"; }
 
 # Newest-runtime device with this exact name -- the same choice `OS=latest` makes for xcodebuild.
@@ -63,8 +66,8 @@ tools/conformance-env/health-check \
   --corpus-manifest "$ROOT/music/corpus-manifest.json"
 
 if [ "$ARM" = current ]; then
-  # Reproduce the residents apple-ci leaves behind: its platform legs boot these three and nothing
-  # shuts them down before the conformance suites.
+  # Three resident devices: the worst case the platform legs can leave behind. (PR #136's run found
+  # one still booted at the composite's start, so this arm overstates today's typical residency.)
   for device in "$(udid_for 'iPhone 17 Pro')" \
                 "$(python3 tools/resolve-ipad-destination --print udid)" \
                 "$(udid_for 'Apple TV 4K (3rd generation)')"; do

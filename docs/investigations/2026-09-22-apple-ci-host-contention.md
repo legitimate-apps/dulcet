@@ -1,7 +1,8 @@
 # apple-ci reliability: what fails, why, and what changed (2026-09-22)
 
-**Status: fix landed on `fix/apple-ci-reliability`; before/after measured by soak (below) and to be
-re-measured over the first 30 post-merge `apple-ci` runs.**
+**Status: fix on `fix/apple-ci-reliability` (#136). Before: 47/111 attempts passed (42.3%). After:
+1/1 on #136, which is not a rate. The suite soak's first run drew no samples (§4); re-dispatch
+`apple-contention-soak` after merge, and read the first 30 post-merge `apple-ci` attempts.**
 
 ## 1. Every failed attempt since 2026-09-08, classified by step and test
 
@@ -91,14 +92,43 @@ its pre-registered criteria over 23 green runs and is **SUPPORTED**: the restart
 `simctl create`+`boot` fell from 3.61x baseline to 1.02x, while the unmoved restart that still
 follows one stayed at 2.13x, slower than baseline in 23 of 23 runs.
 
-Every stall row in §1 runs in a window where the platform legs have left an iPhone, an iPad and an
-Apple TV booted, and the iOS conformance rows additionally follow a fourth, freshly created device.
+Every stall row in §1 runs after the platform legs, which each boot a simulator and never shut it
+down, and the iOS conformance rows additionally follow a freshly created device. **Correction:** an
+earlier draft said three devices were still booted at the composite's start. PR #136's first run
+measured **one** (`SIMULATOR ISOLATION phase=macos-app-and-download shut_down=1`), so resident
+count there is lower than assumed; the swap figures in §4 are what carry the argument.
 On the 3 vCPU / 7 GB hosted runner the single-use Gradle daemon is allowed `-Xmx3g`, and it linked
 the iOS test binary in the same process that then ran the suite.
 
 ## 4. Soak: the arrangement, isolated
 
-*(filled in from `apple-contention-soak`)*
+**First soak, run 35804385105: the suite comparison produced NO samples.** In both arms,
+`reset-transcode-cache` refused to run because the soak script had not exported
+`DULCET_CONFORMANCE_DISPOSABLE=true` (apple-ci's composite gets it from its step env). So Navidrome was
+stopped and never restarted, and all 10 iterations of each arm ended `restart-failed` with 0 tests.
+The script is fixed. **The before/after suite pass rate is still unmeasured by soak.**
+
+What the run did measure is the host-pressure record over the same ten ~3-minute windows per arm,
+with Navidrome down and no suite running. The only difference was the resident simulators:
+
+| per restart window, iterations 2–10 (n = 9 each; iteration 1's window was ~2 s) | `current`: 3 idle booted simulators | `isolated`: none |
+|---|---|---|
+| swap in use, max | **1.93 – 2.11 GB in 9/9** | **0 in 9/9** |
+| compressor, max | 2.62 – 2.70 GB | 0.49 – 0.52 GB |
+| load average (1 min), max | **355 – 819** | 1.3 – 13.7 (13.7 in the first window only) |
+| swap-outs per window | 0 – 224 MB | 0 in 9/9 |
+
+Three **idle** simulators alone hold about 2 GB of swap on the 7 GB runner and drive load averages in
+the hundreds on 3 CPUs. That supports the §2 paging reading. It does not yet show that the suite
+fails because of it; the fixed soak does that.
+
+**PR #136's own `apple-ci` run 35805274097 (green, 81.7 min; job max before this change 118.8, median
+91.6).** Every isolation call reported `isolated=true`. Host pressure by phase: the platform legs
+before the composite reached **2.07 GB swap, 3.3 GB swapped out, load max 594**. Inside the isolated
+composite, swap peaked at 0.87 GB (conformance-ios, the separate link JVM's window) and 0.42 – 0.81 GB
+elsewhere. Restart #3, next to its fresh tvOS simulator, read libwait `elapsed_seconds=2.304`, the
+same as #1 (2.254) and #2 (2.141), against a pre-change 2.13x median ratio. That is one run: a
+consistency check, not a rate.
 
 ## 5. What changed
 

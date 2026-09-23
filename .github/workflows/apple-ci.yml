@@ -736,9 +736,10 @@ jobs:
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
           # SEQUENCING. Every simulator phase below starts with exactly the device it needs booted
-          # and nothing else: the platform steps above leave an iPhone, an iPad and an Apple TV up,
-          # and on this 3-CPU runner the loopback stalls concentrate where extra devices are
-          # resident (docs/investigations/2026-09-22-apple-ci-host-contention.md). Each call prints
+          # and nothing else. Each booted simulator costs this 7 GB runner roughly 0.7 GB of swap
+          # (measured: three idle ones held ~2 GB of swap and load averages in the hundreds; none held
+          # none), and the stalls concentrate next to a freshly booted device
+          # (docs/investigations/2026-09-22-apple-ci-host-contention.md). Each call prints
           # `SIMULATOR ISOLATION ... isolated=true|false` and marks the host-pressure record.
           python3 tools/ci/isolate-simulator --phase macos-app-and-download --none
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \

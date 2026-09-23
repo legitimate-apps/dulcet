@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Leave exactly one simulator booted (or none) before an apple-ci phase that talks to loopback fixtures.
 
-apple-ci's platform legs boot an iPhone, an iPad and an Apple TV and never shut them down, and the
-conformance suites then create and boot a fourth. On a 3-CPU, 7 GB hosted runner that is where the
-job's stalls concentrate: the same conformance sources fail on iosSimulatorArm64 and pass on the
-host (docs/investigations/2026-09-22-apple-ci-host-contention.md). This tool is the sequencing half
+apple-ci's simulator legs each boot a device and nothing shut them down, and the conformance suites
+create and boot fresh ones. On a 3-CPU, 7 GB hosted runner, three idle booted simulators held ~2 GB
+of swap where none held none, and the stalls concentrate next to a freshly booted device: the same
+conformance sources fail on iosSimulatorArm64 and pass on the host
+(docs/investigations/2026-09-22-apple-ci-host-contention.md). This tool is the sequencing half
 of that finding: shut every other device down, boot the one the next phase needs, and wait for
 CoreSimulator to report boot complete before the phase starts its clocks.
 
