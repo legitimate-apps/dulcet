@@ -1,6 +1,9 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -173,6 +176,229 @@ public fun mergeSearchResults(
     }
 }
 
+// ---- Search in a reader (spec §16.15) ----------------------------------------------------------------
+
+/** §18.1's timing and paging. The debounce and the two-character minimum are core policy. */
+internal data class LibrarySearchConfig(
+    val debounceMillis: Long = 250,
+    val minimumServerQueryLength: Int = 2,
+    /** Rows asked of `search3` per type. */
+    val serverPageSize: Int = 30,
+) {
+    init {
+        require(debounceMillis >= 0)
+        require(minimumServerQueryLength >= 1)
+        require(serverPageSize in 1..500)
+    }
+}
+
+/** Where one result row came from. A row the server returned is [Server] even if it was also local. */
+internal enum class SearchResultSource {
+    /** The server's search returned it in this query. */
+    Server,
+
+    /** Found in what this device has seen, and not (or not yet) returned by the server. */
+    Device,
+}
+
+/**
+ * The honest scope of a whole result list (§16.15). The counts are the seen-cache's own, so "no
+ * match" can be told from "no match among what this device has seen".
+ */
+internal sealed interface SearchScope {
+    /** The server search completed and the device's rows were merged into it. */
+    data object ServerAndDevice : SearchScope
+
+    /** Fewer than two characters, or the server request is still pending: "On this device". */
+    data object DeviceWhileServerPending : SearchScope
+
+    /** The server is unreachable: "Searching what's available offline — N albums and M tracks". */
+    data class DeviceOffline(val seen: SeenCacheCounts) : SearchScope
+
+    /** The server search failed with [error]; the device's rows stand, with the device label. */
+    data class DeviceServerFailed(val error: DomainError, val seen: SeenCacheCounts) : SearchScope
+}
+
+/** One row as shells draw it. [favourite] and [rating] carry any pending local change (§16.20). */
+internal data class LibrarySearchRow(
+    val item: SearchResultItem,
+    val source: SearchResultSource,
+    val favourite: Boolean?,
+    val rating: Int?,
+)
+
+internal data class LibrarySearchPublication(
+    /** The text as typed, for matching a publication to the field it answers. */
+    val query: String,
+    /** 1-based, in delivery order. */
+    val sequence: Int,
+    val scope: SearchScope,
+    val rows: List<LibrarySearchRow>,
+)
+
+/**
+ * Search as you type, over one [LibraryReader] (§16.15, §18.1).
+ *
+ * - **Local first, synchronously.** Every keystroke publishes the seen-cache's ranked matches
+ *   before [updateQuery] returns — from the first character, and with no request issued.
+ * - **Server after a pause.** `search3` is issued only for two or more characters, and only after
+ *   [LibrarySearchConfig.debounceMillis] without another keystroke; a keystroke cancels the pending
+ *   or in-flight server request, and an answer to an older query is never published.
+ * - **No flicker when the server answers.** The server's rows replace the device's rows of the same
+ *   opaque id in place, device-only rows keep their positions, and server-only rows append
+ *   ([mergeSearchResults], unchanged from §18.1). Both halves are built from seen-cache records by
+ *   one mapping, so a replaced row changes only where the server's data does. No empty or loading
+ *   list is ever published between the device's rows and the merged ones.
+ * - **Stable order.** The ranker is total ([rankResultsStably]): match tier, then type, then
+ *   normalized title, then id — never the order rows arrived in.
+ * - **Write-through.** The server's entities are written into the seen-cache as a search read
+ *   ([CacheEntitySource.Search]), so the next keystroke finds them locally. Result lists are not
+ *   cached (§16.15).
+ *
+ * Threading follows the reader's contract: every call and every publication is on the reader's
+ * thread.
+ */
+internal class LibrarySearchSession(
+    private val reader: LibraryReader,
+    private val config: LibrarySearchConfig = LibrarySearchConfig(),
+    private val listener: (LibrarySearchPublication) -> Unit,
+) {
+    private val cache: BoundSeenCache get() = reader.cache
+    private val local = SeenCacheSearch(reader.cache)
+    private var text = ""
+    private var generation = 0L
+    private var serverJob: Job? = null
+    private var sequence = 0
+    private var closed = false
+    private var scope: SearchScope = SearchScope.DeviceWhileServerPending
+    private var items: List<SearchResultItem> = emptyList()
+    private var serverIds: Set<ProviderItemId> = emptySet()
+
+    val query: String get() = text
+
+    val isClosed: Boolean get() = closed
+
+    /** One keystroke: publishes the device's rows at once and schedules the server's. */
+    fun updateQuery(value: String) {
+        if (closed) return
+        generation += 1
+        serverJob?.cancel()
+        serverJob = null
+        text = value
+        val trimmed = value.trim()
+        val device = local.search(trimmed)
+        serverIds = emptySet()
+        items = device
+        if (!reader.online) {
+            scope = SearchScope.DeviceOffline(local.counts())
+            publish()
+            return
+        }
+        scope = SearchScope.DeviceWhileServerPending
+        publish()
+        if (normalizeSearchText(trimmed).isEmpty() || trimmed.length < config.minimumServerQueryLength) return
+        val submitted = generation
+        serverJob = reader.scope.launch {
+            delay(config.debounceMillis)
+            if (submitted != generation || closed) return@launch
+            val outcome = readServer(trimmed)
+            if (submitted != generation || closed) return@launch
+            when (outcome) {
+                is ServerOutcome.Read -> {
+                    serverIds = outcome.items.mapTo(mutableSetOf()) { it.id }
+                    items = mergeSearchResults(device, outcome.items)
+                    scope = SearchScope.ServerAndDevice
+                }
+                is ServerOutcome.Failed -> {
+                    scope = if (outcome.error == DomainError.Transport.Unreachable || !reader.online) {
+                        SearchScope.DeviceOffline(local.counts())
+                    } else {
+                        SearchScope.DeviceServerFailed(outcome.error, local.counts())
+                    }
+                }
+            }
+            publish()
+        }
+    }
+
+    /** Runs the current query again, as if retyped: after reachability changes, or on request. */
+    fun refresh() = updateQuery(text)
+
+    /** A pending favourite or rating changed: republish if any row shows one of [rawIds]. */
+    fun republishPendingChanges(rawIds: Set<String>) {
+        if (!closed && items.any { it.id.rawId in rawIds }) publish()
+    }
+
+    /** Idempotent; cancels the server request. Nothing is published after it. */
+    fun close() {
+        closed = true
+        serverJob?.cancel()
+        serverJob = null
+    }
+
+    private sealed interface ServerOutcome {
+        data class Read(val items: List<SearchResultItem>) : ServerOutcome
+        data class Failed(val error: DomainError) : ServerOutcome
+    }
+
+    private suspend fun readServer(query: String): ServerOutcome {
+        // Issued before the request is SENT, so a slower answer never overwrites a newer read.
+        val seq = cache.issue()
+        val epochKey = reader.sessionEpoch?.key
+        return try {
+            val size = config.serverPageSize.toString()
+            val response = reader.checked(
+                "search3",
+                linkedMapOf(
+                    "query" to query,
+                    "artistCount" to size, "artistOffset" to "0",
+                    "albumCount" to size, "albumOffset" to "0",
+                    "songCount" to size, "songOffset" to "0",
+                ),
+            )
+            val entities = parseReaderSearch3(response.body)
+            cache.writeEntities(CacheWriteStamp(seq, cache.now(), epochKey), CacheEntitySource.Search, entities)
+            cache.evictIfNeeded()
+            val provider = cache.serverId
+            ServerOutcome.Read(
+                rankResultsStably(
+                    query,
+                    entities.artists.map { it.toSearchResult(provider) } +
+                        entities.albums.map { it.toSearchResult(provider) } +
+                        entities.tracks.map { it.toSearchResult(provider) },
+                ),
+            )
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            ServerOutcome.Failed(failure.asReaderError())
+        }
+    }
+
+    private fun publish() {
+        if (closed) return
+        val pending = reader.overlay.pending(cache.serverId, items.mapTo(mutableSetOf()) { it.id.rawId })
+        val rows = items.map { item ->
+            val state = userState(item)
+            val overlay = pending[item.id.rawId]
+            LibrarySearchRow(
+                item = item,
+                source = if (item.id in serverIds) SearchResultSource.Server else SearchResultSource.Device,
+                favourite = overlay?.starred ?: state?.starred,
+                rating = overlay?.userRating ?: state?.userRating,
+            )
+        }
+        sequence += 1
+        listener(LibrarySearchPublication(text, sequence, scope, rows))
+    }
+
+    private fun userState(item: SearchResultItem): CacheUserState? = when (item.type) {
+        SearchResultType.Artist -> cache.artist(item.id.rawId)?.record?.userState
+        SearchResultType.Album -> cache.album(item.id.rawId)?.record?.userState
+        SearchResultType.Track -> cache.track(item.id.rawId)?.record?.userState
+    }
+}
+
 private interface AutoCloseableSearchTransport {
     fun close()
 }
@@ -312,6 +538,24 @@ internal fun rankResults(query: String, results: List<SearchResultItem>): List<S
             { it.index },
         ),
     ).map(IndexedValue<SearchResultItem>::value)
+}
+
+/**
+ * [rankResults] with a total order: ties within a match tier and type break on the normalized
+ * title and then the opaque id, never on input order. The reader's search uses it for both halves,
+ * so the same rows rank the same way whichever order the database or the server returned them in,
+ * and a keystroke that keeps a row keeps it in the same place relative to the rows it kept too.
+ */
+internal fun rankResultsStably(query: String, results: List<SearchResultItem>): List<SearchResultItem> {
+    val normalizedQuery = normalizeSearchText(query)
+    return results.sortedWith(
+        compareBy<SearchResultItem>(
+            { matchRank(normalizedQuery, it) },
+            { typeRank(it.type) },
+            { normalizeSearchText(it.title) },
+            { it.id.rawId },
+        ),
+    )
 }
 
 private fun matchRank(query: String, result: SearchResultItem): Int = buildList {

@@ -719,6 +719,17 @@ internal fun parseReaderStarred(body: String): CacheEntities {
     )
 }
 
+/** `search3` as seen-cache records, for the search write-through of §16.15 (R1c). */
+internal fun parseReaderSearch3(body: String): CacheEntities {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val result = payload["searchResult3"] as? JsonObject ?: malformed()
+    return CacheEntities(
+        artists = result.arrayOrEmpty("artist").map { (it as? JsonObject ?: malformed()).readerArtist() }.distinctBy { it.rawId },
+        albums = result.arrayOrEmpty("album").map { (it as? JsonObject ?: malformed()).readerAlbum() }.distinctBy { it.rawId },
+        tracks = result.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }.distinctBy { it.rawId },
+    )
+}
+
 internal fun parseReaderGenres(body: String): List<String> {
     val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
     val container = payload["genres"] as? JsonObject ?: malformed()

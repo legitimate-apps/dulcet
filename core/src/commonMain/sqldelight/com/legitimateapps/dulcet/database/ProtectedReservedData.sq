@@ -27,3 +27,79 @@ CREATE TABLE download (
   UNIQUE (file_relative_path),
   CHECK (expected_byte_length IS NULL OR expected_byte_length >= 0)
 );
+
+-- The mutation outbox (spec §18.3, §16.20) --------------------------------------------------------
+--
+-- One row per pending (target_id, field): a later change to the same field REPLACES the row, which
+-- is the compaction rule. `value` is a small JSON object written and read only by MutationOutbox.kt;
+-- it never carries a credential, a URL or anything but the target's kind and the values below.
+-- `local_sequence` is the seen-cache issue sequence taken when the change was made, so it orders the
+-- change against every live read by when each was issued (never by a clock).
+
+selectPendingMutations:
+SELECT target_id, field, value, local_sequence, wall_clock FROM mutation_outbox
+WHERE server_id = ?
+ORDER BY local_sequence;
+
+selectPendingMutation:
+SELECT target_id, field, value, local_sequence, wall_clock FROM mutation_outbox
+WHERE server_id = ? AND target_id = ? AND field = ?;
+
+insertPendingMutation:
+INSERT INTO mutation_outbox(server_id, target_id, field, value, local_sequence, wall_clock)
+VALUES (?, ?, ?, ?, ?, ?);
+
+replacePendingMutation:
+UPDATE mutation_outbox SET value = :value, local_sequence = :local_sequence, wall_clock = :wall_clock
+WHERE server_id = :server_id AND target_id = :target_id AND field = :field;
+
+-- Written only while the row still holds the change that was sent; a change made during the send
+-- has a newer local_sequence and is left alone.
+updatePendingMutationValue:
+UPDATE mutation_outbox SET value = :value
+WHERE server_id = :server_id AND target_id = :target_id AND field = :field
+  AND local_sequence = :local_sequence;
+
+deletePendingMutationIfUnchanged:
+DELETE FROM mutation_outbox
+WHERE server_id = ? AND target_id = ? AND field = ? AND local_sequence = ?;
+
+deletePendingMutation:
+DELETE FROM mutation_outbox WHERE server_id = ? AND target_id = ? AND field = ?;
+
+countPendingMutations:
+SELECT count(*) FROM mutation_outbox WHERE server_id = ?;
+
+-- Adopt-on-echo: the server acknowledged a set-to-value change, so the value it now holds is known.
+-- Written into the seen-cache row under the issue sequence taken when the acknowledgement arrived,
+-- and only when that outranks the row, so a read issued before the acknowledgement — which may
+-- have been answered before the change was applied — can no longer overwrite it.
+
+adoptArtistStarred:
+UPDATE cache_artist SET starred = :starred,
+  starred_at = CASE WHEN :starred = 1 THEN starred_at ELSE NULL END, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+adoptAlbumStarred:
+UPDATE cache_album SET starred = :starred,
+  starred_at = CASE WHEN :starred = 1 THEN starred_at ELSE NULL END, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+adoptTrackStarred:
+UPDATE cache_track SET starred = :starred,
+  starred_at = CASE WHEN :starred = 1 THEN starred_at ELSE NULL END, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq
+  AND metadata_missing = 0;
+
+adoptArtistRating:
+UPDATE cache_artist SET user_rating = :user_rating, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+adoptAlbumRating:
+UPDATE cache_album SET user_rating = :user_rating, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+adoptTrackRating:
+UPDATE cache_track SET user_rating = :user_rating, issue_seq = :issue_seq
+WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq
+  AND metadata_missing = 0;
