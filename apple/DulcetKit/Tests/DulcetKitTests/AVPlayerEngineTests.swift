@@ -560,13 +560,40 @@ struct AVPlayerEngineTests {
         let image = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01])
         let published = mediaControls.publications.count
         engine.setNowPlayingArtwork(Data([0x00]), for: .init("some-other-session"))
-        #expect(mediaControls.publications.count == published,
+        #expect(mediaControls.publications.count == published)
+        #expect(!engine.holdsArtworkForTesting(.init("some-other-session")),
                 "artwork for a session that is neither current nor preloaded is dropped")
 
         engine.setNowPlayingArtwork(image, for: current.playbackSessionID)
         #expect(mediaControls.publications.count == published + 1)
         #expect(mediaControls.publications.last?.artworkImageData == image)
         #expect(mediaControls.publications.last?.metadata.title == current.metadata.title)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    /// A stall keeps the entry "playing" -- the pause button stays -- but the system must stop
+    /// extrapolating elapsed time, or the lock-screen scrubber runs ahead of the audio.
+    @Test
+    func aStallKeepsTheSystemEntryPlayingAtRateZeroUntilPlaybackResumes() async throws {
+        let mediaControls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(
+            clock: ManualAVPlayerEngineClock(),
+            usesAVFoundationMediaStack: false,
+            audioSession: RecordingAudioSession(),
+            systemMediaControls: mediaControls
+        )
+        let current = plan(session: "stall-session", attempt: "stall-attempt")
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: current))
+        engine.reportCurrentItemReadyForTesting(duration: 60, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        let before = mediaControls.transports.count
+
+        engine.reportCurrentItemStalledForTesting()
+
+        let stalled = try #require(mediaControls.transports.dropFirst(before).last)
+        #expect(stalled.0 == current.playbackSessionID)
+        #expect(stalled.3, "still playing to the listener")
+        #expect(stalled.2 == 0, "but the system must not extrapolate while stalled")
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
@@ -1304,6 +1331,12 @@ private final class RecordingSystemMediaControls: DulcetSystemMediaControlling,
         lock.lock()
         defer { lock.unlock() }
         return transportStorage.map { $0.3 }
+    }
+
+    var transports: [(DulcetPlaybackSessionID, TimeInterval, Double, Bool)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return transportStorage
     }
 
     func setCommandHandler(

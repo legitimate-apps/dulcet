@@ -114,6 +114,30 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.engine.count("preload"), preloadsBefore)
     }
 
+    /// The preload is registered in the core but the engine has not accepted it yet (resolution
+    /// or the engine queue is slow) when the current item ends. Nothing will ever advance into
+    /// it, so the core must start the next entry normally rather than wait for a boundary.
+    func testAnEndBeforeThePreloadReachesTheEngineStartsTheNextEntryNormally() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.engine.holdPreloadCompletions = true
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let pending = try await fixture.waitForPreload(rawID: "b")
+        XCTAssertFalse(fixture.controller.preloadLog.contains("in-engine"), "the engine has not accepted it")
+
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        let fresh = try await fixture.waitForPrepare(rawID: "b", after: preparesBefore)
+        XCTAssertNotEqual(fresh, pending.attempt)
+        XCTAssertTrue(fixture.controller.preloadLog.contains("discarded:ended-before-delivery"))
+        // The late acceptance of the abandoned preload must change nothing.
+        fixture.engine.completeHeldPreloads()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(fixture.controller.preloadLog.contains("in-engine"))
+    }
+
     func testTheEndOfTheQueueKeepsTheLastTrackStoppedAndPlayReplaysIt() async throws {
         let fixture = makeFixture(tracks: ["only"])
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
@@ -355,6 +379,17 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
     private var listener: DulcetPlaybackEventHandler?
     private var recorded: [RecordedCommand] = []
     private var artworkStorage: [(session: String, data: Data?)] = []
+    private var heldPreloads: [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] = []
+    /// When set, `preloadNext` is recorded but not answered until `completeHeldPreloads()`.
+    var holdPreloadCompletions = false
+
+    func completeHeldPreloads() {
+        let held = lock.withLock { () -> [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] in
+            defer { heldPreloads = [] }
+            return heldPreloads
+        }
+        held.forEach { outcome, completion in completion(outcome) }
+    }
 
     var commands: [RecordedCommand] { lock.withLock { recorded } }
     var artwork: [(session: String, data: Data?)] { lock.withLock { artworkStorage } }
@@ -398,6 +433,10 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
             outcome = .completed(commandID: command.commandID, result: .withoutData)
         }
         lock.withLock { recorded.append(entry) }
+        if entry.kind == "preload", holdPreloadCompletions {
+            lock.withLock { heldPreloads.append((outcome, completion)) }
+            return
+        }
         completion(outcome)
     }
 

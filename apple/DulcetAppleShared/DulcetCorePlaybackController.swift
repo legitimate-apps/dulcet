@@ -44,6 +44,7 @@ struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
 private struct DulcetPreloadInFlight {
     let attemptID: String
     let sessionID: String
+    let track: DulcetTrack
     var resolve: (any ApplePlaybackWireOperation)?
     var corePlan: AppleRemotePlaybackPlanDto?
     var inEngine = false
@@ -620,10 +621,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
         var inFlight = DulcetPreloadInFlight(
             attemptID: directive.attemptId,
-            sessionID: directive.playbackSessionId
+            sessionID: directive.playbackSessionId,
+            track: track
         )
         preloadLog.append("registered")
-        fetchArtwork(for: track, sessionID: directive.playbackSessionId)
         let metadata = DulcetNowPlayingMetadata(
             title: track.title,
             artist: track.artistNames.joined(separator: ", "),
@@ -693,6 +694,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
             self.preload?.inEngine = true
             self.preloadLog.append("in-engine")
+            // Only now: the engine drops artwork for a session it does not hold, and a disk-cache
+            // hit can complete before an in-flight preloadNext has reached the engine queue.
+            self.fetchArtwork(for: current.track, sessionID: current.sessionID)
         }
     }
 

@@ -167,6 +167,23 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    /// Drives a playback stall on the non-AVFoundation test path through exactly the
+    /// `beginBuffering` the `.AVPlayerItemPlaybackStalled` observer calls.
+    func reportCurrentItemStalledForTesting() {
+        performOnQueueSynchronously { [self] in
+            guard let current else { return }
+            beginBuffering(current)
+        }
+    }
+
+    /// Whether artwork is held for a session. Artwork for a session the engine does not hold is
+    /// dropped, so the owner must deliver it after the engine accepted that session's plan.
+    func holdsArtworkForTesting(_ sessionID: DulcetPlaybackSessionID) -> Bool {
+        var held = false
+        performOnQueueSynchronously { [self] in held = artworkBySession[sessionID] != nil }
+        return held
+    }
+
     /// Measures whether the serial engine queue can service newly submitted work.
     ///
     /// The timeout races on a separate queue, so this diagnostic still completes when the engine
