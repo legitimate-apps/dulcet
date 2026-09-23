@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Summarise one arm of apple-contention-soak: one line per iteration, then the arm's aggregate.
+
+Usage: summarize-contention-soak OUT_DIR PRESSURE_LOG
+
+Pass/fail alone has little power at the measured failure rate, so every iteration also reports
+continuous stall measures that exist in green runs too:
+  client_create_ms   proxy-auth's in-process HttpClient construction (35 ms on a healthy host)
+  observation_ms     proxy-auth's loopback observation GET (42 ms healthy; 10267 ms in run 35796782723)
+  watchdog_gap_max   the largest gap the in-process stall watchdog reported between its own ticks
+  suite_s            wall time of the whole iOS suite invocation
+and the host-pressure deltas for that iteration's suite window.
+"""
+import glob
+import re
+import statistics
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+out, pressure = Path(sys.argv[1]), sys.argv[2]
+summary = subprocess.run([sys.executable, str(Path(__file__).with_name("host-pressure")),
+                          "summarize", pressure], capture_output=True, text=True).stdout
+suite_pressure = {}
+for line in summary.splitlines():
+    match = re.search(r"phase=iter-(\d+)-suite (.*)", line)
+    if match:
+        suite_pressure[int(match.group(1))] = dict(
+            kv.split("=", 1) for kv in match.group(2).split() if "=" in kv)
+print(summary.strip())
+
+
+def number(pattern: str, text: str) -> float | None:
+    values = [float(v) for v in re.findall(pattern, text)]
+    return max(values) if values else None
+
+
+rows = []
+for directory in sorted(out.glob("iter-*"), key=lambda p: int(p.name.split("-")[1])):
+    index = int(directory.name.split("-")[1])
+    result = (directory / "result.txt").read_text() if (directory / "result.txt").exists() else ""
+    exit_code = re.search(r"exit=(\S+)", result)
+    seconds = re.search(r"seconds=(\d+)", result)
+    console = (directory / "console.log").read_text(errors="replace") \
+        if (directory / "console.log").exists() else ""
+    tests, failed = 0, []
+    for report in glob.glob(str(directory / "junit" / "*.xml")):
+        for case in ET.parse(report).getroot().iter("testcase"):
+            tests += 1
+            if case.find("failure") is not None or case.find("error") is not None:
+                failed.append(f"{case.get('classname', '').rsplit('.', 1)[-1]}.{case.get('name')}")
+    row = dict(
+        iteration=index,
+        exit=exit_code.group(1) if exit_code else "missing",
+        tests=tests,
+        failed=failed,
+        suite_s=int(seconds.group(1)) if seconds else None,
+        client_create_ms=number(r"proxy-auth .*end observation-client-create durationMs=(\d+)", console),
+        observation_ms=number(r"proxy-auth .*end observation-get durationMs=(\d+)", console),
+        watchdog_gap_max=number(r"watchdogGapMs=(\d+)", console),
+        pageouts_mb=float(suite_pressure.get(index, {}).get("pageouts_mb", "nan")),
+        swapouts_mb=float(suite_pressure.get(index, {}).get("swapouts_mb", "nan")),
+        booted=suite_pressure.get(index, {}).get("booted_simulators"),
+    )
+    rows.append(row)
+    print("SOAK SAMPLE " + " ".join(f"{k}={v}" for k, v in row.items()))
+
+executed = [r for r in rows if r["tests"] > 0]
+passed = [r for r in executed if r["exit"] == "0" and not r["failed"]]
+
+
+def med(key: str) -> str:
+    values = [r[key] for r in executed if r[key] is not None and r[key] == r[key]]
+    return f"{statistics.median(values):g}/{max(values):g}" if values else "none"
+
+
+print(f"SOAK ARM iterations={len(rows)} executed={len(executed)} passed={len(passed)} "
+      f"client_create_ms(median/max)={med('client_create_ms')} "
+      f"observation_ms={med('observation_ms')} watchdog_gap_ms={med('watchdog_gap_max')} "
+      f"suite_s={med('suite_s')} pageouts_mb={med('pageouts_mb')} swapouts_mb={med('swapouts_mb')}")
+# A soak whose samples never ran the suite measured nothing; say so instead of reporting 0 failures.
+raise SystemExit(0 if executed and len(executed) == len(rows) else 1)

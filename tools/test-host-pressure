@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Controls for tools/ci/host-pressure.
+
+1. A known delta must be reported exactly (a summary that always prints 0 would otherwise read as
+   "no paging", the conclusion the instrument exists to test).
+2. A file with samples but no phase marks must fail loudly, never summarise as zero pressure.
+3. Live sampling on THIS host must parse vm_stat into the counters the summary reads. A parser that
+   silently matches nothing produces all-zero deltas, which is indistinguishable from a quiet host.
+"""
+import json
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+TOOL = str(Path(__file__).resolve().parent / "ci" / "host-pressure")
+PAGE = 16384
+
+
+def run(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, TOOL, *args], capture_output=True, text=True, timeout=60)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    fixture = Path(tmp) / "known.jsonl"
+    base = dict(page_bytes=PAGE, pageins=0, swapins=0, compressions=0, decompressions=0,
+                free_pages=100, compressor_pages=64, swapUsedMb=0.0, load1=1.0)
+    rows = [
+        dict(event="sampler-start", wallTimeMillis=0, memBytes=7 * 2**30, cpus=3),
+        dict(event="sample", wallTimeMillis=1000, pageouts=0, swapouts=0, **base),
+        dict(event="phase", wallTimeMillis=1500, name="quiet", bootedSimulators=1),
+        dict(event="sample", wallTimeMillis=2000, pageouts=0, swapouts=0, **base),
+        dict(event="phase", wallTimeMillis=2500, name="paging", bootedSimulators=4),
+        # 640 pages of 16 KiB = 10 MB paged out, 1280 pages = 20 MB swapped out.
+        dict(event="sample", wallTimeMillis=3000, pageouts=640, swapouts=1280,
+             **{**base, "swapUsedMb": 512.0, "load1": 9.5}),
+    ]
+    fixture.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    result = run("summarize", str(fixture))
+    assert result.returncode == 0, result
+    lines = {line.split("phase=")[1].split()[0]: line for line in result.stdout.splitlines()
+             if "phase=" in line}
+    assert "pageouts_mb=0 " in lines["quiet"] and "booted_simulators=1" in lines["quiet"], result.stdout
+    assert "pageouts_mb=10 " in lines["paging"], result.stdout
+    assert "swapouts_mb=20 " in lines["paging"], result.stdout
+    assert "swap_used_max_mb=512.0" in lines["paging"] and "load1_max=9.5" in lines["paging"], result.stdout
+    assert "booted_simulators=4" in lines["paging"], result.stdout
+    print("POSITIVE CONTROL PASS known deltas reported: " + lines["paging"])
+
+    unmarked = Path(tmp) / "unmarked.jsonl"
+    unmarked.write_text("".join(json.dumps(r) + "\n" for r in rows if r["event"] != "phase"))
+    result = run("summarize", str(unmarked))
+    assert result.returncode == 1 and "HOST PRESSURE UNAVAILABLE" in result.stdout, result
+    print("NEGATIVE CONTROL PASS unmarked file refused: " + result.stdout.strip())
+
+    live = Path(tmp) / "live.jsonl"
+    sampler = subprocess.Popen([sys.executable, TOOL, "sample", "--output", str(live),
+                                "--interval", "0.5"])
+    try:
+        time.sleep(2.5)
+    finally:
+        sampler.terminate()
+        sampler.wait(timeout=10)
+    samples = [json.loads(line) for line in live.read_text().splitlines()
+               if '"event":"sample"' in line]
+    assert len(samples) >= 3, f"expected >=3 live samples, got {len(samples)}"
+    for key in ("page_bytes", "pageouts", "swapouts", "pageins", "compressor_pages"):
+        assert all(key in s for s in samples), f"live vm_stat parse is missing {key}: {samples[0]}"
+    assert samples[0]["page_bytes"] > 0 and samples[-1]["pageins"] > 0, samples[-1]
+    print(f"LIVE CONTROL PASS samples={len(samples)} page_bytes={samples[0]['page_bytes']} "
+          f"pageins={samples[-1]['pageins']}")
