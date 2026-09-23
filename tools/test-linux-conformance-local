@@ -4,6 +4,7 @@
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -28,12 +29,17 @@ environment = subprocess.run(
 )
 if environment.returncode != 0:
     raise AssertionError(f"environment declaration failed: {environment.stdout}")
+default_root = linux_local.DEFAULT_ROOT.resolve()
 expected = {
     "export TZ=UTC",
     "export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533",
     "export DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540",
     "export DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542",
     "export DULCET_CONFORMANCE_DISPOSABLE=true",
+    f"export DULCET_CONFORMANCE_MUSIC_DIR={shlex.quote(str(default_root / 'music'))}",
+    "export DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL=http://127.0.0.1:4534",
+    "export DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR="
+    f"{shlex.quote(str(default_root / 'purge-default' / 'music'))}",
 }
 if set(environment.stdout.splitlines()) != expected:
     raise AssertionError(f"local environment drifted: {environment.stdout!r}")
@@ -119,8 +125,8 @@ with tempfile.TemporaryDirectory(prefix="dulcet-up-control-") as directory:
         "navidrome.linux.image": "pinned-image",
         "navidrome.linux.architecture": "amd64",
     }[name]
-    linux_local.reset_data_volume = lambda root, image: events.append(
-        ("reset-data", f"{linux_local.data_volume_name(root)}:{image}")
+    linux_local.reset_data_volume = lambda root, image, name=None: events.append(
+        ("reset-data", f"{name or linux_local.data_volume_name(root)}:{image}")
     )
     linux_local.ensure_corpus = lambda _root, _image: events.append(("corpus", ""))
     linux_local.run = lambda _command, **_kwargs: SimpleNamespace(stdout="amd64\n")
@@ -129,7 +135,34 @@ with tempfile.TemporaryDirectory(prefix="dulcet-up-control-") as directory:
     linux_local.wait_for_url = lambda url, **_kwargs: events.append(("wait", url))
     linux_local.start_container = lambda _root, _image, _name: events.append(("start", ""))
     linux_local.health_check = lambda _root, _name: events.append(("health", ""))
+    linux_local.prepare_purge_default = lambda _root: events.append(("purge-default-prepare", ""))
+    linux_local.start_purge_default_container = lambda _root, _image: events.append(
+        ("purge-default-start", "")
+    )
+    linux_local.bootstrap_purge_default = lambda: events.append(("purge-default-bootstrap", ""))
     linux_local.up(lifecycle_root)
+    purge_default_reset = (
+        "reset-data",
+        f"{linux_local.purge_default_volume_name(lifecycle_root)}:pinned-image",
+    )
+    order = [
+        ("corpus", ""),
+        ("purge-default-prepare", ""),
+        purge_default_reset,
+        ("purge-default-start", ""),
+        ("purge-default-bootstrap", ""),
+    ]
+    if any(event not in events for event in order) or [events.index(e) for e in order] != sorted(
+        events.index(e) for e in order
+    ):
+        raise AssertionError(
+            "up must prepare the purge-default music from the corpus, reset its own data volume, "
+            f"start it, then bootstrap it: {events!r}"
+        )
+    if linux_local.purge_default_volume_name(lifecycle_root) == linux_local.data_volume_name(
+        lifecycle_root
+    ):
+        raise AssertionError("the purge-default server shares the fixture's data volume")
     reset_event = (
         "reset-data",
         f"{linux_local.data_volume_name(lifecycle_root)}:pinned-image",

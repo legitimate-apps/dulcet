@@ -3,13 +3,19 @@
 
 Repeatedly reads one list page followed by getScanStatus while a background thread moves one album
 directory out of and back into the server's music folder, so the watcher's scans race the reads.
-A violation is two page reads whose post-read status reports the same `lastScan` with
-`scanning == false` but whose contents differ: a page the check would have accepted under an epoch
-it does not belong to.
+Each page is bracketed by the status read issued before its request (the previous sample's) and the
+one issued after its response. The check accepts a page only when BOTH show the same `lastScan` with
+`scanning == false`; a violation is two accepted page reads under one stamp whose contents differ.
+
+`after_only_violations` counts the same thing judged by the after-reading alone. It is reported,
+not asserted: OBSERVED 2026-09-22 under `PurgeMissing = "always"`, a page read while a purging scan
+ran returned the pre-purge list, and the status read after it blocked until the scan ended and then
+showed the new stamp with `scanning == false`. The before-reading had shown the scan, so the
+bracketed check rejects that page; an after-only check would not (design spec §16.12).
 
 It asserts two things, so a run that measured nothing cannot pass:
-  * the toggler actually fired and at least two distinct stamps were observed (the race happened);
-  * zero violations.
+  * the toggler actually fired and at least two distinct accepted stamps were observed;
+  * zero violations under the bracketed check.
 
 Never point this at a personal or production server: it moves files in the music folder.
 
@@ -62,27 +68,34 @@ def main() -> None:
     samples = []
     started = time.monotonic()
     try:
+        before = call("getScanStatus")["scanStatus"]
         while time.monotonic() - started < a.seconds:
             page = call("getAlbumList2", type="alphabeticalByName", size=100)
             ids = tuple(sorted(album["id"] for album in page["albumList2"].get("album", [])))
-            status = call("getScanStatus")["scanStatus"]
-            samples.append((ids, status.get("lastScan"), status.get("scanning")))
+            after = call("getScanStatus")["scanStatus"]
+            samples.append((ids, before, after))
+            before = after
     finally:
         stop.set()
         thread.join()
         if os.path.isdir(outside) and not os.path.isdir(inside):
             shutil.move(outside, inside)
 
-    accepted = {}
-    for ids, stamp, scanning in samples:
-        if not scanning:
-            accepted.setdefault(stamp, set()).add(ids)
+    accepted, after_only = {}, {}
+    for ids, before, after in samples:
+        stamp = after.get("lastScan")
+        if not after.get("scanning"):
+            after_only.setdefault(stamp, set()).add(ids)
+            if not before.get("scanning") and before.get("lastScan") == stamp:
+                accepted.setdefault(stamp, set()).add(ids)
     violations = {stamp: len(contents) for stamp, contents in accepted.items() if len(contents) > 1}
-    scanning_samples = sum(1 for sample in samples if sample[2])
+    after_only_violations = {stamp: len(c) for stamp, c in after_only.items() if len(c) > 1}
+    scanning_samples = sum(1 for sample in samples if sample[2].get("scanning"))
     print(json.dumps(dict(samples=len(samples), scanning_samples=scanning_samples, toggles=toggles[0],
-                          distinct_stamps=len(accepted), violations=violations)))
+                          distinct_stamps=len(accepted), violations=violations,
+                          after_only_violations=after_only_violations)))
     if toggles[0] < 2 or len(accepted) < 2:
-        sys.exit("the race did not happen: fewer than two toggles or two distinct stamps")
+        sys.exit("the race did not happen: fewer than two toggles or two distinct accepted stamps")
     if violations:
         sys.exit("a stamp accepted two different page contents")
 

@@ -110,6 +110,19 @@ directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled
 providers, log redaction, cache sizes, and localhost-only address. The Darwin and Linux path values are
 the only substitutions.
 
+### The second, default-`PurgeMissing` server
+
+The reader suite (`ReaderServerConformanceTest`, CONF-70..75, design spec §16.11) needs a second
+server that differs from the fixture in exactly one setting: `PurgeMissing` is left at Navidrome's
+default instead of `"always"`. `render-config --purge-missing server-default --port 4534` renders it
+from the same template, `purge-default-server prepare` copies two corpus albums into its own music
+folder, and `purge-default-server bootstrap` creates the fixed admin and waits for the first scan.
+Both legs start it beside the fixture: a second container on `127.0.0.1:4534` in `linux-local up`,
+and a second native process in apple-ci's Darwin conformance step. The suite moves an album directory
+out of each server's music folder and back, and waits for the scanner's watcher, so it reads three
+more variables: `DULCET_CONFORMANCE_MUSIC_DIR`, `DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL` and
+`DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR`. A missing variable fails the test; it never skips.
+
 ## One-command Linux environment
 
 The Linux/amd64 environment used by `core-ci.yml` is also the local environment. Docker Desktop (or

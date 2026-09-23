@@ -644,6 +644,18 @@ jobs:
             -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
           "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
           navidrome_pid=$!
+          # The reader suite's second server: the fixture configuration with PurgeMissing left at
+          # Navidrome's default, serving a copy of two corpus albums (CONF-74, spec §16.11).
+          tools/conformance-env/purge-default-server prepare \
+            --corpus "$ROOT/music" --music-folder "$ROOT/purge-default/music"
+          mkdir -p "$ROOT/purge-default/data" "$ROOT/purge-default/cache"
+          tools/conformance-env/render-config --output "$ROOT/purge-default/config/navidrome.toml" \
+            --music-folder "$ROOT/purge-default/music" --data-folder "$ROOT/purge-default/data" \
+            --cache-folder "$ROOT/purge-default/cache" --address 127.0.0.1 --port 4534 \
+            --purge-missing server-default --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          "$ROOT/bin/navidrome" --configfile "$ROOT/purge-default/config/navidrome.toml" \
+            > "$ROOT/logs/navidrome-purge-default.log" 2>&1 &
+          purge_default_pid=$!
           # Both fixture processes write capped, query-free access logs to RUNNER_TEMP by default.
           # The existing failure upload below includes these dulcet-conformance-access-*.log files.
           python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
@@ -662,6 +674,8 @@ jobs:
             wait "$proxy_pid" 2>/dev/null || true
             kill "$navidrome_pid" >/dev/null 2>&1 || true
             wait "$navidrome_pid" 2>/dev/null || true
+            kill "$purge_default_pid" >/dev/null 2>&1 || true
+            wait "$purge_default_pid" 2>/dev/null || true
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
@@ -728,6 +742,7 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          tools/conformance-env/purge-default-server bootstrap --base-url http://127.0.0.1:4534
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test \
@@ -1008,11 +1023,16 @@ jobs:
           # hypothesis: this is the FASTEST of the three restarts despite those boots, which points
           # at a freshly CREATED device rather than at a running one.
           restart_navidrome_cold macos baseline false
+          # The macOS leg also runs ReaderServerConformanceMacosTest (CONF-70..75), which moves an
+          # album directory in each server's music folder and waits for the watcher's scan.
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
             DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
+            DULCET_CONFORMANCE_MUSIC_DIR="$ROOT/music" \
+            DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL=http://127.0.0.1:4534 \
+            DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR="$ROOT/purge-default/music" \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
           # RESEQUENCED ARM. This restart used to sit after the simulator create+boot below.
           # Nothing between it and the suite streams audio, so the empty-cache assertion the restart

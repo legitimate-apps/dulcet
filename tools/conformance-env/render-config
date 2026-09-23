@@ -10,7 +10,13 @@ TOKENS = {
     "@CACHE_FOLDER@": "cache_folder",
     "@ADDRESS@": "address",
     "@FFMPEG_PATH@": "ffmpeg_path",
+    "@PORT@": "port",
 }
+
+# The fixture configuration purges missing files. Navidrome's own default keeps them, and a reader
+# must hold its gone-ness rules under both (design spec §16.11), so the second configuration is the
+# fixture with exactly this line removed -- never a separately maintained template that could drift.
+PURGE_MISSING_ALWAYS = 'PurgeMissing = "always"\n'
 
 
 def main() -> None:
@@ -21,9 +27,18 @@ def main() -> None:
     parser.add_argument("--cache-folder", required=True)
     parser.add_argument("--address", required=True)
     parser.add_argument("--ffmpeg-path", required=True)
+    parser.add_argument("--port", type=int, default=4533)
+    parser.add_argument(
+        "--purge-missing",
+        choices=("always", "server-default"),
+        default="always",
+        help="'always' is the fixture; 'server-default' leaves PurgeMissing unset",
+    )
     args = parser.parse_args()
+    if not 1 <= args.port <= 65535:
+        raise SystemExit("port is outside the valid range")
 
-    values = vars(args)
+    values = {key: str(value) for key, value in vars(args).items()}
     text = (Path(__file__).parent / "navidrome.toml.template").read_text()
     for token, argument in TOKENS.items():
         value = values[argument]
@@ -32,6 +47,12 @@ def main() -> None:
         text = text.replace(token, value)
     if "@" in text:
         raise SystemExit("unresolved configuration token")
+    if text.count(PURGE_MISSING_ALWAYS) != 1:
+        raise SystemExit("template must set PurgeMissing exactly once")
+    if args.purge_missing == "server-default":
+        text = text.replace(PURGE_MISSING_ALWAYS, "")
+        if "PurgeMissing" in text:
+            raise SystemExit("server-default configuration still names PurgeMissing")
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

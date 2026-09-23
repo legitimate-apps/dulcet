@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import signal
 import socket
@@ -23,6 +24,10 @@ REPOSITORY = TOOLS.parent.parent
 DEFAULT_ROOT = REPOSITORY / ".build/dulcet-linux-conformance"
 MARKER = ".dulcet-conformance-root"
 DISPOSABLE_LABEL = "com.legitimateapps.dulcet.conformance"
+# The second, Navidrome-default PurgeMissing server the reader suite pins CONF-74 against
+# (tools/conformance-env/purge-default-server). It lives under the same disposable root.
+PURGE_DEFAULT = "purge-default"
+PURGE_DEFAULT_PORT = 4534
 
 
 def run(command: list[str], *, capture: bool = False, environment: dict[str, str] | None = None):
@@ -78,6 +83,14 @@ def data_volume_name(root: Path) -> str:
     return f"{container_name(root)}-data"
 
 
+def purge_default_container_name(root: Path) -> str:
+    return f"{container_name(root)}-{PURGE_DEFAULT}"
+
+
+def purge_default_volume_name(root: Path) -> str:
+    return f"{purge_default_container_name(root)}-data"
+
+
 def container_exists(name: str) -> bool:
     result = subprocess.run(
         ["docker", "inspect", "--type", "container", name],
@@ -98,8 +111,8 @@ def volume_exists(name: str) -> bool:
     return result.returncode == 0
 
 
-def remove_data_volume(root: Path) -> None:
-    name = data_volume_name(root)
+def remove_data_volume(root: Path, name: str | None = None) -> None:
+    name = name or data_volume_name(root)
     if not volume_exists(name):
         return
     observed_label = run(
@@ -120,9 +133,9 @@ def remove_data_volume(root: Path) -> None:
     run(["docker", "volume", "rm", name])
 
 
-def reset_data_volume(root: Path, image: str) -> None:
-    name = data_volume_name(root)
-    remove_data_volume(root)
+def reset_data_volume(root: Path, image: str, name: str | None = None) -> None:
+    name = name or data_volume_name(root)
+    remove_data_volume(root, name)
     run(
         [
             "docker",
@@ -173,7 +186,7 @@ def reset_data_volume(root: Path, image: str) -> None:
     )
 
 
-def require_running_container(name: str) -> None:
+def require_running_container(name: str, port: int = 4533) -> None:
     if not container_exists(name):
         raise RuntimeError("conformance environment is not running; invoke 'up' first")
     try:
@@ -183,7 +196,7 @@ def require_running_container(name: str) -> None:
     label = details.get("Config", {}).get("Labels", {}).get(DISPOSABLE_LABEL)
     running = details.get("State", {}).get("Running")
     binding = details.get("NetworkSettings", {}).get("Ports", {}).get("4533/tcp")
-    expected_binding = [{"HostIp": "127.0.0.1", "HostPort": "4533"}]
+    expected_binding = [{"HostIp": "127.0.0.1", "HostPort": str(port)}]
     if label != "true" or running is not True or binding != expected_binding:
         raise RuntimeError(
             "declared disposable container failed its ownership/runtime check: "
@@ -263,6 +276,7 @@ def down(root: Path) -> None:
         return
     require_root(root)
     stop_container(container_name(root))
+    stop_container(purge_default_container_name(root))
     stop_auxiliary(root)
     print(f"conformance environment down: root={root}")
 
@@ -283,7 +297,7 @@ def require_available_loopback_ports() -> None:
         occupied: list[int] = []
         reservations: list[socket.socket] = []
         try:
-            for port in (4533, 4540, 4541, 4542, 4543):
+            for port in (4533, PURGE_DEFAULT_PORT, 4540, 4541, 4542, 4543):
                 reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
@@ -342,6 +356,86 @@ def render_configuration(root: Path) -> None:
             "0.0.0.0",
             "--ffmpeg-path",
             pin("ffmpeg.linux.path"),
+        ]
+    )
+
+
+def prepare_purge_default(root: Path) -> None:
+    clear_directory(root, PURGE_DEFAULT)
+    directory = root / PURGE_DEFAULT
+    (directory / "cache").mkdir()
+    run(
+        [
+            str(TOOLS / "purge-default-server"),
+            "prepare",
+            "--corpus",
+            str(root / "music"),
+            "--music-folder",
+            str(directory / "music"),
+        ]
+    )
+    run(
+        [
+            str(TOOLS / "render-config"),
+            "--output",
+            str(directory / "config/navidrome.toml"),
+            "--music-folder",
+            "/music",
+            "--data-folder",
+            "/data",
+            "--cache-folder",
+            "/cache",
+            "--address",
+            "0.0.0.0",
+            "--ffmpeg-path",
+            pin("ffmpeg.linux.path"),
+            "--purge-missing",
+            "server-default",
+        ]
+    )
+
+
+def start_purge_default_container(root: Path, image: str) -> None:
+    directory = root / PURGE_DEFAULT
+    run(
+        [
+            "docker",
+            "run",
+            "--detach",
+            "--name",
+            purge_default_container_name(root),
+            "--platform",
+            "linux/amd64",
+            "--label",
+            f"{DISPOSABLE_LABEL}=true",
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "--publish",
+            f"127.0.0.1:{PURGE_DEFAULT_PORT}:4533",
+            "--env",
+            "ND_CONFIGFILE=/config/navidrome.toml",
+            "--env",
+            "TZ=UTC",
+            "--volume",
+            f"{directory / 'config/navidrome.toml'}:/config/navidrome.toml:ro",
+            "--volume",
+            f"{directory / 'music'}:/music:ro",
+            "--mount",
+            f"type=volume,source={purge_default_volume_name(root)},target=/data",
+            "--volume",
+            f"{directory / 'cache'}:/cache",
+            image,
+        ]
+    )
+
+
+def bootstrap_purge_default() -> None:
+    run(
+        [
+            str(TOOLS / "purge-default-server"),
+            "bootstrap",
+            "--base-url",
+            f"http://127.0.0.1:{PURGE_DEFAULT_PORT}",
         ]
     )
 
@@ -505,6 +599,8 @@ def up(root: Path) -> None:
     if architecture != pin("navidrome.linux.architecture"):
         raise RuntimeError(f"pinned image architecture mismatch: {architecture}")
     render_configuration(root)
+    prepare_purge_default(root)
+    reset_data_volume(root, image, purge_default_volume_name(root))
     name = container_name(root)
     try:
         start_auxiliary(root)
@@ -512,14 +608,18 @@ def up(root: Path) -> None:
         wait_for_url("https://127.0.0.1:4542/health", insecure=True)
         wait_for_url("http://127.0.0.1:4543/health")
         start_container(root, image, name)
+        start_purge_default_container(root, image)
         health_check(root, name)
+        bootstrap_purge_default()
     except Exception:
         stop_container(name)
+        stop_container(purge_default_container_name(root))
         stop_auxiliary(root)
         raise
     state = {
         "schema": 1,
         "container": name,
+        "purge_default_container": purge_default_container_name(root),
         "image": image,
         "root": str(root),
         "cold_started_at": time.time(),
@@ -531,13 +631,18 @@ def up(root: Path) -> None:
     print("run Android host tests: tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:testAndroidHostTest")
 
 
-def conformance_environment() -> dict[str, str]:
+def conformance_environment(root: Path) -> dict[str, str]:
     return {
         "TZ": "UTC",
         "DULCET_CONFORMANCE_BASE_URL": "http://127.0.0.1:4533",
         "DULCET_REDIRECT_CONFORMANCE_ROOT": "http://127.0.0.1:4540",
         "DULCET_UNTRUSTED_TLS_URL": "https://127.0.0.1:4542",
         "DULCET_CONFORMANCE_DISPOSABLE": "true",
+        # The reader suite moves album directories in these host folders; the containers mount
+        # them read-only and see the change through the scanner's watcher.
+        "DULCET_CONFORMANCE_MUSIC_DIR": str(root / "music"),
+        "DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL": f"http://127.0.0.1:{PURGE_DEFAULT_PORT}",
+        "DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR": str(root / PURGE_DEFAULT / "music"),
     }
 
 
@@ -545,16 +650,17 @@ def run_test_command(root: Path, command: list[str]) -> int:
     require_root(root)
     name = container_name(root)
     require_running_container(name)
+    require_running_container(purge_default_container_name(root), PURGE_DEFAULT_PORT)
     if not command:
         raise RuntimeError("run requires a command after --")
     environment = os.environ.copy()
-    environment.update(conformance_environment())
+    environment.update(conformance_environment(root))
     return subprocess.run(command, env=environment, check=False).returncode
 
 
-def print_environment() -> None:
-    for key, value in conformance_environment().items():
-        print(f"export {key}={value}")
+def print_environment(root: Path) -> None:
+    for key, value in conformance_environment(root).items():
+        print(f"export {key}={shlex.quote(value)}")
 
 
 def observe_transcode_cache(root: Path, *, expected_cached: bool | None = None) -> int:
@@ -566,7 +672,7 @@ def observe_transcode_cache(root: Path, *, expected_cached: bool | None = None) 
         command.extend(("--expect-cached", str(expected_cached).lower()))
     return subprocess.run(
         command,
-        env={**os.environ, **conformance_environment()},
+        env={**os.environ, **conformance_environment(root)},
         check=False,
     ).returncode
 
@@ -583,7 +689,7 @@ def reset_transcode_cache(root: Path) -> int:
     )
     cleared = subprocess.run(
         [str(TOOLS / "reset-transcode-cache"), "--root", str(root)],
-        env={**os.environ, **conformance_environment()},
+        env={**os.environ, **conformance_environment(root)},
         check=False,
     )
     if cleared.returncode != 0:
@@ -597,8 +703,8 @@ def run_apple_conformance(root: Path, ios_simulator_udid: str, tvos_simulator_ud
     require_root(root)
     name = container_name(root)
     require_running_container(name)
-    environment = {**os.environ, **conformance_environment()}
-    for key, value in conformance_environment().items():
+    environment = {**os.environ, **conformance_environment(root)}
+    for key, value in conformance_environment(root).items():
         if key.startswith("DULCET_"):
             environment[f"SIMCTL_CHILD_{key}"] = value
 
@@ -667,7 +773,7 @@ def main() -> int:
         elif args.command == "down":
             down(root)
         elif args.command == "env":
-            print_environment()
+            print_environment(root)
         elif args.command == "probe-cache":
             return observe_transcode_cache(root)
         elif args.command == "run":
