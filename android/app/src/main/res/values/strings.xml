@@ -72,8 +72,6 @@
     <string name="library_sync_failed">Unable to sync. Saved music remains available.</string>
     <string name="library_empty">No saved music yet. Sync your library to browse offline.</string>
     <string name="library_artist_kind">Artist</string>
-    <string name="library_album_count">%1$d albums</string>
-    <string name="album_song_count">%1$d songs</string>
     <string name="album_not_found">This album is no longer in the saved library.</string>
     <string name="artist_not_found">This artist is no longer in the saved library.</string>
     <string name="action_play">Play</string>
@@ -104,4 +102,12 @@
     <string name="duration_hours_minutes">%1$d hr %2$d min</string>
     <string name="state_on">On</string>
     <string name="state_off">Off</string>
+    <plurals name="library_album_count">
+        <item quantity="one">%1$d album</item>
+        <item quantity="other">%1$d albums</item>
+    </plurals>
+    <plurals name="album_song_count">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
 </resources>

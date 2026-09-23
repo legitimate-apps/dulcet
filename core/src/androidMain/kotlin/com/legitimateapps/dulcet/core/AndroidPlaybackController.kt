@@ -100,7 +100,6 @@ public class AndroidPlaybackController internal constructor(
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
     private var closed = false
-    private var title = ""
     // Presentation metadata by opaque identity. It never decides what plays: the core queue does.
     private val metadata = mutableMapOf<ProviderItemId, AndroidTrack>()
     private val metadataLoads = mutableSetOf<ProviderItemId>()
@@ -480,10 +479,12 @@ public class AndroidPlaybackController internal constructor(
             AndroidQueueEntry(entry.queueEntryId.value, metadata[entry.itemId]
                 ?: AndroidTrack(entry.itemId.providerInstanceId, entry.itemId.rawId, ""))
         }
-        mutableState.value = AndroidPlaybackState(current?.title ?: title,
+        // Without a session the player still holds the last song's position; it describes nothing.
+        mutableState.value = AndroidPlaybackState(current?.title.orEmpty(),
             session?.currentAttempt?.phase?.name ?: "Stopped",
-            exo.currentPosition.coerceAtLeast(0),
-            exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 } ?: current?.durationMilliseconds,
+            if (session == null) 0 else exo.currentPosition.coerceAtLeast(0),
+            if (session == null) null
+            else exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 } ?: current?.durationMilliseconds,
             session?.queueEntryId?.value, session?.playbackSessionId?.value,
             session?.currentAttempt?.attemptId?.value, failure, consumed.get(),
             artist = current?.artist, album = current?.album, artworkKey = current?.artworkKey,

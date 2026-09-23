@@ -182,6 +182,23 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun anEndedQueueReportsNoSessionAndNoStalePosition() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("only"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 39_000
+            f.probe.state = androidx.media3.common.Player.STATE_ENDED
+            f.probe.events()
+            val ended = f.controller.state.value
+            assertEquals(null, ended.playbackSessionId, "The control requires the queue to have ended")
+            assertEquals(0, ended.positionMilliseconds, "A finished queue must not report the last song's position")
+            assertNull(ended.durationMilliseconds)
+            assertFalse(ended.playWhenReady)
+            assertEquals("", ended.title)
+        }
+    }
+
     @Test fun refusedTransportVerbIsNotReportedAsAPlaybackFailure() {
         Fixture().use { f ->
             // Nothing is prepared, so the engine refuses both seeks. That must not paint an error.

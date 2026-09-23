@@ -153,7 +153,9 @@ internal fun NowPlayingScreen(
                 Modifier.fillMaxWidth().aspectRatio(1f).scale(scale).shadow(24.dp, RoundedCornerShape(12.dp)))
             Spacer(Modifier.weight(0.5f))
             Column(Modifier.fillMaxWidth()) {
-                Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
+                Text(state.title.ifBlank {
+                        stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
+                    },
                     style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1,
                     modifier = Modifier.basicMarquee().testTag("player.title"))
                 Text(state.artist.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,

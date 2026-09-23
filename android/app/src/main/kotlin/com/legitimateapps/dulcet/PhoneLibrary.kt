@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -209,7 +210,7 @@ internal fun ArtistRow(item: SearchResultItem, albumCount: Int?, modifier: Modif
     ListItem(
         headlineContent = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            Text(if (albumCount != null && albumCount > 0) stringResource(R.string.library_album_count, albumCount)
+            Text(if (albumCount != null && albumCount > 0) pluralStringResource(R.plurals.library_album_count, albumCount, albumCount)
                 else stringResource(R.string.library_artist_kind))
         },
         leadingContent = { Monogram(item.title, 48.dp) },
@@ -304,7 +305,7 @@ internal fun AlbumScreen(account: SearchAccount, album: LibraryAlbum?, playingRa
                             artist?.id?.let { actions.openArtist(it.rawId) }
                         }.padding(4.dp))
                     Text(listOfNotNull(album.item.year?.toString(),
-                        stringResource(R.string.album_song_count, album.tracks.size),
+                        pluralStringResource(R.plurals.album_song_count, album.tracks.size, album.tracks.size),
                         album.durationMilliseconds.takeIf { it > 0 }?.let { longDuration(it) }).joinToString(" · "),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(16.dp))
@@ -342,7 +343,7 @@ internal fun ArtistScreen(account: SearchAccount, index: LibraryIndex, artist: L
                 Spacer(Modifier.height(12.dp))
                 Text(artist.item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center)
-                Text(stringResource(R.string.library_album_count, albums.size),
+                Text(pluralStringResource(R.plurals.library_album_count, albums.size, albums.size),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
                 PlayShuffleButtons(onPlay = { actions.playArtist(artist, false) }, onShuffle = { actions.playArtist(artist, true) },
