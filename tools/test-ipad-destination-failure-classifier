@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Prove the iPadOS retry fires on the empty enumeration and on nothing else.
+
+A retry that fires on the wrong failure converts a red run into a green one, which is the single
+worst thing this repository's CI can do. So these controls are written from both sides: the two
+shapes that MUST retry, and every shape that must not -- including the two that a plausible
+implementation gets wrong.
+
+The last control is the one that keeps the rest honest. It re-implements the predicate this suite
+replaced, and the obvious wrong fix to it, and asserts each of them FAILS a fixture here. A suite
+that a broken predicate also passes proves nothing about the working one.
+"""
+
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import re
+import subprocess
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+CLASSIFIER = Path(__file__).resolve().parent / "classify-ipad-destination-failure"
+
+DEVICE_NOT_FOUND = "Unable to find a device matching the provided destination specifier"
+
+# OBSERVED, apple-ci runs on 2026-09-05 (main 315a6bd and pull request 77 at 03b8a9e): the transcript
+# of the empty enumeration, reproduced from the preserved job logs. The two runs differ only in the
+# runner's own hardware id on the "My Mac" row, which the parse never reads because it filters on
+# `platform` first; a synthetic value stands in for it here so no machine identifier is committed.
+#
+# Two properties of this transcript are the whole reason the predicate is written the way it is:
+# the requested destination is a concrete simulator id on a `platform:iOS Simulator` row, and that
+# row carries NO `arch:` field. A whole-transcript grep sees the request and the answer as one text.
+REAL_EMPTY_ENUMERATION = """Resolve Package Graph
+
+Resolved source packages:
+  DulcetKit: <checkout>/apple/DulcetKit
+
+Writing result bundle at path:
+\t<runner-temp>/dulcet-ipados-ui-testing.xcresult
+
+xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tThe requested device could not be found because no available devices matched the request.
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:0000000000000000000000000000000000000000, name:My Mac }
+\t\t{ platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device }
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+"""
+
+# The counterexample the independent review of pull request 120 supplied: a published Xcode 16.2
+# failure listing concrete simulators WITHOUT an `arch:` field. Nothing here should be retried --
+# the destination genuinely did not match a list that was genuinely populated.
+CONCRETE_WITHOUT_ARCH = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tThe requested device could not be found because no available devices matched the request.
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:46A1D6B5-D058-48BE-9721-28BF4BA8CFD9, OS:18.2, name:iPhone 15 Pro 18.2 }
+\t\t{ platform:iOS Simulator, id:9B4E7C21-3F5A-4D18-B0C6-1E2A7D3F5B8C, OS:18.2, name:iPad Pro 13-inch (M4) }
+"""
+
+CONCRETE_WITH_ARCH = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, arch:arm64, id:46A1D6B5-D058-48BE-9721-28BF4BA8CFD9, OS:26.5, name:iPad Pro 13-inch (M5) }
+"""
+
+# The enumeration went empty AND something else already failed. Destination resolution runs before
+# the build, so a transcript carrying both is not the race -- retrying it could green a real failure.
+PLACEHOLDERS_PLUS = {
+    "a test executed": "Test Suite 'DulcetiOSUITests' started at 2026-09-05 02:20:25.885\n",
+    "the build failed": "** BUILD FAILED **\n",
+    "the tests failed": "** TEST FAILED **\n",
+    "the app would not launch": "Failed to launch Dulcet via Xcode: timed out\n",
+    "our own launch marker": "DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true\n",
+}
+
+# Failures with no destination diagnostic at all: the four apple-ci mechanisms most likely to be
+# running when this step fails. None may reach the retry.
+UNRELATED_FAILURES = {
+    "gradle configuration cache lock": "Timeout waiting to lock Configuration Cache (…). It is currently in use by another Gradle instance.\n** BUILD FAILED **\n",
+    "library browse timeout": "library browse failed: kind=timeout\n** TEST FAILED **\n",
+    "proxy authentication bound": "proxyChallengeFailsClosedWithoutAmbientCredentials[iosSimulatorArm64] FAILED\n",
+    "conformance stall": "slowSelfHostedServerCanCompleteAccountNegotiation[iosSimulatorArm64] FAILED\n",
+}
+
+MALFORMED = {
+    "no available-destinations header": DEVICE_NOT_FOUND
+        + ":\n\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }\n",
+    "an unterminated destination row": """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder,
+""",
+    "a truncated transcript": """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-""",
+}
+
+
+# A well-formed, placeholder-only available-destinations section with NO device-not-found line.
+# This is the ONLY control that pins condition 1. An independent review deleted the
+# NO_MATCHING_DEVICE guard entirely and all 22 controls still passed, because every other fixture
+# lacking the phrase also lacks a parseable section -- the parse refused those on its own and the
+# guard never had to hold. A condition that no fixture can distinguish is not being tested.
+SECTION_WITHOUT_THE_ERROR = """xcodebuild: error: Signing for "DulcetiOS" requires a development team.
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+"""
+
+# The second launch phrasing. The first had a fixture; this one had none.
+LAUNCH_TIMED_OUT = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+Timed out while launching application via Xcode
+"""
+
+# A line torn into the middle of the destination rows. `accepted_ids` stops at it and never sees the
+# concrete simulator below, so without a contiguity check this is retried while a real simulator was
+# listed. Not observed on this runner; the direction of the failure is why it is closed.
+INTERLEAVED_SECTION = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+note: Using codesigning identity override
+\t\t{ platform:iOS Simulator, id:46A1D6B5-D058-48BE-9721-28BF4BA8CFD9, OS:26.5, name:iPad Pro 13-inch (M5) }
+"""
+
+# An Ineligible section after the Available one is NORMAL, not tearing. Without this control the
+# contiguity check could be written to reject every real transcript that has both sections.
+INELIGIBLE_SECTION_FOLLOWS = """xcodebuild: error: Unable to find a device matching the provided destination specifier:
+\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }
+
+\tAvailable destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+
+\tIneligible destinations for the "DulcetiOS" scheme:
+\t\t{ platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device, error:iOS 26.5 is not installed }
+"""
+
+
+def classify(transcript: str | None, scheme: str = "DulcetiOS") -> subprocess.CompletedProcess:
+    with TemporaryDirectory() as tmp:
+        log = Path(tmp) / "dulcet-ipados-ui-testing.log"
+        if transcript is not None:
+            log.write_text(transcript)
+        return subprocess.run([sys.executable, str(CLASSIFIER), str(log), "--scheme", scheme],
+                              text=True, capture_output=True, check=False)
+
+
+def decide(transcript: str, scheme: str = "DulcetiOS") -> bool:
+    """True when the classifier asks for a retry. Every run must also say why, on one line."""
+    result = classify(transcript, scheme)
+    if result.returncode not in (0, 1):
+        raise AssertionError(f"classifier crashed: {result.returncode}\n{result.stderr}")
+    lines = [line for line in result.stdout.splitlines() if line.startswith("IPADOS RETRY DECISION ")]
+    if len(lines) != 1:
+        raise AssertionError(f"expected exactly one decision line, got {lines!r}")
+    retry = "retry=yes" in lines[0]
+    if retry != (result.returncode == 0):
+        raise AssertionError(f"exit status disagrees with the printed decision: {lines[0]!r}")
+    if "reason=" not in lines[0]:
+        raise AssertionError(f"decision names no reason: {lines[0]!r}")
+    return retry
+
+
+# The predicate this suite replaced, and the obvious wrong fix to it, expressed exactly. They exist
+# only so the last control can prove these fixtures are capable of failing an implementation.
+def shipped_predicate(transcript: str) -> bool:
+    if DEVICE_NOT_FOUND not in transcript:
+        return False
+    return not re.search(r"platform:iOS Simulator, arch:[^}]*id:[0-9A-Fa-f]{8}-", transcript)
+
+
+def arch_optional_predicate(transcript: str) -> bool:
+    if DEVICE_NOT_FOUND not in transcript:
+        return False
+    return not re.search(r"platform:iOS Simulator[^}]*id:[0-9A-Fa-f]{8}-", transcript)
+
+
+def main() -> None:
+    failures: list[str] = []
+
+    def check(label: str, condition: bool) -> None:
+        if not condition:
+            failures.append(label)
+
+    check("the recorded empty enumeration is retried", decide(REAL_EMPTY_ENUMERATION))
+    check("a concrete simulator listed without arch: blocks the retry",
+          not decide(CONCRETE_WITHOUT_ARCH))
+    check("a concrete simulator listed with arch: blocks the retry",
+          not decide(CONCRETE_WITH_ARCH))
+
+    for label, suffix in PLACEHOLDERS_PLUS.items():
+        check(f"{label} blocks the retry", not decide(REAL_EMPTY_ENUMERATION + suffix))
+
+    for label, transcript in UNRELATED_FAILURES.items():
+        check(f"{label} blocks the retry", not decide(transcript))
+
+    for label, transcript in MALFORMED.items():
+        check(f"{label} blocks the retry", not decide(transcript))
+
+    # Condition 1: the device-not-found line must be present. Nothing else pins this.
+    check("a destination list without the error line blocks the retry",
+          not decide(SECTION_WITHOUT_THE_ERROR))
+    check("the second launch phrasing blocks the retry", not decide(LAUNCH_TIMED_OUT))
+    check("a torn destination section blocks the retry", not decide(INTERLEAVED_SECTION))
+    # ...and the contiguity check must not reject a normal two-section transcript.
+    check("an ineligible section after the available one still retries",
+          decide(INELIGIBLE_SECTION_FOLLOWS))
+
+    # Fail closed on a scheme whose section is not the one in the transcript, and on no transcript.
+    check("a mismatched scheme blocks the retry",
+          not decide(REAL_EMPTY_ENUMERATION, scheme="DulcetMac"))
+    missing = classify(None)
+    check("a missing transcript blocks the retry", missing.returncode != 0)
+    check("a missing transcript says so",
+          "reason=transcript-unreadable" in missing.stdout)
+
+    # An empty section -- header present, no rows at all -- is the enumeration at its emptiest.
+    header_only = ('xcodebuild: error: ' + DEVICE_NOT_FOUND + ':\n'
+                   '\t\t{ platform:iOS Simulator, id:D2D29ECE-4521-4B2E-ADFF-A85EB836607E }\n\n'
+                   '\tAvailable destinations for the "DulcetiOS" scheme:\n')
+    check("an empty available-destinations section is retried", decide(header_only))
+
+    # The control that keeps the rest honest: each broken predicate must get a fixture WRONG here.
+    check("these fixtures catch the shipped predicate",
+          shipped_predicate(CONCRETE_WITHOUT_ARCH) is True)
+    check("these fixtures catch making arch: optional",
+          arch_optional_predicate(REAL_EMPTY_ENUMERATION) is False)
+    check("these fixtures catch a predicate that ignores conflicting failure evidence",
+          shipped_predicate(REAL_EMPTY_ENUMERATION + PLACEHOLDERS_PLUS["the build failed"]) is True)
+
+    if failures:
+        for label in failures:
+            print(f"FAIL: {label}", file=sys.stderr)
+        raise SystemExit(f"{len(failures)} iPadOS retry control(s) failed")
+    print("iPadOS destination-failure classifier controls passed")
+
+
+if __name__ == "__main__":
+    main()
