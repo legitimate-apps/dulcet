@@ -682,24 +682,14 @@ jobs:
             tail -200 "$ROOT/logs/navidrome.log" || true
           }
           trap cleanup EXIT
-          # EXPERIMENT, not a fix. `restart_navidrome_cold` runs three times, and across 99 green
-          # apple-ci runs 2026-09-02..2026-09-10 its readiness window was elevated exactly where a
-          # `simctl create`+`boot` immediately preceded it: restart #1 (0/99 preceded) median 2.61 s,
-          # restart #2 (99/99 preceded, iOS) median 9.49 s and max 89.01 s, restart #3 (99/99
-          # preceded, tvOS) median 5.84 s. Paired within each run, restart #2 exceeded restart #1 in
-          # 99/99 runs (median 3.61x) and the stream probe's first response in 97/99 (median 5.47x).
-          # Restart #3 is BELOW restart #2, so "later in the job is slower" does not explain it.
-          #
-          # A perfect correlation is where a confound hides, and the causal link is ASSUMED. So this
-          # is a designed test of it: restart #2 is moved AHEAD of its simulator create+boot, and
-          # restart #3 is deliberately LEFT where it is as an in-run control. Every future run then
-          # carries its own comparison between a moved restart and an unmoved one, which is stronger
-          # than comparing runs to each other.
-          #
-          # REFUTED if restart #2's paired ratio against restart #1 stays near 3.6x while restart
-          # #3's holds near 2.3x: the association would then be with job position, and the
-          # simulator a bystander. Design, criteria and the measurement recipe:
-          # docs/investigations/2026-09-10-restart-sequencing-experiment.md
+          # `restart_navidrome_cold` runs three times, and across 99 green apple-ci runs 2026-09-02..
+          # 2026-09-10 its readiness window was elevated exactly where a `simctl create`+`boot`
+          # immediately preceded it (restart #2 median 9.49 s, max 89.01 s, against 2.61 s for #1).
+          # Restart #2 was then moved AHEAD of its simulator create+boot as a pre-registered
+          # experiment, with #3 left in place as the in-run control. Read 2026-09-22 over 23 green
+          # runs it is SUPPORTED: #2/#1 fell to 1.02x while #3/#1 stayed at 2.13x (23/23 above 1).
+          # The markers stay so the arrangement remains legible in every log; design, criteria and
+          # result are in docs/investigations/2026-09-10-restart-sequencing-experiment.md.
           restart_index=0
           restart_navidrome_cold() {
             restart_index=$((restart_index + 1))
