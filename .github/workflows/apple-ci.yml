@@ -50,6 +50,8 @@ jobs:
         run: python3 tools/test-capture-conformance-stall
       - name: Prove phase-gap calibration rejects invalid evidence
         run: python3 tools/test-measure-conformance-phase-gaps
+      - name: Prove the host-pressure summary reports a known delta and refuses an empty record
+        run: python3 tools/test-host-pressure
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
