@@ -759,6 +759,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let selectedAlbum: DulcetAlbum?
     public let selectedArtist: DulcetArtist?
     public let nowPlaying: DulcetNowPlaying?
+    /// The playback surface's status, carried on every snapshot whatever the destination, so a
+    /// persistent now-playing bar can say "preparing" or "failed" rather than vanishing.
+    public let playbackStatus: DulcetPlaybackSurfaceStatus
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
     public let searchHasMoreKinds: Set<DulcetSearchResultKind>
@@ -786,6 +789,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         selectedAlbum: DulcetAlbum? = nil,
         selectedArtist: DulcetArtist? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
+        playbackStatus: DulcetPlaybackSurfaceStatus? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -810,6 +814,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.selectedAlbum = selectedAlbum
         self.selectedArtist = selectedArtist
         self.nowPlaying = nowPlaying
+        // A snapshot built with a now-playing value and no status is ready by construction.
+        self.playbackStatus = playbackStatus ?? (nowPlaying == nil ? .unavailable : .ready)
         self.searchQuery = searchQuery
         self.searchResults = searchResults
         self.searchHasMoreKinds = searchHasMoreKinds

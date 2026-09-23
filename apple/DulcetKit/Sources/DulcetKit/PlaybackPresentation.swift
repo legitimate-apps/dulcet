@@ -122,3 +122,42 @@ public protocol DulcetPlaybackControlling: AnyObject {
     func send(_ intent: DulcetPlaybackControlIntent)
     func disconnect()
 }
+
+/// What starting playback does to the surface the person is looking at.
+///
+/// Where a persistent now-playing bar exists (iPhone, iPad, Mac), playing a track leaves the
+/// person where they were — on the album, the artist or the search results — and the bar shows
+/// what is playing; the full player is one tap on that bar away. tvOS has no such bar, so there
+/// starting playback still moves the app to Now Playing, which is the only place its transport
+/// controls live.
+public enum DulcetPlaybackStartNavigation: Sendable, Hashable {
+    case showNowPlaying
+    case stayOnCurrentSurface
+
+    public static var platformDefault: Self {
+#if os(tvOS)
+        .showNowPlaying
+#else
+        .stayOnCurrentSurface
+#endif
+    }
+}
+
+/// Where tracks added to an existing queue go.
+public enum DulcetQueuePlacement: Sendable, Hashable {
+    /// Immediately after the current entry.
+    case next
+    /// After the last entry.
+    case last
+}
+
+/// Optional capability of a playback controller: adding tracks to the live queue without
+/// replacing it.
+///
+/// No controller conforms yet. The presentation layer offers Play Next and Add to Queue only when
+/// the controller does, so the actions stay hidden rather than dead until the queue exposes
+/// insertion.
+@MainActor
+public protocol DulcetQueueInserting: AnyObject {
+    func insert(_ tracks: [DulcetTrack], placement: DulcetQueuePlacement)
+}

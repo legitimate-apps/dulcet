@@ -477,6 +477,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var selectedAlbumTracksFailure: DulcetLibraryFailure?
     /// Whether the library currently held was read to completion for the current connection.
     private var libraryReadCompleted = false
+    /// What starting playback does to the surface the person is on.
+    private let playbackStartNavigation: DulcetPlaybackStartNavigation
+    /// The playback controller's latest presentation. Every publication carries it, so the
+    /// now-playing state survives navigation instead of being dropped by whichever publication
+    /// happened not to pass it along — the persistent mini-player and the macOS Playback menu
+    /// both read it from every snapshot, whatever the destination.
+    private var latestPlaybackPresentation: DulcetPlaybackPresentation = .unavailable
 
     static let defaultSearchDebounce: Duration = .milliseconds(250)
     private static let searchPageSize = 20
@@ -500,9 +507,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryRefreshCadence: Duration = .seconds(86_400),
         libraryRefreshScheduler: any DulcetLibraryRefreshScheduling =
             DulcetMonotonicLibraryRefreshScheduler(),
-        providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString }
+        providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString },
+        playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault
     ) {
         self.connector = connector
+        self.playbackStartNavigation = playbackStartNavigation
+        latestPlaybackPresentation = playbackController?.currentPresentation ?? .unavailable
         self.credentialStore = credentialStore
         self.libraryBrowser = libraryBrowser
         self.artworkFetcher = artworkFetcher
@@ -644,6 +654,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             downloadController?.requestDownload(track)
         case let .playbackControl(intent):
             playbackController?.send(intent)
+        case let .showAlbum(id):
+            // Navigation, not a reason to re-read: the same path an album search result takes.
+            cancelSearchRequest()
+            openLibrary(reason: .entered, selecting: .album(id))
+        case let .showArtist(id):
+            cancelSearchRequest()
+            openLibrary(reason: .entered, selecting: .artist(id))
+        case let .insertIntoQueue(tracks, placement):
+            guard let inserter = playbackController as? any DulcetQueueInserting,
+                  !tracks.isEmpty else { return }
+            inserter.insert(tracks, placement: placement)
         case let .submitAccountConnection(request):
             submit(request)
         case .cancelAccountConnection:
@@ -751,7 +772,6 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         selectedAlbum: DulcetAlbum? = nil,
         selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
-        nowPlaying: DulcetNowPlaying? = nil,
         selectedAlbumTracksFailure: DulcetLibraryFailure? = nil
     ) {
         currentSnapshot = Self.snapshot(
@@ -765,7 +785,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedAlbum: selectedAlbum,
             selectedArtist: selectedArtist,
             libraryFailure: libraryFailure,
-            nowPlaying: nowPlaying,
+            playback: latestPlaybackPresentation,
             selectedAlbumTracksFailure: selectedAlbumTracksFailure,
             searchQuery: searchQuery,
             searchResults: searchResults,
@@ -788,7 +808,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         selectedAlbum: DulcetAlbum? = nil,
         selectedArtist: DulcetArtist? = nil,
         libraryFailure: DulcetLibraryFailure? = nil,
-        nowPlaying: DulcetNowPlaying? = nil,
+        playback: DulcetPlaybackPresentation = .unavailable,
         selectedAlbumTracksFailure: DulcetLibraryFailure? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
@@ -822,7 +842,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             recentlyAddedTracks: [],
             selectedAlbum: selectedAlbum,
             selectedArtist: selectedArtist,
-            nowPlaying: nowPlaying,
+            // Only a ready presentation carries a now-playing value into the snapshot: the menu
+            // commands and the Now Playing surface both key off its presence.
+            nowPlaying: playback.status == .ready ? playback.nowPlaying : nil,
+            playbackStatus: playback.status,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,
@@ -1726,13 +1749,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func beginPlayback(_ intent: DulcetPlaybackQueueIntent) {
         guard let playbackController else { return }
         playbackController.replaceQueueAndPlay(intent)
-        receivePlaybackPresentation(playbackController.currentPresentation, selectNowPlaying: true)
+        receivePlaybackPresentation(
+            playbackController.currentPresentation,
+            selectNowPlaying: playbackStartNavigation == .showNowPlaying
+        )
     }
 
     private func receivePlaybackPresentation(
         _ presentation: DulcetPlaybackPresentation,
         selectNowPlaying: Bool = false
     ) {
+        latestPlaybackPresentation = presentation
         let destination = selectNowPlaying ? .nowPlaying : currentSnapshot.selectedDestination
         let state: DulcetPresentationState
         if destination == .nowPlaying {
@@ -1758,8 +1785,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             artists: currentSnapshot.artists,
             albums: currentSnapshot.albums,
             selectedAlbum: currentSnapshot.selectedAlbum,
+            // A playback update lands on whatever surface is showing. Leaving these out
+            // emptied an artist page and dropped an album's track-list failure on every tick.
+            selectedArtist: currentSnapshot.selectedArtist,
             libraryFailure: currentSnapshot.libraryFailure,
-            nowPlaying: presentation.status == .ready ? presentation.nowPlaying : nil
+            selectedAlbumTracksFailure: currentSnapshot.selectedAlbumTracksFailure
         )
     }
 
@@ -1793,7 +1823,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedAlbum: selectedAlbum,
             selectedArtist: currentSnapshot.selectedArtist,
             libraryFailure: currentSnapshot.libraryFailure,
-            nowPlaying: currentSnapshot.nowPlaying
+            selectedAlbumTracksFailure: currentSnapshot.selectedAlbumTracksFailure
         )
     }
 
@@ -1822,6 +1852,43 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedAlbum: currentSnapshot.selectedAlbum,
             libraryFailure: currentSnapshot.libraryFailure
         )
+    }
+}
+
+extension DulcetAccountDataSource: DulcetLibraryNavigating {
+    /// Resolves against the library read that is held, never against the network: a link is
+    /// offered only for an artist the library already lists, so following it cannot start a read
+    /// that ends on an error page.
+    public func libraryArtistID(for credit: DulcetCredit) -> DulcetProviderItemID? {
+        if let id = credit.id, libraryArtists.contains(where: { $0.id == id }) {
+            return id
+        }
+        let named = libraryArtists.filter { $0.name == credit.name }
+        return named.count == 1 ? named[0].id : nil
+    }
+
+    /// A track carries its album's title, not its album's identity. It resolves only when the
+    /// answer is unambiguous: an album already holding the track, or exactly one album with that
+    /// title — narrowed by shared artist names when titles repeat. "Greatest Hits" by two artists
+    /// resolves to neither rather than to the wrong one.
+    public func libraryAlbumID(for track: DulcetTrack) -> DulcetProviderItemID? {
+        if let holding = libraryAlbums.first(where: { album in
+            album.tracks.contains(where: { $0.id == track.id })
+        }) {
+            return holding.id
+        }
+        guard let title = track.albumTitle, !title.isEmpty else { return nil }
+        let titled = libraryAlbums.filter { $0.title == title }
+        if titled.count == 1 { return titled[0].id }
+        let artists = Set(track.credits.map(\.name))
+        let credited = titled.filter { album in
+            !artists.isDisjoint(with: album.credits.map(\.name))
+        }
+        return credited.count == 1 ? credited[0].id : nil
+    }
+
+    public var queueInsertionEnabled: Bool {
+        playbackController is any DulcetQueueInserting
     }
 }
 

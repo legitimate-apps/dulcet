@@ -12,6 +12,12 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case playAlbum(DulcetProviderItemID, shuffle: Bool)
     case activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID)
     case downloadTrack(DulcetProviderItemID)
+    /// Shows one library album from anywhere in the app.
+    case showAlbum(DulcetProviderItemID)
+    /// Shows one library artist from anywhere in the app.
+    case showArtist(DulcetProviderItemID)
+    /// Adds tracks to the live queue. Sent only when ``DulcetDataSource/queueInsertionEnabled``.
+    case insertIntoQueue([DulcetTrack], DulcetQueuePlacement)
     case playbackControl(DulcetPlaybackControlIntent)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
@@ -34,6 +40,16 @@ public protocol DulcetDataSource: AnyObject {
 
 public extension DulcetDataSource {
     var downloadsEnabled: Bool { false }
+}
+
+/// Optional capability of a data source: answering, synchronously, whether an item the person
+/// can see has a library page to go to. A view offers a "Go to" link only when this says yes, so
+/// no link leads nowhere.
+@MainActor
+public protocol DulcetLibraryNavigating: AnyObject {
+    func libraryArtistID(for credit: DulcetCredit) -> DulcetProviderItemID?
+    func libraryAlbumID(for track: DulcetTrack) -> DulcetProviderItemID?
+    var queueInsertionEnabled: Bool { get }
 }
 
 @MainActor
@@ -126,6 +142,42 @@ public final class DulcetPresentationStore {
 
     public func sendPlaybackControl(_ intent: DulcetPlaybackControlIntent) {
         source.send(.playbackControl(intent))
+    }
+
+    /// The library artist a credit leads to, or nil when there is no page to show.
+    public func libraryArtistID(for credit: DulcetCredit) -> DulcetProviderItemID? {
+        (source as? any DulcetLibraryNavigating)?.libraryArtistID(for: credit)
+    }
+
+    /// The library album a track belongs to, or nil when it cannot be identified.
+    public func libraryAlbumID(for track: DulcetTrack) -> DulcetProviderItemID? {
+        (source as? any DulcetLibraryNavigating)?.libraryAlbumID(for: track)
+    }
+
+    public func showAlbum(_ id: DulcetProviderItemID) {
+        source.send(.showAlbum(id))
+    }
+
+    public func showArtist(_ id: DulcetProviderItemID) {
+        source.send(.showArtist(id))
+    }
+
+    /// Whether Play Next and Add to Queue have a queue to act on. False until the playback
+    /// controller exposes insertion; the actions are hidden, never shown disabled, until then.
+    public var queueInsertionEnabled: Bool {
+        (source as? any DulcetLibraryNavigating)?.queueInsertionEnabled == true
+    }
+
+    public func insertIntoQueue(_ tracks: [DulcetTrack], placement: DulcetQueuePlacement) {
+        guard queueInsertionEnabled, !tracks.isEmpty else { return }
+        source.send(.insertIntoQueue(tracks, placement))
+    }
+
+    /// ⌘F on the Mac: go to Search.
+    public func focusSearch() {
+        if selectedDestination != .search {
+            selectDestination(.search)
+        }
     }
 
     public func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {

@@ -2477,3 +2477,159 @@ func playingTheWholeLibraryBeforeTrackListsExistQueuesNothing() throws {
     store.playLibrary(shuffle: false)
     #expect(playback.queueIntents.count == 1)
 }
+
+// MARK: - Shell navigation: playback leaves the person where they are
+
+@MainActor
+private func connectedShellStore(
+    navigation: DulcetPlaybackStartNavigation
+) -> (DulcetPresentationStore, ControlledPlaybackController, DulcetAlbum, DulcetArtist) {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        providerInstanceIDFactory: { "provider-instance-fixture" },
+        playbackStartNavigation: navigation
+    ))
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    let album = fixtureLibraryAlbum()
+    let artist = DulcetArtist(
+        id: try! #require(album.credits.first?.id),
+        name: "Opaque Artist",
+        mediaSourceID: nil
+    )
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [artist], albums: [album]))
+    return (store, playback, album, artist)
+}
+
+@MainActor
+private func readyPresentation(for album: DulcetAlbum) -> DulcetPlaybackPresentation {
+    DulcetPlaybackPresentation(status: .ready, nowPlaying: DulcetNowPlaying(
+        sessionID: DulcetPlaybackSessionID("session-shell"),
+        current: album.tracks[0],
+        queue: album.tracks,
+        elapsed: .seconds(3),
+        isPlaying: true,
+        outputName: "Fixture output",
+        volume: 1,
+        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1)
+    ))
+}
+
+@Test @MainActor
+func playingATrackLeavesTheAlbumPageShowingAndCarriesNowPlayingEverywhere() {
+    let (store, playback, album, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    #expect(playback.queueIntents.count == 1)
+    // Still on the album: the bar says what is playing, the page does not go away.
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(store.snapshot.playbackStatus == .preparing)
+
+    playback.publish(readyPresentation(for: album))
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+
+    // Every later publication carries it -- navigation used to drop it until the next tick.
+    store.selectDestination(.search)
+    #expect(store.snapshot.selectedDestination == .search)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.selectDestination(.library)
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.selectDestination(.settings)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+
+    playback.publish(.unavailable)
+    #expect(store.snapshot.nowPlaying == nil)
+    #expect(store.snapshot.playbackStatus == .unavailable)
+}
+
+@Test @MainActor
+func showNowPlayingNavigationStillMovesToNowPlayingForTV() {
+    let (store, playback, album, _) = connectedShellStore(navigation: .showNowPlaying)
+    store.selectAlbum(album.id)
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    #expect(store.snapshot.selectedDestination == .nowPlaying)
+    playback.publish(readyPresentation(for: album))
+    #expect(store.snapshot.state == .nowPlaying)
+}
+
+@Test
+func playbackStartNavigationDefaultsStayPutWhereANowPlayingBarExists() {
+#if os(tvOS)
+    #expect(DulcetPlaybackStartNavigation.platformDefault == .showNowPlaying)
+#else
+    #expect(DulcetPlaybackStartNavigation.platformDefault == .stayOnCurrentSurface)
+#endif
+}
+
+@Test @MainActor
+func aPlaybackTickDoesNotEmptyTheArtistPage() {
+    let (store, playback, album, artist) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.showArtist(artist.id)
+    #expect(store.snapshot.state == .artistDetail)
+    #expect(store.snapshot.selectedArtist?.id == artist.id)
+    playback.publish(readyPresentation(for: album))
+    #expect(store.snapshot.state == .artistDetail)
+    #expect(store.snapshot.selectedArtist?.id == artist.id)
+}
+
+@Test @MainActor
+func artistAndAlbumLinksResolveOnlyToPagesTheLibraryHolds() {
+    let (store, _, album, artist) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    let track = album.tracks[0]
+
+    // By identity, then by an unambiguous name; never to an artist the library does not list.
+    #expect(store.libraryArtistID(for: DulcetCredit(role: .artist, name: "x", id: artist.id)) == artist.id)
+    #expect(store.libraryArtistID(for: DulcetCredit(role: .artist, name: artist.name, id: nil)) == artist.id)
+    #expect(store.libraryArtistID(for: DulcetCredit(role: .artist, name: "Nobody", id: nil)) == nil)
+    #expect(store.libraryArtistID(for: DulcetCredit(
+        role: .artist,
+        name: "Featured",
+        id: DulcetProviderItemID(providerInstanceID: "provider-instance-fixture", rawID: "artist:unlisted")
+    )) == nil)
+
+    #expect(store.libraryAlbumID(for: track) == album.id)
+    let unknown = DulcetTrack(
+        id: DulcetProviderItemID(providerInstanceID: "p", rawID: "t:other"),
+        title: "Other",
+        credits: [],
+        albumTitle: "Some Other Album",
+        duration: .seconds(1),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: "o", palette: .tealSun)
+    )
+    #expect(store.libraryAlbumID(for: unknown) == nil)
+
+    store.selectDestination(.search)
+    store.showArtist(artist.id)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state == .artistDetail)
+    store.showAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+}
+
+@Test @MainActor
+func queueInsertionIsHiddenUntilTheControllerCanInsert() {
+    let (store, playback, album, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    #expect(!store.queueInsertionEnabled)
+    store.insertIntoQueue(album.tracks, placement: .next)
+    #expect(playback.queueIntents.isEmpty)
+}
