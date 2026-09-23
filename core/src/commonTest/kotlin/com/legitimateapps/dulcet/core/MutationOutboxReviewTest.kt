@@ -73,6 +73,22 @@ class MutationOutboxReviewTest {
     }
 
     @Test
+    fun anArtistAndAnAlbumWithTheSameIdInOneResultListEachShowTheirOwnStar() = sessionTest { env ->
+        val (session, _) = online(env)
+        val cache = env.cache()
+        cache.writeEntities(CacheWriteStamp(cache.issue(), 1, null), CacheEntitySource.Search,
+            CacheEntities(artists = listOf(CacheArtistRecord(albumId(4), "Album 0004 Players"))))
+        session.setOnline(false)
+        session.favourites.setFavourite(artist4, true)
+        val rows = Recorder<LibrarySearchPublication>(env.server)
+        session.openSearch(listener = rows).updateQuery("Album 0004")
+        val byType = rows.last.rows.associate { it.item.type to it.favourite }
+        assertEquals(setOf(SearchResultType.Artist, SearchResultType.Album), byType.keys, "fixture: both kinds, one id")
+        assertEquals(true, byType[SearchResultType.Artist])
+        assertEquals(false, byType[SearchResultType.Album])
+    }
+
+    @Test
     fun noEntryPointThrowsWhenTheDatabaseFails() = sessionTest { env ->
         val driver = createTestDriver()
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
