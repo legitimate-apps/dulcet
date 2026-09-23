@@ -145,6 +145,93 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun albumQueuePublishesUpNextAndJumpStartsTheNamedEntry() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3"), 1, AndroidQueueSource.Album, "Album", "album-id")
+            val started = f.controller.state.value
+            assertEquals(listOf("t1", "t2", "t3"), started.queue.map { it.track.rawId })
+            assertEquals(1, started.currentIndex)
+            assertEquals("Title t2", started.title)
+            assertEquals("Artist", started.artist)
+            assertEquals("cover-t2", started.artworkKey)
+            assertTrue(started.playWhenReady)
+            assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId })
+            assertTrue(f.probe.requested)
+
+            val third = started.queue[2].queueEntryId
+            f.controller.jumpTo(third)
+            val jumped = f.controller.state.value
+            assertEquals(listOf("t2", "t3"), f.prepared.map { it.itemId.rawId })
+            assertEquals(third, jumped.queueEntryId)
+            assertEquals(started.queue.map { it.queueEntryId }, jumped.queue.map { it.queueEntryId },
+                "A jump must keep every queue entry identity")
+            assertNotEquals(started.playbackSessionId, jumped.playbackSessionId)
+        }
+    }
+
+    @Test fun naturalCompletionAdvancesToTheNextAlbumTrack() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.state = androidx.media3.common.Player.STATE_ENDED
+            f.probe.events()
+            assertEquals(listOf("t1", "t2"), f.prepared.map { it.itemId.rawId })
+            assertEquals(1, f.controller.state.value.currentIndex)
+            assertEquals("Title t2", f.controller.state.value.title)
+        }
+    }
+
+    @Test fun refusedTransportVerbIsNotReportedAsAPlaybackFailure() {
+        Fixture().use { f ->
+            // Nothing is prepared, so the engine refuses both seeks. That must not paint an error.
+            f.controller.seek(10_000)
+            f.controller.sessionPlayer.seekTo(5_000)
+            assertTrue(f.probe.seekCommands.isEmpty(), "The control requires both seeks to have been refused")
+            assertNull(f.controller.state.value.error)
+        }
+    }
+
+    @Test fun foreignAccountTrackIsRefusedBeforeAnyRequest() {
+        val loaded = mutableListOf<String>()
+        Fixture(loadSong = { loaded += it; song(it) }).use { f ->
+            f.controller.playQueue(listOf(AndroidTrack(OWNER, "a", "A"), AndroidTrack("provider:other", "b", "B")),
+                0, AndroidQueueSource.Album, "Album", "album-id")
+            assertEquals(DomainError.Auth.Forbidden, f.controller.state.value.error)
+            assertTrue(loaded.isEmpty(), "No request may be made for a queue holding another account's song")
+            assertTrue(f.prepared.isEmpty())
+        }
+    }
+
+    @Test fun previousRestartsASongPastThreeSecondsAndOtherwiseMovesBack() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("a", "b"), 1, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 10_000
+            f.controller.skipToPrevious()
+            assertEquals(listOf(0L), f.probe.seekCommands, "Past the threshold, Previous restarts the song")
+            assertEquals(listOf("b"), f.prepared.map { it.itemId.rawId })
+            f.controller.skipToPrevious()
+            assertEquals(listOf("b", "a"), f.prepared.map { it.itemId.rawId }, "At the start, Previous moves back")
+        }
+    }
+
+    @Test fun sessionAdvertisesQueueSkipsThatTheOneItemTimelineCannot() {
+        Fixture().use { f ->
+            val session = f.controller.sessionPlayer
+            assertTrue(session.isCommandAvailable(androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT))
+            assertTrue(session.isCommandAvailable(androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS))
+            assertFalse(session.isCommandAvailable(androidx.media3.common.Player.COMMAND_CHANGE_MEDIA_ITEMS),
+                "System controllers must not edit the core-owned queue")
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            assertTrue(session.hasNextMediaItem())
+            session.seekToNext()
+            assertEquals(listOf("a", "b"), f.prepared.map { it.itemId.rawId })
+            assertFalse(session.hasNextMediaItem())
+        }
+    }
+
     @Test fun productionPlayerConsumesAuthenticatedValidatedBytes() {
         val audio = pcmWave()
         PlaybackResourceReceiver(audio).use { receiver ->
@@ -367,6 +454,9 @@ class AndroidPlaybackControllerTest {
 
     companion object {
         private const val OWNER = "provider:owner"
+        private fun album(vararg ids: String) = ids.map {
+            AndroidTrack(OWNER, it, "Title $it", "Artist", "Album", 40_000, "cover-$it")
+        }
         private fun resolved(r: PlaybackResolveRequest) = PlaybackResolutionResult.Resolved(RemotePlaybackWirePlan(
             r.playbackSessionId, r.attemptId, r.itemId, PlaybackDeliveryPath.Legacy, PlaybackDeliveryProtocol.HttpProgressive,
             r.sourceContainer, PlaybackWireTranscodeDecision.LegacyHint(null, null), endpoint = "stream",

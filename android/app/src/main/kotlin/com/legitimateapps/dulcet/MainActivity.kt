@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet
 
+import android.content.Intent
 import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -45,14 +48,24 @@ class MainActivity : ComponentActivity() {
         (application as? SearchHostDependencyOwner)?.searchHostDependencies
             ?: ProductionSearchHostDependencies
     }
+    private val requests = PhonePlaybackRequests()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // A recreated activity has already acted on its launch intent; only a fresh one reads it.
+        if (savedInstanceState == null) requests.accept(intent)
         setContent {
             DulcetTheme {
-                AccountConnectScreen(viewModel, searchDependencies)
+                AccountConnectScreen(viewModel, searchDependencies, requests)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        requests.accept(intent)
     }
 }
 
@@ -60,6 +73,7 @@ class MainActivity : ComponentActivity() {
 internal fun AccountConnectScreen(
     viewModel: AccountConnectViewModel,
     searchDependencies: SearchHostDependencies,
+    requests: PhonePlaybackRequests = PhonePlaybackRequests(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -67,7 +81,7 @@ internal fun AccountConnectScreen(
         runCatching { searchDependencies.loadAccount(context) }.getOrNull()
     }
     if (storedAccount != null) {
-        com.legitimateapps.dulcet.library.LibraryEntry(storedAccount) { MobileSearchRoute(storedAccount, searchDependencies) }
+        PhoneApp(storedAccount, searchDependencies, requests)
         return
     }
     AccountConnectContent(
@@ -94,6 +108,7 @@ private fun AccountConnectContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -213,9 +228,4 @@ private fun StatusCard(title: String, body: String, tag: String, recovery: Strin
             if (recovery.isNotEmpty()) Text(recovery, style = MaterialTheme.typography.bodyMedium)
         }
     }
-}
-
-@Composable
-private fun DulcetTheme(content: @Composable () -> Unit) {
-    MaterialTheme(content = content)
 }

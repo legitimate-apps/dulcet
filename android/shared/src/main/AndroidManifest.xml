@@ -3,13 +3,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <application>
+        <!-- Not exported: the notification, lock screen and media buttons reach playback through
+             the in-process platform session. Exporting would also expose the local binding. -->
         <service android:name="com.legitimateapps.dulcet.playback.PlaybackService"
             android:exported="false" android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
-        <activity android:name="com.legitimateapps.dulcet.playback.PlaybackActivity" android:exported="false" />
         <activity
             android:name="com.legitimateapps.dulcet.search.SearchDetailActivity"
             android:exported="false" />

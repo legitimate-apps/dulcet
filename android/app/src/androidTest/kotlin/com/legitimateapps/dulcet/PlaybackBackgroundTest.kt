@@ -12,7 +12,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.legitimateapps.dulcet.playback.PlaybackActivity
+import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.PlaybackService
 import org.junit.Assert.*
 import org.junit.Test
@@ -46,11 +46,9 @@ class PlaybackBackgroundTest {
             }
             var observerBound = false
             try {
-                val intent = Intent(context, PlaybackActivity::class.java)
-                    .putExtra(PlaybackActivity.PROVIDER, account.id)
-                    .putExtra(PlaybackActivity.SONG, "fixture-song")
-                    .putExtra(PlaybackActivity.TITLE, "Background fixture")
-                ActivityScenario.launch<PlaybackActivity>(intent).use { activity ->
+                val intent = PlaybackIntents.playTrack(context, account.id, "fixture-song", "Background fixture")
+                    .setClassName(context, PLAYBACK_ENTRY_ALIAS)
+                ActivityScenario.launch<MainActivity>(intent).use { activity ->
                     observerBound = context.bindService(Intent(context, PlaybackService::class.java)
                         .setAction(PlaybackService.LOCAL_BIND), connection, Context.BIND_AUTO_CREATE)
                     assertTrue(observerBound)

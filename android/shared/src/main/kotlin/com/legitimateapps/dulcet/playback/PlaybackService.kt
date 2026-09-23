@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.playback
 
+import android.app.PendingIntent
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
@@ -23,15 +24,25 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        ensurePlayback()
+    }
+
+    /**
+     * Creates the controller once an account exists. The service may have been created before the
+     * first connection (a media button, a bind from the connect screen), so absence is re-checked
+     * on every local bind instead of being fixed at creation.
+     */
+    fun ensurePlayback(): AndroidPlaybackController? {
+        playback?.let { return it }
         val account = try { AndroidAccountCredentialStore(this).load() }
         catch (_: CredentialStoreException) {
             unavailableReason = "Saved credentials are unavailable. Reconnect your account."
-            return
-        } ?: return
+            return null
+        } ?: return null
         val controller = AndroidPlaybackController(this, PlaybackEndpointAccount(
             account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp))
         playback = controller
-        session = MediaSession.Builder(this, controller.sessionPlayer)
+        val builder = MediaSession.Builder(this, controller.sessionPlayer)
             .setCallback(object : MediaSession.Callback {
                 override fun onConnectAsync(session: MediaSession, controller: MediaSession.ControllerInfo):
                     ListenableFuture<MediaSession.ConnectionResult> = Futures.immediateFuture(
@@ -39,13 +50,23 @@ class PlaybackService : MediaSessionService() {
                         MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                             .setAvailablePlayerCommands(session.player.availableCommands).build()
                     else MediaSession.ConnectionResult.reject())
-            }).build().also { addSession(it) }
+            })
+        // Tapping the notification or lock-screen card opens this app's own Now Playing.
+        val show = PlaybackIntents.showNowPlaying(this)
+        if (packageManager.resolveActivity(show, 0) != null)
+            builder.setSessionActivity(PendingIntent.getActivity(this, 0, show,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+        session = builder.build().also { addSession(it) }
+        return controller
     }
 
     override fun onBind(intent: Intent?): IBinder? =
         if (intent?.action == LOCAL_BIND) LocalBinder() else super.onBind(intent)
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        ensurePlayback()
+        return session
+    }
 
     override fun onDestroy() {
         session?.let { removeSession(it); it.release() }

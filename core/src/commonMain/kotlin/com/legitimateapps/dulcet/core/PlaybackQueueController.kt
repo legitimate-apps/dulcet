@@ -121,6 +121,19 @@ internal class PlaybackQueueController(
 
     fun previous(): PlaybackQueueTransition = moveBy(-1)
 
+    /**
+     * Starts the entry the user picked from Up Next. Addressed by queue-entry identity, never by
+     * index: an index captured by a presentation goes stale as soon as the queue changes, and the
+     * same song may appear twice. Every entry keeps its identity; only a new session begins.
+     */
+    fun jumpTo(queueEntryId: QueueEntryId): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val index = state.entries.indexOfFirst { it.queueEntryId == queueEntryId }
+        if (index < 0) return emptyTransition()
+        return startAt(state, index)
+    }
+
     fun nextForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
         if (acceptsCommand(playbackSessionId)) moveBy(1) else emptyTransition()
 

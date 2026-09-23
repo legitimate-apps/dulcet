@@ -239,6 +239,7 @@ internal class PlayerProbe {
                 discontinuity(target, Player.DISCONTINUITY_REASON_SEEK)
                 null
             }
+            "getAvailableCommands" -> Player.Commands.Builder().addAllCommands().build()
             "prepare", "stop", "clearMediaItems", "release" -> null
             "toString" -> "PlayerProbe"
             else -> throw AssertionError("Unmodeled Player call ${method.name}")
