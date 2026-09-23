@@ -12,7 +12,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -119,6 +121,11 @@ internal data class LibraryEndpointResponse(
     val statusCode: Int,
     val body: String,
     val redactedUrl: String,
+    /**
+     * The server's `X-Total-Count` header, when present and a non-negative integer. A window uses
+     * it opportunistically as its total and never as its termination signal (spec §16.9, §16.12).
+     */
+    val totalCount: Int? = null,
 )
 
 internal fun interface LibraryEndpointTransport {
@@ -126,12 +133,19 @@ internal fun interface LibraryEndpointTransport {
 }
 
 /**
+ * 🚨 **Retired by the reader (spec §16.18, phase R1b).** New code reads through [LibraryReader],
+ * which publishes from the seen-cache with freshness, coverage and a window per list. This class
+ * stays only while the Apple browse facade still calls it; it is deleted with that facade when the
+ * shells move to the reader (R2a), and it gains no new callers in the meantime. The parsers below
+ * it are kept: the reader uses them.
+ *
  * One uncached, read-through library read.
  *
  * [browse] reads only what the album grid draws. It never issues `getAlbum`, so its request count
  * is a small constant plus one request per album *page* — it does not grow per album. Track lists
  * are read one album at a time by [albumTracks], when somebody opens that album.
  */
+@Deprecated("Retired by LibraryReader (spec §16.18 R1b); kept only for the Apple browse facade until R2a.")
 internal class LibraryBrowser private constructor(
     private val transportFactory: (LibraryBrowseRequest) -> LibraryEndpointTransport,
     private val albumPageSize: Int,
@@ -404,6 +418,7 @@ internal class KtorLibraryEndpointTransport(
             response.statusCode,
             response.body.decodeToString(),
             response.redactedUrl,
+            totalCount = response.headers.totalCount?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
         )
     }
 
@@ -624,3 +639,156 @@ private fun JsonObject?.int(name: String): Int? =
 
 private fun malformed(): Nothing =
     throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+
+// ---- Reader parsers (spec §16.9) -------------------------------------------------------------------
+//
+// These produce the seen-cache's records directly, including the per-user state every catalog
+// payload carries for the reading user (§16.10). In a LIVE response an absent `starred`,
+// `userRating` or `playCount` is a known value — not starred, unrated, never played — which is why
+// these map absence to false/0, while rows seeded on upgrade keep them unknown (NULL).
+
+/** One `getScanStatus` reading. [lastScan] is the raw string; it is compared, never parsed. */
+internal data class ScanStatusReading(val lastScan: String?, val scanning: Boolean)
+
+internal fun parseScanStatus(body: String): ScanStatusReading {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val status = payload["scanStatus"] as? JsonObject ?: malformed()
+    val scanning = (status["scanning"] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+        ?: malformed()
+    return ScanStatusReading(lastScan = status.string("lastScan")?.takeIf(String::isNotBlank), scanning = scanning)
+}
+
+internal fun parseReaderMusicFolderIds(body: String): Set<String> =
+    parseMusicFolders("reader", body).mapTo(mutableSetOf()) { it.id.rawId }
+
+internal fun parseReaderAlbumList(body: String): List<CacheAlbumRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val list = payload["albumList2"] as? JsonObject ?: malformed()
+    return list.arrayOrEmpty("album").map { (it as? JsonObject ?: malformed()).readerAlbum() }
+}
+
+internal fun parseReaderAlbum(body: String, expectedRawId: String): Pair<CacheAlbumRecord, List<CacheTrackRecord>> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val album = payload["album"] as? JsonObject ?: malformed()
+    val record = album.readerAlbum()
+    if (record.rawId != expectedRawId) malformed()
+    val tracks = album.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(record.rawId) }
+    return record to tracks
+}
+
+internal fun parseReaderArtists(body: String): List<CacheArtistRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val container = payload["artists"] as? JsonObject ?: malformed()
+    return container.arrayOrEmpty("index").flatMap { index ->
+        (index as? JsonObject ?: malformed()).arrayOrEmpty("artist").map {
+            (it as? JsonObject ?: malformed()).readerArtist()
+        }
+    }.distinctBy { it.rawId }
+}
+
+internal fun parseReaderArtist(body: String, expectedRawId: String): Pair<CacheArtistRecord, List<CacheAlbumRecord>> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val artist = payload["artist"] as? JsonObject ?: malformed()
+    val record = artist.readerArtist()
+    if (record.rawId != expectedRawId) malformed()
+    return record to artist.arrayOrEmpty("album").map { (it as? JsonObject ?: malformed()).readerAlbum() }
+}
+
+internal fun parseReaderPlaylists(body: String): List<CachePlaylistRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val container = payload["playlists"] as? JsonObject ?: malformed()
+    return container.arrayOrEmpty("playlist").map { (it as? JsonObject ?: malformed()).readerPlaylist() }
+}
+
+internal fun parseReaderPlaylist(body: String, expectedRawId: String): Pair<CachePlaylistRecord, List<CacheTrackRecord>> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val playlist = payload["playlist"] as? JsonObject ?: malformed()
+    val record = playlist.readerPlaylist()
+    if (record.rawId != expectedRawId) malformed()
+    return record to playlist.arrayOrEmpty("entry").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
+
+/** `getStarred2`, in the server's order: artists, then albums, then songs. */
+internal fun parseReaderStarred(body: String): CacheEntities {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val starred = payload["starred2"] as? JsonObject ?: malformed()
+    return CacheEntities(
+        artists = starred.arrayOrEmpty("artist").map { (it as? JsonObject ?: malformed()).readerArtist() },
+        albums = starred.arrayOrEmpty("album").map { (it as? JsonObject ?: malformed()).readerAlbum() },
+        tracks = starred.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) },
+    )
+}
+
+internal fun parseReaderGenres(body: String): List<String> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val container = payload["genres"] as? JsonObject ?: malformed()
+    return container.arrayOrEmpty("genre").mapNotNull { element ->
+        (element as? JsonObject ?: malformed()).string("value")?.takeIf(String::isNotBlank)
+    }.distinct()
+}
+
+internal fun parseReaderSongsByGenre(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val container = payload["songsByGenre"] as? JsonObject ?: malformed()
+    return container.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
+
+private fun JsonObject.readerUserState(withPlays: Boolean): CacheUserState {
+    val starredAt = string("starred")?.takeIf(String::isNotBlank)
+    return CacheUserState(
+        starred = starredAt != null,
+        starredAt = starredAt,
+        userRating = int("userRating")?.takeIf { it in 0..5 } ?: 0,
+        playCount = if (withPlays) (long("playCount")?.takeIf { it >= 0 } ?: 0L) else null,
+        played = if (withPlays) string("played")?.takeIf(String::isNotBlank) else null,
+    )
+}
+
+private fun JsonObject.readerAlbum(): CacheAlbumRecord = CacheAlbumRecord(
+    rawId = requiredOpaqueId("id"),
+    title = string("name")?.takeIf(String::isNotBlank) ?: requiredString("title"),
+    credits = readerCredits(CreditRole.AlbumArtist),
+    year = int("year"),
+    genre = string("genre"),
+    durationMilliseconds = optionalDuration()?.inWholeMilliseconds,
+    songCount = int("songCount")?.takeIf { it >= 0 },
+    artworkKey = optionalOpaqueId("coverArt"),
+    userState = readerUserState(withPlays = true),
+)
+
+private fun JsonObject.readerTrack(albumRawId: String?): CacheTrackRecord = CacheTrackRecord(
+    rawId = requiredOpaqueId("id"),
+    albumRawId = albumRawId ?: optionalOpaqueId("albumId"),
+    title = requiredString("title"),
+    albumTitle = string("album"),
+    credits = readerCredits(CreditRole.Artist),
+    discNumber = int("discNumber"),
+    trackNumber = int("track"),
+    durationMilliseconds = optionalDuration()?.inWholeMilliseconds,
+    sourceContainer = libraryAudioContainer(),
+    artworkKey = optionalOpaqueId("coverArt"),
+    userState = readerUserState(withPlays = true),
+)
+
+private fun JsonObject.readerArtist(): CacheArtistRecord = CacheArtistRecord(
+    rawId = requiredOpaqueId("id"),
+    name = requiredString("name"),
+    albumCount = int("albumCount")?.takeIf { it >= 0 },
+    artworkKey = optionalOpaqueId("coverArt"),
+    userState = readerUserState(withPlays = false),
+)
+
+private fun JsonObject.readerPlaylist(): CachePlaylistRecord = CachePlaylistRecord(
+    rawId = requiredOpaqueId("id"),
+    name = requiredString("name"),
+    songCount = int("songCount")?.takeIf { it >= 0 },
+    durationMilliseconds = optionalDuration()?.inWholeMilliseconds,
+    owner = string("owner"),
+    artworkKey = optionalOpaqueId("coverArt"),
+)
+
+private fun JsonObject.readerCredits(role: CreditRole): List<CacheCredit> =
+    credit("reader", role).map { CacheCredit(it.role, it.name, it.id?.rawId) }
+
+private fun JsonObject.long(name: String): Long? =
+    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull

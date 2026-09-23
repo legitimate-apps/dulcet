@@ -643,10 +643,24 @@ internal class BoundSeenCache internal constructor(
     fun saveListState(state: CachedListState) = saveListInTransaction(state)
 
     private fun saveListInTransaction(state: CachedListState) {
-        queries.saveList(
-            serverId, state.listKey, state.windowEpoch, state.folderIds?.let(::encodeIdSet),
+        val folders = state.folderIds?.let(::encodeIdSet)
+        queries.insertListIfAbsent(
+            serverId, state.listKey, state.windowEpoch, folders,
             state.firstLoadedOffset.toLong(), state.endLoadedOffset.toLong(), state.total?.toLong(),
             state.coverage.wireName, state.fetchedAtWall, state.lastAccessWall, state.issueSeq,
+        )
+        queries.updateList(
+            window_epoch = state.windowEpoch,
+            folder_ids = folders,
+            first_loaded_offset = state.firstLoadedOffset.toLong(),
+            end_loaded_offset = state.endLoadedOffset.toLong(),
+            total = state.total?.toLong(),
+            coverage = state.coverage.wireName,
+            fetched_at_wall = state.fetchedAtWall,
+            last_access_wall = state.lastAccessWall,
+            issue_seq = state.issueSeq,
+            server_id = serverId,
+            list_key = state.listKey,
         )
     }
 

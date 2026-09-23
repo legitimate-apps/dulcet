@@ -379,12 +379,22 @@ ORDER BY role, ordinal;
 selectList:
 SELECT * FROM cache_list WHERE server_id = ? AND list_key = ?;
 
-saveList:
-INSERT OR REPLACE INTO cache_list(
+-- Never `INSERT OR REPLACE` here: REPLACE deletes the existing row first, and the ON DELETE
+-- CASCADE on cache_list_member then deletes every page of the window being extended.
+insertListIfAbsent:
+INSERT OR IGNORE INTO cache_list(
   server_id, list_key, window_epoch, folder_ids, first_loaded_offset, end_loaded_offset, total,
   coverage, fetched_at_wall, last_access_wall, issue_seq
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateList:
+UPDATE cache_list SET
+  window_epoch = :window_epoch, folder_ids = :folder_ids,
+  first_loaded_offset = :first_loaded_offset, end_loaded_offset = :end_loaded_offset,
+  total = :total, coverage = :coverage, fetched_at_wall = :fetched_at_wall,
+  last_access_wall = :last_access_wall, issue_seq = :issue_seq
+WHERE server_id = :server_id AND list_key = :list_key;
 
 deleteListMembers:
 DELETE FROM cache_list_member WHERE server_id = ? AND list_key = ?;

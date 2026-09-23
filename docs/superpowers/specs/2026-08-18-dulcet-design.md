@@ -2502,7 +2502,8 @@ Rules the table does not show:
 
 **Multi-list screens (a home screen).** A screen showing several lists — recently added
 (`newest`), recently played (`recent`), most played (`frequent`), a `random` row, favourites
-(`getStarred2`) — is **N independent windows**, one per row, each a single page of at most 20 items
+(`getStarred2`) — is **N independent windows** (a row is cached under its own key, never the key of
+the windowed grid of the same request, or writing the row's one page would replace the grid's pages), one per row, each a single page of at most 20 items
 (ASSUMED size), each with its **own** freshness and coverage (§16.14). The screen shares one epoch
 reading and never waits for all rows: each row paints from its cache at once and is replaced when its
 own read lands; a row whose read fails keeps its cached content labelled with that failure, and the
@@ -2752,6 +2753,13 @@ append would freeze scrolling for as long as the scan runs, which on a large lib
   list may change";
 - the first epoch reading that shows `scanning == false` rebases the window around the viewport
   (above) under the new stamp, and the label clears.
+- **"Scanning cleared" is itself the trigger, not only a moved stamp.** The server publishes the new
+  stamp *before* it clears `scanning` (§16.11), so a window opened late in a scan already holds the
+  final stamp, and the reading that ends the scan shows that stamp unchanged. A stamp comparison
+  alone would then append a guarded page to a window of unguarded ones. And the 60-second rule of
+  §16.11 never spares a torn or still-unverified window from this rebase. (R1b,
+  `conf82WhileScanningPagesAppendUnverifiedAndTheScanEndRebasesEvenUnderAnUnchangedStamp`,
+  `conf82AReconnectThatSeesTheScanEndedRebasesAWindowReadWhileScanning`.)
 
 A window opened mid-scan follows the same rule from its first page; it is never presented as guarded.
 
@@ -2882,6 +2890,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | `live` | read from the server in this session under the current epoch | nothing extra |
 | `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), or `stale` (the epoch moved and no live read has landed yet) | the content plus one line: "Showing what you last saw 3 days ago — you're offline", or with no `asOf`, "Showing what this device had saved — age unknown" |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
+| `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
 Lists also carry **coverage** (§16.12). `open` is stated when offline — **above** the list, not in a
 footer, because a grid that simply stops reads as finished — and with a total states both numbers:
@@ -4605,6 +4614,26 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `cache_pin` rows once a fixture carries them. The additive migration's pins read `queue_entry`,
     which released schema 2 already shipped; `DulcetDriverFactoryTest`'s hand-built v2 fixture had
     omitted it and now carries the released DDL verbatim.
+16. **Found while implementing R1b (live source, epoch, windows, look-ahead).** A window opened
+    late in a scan holds the final stamp, because the stamp publishes before `scanning` clears, so
+    **"scanning cleared" must itself rebase** and the 60-second rule may never spare a torn window
+    (§16.12). §16.14 gains the `loading` state, the only one a spinner may show. A home row is cached
+    under its own key (§16.9). Saving a window's state with `INSERT OR REPLACE` deleted every page
+    already loaded, through `cache_list_member`'s `ON DELETE CASCADE` — REPLACE deletes the row first;
+    the window tests caught it on their first run and the store now upserts. One live operation runs
+    per window at a time, or an open's revalidation and an early `loadMore` rebase the same stale
+    window twice. The foreground epoch cadence is core policy (`setForeground`), not a shell timer.
+    `LibraryBrowser` is retired as deprecated rather than deleted: `AppleLibraryBrowseFacade`, which
+    no R1 brief owns, still calls it, so the deletion moves to R2a with that facade. OBSERVED
+    2026-09-22 (fixture configuration, `PurgeMissing = "always"`), the production reader over the
+    real transport against a private disposable Navidrome 0.63.2 holding 8 albums, with pages of 3:
+    the window completed on `X-Total-Count` after three page reads and three `getScanStatus`; after
+    one album directory was moved out and the watcher's scan finished, `loadMore` issued
+    `getAlbumList2@3`, `getScanStatus`, `getAlbumList2@0`, `getScanStatus` — the check fired and the
+    window was rebased around the viewport without the removed album — and that album's `getAlbum`
+    answered code 70 and published `unavailable(gone)`. That run was a local probe, not a committed
+    test: no R1b id is declared server-backed, and the server facts it relied on are R0's CONF-70
+    and CONF-74.
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to
