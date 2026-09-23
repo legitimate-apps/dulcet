@@ -203,15 +203,17 @@ jobs:
             target: google_apis
             arch: x86_64
             profile: pixel_6
-            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
+            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
             task: :android:app:connectedDevDebugAndroidTest
+            conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidPhoneConformanceTest
             results: android/app/build/outputs/androidTest-results/connected
           - surface: tv
             target: android-tv
             arch: x86
             profile: tv_1080p
-            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest
+            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
             task: :android:tv:connectedDebugAndroidTest
+            conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidTvConformanceTest
             results: android/tv/build/outputs/androidTest-results/connected
     env:
       TZ: UTC
@@ -248,7 +250,13 @@ jobs:
       # loopback 4533. The emulator reaches host loopback as 10.0.2.2.
       - name: Start the disposable server
         run: tools/conformance-env/linux-local --root "${{ steps.root.outputs.path }}" up
-      - name: Play on the emulator and require exactly one server play
+      # Two proofs on one booted emulator, each line a separate command that fails the step:
+      # 1. The declared playback and scrobble conformance, instrumented on this device's runtime
+      #    under a per-surface identity. It runs first, while the server's transcode cache is still
+      #    cold, because CONF-14a, CONF-17 and CONF-51 measure cold-cache behavior. `adb reverse`
+      #    keeps the suite on device loopback, which its disposable-server guard requires.
+      # 2. The app proof: production entry to exactly one server play.
+      - name: Run device conformance, then play and require exactly one server play
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
@@ -259,10 +267,10 @@ jobs:
           emulator-boot-timeout: 600
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -camera-back none
-          script: >-
-            ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }}
-            -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533
-            -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true
+          script: |
+            adb reverse tcp:4533 tcp:4533
+            ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
+            ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }} -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533 -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true
       - name: Stop the disposable server
         if: ${{ always() }}
         run: tools/conformance-env/linux-local --root "${{ steps.root.outputs.path }}" down || true
@@ -271,7 +279,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-android-emulator-${{ matrix.surface }}${{ matrix.rep != 1 && format('-rep{0}', matrix.rep) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ matrix.results }}
+          path: |
+            ${{ matrix.results }}
+            core-conformance/build/outputs/androidTest-results/connected
           if-no-files-found: error
           retention-days: 7
 

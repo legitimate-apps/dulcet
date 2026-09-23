@@ -196,6 +196,34 @@ mutation that makes the service call `stopForeground(STOP_FOREGROUND_REMOVE)` on
 stops, while playback continues, fails with `background: no foreground notification … position=6019`.
 The barrier had passed after 157 ms. The unmutated run passed, with server plays 8 → 9.
 
+## Declared conformance on the device runtime
+
+The playback cells hold Android to the Apple bar: each declared CONF id must execute on the
+platform runtime, not only in host tests. `:core-conformance` now has an Android device-test
+target that compiles the common suite unchanged. `PlaybackScrobbleConformanceTest` is `open`,
+and two empty subclasses give each platform its own test identity:
+
+- `PlaybackScrobbleAndroidPhoneConformanceTest` requires `leanback=false`.
+- `PlaybackScrobbleAndroidTvConformanceTest` requires `leanback=true`.
+
+A run on the wrong device class therefore fails instead of evidencing the other platform. The host
+run of the same methods reports the parent class, so it cannot satisfy these identities.
+
+Each emulator leg runs its subclass first, while the server's transcode cache is still cold, and
+then runs the app proof. On a device the variables arrive as instrumentation arguments under the
+same names. `adb reverse tcp:4533` keeps the suite on the device's loopback, which is where its
+disposable-server guard requires it to be.
+
+| run, local phone emulator | result |
+|---|---|
+| phone subclass | **OBSERVED** 11/11 pass, including CONF-11, 12, 13, 14a, 14b, 15, 22 and 23, in 5.2 s |
+| `submission=true` sent as `false` in the core | fails: `CONF-22 submission=true did not increment play count exactly once expected:<2> but was:<1>`; CONF-23 fails the same way |
+| TV subclass on the phone | fails, 11 of 11: `This identity evidences Android TV, but the device reports leanback=false` |
+
+The mutation run also failed CONF-14a and CONF-51. They measure cold-cache estimates, and the
+server's cache was warm from the preceding run. That is why CI runs the suite first, on each leg's
+fresh server.
+
 ## Still assumed or open
 
 - **Lock-screen controls**: the emulator had no secure lock screen. **ASSUMED** from the platform
@@ -204,8 +232,8 @@ The barrier had passed after 157 ms. The unmutated run passed, with server plays
   content music). Loss of focus to another app and a headset unplug were not exercised.
 - **Acoustic output**: never claimed; the corpus is silent and the emulator's audio is virtual.
 - **Citable evidence**: `playback.stream` and `playback.scrobble` are promoted on `android` and
-  `androidtv`. Each cell cites its emulator proof as an observation row in `core-ci/core-ci`. The
-  declared conformance controls in those cells run on the host JVM, not on the emulator's runtime.
+  `androidtv`. Each declared CONF id cites its device-runtime identity. Each cell also cites its
+  emulator app proof as an observation row. All of these are in `core-ci/core-ci`.
 - **Validation on the device**: that the engine consumed validated bytes is inferred. The data
   source throws before releasing any byte that has not matched an audio signature. No on-device
   marker records the validation itself.
