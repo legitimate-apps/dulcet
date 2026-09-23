@@ -88,20 +88,20 @@ class SeenCacheStoreTest {
     @Test
     fun aDetailThatOmitsATrackOutranksAnOlderListPageButNotANewerOne() = withSeenCache { store, _ ->
         val cache = store.bind(BINDING)
-        val listBefore = cache.issue()
-        val detail = cache.issue()
-        val listAfter = cache.issue()
         cache.writeAlbumDetail(stamp(cache.issue()), album("album:1", "A"), listOf(track("track:1", "album:1"), track("track:2", "album:1")))
-        // A LATER detail read omits track:2.
-        val newestDetail = cache.issue()
-        cache.writeAlbumDetail(stamp(newestDetail), album("album:1", "A"), listOf(track("track:1", "album:1")))
+        // A list page is SENT, then a detail read is sent and lands first, omitting track:2.
+        val slowListPage = cache.issue()
+        val newerDetail = cache.issue()
+        cache.writeAlbumDetail(stamp(newerDetail), album("album:1", "A"), listOf(track("track:1", "album:1")))
         assertEquals(true, cache.track("track:2")?.row?.gone)
 
-        // A list page issued BEFORE that detail cannot resurrect the track...
-        cache.writeEntities(stamp(listBefore), CacheEntitySource.ListPage, CacheEntities(tracks = listOf(track("track:2", "album:1"))))
-        assertEquals(true, cache.track("track:2")?.row?.gone)
-        assertTrue(detail < newestDetail && listAfter < newestDetail)
-        // ...but one issued after it can: a list read that includes the track is newer evidence.
+        // The slow list page lands afterwards. It was issued BEFORE the detail, so it must not
+        // resurrect the track — which it would if marking gone did not carry the detail's sequence,
+        // because the track row still held the first detail's older sequence.
+        cache.writeEntities(stamp(slowListPage), CacheEntitySource.ListPage, CacheEntities(tracks = listOf(track("track:2", "album:1"))))
+        assertEquals(true, cache.track("track:2")?.row?.gone, "an older list page resurrected a track a newer detail omitted")
+
+        // A list read issued after the detail is newer evidence and does restore it.
         cache.writeEntities(stamp(cache.issue()), CacheEntitySource.ListPage, CacheEntities(tracks = listOf(track("track:2", "album:1"))))
         assertEquals(false, cache.track("track:2")?.row?.gone)
     }
@@ -180,6 +180,15 @@ class SeenCacheStoreTest {
         cache.writeAlbumDetail(stamp(cache.issue()), album("album:pinned", "Kept"), listOf(track("track:pinned", "album:pinned"), track("track:loose", "album:pinned")))
         cache.pin(CacheItemKind.Track, "track:pinned", CachePinReason.Download)
         cache.pin(CacheItemKind.Album, "album:pinned", CachePinReason.Download)
+        // Pins that nothing else protects: an album seen only as a summary, and a track whose album
+        // is not cached. Each survives on its pin alone, so a pin check that stopped working could
+        // not hide behind the detail or pinned-track references above.
+        cache.writeEntities(stamp(cache.issue()), CacheEntitySource.ListPage, CacheEntities(
+            albums = listOf(album("album:summary-pinned", "Summary")),
+            tracks = listOf(track("track:orphan-pinned", null)),
+        ))
+        cache.pin(CacheItemKind.Album, "album:summary-pinned", CachePinReason.Queue)
+        cache.pin(CacheItemKind.Track, "track:orphan-pinned", CachePinReason.Playing)
         clock.now = 2_000
         writeWindow(cache, "list:one", listOf("album:x", "album:y"))
         clock.now = 3_000
@@ -189,16 +198,19 @@ class SeenCacheStoreTest {
 
         assertNotNull(cache.album("album:pinned"), "a pinned album was evicted")
         assertNotNull(cache.track("track:pinned"), "a pinned track was evicted")
+        assertNotNull(cache.album("album:summary-pinned"), "an album protected only by its pin was evicted")
+        assertNotNull(cache.track("track:orphan-pinned"), "a track protected only by its pin was evicted")
         // Both windows were released to reach the album ceiling, and every unpinned orphan went.
         assertNull(cache.listState("list:one"))
         assertNull(cache.listState("list:two"))
-        assertEquals(listOf("album:pinned"), cache.localAlbums().map { it.record.rawId })
+        assertEquals(setOf("album:pinned", "album:summary-pinned"), cache.localAlbums().map { it.record.rawId }.toSet())
         // The unpinned sibling of a detail-complete album is still referenced by that detail.
         assertNotNull(cache.track("track:loose"))
 
         // Unpinning releases it to the next pass.
         cache.unpin(CacheItemKind.Album, "album:pinned", CachePinReason.Download)
         cache.unpin(CacheItemKind.Track, "track:pinned", CachePinReason.Download)
+        cache.unpin(CacheItemKind.Album, "album:summary-pinned", CachePinReason.Queue)
         cache.writeEntities(stamp(cache.issue()), CacheEntitySource.ListPage, CacheEntities(albums = listOf(album("album:new", "New"))))
         cache.evictIfNeeded()
         assertEquals(1, cache.localAlbums().size)
