@@ -58,7 +58,7 @@ PROD_INFO_KEYS = {
     "CFBundleIconName", "CFBundleIdentifier", "CFBundleInfoDictionaryVersion", "CFBundleName",
     "CFBundlePackageType", "CFBundleShortVersionString", "CFBundleVersion",
     "ITSAppUsesNonExemptEncryption", "LSApplicationCategoryType", "LSMinimumSystemVersion",
-    "NSHumanReadableCopyright",
+    "NSHumanReadableCopyright", "NSLocalNetworkUsageDescription",
 }
 PROD_TARGET_SETTINGS = {
     "OTHER_LDFLAGS", "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_MODULE_NAME", "PRODUCT_NAME",
