@@ -570,7 +570,7 @@ class AppleLibraryReaderFacadeTest {
         assertNotNull(failed.seenAlbumCount)
     }
 
-    /** Reconnect tells the session the server is back, so an offline search re-runs without a keystroke. */
+    /** Reconnect alone re-runs an offline search without a keystroke: the core revalidates open searches. */
     @Test
     fun reconnectRerunsAnOfflineSearchAndReportsTheSession() = facadeTest { h ->
         val c = h.client()

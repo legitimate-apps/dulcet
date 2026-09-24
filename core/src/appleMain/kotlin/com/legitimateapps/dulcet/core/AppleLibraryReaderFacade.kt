@@ -179,14 +179,12 @@ public class AppleLibraryReaderClient internal constructor(
         }
 
     /**
-     * Reachability returned, or the app came back to the foreground online (§16.14): the session
-     * is told the server is reachable — which re-runs open searches — and then the reader's
-     * reconnect runs in its fixed order: outbox flush, epoch read, visible-screen revalidation,
-     * downloaded-album recheck, nothing else.
+     * Reachability returned, or the app came back to the foreground online (§16.14): the reader's
+     * reconnect runs in its fixed order — outbox flush, epoch read, visible-screen revalidation
+     * (open windows, then open searches), downloaded-album recheck — and nothing else.
      */
     public fun reconnect(completion: (AppleLibraryReaderConnection) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = ::failedConnection) { session ->
-            session.setOnline(true)
             session.reader.reconnect()
             session.connection()
         }
