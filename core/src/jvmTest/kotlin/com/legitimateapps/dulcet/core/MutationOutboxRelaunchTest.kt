@@ -27,7 +27,7 @@ class MutationOutboxRelaunchTest {
         try {
             fun open(scope: CoroutineScope): Pair<DulcetDatabaseStore, LibraryReaderSession> {
                 val store = DulcetDriverFactory(path.toString()).openDulcetDatabase()
-                return store to LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(binding), server, scope)
+                return store to LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(binding), server, scope, formPost = false)
             }
 
             val firstScope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
@@ -74,7 +74,7 @@ class MutationOutboxRelaunchTest {
         try {
             fun open(scope: CoroutineScope): Pair<DulcetDatabaseStore, LibraryReaderSession> {
                 val store = DulcetDriverFactory(path.toString()).openDulcetDatabase()
-                return store to LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(binding), server, scope)
+                return store to LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(binding), server, scope, formPost = false)
             }
 
             val firstScope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())

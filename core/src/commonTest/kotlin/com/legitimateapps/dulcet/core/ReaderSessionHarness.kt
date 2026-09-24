@@ -38,6 +38,12 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     /** Endpoints whose change IS applied but whose answer is lost: the at-least-once case. */
     val applyThenLose = mutableSetOf<String>()
 
+    /** Endpoint -> an HTTP status answered with no envelope, the change NOT applied (a proxy's refusal). */
+    val failWithStatus = mutableMapOf<String, Int>()
+
+    /** Endpoint -> an HTTP status answered with no envelope AFTER the change was applied (a gateway timing out). */
+    val applyThenStatus = mutableMapOf<String, Int>()
+
     /** Endpoints held BEFORE they are applied, until [release]. */
     val holdBeforeApply = mutableSetOf<String>()
 
@@ -75,6 +81,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
         log += Request(endpoint, parameters)
         failWithError[endpoint]?.let { throw LibraryRequestFailure(it) }
         failWithCode[endpoint]?.let { return envelope(""""error":{"code":$it,"message":"refused"}""") }
+        failWithStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>refused</html>", "http://fixture.invalid/rest") }
         if (endpoint in holdBeforeApply) hold()
         val response = when (endpoint) {
             "search3" -> search(parameters)
@@ -97,6 +104,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
             else -> inject(base.request(endpoint, parameters))
         }
         if (endpoint in applyThenLose) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+        applyThenStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>bad gateway</html>", "http://fixture.invalid/rest") }
         if (endpoint in holdAfterAnswer) hold()
         return response
     }
@@ -165,6 +173,7 @@ internal class SessionEnv(
         scope = scope,
         config = config,
         otherOutboxes = otherOutboxes,
+        formPost = false,
     )
 
     fun cache(): BoundSeenCache = store.bind(BINDING)

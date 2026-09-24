@@ -127,7 +127,14 @@ internal class LibraryReader(
     suspend fun reconnect() {
         checkConfined()
         online = true
-        outboxes.flush()
+        // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
+        try {
+            outboxes.flush()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            uncaughtFailures += failure
+        }
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
         val epoch = readEpoch() ?: return
         visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
@@ -276,11 +283,7 @@ internal class LibraryReader(
      * is ordered by when it went out, and its *before* is provably earlier than the request.
      */
     internal suspend fun send(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
-        permits.withPermit {
-            val seq = cache.issue()
-            val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
-            SentResponse(seq, before, transport.request(endpoint, parameters))
-        }
+        permits.withPermit { issue { transport.request(endpoint, parameters) } }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
@@ -292,10 +295,33 @@ internal class LibraryReader(
         parameters: List<Pair<String, String>>,
         formPost: Boolean,
     ): SentResponse = permits.withPermit {
+        issue { transport.requestRepeated(endpoint, parameters, formPost) }
+    }.requireOk(endpoint, emptyMap())
+
+    /**
+     * Runs [block] holding ONE slot of the per-server bound for its whole length: every request it
+     * sends through the [HeldSlot] goes out on that slot, one after another, and no other request of
+     * this reader is sent in between. Playlist editing holds one from its re-read to its write, so
+     * the moment in which another client's change can land unseen is one round trip (§18.6).
+     * [block] must send nothing any other way — with a bound of one, that would wait for ever.
+     */
+    internal suspend fun <T> withOneSlot(block: suspend (HeldSlot) -> T): T = permits.withPermit { block(HeldSlot()) }
+
+    /** Requests sent on a slot already held by [withOneSlot]. Valid only inside that block. */
+    internal inner class HeldSlot internal constructor() {
+        suspend fun send(endpoint: String, parameters: Map<String, String>): SentResponse =
+            issue { transport.request(endpoint, parameters) }
+
+        suspend fun sendRepeatedChecked(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean): SentResponse =
+            issue { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
+    }
+
+    /** Takes the issue sequence and the *before* reading as the request goes out, on a held slot. */
+    private suspend fun issue(request: suspend () -> LibraryEndpointResponse): SentResponse {
         val seq = cache.issue()
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
-        SentResponse(seq, before, transport.requestRepeated(endpoint, parameters, formPost))
-    }.requireOk(endpoint, emptyMap())
+        return SentResponse(seq, before, request())
+    }
 
     private val bounded = LibraryEndpointTransport { endpoint, parameters -> send(endpoint, parameters).response }
 
@@ -664,6 +690,9 @@ internal sealed interface LibraryItem {
         /**
          * Whether this account may edit it: the server said `readonly: false`, or — for a server that
          * does not say — the account owns it. Never true for another user's playlist (§18.6).
+         * The shells show [owner] and present a playlist that is not editable as read-only — no
+         * edit affordance at all, never one that fails when used — so another user's playlist is
+         * recognisable as theirs.
          */
         val editable: Boolean = false,
         /** Edits made on this device that the server has not yet confirmed are shown (§18.6). */
@@ -791,6 +820,18 @@ internal fun Throwable.asReaderError(): DomainError = when (this) {
     is AuthenticatedEndpointFailure -> error
     else -> mapAccountConnectionFailure(this)
 }
+
+/** 413 or 414: the request was too large for the server or a proxy. The same request never fits. */
+internal val DomainError.Server.HttpStatus.tooLarge: Boolean get() = status == 413 || status == 414
+
+/** 502, 503 or 504: a gateway that could not reach the server — as unreachable as no answer at all. */
+internal val DomainError.Server.HttpStatus.gatewayCannotReachServer: Boolean get() = status in 502..504
+
+/**
+ * A 4xx refused the request before anything handled it; a 5xx may come from a gateway after the
+ * server applied it, so it proves nothing.
+ */
+internal val DomainError.Server.HttpStatus.provesNotApplied: Boolean get() = status in 400..499
 
 /** Subsonic code 70, "the requested data was not found". */
 internal fun DomainError.isNotFound(): Boolean =

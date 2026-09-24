@@ -423,6 +423,13 @@ private fun DomainError.failureClass(): FailureClass = when (this) {
     is DomainError.Server.Known -> if (code == 0) FailureClass.ThisChange else FailureClass.Refused
     is DomainError.Server.Unknown -> if (code == 0) FailureClass.ThisChange else FailureClass.Refused
     is DomainError.Server.Busy -> FailureClass.ThisChange
+    // An HTTP status with no envelope: a gateway that cannot reach the server stops the flush like
+    // no answer at all; a request too large never fits; anything else is this change's failure.
+    is DomainError.Server.HttpStatus -> when {
+        gatewayCannotReachServer -> FailureClass.Transport
+        tooLarge -> FailureClass.Refused
+        else -> FailureClass.ThisChange
+    }
     // Code 50: this user may not make this change.
     DomainError.Auth.Forbidden -> FailureClass.Refused
     is DomainError.Protocol -> FailureClass.ThisChange
@@ -434,6 +441,7 @@ private fun DomainError.provesNotApplied(): Boolean = when (this) {
     DomainError.Transport.Unreachable -> true
     is DomainError.Security -> true
     is DomainError.Auth -> true
+    is DomainError.Server.HttpStatus -> provesNotApplied
     is DomainError.Server -> true
     else -> false
 }
@@ -667,7 +675,8 @@ internal class LibraryReaderSession(
     config: LibraryReaderConfig = LibraryReaderConfig(),
     downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
-    formPost: Boolean = false,
+    /** Required: whether the account's server advertises the OpenSubsonic `formPost` extension (§18.6). */
+    formPost: Boolean,
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
@@ -687,10 +696,12 @@ internal class LibraryReaderSession(
         config = config,
         overlay = outbox,
         downloads = downloads,
+        // Each flush is independent: one whose database fails must not skip the next, nor the
+        // epoch read that follows (§16.14). What one throws is recorded, never raised.
         outboxes = ReconnectOutboxes {
-            favouritesRef.flush()
-            playlistsRef.flush()
-            otherOutboxes.flush()
+            flushRecordingFailure { favouritesRef.flush() }
+            flushRecordingFailure { playlistsRef.flush() }
+            flushRecordingFailure { otherOutboxes.flush() }
         },
         playlistOverlay = object : LibraryPlaylistOverlay {
             override fun resolve(rawId: String) = playlistsRef.resolve(rawId)
@@ -707,6 +718,16 @@ internal class LibraryReaderSession(
     val playlists = PlaylistEditor(database, { reader }, formPost).also { playlistsRef = it }
 
     private val searches = mutableListOf<LibrarySearchSession>()
+
+    private suspend fun flushRecordingFailure(flush: suspend () -> Unit) {
+        try {
+            flush()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            reader.uncaughtFailures += failure
+        }
+    }
 
     /** A search over this reader whose rows carry the same overlaid favourite state (§16.15). */
     fun openSearch(

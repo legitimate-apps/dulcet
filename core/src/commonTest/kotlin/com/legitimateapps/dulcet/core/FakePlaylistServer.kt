@@ -18,7 +18,9 @@ package com.legitimateapps.dulcet.core
  */
 internal class FakePlaylistServer(
     val user: String = "listener",
-    val songs: Set<String> = (1..12).map { "song-$it" }.toSet(),
+    val songs: Set<String> = (1..3000).map { "song-$it" }.toSet(),
+    /** The server's clock, epoch milliseconds: the `created` stamp of every playlist it makes. */
+    var now: () -> Long = { 0L },
 ) : LibraryEndpointTransport {
     data class Request(val endpoint: String, val parameters: List<Pair<String, String>>, val formPost: Boolean) {
         fun all(name: String): List<String> = parameters.filter { it.first == name }.map { it.second }
@@ -32,6 +34,7 @@ internal class FakePlaylistServer(
         val entries: MutableList<String> = mutableListOf(),
         var comment: String? = null,
         var isPublic: Boolean = false,
+        val created: Long = 0L,
     )
 
     val playlists = mutableListOf<Playlist>()
@@ -53,10 +56,28 @@ internal class FakePlaylistServer(
     /** Whether `createPlaylist` answers with the playlist (OpenSubsonic) or an empty `ok`. */
     var createAnswersWithPlaylist = true
 
+    /** A server that does not send `readonly` at all. */
+    var omitReadonly = false
+
+    /** A server that does not say who owns a playlist. */
+    var omitOwner = false
+
+    /** A server that answers `ok` to a comment change and does not apply it. */
+    var ignoreComment = false
+
+    /** Endpoint -> an HTTP status answered with a non-envelope body, nothing applied (a proxy's 414). */
+    val httpStatus = mutableMapOf<String, Int>()
+
+    /** Endpoint -> an HTTP status answered AFTER the change was applied (a gateway timing out on it). */
+    val applyThenStatus = mutableMapOf<String, Int>()
+
+    /** Every request's parameter bytes, as a query string would carry them. */
+    val urlLengths = mutableListOf<Int>()
+
     fun playlist(id: String): Playlist = playlists.first { it.id == id }
 
-    fun add(name: String, entries: List<String>, owner: String = user, isPublic: Boolean = false): Playlist =
-        Playlist("pl-${nextId++}", name, owner, entries.toMutableList(), isPublic = isPublic).also { playlists += it }
+    fun add(name: String, entries: List<String>, owner: String = user, isPublic: Boolean = false, created: Long = now()): Playlist =
+        Playlist("pl-${nextId++}", name, owner, entries.toMutableList(), isPublic = isPublic, created = created).also { playlists += it }
 
     fun writes(): List<Request> = log.filter { it.endpoint in WRITES }
 
@@ -71,13 +92,18 @@ internal class FakePlaylistServer(
         formPost: Boolean,
     ): LibraryEndpointResponse = answer(Request(endpoint, parameters, formPost))
 
-    private fun answer(request: Request): LibraryEndpointResponse {
+    private suspend fun answer(request: Request): LibraryEndpointResponse {
         log += request
+        urlLengths += request.parameters.sumOf { it.first.length + it.second.length + 2 }
+        // A real transport suspends: other coroutines may run while a request is out.
+        kotlinx.coroutines.yield()
         failWithError[request.endpoint]?.let { throw LibraryRequestFailure(it) }
+        httpStatus[request.endpoint]?.let { return LibraryEndpointResponse(it, "<html>request rejected</html>", "http://fixture.invalid/rest") }
         failWithCode[request.endpoint]?.let { return error(it) }
         if (request.endpoint in WRITES) beforeWrite(request)
         val response = respond(request)
         if (request.endpoint in applyThenLose) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+        applyThenStatus[request.endpoint]?.let { return LibraryEndpointResponse(it, "<html>bad gateway</html>", "http://fixture.invalid/rest") }
         return response
     }
 
@@ -127,7 +153,7 @@ internal class FakePlaylistServer(
                 p.owner != user -> error(50)
                 else -> {
                     request.one("name")?.takeIf(String::isNotEmpty)?.let { p.name = it }
-                    request.one("comment")?.let { p.comment = it.ifEmpty { null } }
+                    if (!ignoreComment) request.one("comment")?.let { p.comment = it.ifEmpty { null } }
                     request.one("public")?.let { p.isPublic = it == "true" }
                     val remove = request.all("songIndexToRemove").mapNotNull(String::toIntOrNull).toSet()
                     val kept = p.entries.filterIndexed { index, _ -> index !in remove }
@@ -152,10 +178,13 @@ internal class FakePlaylistServer(
     }
 
     private fun header(p: Playlist): String = buildString {
-        append("""{"id":"${p.id}","name":"${p.name}","songCount":${p.entries.size},"duration":${p.entries.size * 60},"owner":"${p.owner}"""")
+        append("""{"id":"${p.id}","name":"${p.name}","songCount":${p.entries.size},"duration":${p.entries.size * 60}""")
+        if (!omitOwner) append(""","owner":"${p.owner}"""")
         p.comment?.let { append(""","comment":"$it"""") }
         if (p.isPublic) append(""","public":true""")
-        append(""","readonly":${p.owner != user},"coverArt":"pl-${p.id}"}""")
+        append(",\"created\":\"" + kotlin.time.Instant.fromEpochMilliseconds(p.created) + "\"")
+        if (!omitReadonly) append(",\"readonly\":" + (p.owner != user))
+        append(",\"coverArt\":\"pl-" + p.id + "\"}")
     }
 
     private fun songJson(id: String) =

@@ -60,7 +60,7 @@ class PlaylistEditingTest {
     }
 
     @Test
-    fun aRemovalOnAnUnchangedListIsOneWholeListWriteReadBack() = playlistTest { env ->
+    fun aRemovalOnAnUnchangedListSendsTheVerifiedPositionAndIsReadBack() = playlistTest { env ->
         val p = env.server.add("Mix", listOf("song-1", "song-2", "song-3", "song-2"))
         val session = env.session()
         val detail = env.open(session, LibraryQuery.Playlist(p.id))
@@ -74,11 +74,12 @@ class PlaylistEditingTest {
         assertTrue(assertIs<LibraryItem.Playlist>(tap.value.header).pendingChanges)
         advanceUntilIdle()
         assertEquals(listOf("song-1", "song-2", "song-3"), p.entries)
+        // A removal only: the verified position of the entry chosen, never a whole list (§18.6).
         val write = env.server.writes().single()
-        assertEquals("createPlaylist", write.endpoint)
-        assertEquals(listOf("playlistId" to p.id, "songId" to "song-1", "songId" to "song-2", "songId" to "song-3"), write.parameters)
-        assertTrue(write.formPost, "a whole list travels as a form body when the server advertises formPost")
-        assertEquals(listOf("getPlaylist", "createPlaylist", "getPlaylist"), env.server.log.map { it.endpoint }, "verified, written, read back")
+        assertEquals("updatePlaylist", write.endpoint)
+        assertEquals(listOf("playlistId" to p.id, "songIndexToRemove" to "3"), write.parameters)
+        assertTrue(write.formPost, "repeated parameters travel as a form body when the server advertises formPost")
+        assertEquals(listOf("getPlaylist", "updatePlaylist", "getPlaylist"), env.server.log.map { it.endpoint }, "verified, written, read back")
         assertEquals(PlaylistEditOutcome.Saved(p.id, PlaylistRowKind.Entries), env.outcomes.last())
         assertFalse(assertIs<LibraryItem.Playlist>(detail.last.header).pendingChanges)
     }
@@ -109,7 +110,7 @@ class PlaylistEditingTest {
         assertEquals(emptyList(), p.entries)
         val write = env.server.writes().single()
         assertEquals("updatePlaylist", write.endpoint)
-        assertEquals(listOf("0", "1"), write.all("songIndexToRemove"))
+        assertEquals(listOf("1", "0"), write.all("songIndexToRemove"), "descending")
         assertEquals(PlaylistEditOutcome.Saved(p.id, PlaylistRowKind.Entries), env.outcomes.last())
     }
 
@@ -399,7 +400,7 @@ class PlaylistEditingTest {
         env.server.applyThenLose.clear()
         session.playlists.flush()
         advanceUntilIdle()
-        assertEquals(1, env.server.count("createPlaylist"), "the re-read showed it landed: not sent again")
+        assertEquals(listOf("createPlaylist"), env.server.writes().map { it.endpoint }, "the re-read showed it landed: nothing sent again")
         assertEquals(PlaylistEditOutcome.Saved(p.id, PlaylistRowKind.Entries), env.outcomes.last())
         assertEquals(0L, session.playlists.pendingCount())
     }
@@ -532,16 +533,21 @@ internal class PlaylistEnv(
     private val database: DulcetDatabaseStore,
     private val store: SeenCacheStore,
     private val scope: CoroutineScope,
+    val clock: ManualWallClock,
+    val driver: app.cash.sqldelight.db.SqlDriver,
 ) {
     val outcomes = mutableListOf<PlaylistEditOutcome>()
 
-    fun session(): LibraryReaderSession = LibraryReaderSession(
+    fun session(
+        formPost: Boolean = true,
+        config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+    ): LibraryReaderSession = LibraryReaderSession(
         database = database.database,
         cache = store.bind(BINDING),
         transport = server,
         scope = scope,
-        config = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
-        formPost = true,
+        config = config,
+        formPost = formPost,
     ).also { it.playlists.addOutcomeListener(outcomes::add) }
 
     class Opened(val handle: LibraryWindowHandle, val all: MutableList<Seen>) {
@@ -566,7 +572,10 @@ internal fun playlistTest(block: suspend TestScope.(PlaylistEnv) -> Unit) = runT
     val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
     try {
         val database = DulcetDatabaseStore.open(driver)
-        block(PlaylistEnv(FakePlaylistServer(), database, SeenCacheStore(database, ManualWallClock(now = 3_000_000)), scope))
+        val clock = ManualWallClock(now = 3_000_000)
+        // The device and the server share one clock here; §18.6 states what a skew costs.
+        val server = FakePlaylistServer(now = { clock.now })
+        block(PlaylistEnv(server, database, SeenCacheStore(database, clock), scope, clock, driver))
     } finally {
         scope.cancel()
         driver.close()

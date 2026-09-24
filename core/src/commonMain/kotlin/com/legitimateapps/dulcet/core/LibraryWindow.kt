@@ -1157,16 +1157,18 @@ internal class CollectionDetailWindow(
 /**
  * One `getPlaylist`, written through: the playlist and its ordered entries (duplicates kept, §18.6)
  * in one transaction. The playlist screen and playlist editing both read through this; the caller
- * holds the playlist's list lock (one writer per list). [issued] learns the request's sequence
- * before the envelope is judged, so a not-found can be recorded with it.
+ * holds the playlist's list lock (one writer per list). [slot]: sent on a slot the caller already
+ * holds ([LibraryReader.withOneSlot]). [issued] learns the request's sequence before the envelope
+ * is judged, so a not-found can be recorded with it.
  */
 internal suspend fun LibraryReader.readPlaylistDetail(
     rawId: String,
     epoch: CatalogEpoch?,
+    slot: LibraryReader.HeldSlot? = null,
     issued: (Long) -> Unit = {},
-): List<CacheTrackRecord> {
+): PlaylistDetailRead {
     val parameters = mapOf("id" to rawId)
-    val sent = send("getPlaylist", parameters)
+    val sent = slot?.send("getPlaylist", parameters) ?: send("getPlaylist", parameters)
     issued(sent.issueSeq)
     sent.requireOk("getPlaylist", parameters)
     val now = cache.now()
@@ -1181,7 +1183,12 @@ internal suspend fun LibraryReader.readPlaylistDetail(
     )
     cache.markPlaylistDetail(sent.issueSeq, rawId)
     liveListReads[listKey] = cache.now()
-    return entries
+    return PlaylistDetailRead(playlist, entries)
+}
+
+/** A playlist as one `getPlaylist` read it: its header and its entries in the server's order. */
+internal class PlaylistDetailRead(val playlist: CachePlaylistRecord, val entries: List<CacheTrackRecord>) {
+    val ids: List<String> get() = entries.map { it.rawId }
 }
 
 // ---- Item mapping -------------------------------------------------------------------------------------

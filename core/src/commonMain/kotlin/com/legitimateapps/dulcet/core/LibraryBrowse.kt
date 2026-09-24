@@ -465,8 +465,13 @@ internal suspend fun LibraryEndpointTransport.checkedRequest(
     parameters: Map<String, String> = emptyMap(),
 ): String {
     val response = request(endpoint, parameters)
+    // An error status with no envelope is the server or a proxy refusing the HTTP request itself —
+    // a 414 for a URL too long, a 502 from a gateway — and is named as such, never as a malformed
+    // answer (spec §18.6). An envelope, whatever the status, is judged as an envelope.
     val envelope = parseLibraryEnvelope(response.body)
-        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+        ?: throw LibraryRequestFailure(
+            if (response.statusCode in 400..599) DomainError.Server.HttpStatus(response.statusCode) else DomainError.Protocol.MalformedEnvelope,
+        )
     if (envelope.status != "ok") {
         val error = envelope.payload["error"] as? JsonObject
         val code = error.int("code") ?: -1

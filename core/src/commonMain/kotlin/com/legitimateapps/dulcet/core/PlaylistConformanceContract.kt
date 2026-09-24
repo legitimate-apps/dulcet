@@ -50,6 +50,12 @@ public data class PlaylistServerFacts(
     val replaceEntriesAsSent: Boolean,
     /** The same replace sent as a form body (OpenSubsonic `formPost`). */
     val formPostReplaceEntriesAsSent: Boolean,
+    /**
+     * A replace of [largeFormPostReplaceSize] entries — duplicates, in an order no sort produces —
+     * sent as ONE form body: whether the list read back is exactly that list, in that order.
+     */
+    val largeFormPostReplaceSize: Int,
+    val largeFormPostReplaceKeptOrder: Boolean,
     /** A replace with no `songId`: the entries after it equal the entries before it. */
     val emptyReplaceChangedNothing: Boolean,
     val emptyNameIgnored: Boolean,
@@ -79,6 +85,42 @@ public data class PlaylistRoundTripResult(
     val offlineEditsPublishedWithoutRequests: Boolean,
     val offlineReplayWrites: List<String>,
     val codeAfterDelete: Int?,
+)
+
+/**
+ * CONF-89 without `formPost`: the production editor on a session told the server does NOT take a
+ * form body, over a list too long for one query string. Each observation is read back raw.
+ */
+public data class PlaylistQueryStringResult(
+    /** Removing most entries of a long list: batches, highest positions first, each verified. */
+    val removal: PlaylistEditObservation,
+    /** Appending many songs: batches, in order. */
+    val append: PlaylistEditObservation,
+    /** Moving one entry of a list whose whole-list write would not fit: refused, nothing written. */
+    val reorder: PlaylistEditObservation,
+    /** The parameter bytes of every write the editor sent, and the budget it keeps them within. */
+    val writeParameterBytes: List<Int>,
+    val budgetBytes: Int,
+)
+
+/**
+ * CONF-89, a create whose answer is lost (§18.6): the production editor over a transport that
+ * delivers the request and then loses the answer, against the server's real `created` times.
+ */
+public data class PlaylistLostCreateResult(
+    /** Lost, then flushed again: the outcome, the creates sent, and the playlists of that name. */
+    val adoptedOutcome: String,
+    val adoptedCreateWrites: Int,
+    val adoptedPlaylistsNamed: Int,
+    /** Whether the adopted id is the one server playlist of that name. */
+    val adoptedIdIsTheServers: Boolean,
+    /** Lost, then deleted here: the outcomes told, and the playlists of that name left. */
+    val cancelledOutcomes: List<String>,
+    val cancelledPlaylistsNamedAfter: Int,
+    /** A create that never arrived, deleted here, beside an OLDER playlist of that name and songs. */
+    val olderOutcomes: List<String>,
+    val olderSurvived: Boolean,
+    val olderDeleteWrites: Int,
 )
 
 /** CONF-90: the hazard demonstrated raw, then the editor refusing it; and the positive control. */
@@ -147,6 +189,10 @@ public object PlaylistConformanceContract {
         val replaceEntries = raw.entries(created) == listOf(songs[3], songs[1])
         raw.writeBody("createPlaylist", listOf("playlistId" to created, "songId" to songs[4], "songId" to songs[0]), formPost = true)
         val formPostEntries = raw.entries(created) == listOf(songs[4], songs[0])
+        // What the editor's whole-list write relies on for a large playlist: one form body, in order.
+        val large = scrambled(songs, LARGE_REPLACE_SIZE)
+        raw.writeBody("createPlaylist", listOf("playlistId" to created) + large.map { "songId" to it }, formPost = true)
+        val largeKeptOrder = raw.entries(created) == large
         val beforeEmpty = raw.entries(created)
         raw.write("createPlaylist", listOf("playlistId" to created))
         val emptyReplaceUnchanged = raw.entries(created) == beforeEmpty
@@ -171,6 +217,8 @@ public object PlaylistConformanceContract {
             replaceKeptHeader = replaceKeptHeader,
             replaceEntriesAsSent = replaceEntries,
             formPostReplaceEntriesAsSent = formPostEntries,
+            largeFormPostReplaceSize = large.size,
+            largeFormPostReplaceKeptOrder = largeKeptOrder,
             emptyReplaceChangedNothing = emptyReplaceUnchanged,
             emptyNameIgnored = emptyNameIgnored,
             emptyCommentCleared = commentCleared,
@@ -242,6 +290,99 @@ public object PlaylistConformanceContract {
         step("delete", emptyList(), null, { id }) { env.session.playlists.delete(id) }
         env.cleanup -= id
         PlaylistRoundTripResult(observations, publishedOffline, offlineWrites, env.raw.code("getPlaylist", listOf("id" to id)))
+    }
+
+    public suspend fun editorWithoutFormPost(request: PlaylistConformanceRequest): PlaylistQueryStringResult = withSession(request, formPost = false) { env ->
+        val songs = env.songs
+        val (_, id) = env.raw.create("CONF-89 query string", scrambled(songs, QUERY_STRING_LIST_SIZE), formPost = true)
+        env.cleanup += id
+        val detail = env.open(LibraryQuery.Playlist(id))
+        env.awaitLive(detail)
+        fun view() = detail().items.map { it.rawId }
+        suspend fun step(edit: String, expected: List<String>, act: () -> Unit): PlaylistEditObservation {
+            val before = env.writes.size
+            env.outcomes.clear()
+            act()
+            env.session.playlists.flush()
+            return PlaylistEditObservation(
+                edit, env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none", expected, env.raw.entries(id), null, null,
+                env.writes.drop(before),
+            )
+        }
+        val removeAt = view().indices.filter { it % 6 != 0 }.toSet()
+        val kept = view().filterIndexed { index, _ -> index !in removeAt }
+        val removal = step("remove", kept) { env.session.playlists.remove(id, removeAt, view()) }
+        val added = scrambled(songs.reversed(), QUERY_STRING_APPEND_SIZE)
+        val append = step("append", kept + added) { env.session.playlists.append(id, added) }
+        val unchanged = env.raw.entries(id).orEmpty()
+        val reorder = step("move", unchanged) { env.session.playlists.move(id, 0, view().lastIndex, view()) }
+        PlaylistQueryStringResult(removal, append, reorder, env.writeParameterBytes.toList(), PlaylistEditor.QUERY_BUDGET_BYTES)
+    }
+
+    public suspend fun lostCreate(request: PlaylistConformanceRequest): PlaylistLostCreateResult = withSession(request) { env ->
+        val songs = env.songs
+        suspend fun named(name: String) = parseReaderPlaylists(env.raw.body("getPlaylists")).filter { it.name == name }
+        // Recorded offline, so no flush starts on its own: each flush below is the one named.
+        fun createOffline(name: String, songs: List<String>): String {
+            env.session.setOnline(false)
+            val localId = env.session.playlists.create(name, songs).localId!!
+            env.session.setOnline(true)
+            return localId
+        }
+
+        // Adopted: the create lands, its answer is lost, and the next flush finds it by proof.
+        val adoptedName = "CONF-89 lost create"
+        env.loseAnswer["createPlaylist"] = 1
+        env.outcomes.clear()
+        val writesBefore = env.writes.size
+        val adoptedLocal = createOffline(adoptedName, listOf(songs[0], songs[1], songs[0]))
+        env.session.playlists.flush() // delivered; the answer lost
+        env.session.playlists.flush() // found by proof
+        val adopted = named(adoptedName)
+        adopted.forEach { env.cleanup += it.rawId }
+        val adoptedOutcome = env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none"
+        val adoptedCreates = env.writes.drop(writesBefore).count { it == "createPlaylist" }
+        val adoptedId = env.session.reader.playlistOverlay.resolve(adoptedLocal)
+
+        // Cancelled: the create lands, its answer is lost, then the person deletes it here.
+        val cancelledName = "CONF-89 lost then deleted"
+        env.loseAnswer["createPlaylist"] = 1
+        env.outcomes.clear()
+        val cancelledLocal = createOffline(cancelledName, listOf(songs[2]))
+        env.session.playlists.flush() // delivered; the answer lost
+        env.session.playlists.delete(cancelledLocal)
+        env.session.playlists.flush()
+        val cancelledOutcomes = env.outcomes.map(::outcomeName)
+        val cancelledAfter = named(cancelledName)
+        cancelledAfter.forEach { env.cleanup += it.rawId }
+
+        // Older: a playlist of the same name and songs made BEFORE the attempt, which never arrived.
+        val olderName = "CONF-89 older namesake"
+        val (_, older) = env.raw.create(olderName, listOf(songs[3]))
+        env.cleanup += older
+        delay(OLDER_GAP_MILLIS)
+        env.dropRequest["createPlaylist"] = 1
+        env.outcomes.clear()
+        val olderLocal = createOffline(olderName, listOf(songs[3]))
+        env.session.playlists.flush() // never delivered, and not provably so
+        val deletesBefore = env.writes.count { it == "deletePlaylist" }
+        env.session.playlists.delete(olderLocal)
+        env.session.playlists.flush()
+        val olderOutcomes = env.outcomes.map(::outcomeName)
+        val olderLeft = named(olderName)
+        olderLeft.forEach { env.cleanup += it.rawId }
+
+        PlaylistLostCreateResult(
+            adoptedOutcome = adoptedOutcome,
+            adoptedCreateWrites = adoptedCreates,
+            adoptedPlaylistsNamed = adopted.size,
+            adoptedIdIsTheServers = adopted.singleOrNull()?.rawId == adoptedId,
+            cancelledOutcomes = cancelledOutcomes,
+            cancelledPlaylistsNamedAfter = cancelledAfter.size,
+            olderOutcomes = olderOutcomes,
+            olderSurvived = olderLeft.map { it.rawId } == listOf(older),
+            olderDeleteWrites = env.writes.count { it == "deletePlaylist" } - deletesBefore,
+        )
     }
 
     public suspend fun staleIndex(request: PlaylistConformanceRequest): PlaylistStaleIndexResult = withSession(request) { env ->
@@ -390,6 +531,7 @@ public object PlaylistConformanceContract {
         is PlaylistEditOutcome.Diverged -> "Diverged"
         is PlaylistEditOutcome.Superseded -> "Superseded"
         is PlaylistEditOutcome.NotRecorded -> "NotRecorded"
+        is PlaylistEditOutcome.PossiblyCreated -> "PossiblyCreated"
     }
 
     private suspend fun <T> withRaw(
@@ -414,6 +556,11 @@ public object PlaylistConformanceContract {
         val writes: List<String>,
         val outcomes: MutableList<PlaylistEditOutcome>,
         val cleanup: MutableSet<String>,
+        val writeParameterBytes: List<Int>,
+        /** Per endpoint: how many of its next writes are delivered and then have their answer lost. */
+        val loseAnswer: MutableMap<String, Int>,
+        /** Per endpoint: how many of its next writes fail before reaching the server. */
+        val dropRequest: MutableMap<String, Int>,
     ) {
         private val publications = mutableListOf<MutableList<LibraryPublication>>()
 
@@ -437,7 +584,7 @@ public object PlaylistConformanceContract {
      * A production session on its own dedicated reader thread (the production dispatcher, so the
      * confinement is real), over the production transport and a fresh disposable database.
      */
-    private suspend fun <T> withSession(request: PlaylistConformanceRequest, block: suspend (SessionEnv) -> T): T {
+    private suspend fun <T> withSession(request: PlaylistConformanceRequest, formPost: Boolean = true, block: suspend (SessionEnv) -> T): T {
         val dispatcher = newLibraryReaderDispatcher()
         val database = createLibrarySyncControlDatabase()
         val raw = RawPlaylistClient(request)
@@ -448,6 +595,14 @@ public object PlaylistConformanceContract {
         )
         val requests = mutableListOf<String>()
         val writes = mutableListOf<String>()
+        val writeParameterBytes = mutableListOf<Int>()
+        val loseAnswer = mutableMapOf<String, Int>()
+        val dropRequest = mutableMapOf<String, Int>()
+        fun take(counts: MutableMap<String, Int>, endpoint: String): Boolean {
+            val left = counts[endpoint] ?: 0
+            if (left > 0) counts[endpoint] = left - 1
+            return left > 0
+        }
         val recording = object : LibraryEndpointTransport {
             override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
                 requests += endpoint
@@ -457,8 +612,15 @@ public object PlaylistConformanceContract {
 
             override suspend fun requestRepeated(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean): LibraryEndpointResponse {
                 requests += endpoint
-                if (endpoint in WRITES) writes += endpoint
-                return transport.requestRepeated(endpoint, parameters, formPost)
+                if (endpoint in WRITES) {
+                    writes += endpoint
+                    writeParameterBytes += encodedLength(parameters)
+                }
+                // A timeout proves nothing about delivery: the editor must treat both alike.
+                if (take(dropRequest, endpoint)) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+                val response = transport.requestRepeated(endpoint, parameters, formPost)
+                if (take(loseAnswer, endpoint)) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+                return response
             }
         }
         try {
@@ -472,12 +634,12 @@ public object PlaylistConformanceContract {
                         recording,
                         scope,
                         LibraryReaderConfig(lookAheadMaxPerViewport = 0),
-                        formPost = true,
+                        formPost = formPost,
                     )
                     val outcomes = mutableListOf<PlaylistEditOutcome>()
                     session.playlists.addOutcomeListener(outcomes::add)
                     session.reader.connect()
-                    block(SessionEnv(session, raw, raw.songIds(), requests, writes, outcomes, cleanup))
+                    block(SessionEnv(session, raw, raw.songIds(), requests, writes, outcomes, cleanup, writeParameterBytes, loseAnswer, dropRequest))
                 } finally {
                     scope.cancel()
                 }
@@ -492,8 +654,26 @@ public object PlaylistConformanceContract {
     }
 
     private val WRITES = setOf("createPlaylist", "updatePlaylist", "deletePlaylist")
+    private const val LARGE_REPLACE_SIZE = 2_400
+    private const val QUERY_STRING_LIST_SIZE = 600
+    private const val QUERY_STRING_APPEND_SIZE = 450
+
+    /** Between the older namesake and the attempt: enough that the server's clock orders them. */
+    private const val OLDER_GAP_MILLIS = 50L
     private const val AWAIT_POLLS = 200
     private const val AWAIT_POLL_MILLIS = 50L
+}
+
+/**
+ * [size] entries drawn from [songs] by a fixed pseudo-random sequence: duplicates throughout and an
+ * order no sort or de-duplication preserves, so a server that reorders or collapses is seen.
+ */
+private fun scrambled(songs: List<String>, size: Int): List<String> {
+    var state = 12_345L
+    return List(size) {
+        state = (state * 1_103_515_245L + 12_345L) and 0x7fff_ffffL
+        songs[((state ushr 16) % songs.size).toInt()]
+    }
 }
 
 private fun createdPlaylistIdOf(body: String): String? {
@@ -536,8 +716,8 @@ private class RawPlaylistClient(request: PlaylistConformanceRequest) {
         return ((payload?.get("scanStatus") as? JsonObject)?.get("lastScan") as? JsonPrimitive)?.content
     }
 
-    suspend fun create(name: String, songs: List<String>): Pair<String, String> {
-        val (body, _) = writeBody("createPlaylist", listOf("name" to name) + songs.map { "songId" to it })
+    suspend fun create(name: String, songs: List<String>, formPost: Boolean = false): Pair<String, String> {
+        val (body, _) = writeBody("createPlaylist", listOf("name" to name) + songs.map { "songId" to it }, formPost)
         return body to (createdPlaylistIdOf(body) ?: error("createPlaylist answered without a playlist"))
     }
 
@@ -555,6 +735,8 @@ private class RawPlaylistClient(request: PlaylistConformanceRequest) {
 
     suspend fun code(endpoint: String, parameters: List<Pair<String, String>>): Int? =
         errorCode(transport.requestRepeated(endpoint, parameters, false).body)
+
+    suspend fun body(endpoint: String): String = transport.request(endpoint, emptyMap()).body
 
     suspend fun entries(id: String): List<String>? {
         val body = transport.request("getPlaylist", mapOf("id" to id)).body
