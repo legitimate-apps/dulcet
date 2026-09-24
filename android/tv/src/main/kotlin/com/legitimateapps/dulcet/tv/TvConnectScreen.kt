@@ -198,7 +198,7 @@ private fun DomainError.tvConnectMessage(): Int = when (this) {
     DomainError.Protocol.UnexpectedBinary, is DomainError.Protocol.Incompatible,
     DomainError.Protocol.NotASubsonicServer -> R.string.tv_error_protocol
     is DomainError.Server.Busy, is DomainError.Server.Known, is DomainError.Server.Unknown,
-    DomainError.Playback.NoPlayableSource -> R.string.tv_error_server
+    is DomainError.Server.HttpStatus, DomainError.Playback.NoPlayableSource -> R.string.tv_error_server
     DomainError.Auth.InvalidCredentials, DomainError.Auth.TokenAuthUnsupported, DomainError.Auth.Forbidden,
     DomainError.Auth.UnsupportedAuthenticationChallenge -> R.string.tv_error_auth
     is DomainError.CapabilityUnsupported -> R.string.tv_error_capability
