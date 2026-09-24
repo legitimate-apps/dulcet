@@ -88,39 +88,52 @@ import kotlinx.serialization.json.longOrNull
  *
  * **A create in doubt is identified without any clock.** Just before every send of a create, the
  * server's playlists are listed and the ids of ALL of them — whatever their names — recorded with
- * the send; a playlist another create of this device is found to have made (answered, adopted or
- * chosen) joins that record for every create still in doubt, and one waiting on a choice that named
- * it looks again without it. After a lost answer — or an empty
- * `ok` — its CANDIDATES are the playlists of the name that send carried whose ids are in no such
- * record, and not mapped to another create made here, whoever the server says owns them. No
- * `created` stamp, timezone or device clock is compared, so a playlist that existed before the send
- * is never a candidate — however close in time, and even renamed into the name later — and nor is
- * this device's own other create of the same name.
+ * the send. Every id this device later ties to another of its creates joins that record for every
+ * create still in doubt: one another create is found to have made (answered, adopted or chosen),
+ * and one offered to the person for another create, as what it may have made or may be. After a
+ * lost answer — or an empty `ok` — a create's CANDIDATES are the playlists of the name that send
+ * carried whose ids are in no such record, and not mapped to another create made here, whoever the
+ * server says owns them. No `created` stamp, timezone or device clock is compared, so a playlist
+ * that existed before the send is never a candidate — however close in time, and even renamed into
+ * the name later — and nor is one this device knows another of its creates made, or has offered
+ * for another. What another create's lost send made CAN be a candidate while that create is still
+ * in doubt itself: nothing yet says whose it is. So a lone candidate is adopted only while no other
+ * create of this device that sent the same name is in doubt, and named otherwise; no create adopts
+ * a playlist another create of that name may have made.
  * - No candidate: nothing the send could have made is listed, and it is sent again. This does not
  *   prove the send did not land: a server that commits a timed-out create only after the next
  *   flush has listed its playlists ends with two, and nobody is told.
- * - Exactly one, owned by this account or with no owner stated (compared ignoring case), holding
- *   the songs sent in the order sent, or some of them — every copy of a song left out, never all
- *   the songs: it is the create's playlist, adopted, and any difference from the songs sent is told
+ * - Exactly one, while no other create of this device that sent the same name is in doubt, owned
+ *   by this account or with no owner stated (compared ignoring case), holding the songs sent in the
+ *   order sent, or some of them — every copy of a song left out, never all the songs: it is the
+ *   create's playlist, adopted, and any difference from the songs sent is told
  *   ([PlaylistEditOutcome.Diverged]). A server dropping ids it does not know cannot be told apart
  *   from a playlist another client made with fewer of the songs.
- * - Several, or one holding other songs (or the same in another order), or one whose stated owner
- *   is not this account: nothing is sent. The person is told the candidates
- *   ([PlaylistEditOutcome.PossibleDuplicate]) and the create waits for their choice
- *   ([chooseCreated]: one of them, or none — which sends it) or for them to withdraw it. An owner
- *   that does not match names a candidate and never rules it out: a server may state this account
- *   in a form other than the name it signs in with.
+ * - Several; or one while another create of this device that sent the same name is in doubt, one
+ *   holding other songs (or the same in another order), or one whose stated owner is not this
+ *   account: nothing is sent.
+ *   The person is told the candidates ([PlaylistEditOutcome.PossibleDuplicate]) and the create waits
+ *   for their choice ([chooseCreated]: one of them, or none — which sends it) or for them to
+ *   withdraw it. An owner that does not match names a candidate and never rules it out: a server
+ *   may state this account in a form other than the name it signs in with. A candidate another
+ *   create then settles leaves the choice: a choice of it is void, and the create is asked again
+ *   with those that remain — never adopting one the person passed over — or, with none left, looks
+ *   again.
  * - Deleted here while in doubt — before the flush, or while it looked: NOTHING is deleted on
  *   inference. The person is told the candidates ([PlaylistEditOutcome.PossiblyCreated]) so a shell
  *   can offer to delete one; the delete the person confirms is an ordinary delete by id. Only an id
- *   the server's own answer named is deleted without them.
+ *   the server's own answer named is deleted without them. A playlist found by inference is written
+ *   nothing once the delete is seen — checked just before the create's comment or visibility is
+ *   written — but a write already out when the delete arrives is not recalled, and may land.
  * What was sent is recorded with the send, so a rename or song change made here meanwhile neither
  * hides the create nor is lost: it follows the adopted playlist as its own change. What remains: a
  * playlist another client makes for this account under the same name, with the songs sent or some of
  * them, between a lost send and the next flush is indistinguishable from the create's own — alone, it
  * is adopted, merging the two; a playlist the send made, then renamed or deleted elsewhere before the
  * next flush, leaves no candidate, so a create still wanted is sent again and one deleted here names
- * nothing; and a create committed late, as above.
+ * nothing; a create committed late, as above; and with two creates of one name in doubt, what either
+ * made may be offered for the other, and a create whose own playlist was offered for another is sent
+ * again — a duplicate for the person to delete, never a playlist lost.
  *
  * **Without `formPost`** every request stays within [QUERY_BUDGET_BYTES] of parameters: appends —
  * including a create's songs beyond the first request's — go in batches, in order; removals go in
@@ -142,13 +155,19 @@ import kotlinx.serialization.json.longOrNull
  * `ping`: refused too, the ACCOUNT is refused, and the flush stops with every change kept and the
  * person told ([PlaylistEditOutcome.Held]); answered, the refusal was that request's own — a rule in
  * front of one endpoint — and the change fails on its own, so one refused change never holds every
- * later one. A rate limit (429) stops it the same way, told once per run of 429s — a run ends when a
- * flush sends something and meets no 429, or when the queue empties, never on one delivery; neither
- * this flush nor the favourites one sends again until `max(Retry-After, a floor doubling through the
- * run from two seconds)` has passed, never more than five minutes, whatever triggers them meanwhile,
- * and a later 429 of either never shortens that wait. Whatever holds a change, the person can
- * withdraw it ([withdraw]): too late to undo when a send of it has gone out
- * ([PlaylistEditRecord.AlreadySent]). A failure of the device's own database stops the flush too,
+ * later one. A rate limit (429) stops it the same way, told once per run of 429s — a run begins with
+ * a 429 for a change still queued, and ends when a flush sends something and meets no 429, or
+ * finishes with nothing pending, or the queue empties here, never on one delivery; a 429 for a
+ * change withdrawn or undone while its request was out stops the flush and sets the wait, but begins
+ * no run and is not told. Neither this flush nor the favourites one begins sending a change again
+ * until `max(Retry-After, a floor doubling through the run from two seconds)` has passed, never more
+ * than five minutes, whatever triggers them meanwhile — each checks the wait before each change, so
+ * one already running stops at its next; a request already out is not recalled — and a later 429 of
+ * either never shortens that wait. Whatever holds a change, the person can withdraw it
+ * ([withdraw]). Only a send that went out and was not answered with a 429, another 4xx, or another
+ * answer proving it did not apply (an error envelope, unreachable) makes that too late to undo
+ * ([PlaylistEditRecord.AlreadySent]); a change whose sends were all answered so is
+ * [PlaylistEditRecord.CompactedAway]. A failure of the device's own database stops the flush too,
  * reported as local.
  *
  * **Storage.** Rows live in `mutation_outbox` (protected, §11.4) under `field = playlist.<kind>`
@@ -223,19 +242,23 @@ internal sealed interface PendingPlaylistRow {
         val sentName: String? = null,
         val sentSongs: List<String>? = null,
         /**
-         * The ids of every playlist the server listed just before the latest send, whatever its name,
-         * and of every playlist another create of this device was since found to have made (§18.6):
-         * none of them can be what that send made, whatever any clock says. Null only on a row no
-         * send has marked.
+         * The ids of every playlist the server listed just before the latest send, whatever its name;
+         * of every playlist another create of this device was since found to have made; and of every
+         * playlist since offered to the person for another create (§18.6). None of them is taken as
+         * what that send made, whatever any clock says. Null only on a row no send has marked.
          */
         val seenBeforeSend: List<String>? = null,
         /**
          * The playlists the person was told may be what a send in doubt made
          * ([PlaylistEditOutcome.PossibleDuplicate]): the create is not sent again until they choose
-         * ([PlaylistEditor.chooseCreated]) or withdraw it.
+         * ([PlaylistEditor.chooseCreated]) or withdraw it. A candidate another create settles leaves
+         * this list, and the person is asked again with those that remain.
          */
         val candidates: List<String>? = null,
-        /** The candidate the person chose as this create's playlist, adopted by the next flush. */
+        /**
+         * The candidate the person chose as this create's playlist, adopted by the next flush — void
+         * if another create settles it first.
+         */
         val chosen: String? = null,
     ) : PendingPlaylistRow {
         override val kind: PlaylistRowKind get() = PlaylistRowKind.Create
@@ -338,10 +361,12 @@ internal enum class PlaylistEditRecord {
     NotRecorded,
 
     /**
-     * Withdrawn too late to undo: a send of the change has gone out — in flight now, or answered
-     * with nothing — so the server may hold it already. It is not sent again, and the playlist shows
-     * what the server answers, or its next read; a create's possible playlist is named
-     * ([PlaylistEditOutcome.PossiblyCreated]).
+     * Withdrawn too late to undo: a send of the change has gone out and was not answered with a 429,
+     * another 4xx or another answer proving it did not apply — it is in flight now, or its answer was
+     * lost — so the server may hold it already. It is not sent again, and the playlist shows what the
+     * server answers, or its next read; a create's possible playlist is named
+     * ([PlaylistEditOutcome.PossiblyCreated]). A change whose sends were all answered with a 429 or
+     * a 4xx is [CompactedAway].
      */
     AlreadySent,
 }
@@ -404,9 +429,10 @@ internal sealed interface PlaylistEditOutcome {
     /**
      * A create whose answer was lost was then deleted here — before the flush looked for it, or
      * while it did. Nothing is deleted on inference (§18.6): [candidates] are the server's playlists
-     * that may be what that create made — named [name], not listed before the send and not another
-     * create's of this device, whoever the server says owns them — never empty, and the change is
-     * gone from the outbox. A shell offers "A playlist named [name] may have been created. Delete it
+     * that may be what that create made — named [name], not listed before the send, and neither
+     * known to be nor offered as another create's of this device, whoever the server says owns them
+     * — never empty, and the change is gone from the outbox. None of them is ever a candidate for
+     * another create here. A shell offers "A playlist named [name] may have been created. Delete it
      * on the server?"; the delete the person confirms is an ordinary [PlaylistEditor.delete] of the
      * candidate's id.
      */
@@ -417,11 +443,13 @@ internal sealed interface PlaylistEditOutcome {
     /**
      * A create whose answer was lost (or answered with an empty `ok`) may already be one of
      * [candidates] — playlists named [name] that were not listed before its send — and none is
-     * certain: there are several, or the one there does not hold what was sent, or its stated owner
-     * is not this account (§18.6). It is NOT
-     * sent again on a guess: it waits, shown as pending, until the person chooses one
+     * certain: there are several; or the one there may be what another create of this device made,
+     * which is also in doubt; or it does not hold what was sent; or its stated owner is not this
+     * account (§18.6). None of them is ever a candidate for another create here. It is NOT sent
+     * again on a guess: it waits, shown as pending, until the person chooses one
      * ([PlaylistEditor.chooseCreated] with its id), says none is theirs ([PlaylistEditor.chooseCreated]
-     * with null, which sends it), or withdraws it ([PlaylistEditor.withdraw]).
+     * with null, which sends it), or withdraws it ([PlaylistEditor.withdraw]). Told again, with fewer
+     * candidates, when another create settles one of them — voiding a choice of that one.
      */
     data class PossibleDuplicate(val localId: String, val name: String, val candidates: List<String>) : PlaylistEditOutcome {
         override val playlistId: String get() = localId
@@ -697,10 +725,11 @@ internal class PlaylistEditor(
      * Takes back one pending change: it is not sent again, and the playlist shows the server's last
      * state again. However a change is held or failing, the person can always withdraw it (§18.6
      * "Failures").
-     * - [PlaylistEditRecord.CompactedAway]: no send of it had gone out, so it never reaches the server.
-     * - [PlaylistEditRecord.AlreadySent]: too late to undo — a send of it is in flight, or was answered
-     *   with nothing, so the server may hold it already; the playlist shows what the server answers,
-     *   or its next read.
+     * - [PlaylistEditRecord.CompactedAway]: no send of it had gone out, or each one was answered with a
+     *   429, another 4xx or another answer proving it did not apply, so it never reaches the server.
+     * - [PlaylistEditRecord.AlreadySent]: too late to undo — a send of it is in flight, or its answer
+     *   was lost, so the server may hold it already; the playlist shows what the server answers, or
+     *   its next read.
      * A create is withdrawn as [delete] of its local id: one never sent is simply gone
      * ([PlaylistEditRecord.CompactedAway]); one sent is looked for once more, and what it may have made
      * is named, never deleted ([PlaylistEditOutcome.PossiblyCreated], [PlaylistEditRecord.AlreadySent]).
@@ -738,7 +767,9 @@ internal class PlaylistEditor(
      * The person's answer to [PlaylistEditOutcome.PossibleDuplicate] for the create [localId]:
      * [playlistId], one of the candidates they were shown, IS that playlist — adopted by the next
      * flush, and every edit made here since follows it — or, with null, none of them is: the create is
-     * sent, and those playlists are left as they are. [PlaylistEditRecord.Invalid] when the create is
+     * sent, and those playlists are left as they are. A choice another create settles first is void,
+     * and the person is asked again ([PlaylistEditOutcome.PossibleDuplicate]) with the candidates that
+     * remain; none they passed over is adopted instead. [PlaylistEditRecord.Invalid] when the create is
      * not waiting for a choice or [playlistId] is not one of its candidates.
      */
     fun chooseCreated(localId: String, playlistId: String?): PlaylistEditRecord {
@@ -1205,9 +1236,12 @@ internal class PlaylistEditor(
     }
 
     private suspend fun flushLocked(tally: Tally): PlaylistFlushReport {
-        // The server asked for quiet (a 429): nothing is sent until the wait has passed.
-        tally.stoppedBy = reader.busyError()
-        while (reader.online && tally.stoppedBy == null) {
+        while (reader.online) {
+            // The server asked for quiet (a 429): nothing is sent until the wait has passed. Checked
+            // before each row, not once, so a wait the favourites flush's 429 sets meanwhile stops
+            // this flush too; a request already out is not recalled.
+            tally.stoppedBy = reader.busyError()
+            if (tally.stoppedBy != null) break
             // A create waiting for the person's choice is passed over, never sent on a guess.
             val row = outbox.all().firstOrNull { it.key !in tally.deferred && !(it is PendingPlaylistRow.Create && it.awaitsChoice) } ?: break
             // Only a failure of a request is the server's to classify; anything else — the device's
@@ -1256,10 +1290,13 @@ internal class PlaylistEditor(
                 }
                 PlaylistFailureClass.Held -> {
                     tally.stoppedBy = error
-                    // A 429 is told once per run of them, not once per retry.
+                    // A 429 is told once per run of them, not once per retry. One for a change
+                    // withdrawn or undone while its request was out still sets the wait, but nothing
+                    // of it is queued: it begins no run and is not told.
                     val tell = if (error is DomainError.Server.Busy) {
-                        tally.met429 = true
-                        reader.noteBusy(busyRun, error.retryAfter)
+                        val queued = outbox.find(row.playlistId, row.kind) != null
+                        if (queued) tally.met429 = true
+                        reader.noteBusy(busyRun, error.retryAfter, count = queued)
                     } else {
                         true
                     }
@@ -1547,8 +1584,9 @@ internal class PlaylistEditor(
             if (row.cancelled) {
                 // Deleted here after a send whose answer was lost. Nothing is deleted on inference, however
                 // strong: every playlist that may be what that send made is named to the person, who can
-                // delete one by its id — an ordinary delete, confirmed by them (§18.6).
-                if (candidates.isNotEmpty()) emit(PlaylistEditOutcome.PossiblyCreated(row.playlistId, earlierName, candidates.map { it.id }))
+                // delete one by its id — an ordinary delete, confirmed by them (§18.6) — and none of them
+                // is ever a candidate for another create here, which could keep the one they delete.
+                if (candidates.isNotEmpty()) offer(PlaylistEditOutcome.PossiblyCreated(row.playlistId, earlierName, candidates.map { it.id }))
                 outbox.removeIfUnchanged(outbox.current(row) ?: row)
                 changed(setOf(row.playlistId))
                 reader.rereadList(LibraryQuery.Playlists)
@@ -1607,10 +1645,12 @@ internal class PlaylistEditor(
             sentName = attempted.name
             sentSongs = songs
         }
-        // Deleted here while the flush looked: a playlist found by inference is named, and nothing —
-        // not even the create's comment or visibility — is written to it.
-        if (inferred && deletedHere(row.playlistId)) return nameInsteadOfDeleting(row.playlistId, sentName, id)
-        reader.listLock(playlistDetailListKey(id)).withLock {
+        val deletedMeanwhile = reader.listLock(playlistDetailListKey(id)).withLock {
+            // Checked as late as it can be, just before the first write to [id]: deleted here while the
+            // flush looked for it — or waited for this lock — a playlist found by inference is named,
+            // and nothing more is written to it. A write already out when the delete arrives is not
+            // recalled and may land (§18.6).
+            if (inferred && deletedHere(row.playlistId)) return@withLock true
             val extra = buildList {
                 row.comment?.let { add(PlaylistDetailField.Comment to it) }
                 row.isPublic?.let { add(PlaylistDetailField.Public to it.toString()) }
@@ -1626,7 +1666,9 @@ internal class PlaylistEditor(
                 }
             }
             reader.readPlaylistDetail(id, reader.sessionEpoch)
+            false
         }
+        if (deletedMeanwhile) return nameInsteadOfDeleting(row.playlistId, sentName, id)
         // Edits made while the create was in flight folded into its row; from here they are the
         // new playlist's own changes, never a second create.
         if (!settleCreate(row.copy(name = sentName), id, sentSongs, inferred)) return nameInsteadOfDeleting(row.playlistId, sentName, id)
@@ -1647,44 +1689,54 @@ internal class PlaylistEditor(
      * The create [sent] is on the server as [id]. Its row goes; what the person changed since it was
      * sent — a later name, comment, visibility or songs — and the songs its request could not carry
      * become pending changes of [id], delivered like any other. [id] joins the pre-send record of
-     * every other create still in doubt: this device's own playlist is never a candidate for another
-     * of its creates, after a relaunch too, and a create waiting on a choice that named it looks
-     * again without it (§18.6). Deleted here meanwhile, the playlist is deleted
-     * only when [id] was the server's own answer; one [inferred] is not, and false is returned —
-     * nothing settled, the row gone, for the caller to name the playlist to the person.
+     * every other create still in doubt: a playlist this device knows one of its creates made is
+     * never a candidate for another, after a relaunch too (§18.6). A create waiting on a choice that
+     * named [id] loses it from that choice: a choice the person made of [id] is void, and a create
+     * left waiting is asked again with the candidates that remain — never adopting one the person
+     * passed over — while one left with none looks again. Deleted here meanwhile, the playlist is
+     * deleted only when [id] was the server's own answer; one [inferred] is not, and false is
+     * returned — nothing settled, the row gone, for the caller to name the playlist to the person.
      */
-    private fun settleCreate(sent: PendingPlaylistRow.Create, id: String, createSongs: List<String>, inferred: Boolean): Boolean = database.transactionWithResult {
-        val latest = outbox.find(sent.playlistId, PlaylistRowKind.Create) as PendingPlaylistRow.Create? ?: sent
-        outbox.remove(sent.playlistId, PlaylistRowKind.Create)
-        if (latest.cancelled && inferred) return@transactionWithResult false
-        outbox.all().filterIsInstance<PendingPlaylistRow.Create>().forEach { other ->
-            val seen = other.seenBeforeSend
-            val named = other.candidates
-            // A create already waiting on a choice that named this playlist stops waiting: the next
-            // look at it leaves this one out — a choice of it included — and may settle it with no
-            // choice left to make.
-            if ((seen != null && id !in seen) || (named != null && id in named)) {
-                outbox.rewrite(
-                    other.copy(
-                        seenBeforeSend = seen?.let { if (id in it) it else it + id },
-                        candidates = named?.takeIf { id !in it },
-                    ),
+    private fun settleCreate(sent: PendingPlaylistRow.Create, id: String, createSongs: List<String>, inferred: Boolean): Boolean {
+        val askedAgain = mutableListOf<PlaylistEditOutcome.PossibleDuplicate>()
+        val settled = database.transactionWithResult {
+            val latest = outbox.find(sent.playlistId, PlaylistRowKind.Create) as PendingPlaylistRow.Create? ?: sent
+            outbox.remove(sent.playlistId, PlaylistRowKind.Create)
+            if (latest.cancelled && inferred) return@transactionWithResult false
+            outbox.all().filterIsInstance<PendingPlaylistRow.Create>().forEach { other ->
+                val seen = other.seenBeforeSend
+                val named = other.candidates
+                val offered = named != null && id in named
+                if ((seen == null || id in seen) && !offered) return@forEach
+                val remaining = named?.filter { it != id }
+                val next = other.copy(
+                    seenBeforeSend = seen?.let { if (id in it) it else it + id },
+                    candidates = if (offered) remaining?.takeIf { it.isNotEmpty() } else named,
+                    // A choice of [id] is void; so is any choice once nothing is left to choose from.
+                    chosen = other.chosen?.takeIf { it != id && (!offered || !remaining.isNullOrEmpty()) },
                 )
+                outbox.rewrite(next)
+                if (offered && next.awaitsChoice) askedAgain += PlaylistEditOutcome.PossibleDuplicate(next.playlistId, next.sentName ?: next.name, next.candidates!!)
             }
+            if (latest.cancelled) {
+                outbox.put(PendingPlaylistRow.Delete(id, false, 0, 0))
+                return@transactionWithResult true
+            }
+            val fields = buildMap {
+                if (latest.name != sent.name) put(PlaylistDetailField.Name, PendingFieldChange(latest.name, sent.name))
+                if (latest.comment != sent.comment) put(PlaylistDetailField.Comment, PendingFieldChange(latest.comment.orEmpty(), sent.comment.orEmpty()))
+                latest.isPublic?.takeIf { it != sent.isPublic }?.let { put(PlaylistDetailField.Public, PendingFieldChange(it.toString(), (sent.isPublic == true).toString())) }
+            }
+            if (fields.isNotEmpty()) putDetails(id, fields)
+            // Verified against the list just read back — the songs sent, less any the server dropped.
+            if (latest.songs != createSongs) outbox.put(PendingPlaylistRow.Entries(id, cachedEntries(id) ?: createSongs, latest.songs, emptyList(), false, 0, 0))
+            true
         }
-        if (latest.cancelled) {
-            outbox.put(PendingPlaylistRow.Delete(id, false, 0, 0))
-            return@transactionWithResult true
+        askedAgain.forEach { outcome ->
+            changed(setOf(outcome.localId))
+            offer(outcome)
         }
-        val fields = buildMap {
-            if (latest.name != sent.name) put(PlaylistDetailField.Name, PendingFieldChange(latest.name, sent.name))
-            if (latest.comment != sent.comment) put(PlaylistDetailField.Comment, PendingFieldChange(latest.comment.orEmpty(), sent.comment.orEmpty()))
-            latest.isPublic?.takeIf { it != sent.isPublic }?.let { put(PlaylistDetailField.Public, PendingFieldChange(it.toString(), (sent.isPublic == true).toString())) }
-        }
-        if (fields.isNotEmpty()) putDetails(id, fields)
-        // Verified against the list just read back — the songs sent, less any the server dropped.
-        if (latest.songs != createSongs) outbox.put(PendingPlaylistRow.Entries(id, cachedEntries(id) ?: createSongs, latest.songs, emptyList(), false, 0, 0))
-        true
+        return settled
     }
 
     /** Whether the create [localId] was deleted on this device after its send. */
@@ -1694,15 +1746,52 @@ internal class PlaylistEditor(
     /**
      * The create [localId] was deleted here while the flush found [id] without the server's answer —
      * the lone candidate, the person's choice, or what an empty `ok` left. NOTHING is deleted on
-     * inference (§18.6): the playlist is named to the person, who can delete it by its id, and the
-     * create is gone.
+     * inference (§18.6): the playlist is named to the person, who can delete it by its id, and is
+     * never a candidate for another create here; the create is gone.
      */
     private suspend fun nameInsteadOfDeleting(localId: String, name: String, id: String) {
         database.transaction { outbox.remove(localId, PlaylistRowKind.Create) }
         changed(setOf(localId))
-        emit(PlaylistEditOutcome.PossiblyCreated(localId, name, listOf(id)))
+        offer(PlaylistEditOutcome.PossiblyCreated(localId, name, listOf(id)))
         reader.rereadList(LibraryQuery.Playlists)
     }
+
+    /**
+     * Tells the person of playlists that may be what the create [localId] made
+     * ([PlaylistEditOutcome.PossiblyCreated]) or may be that create
+     * ([PlaylistEditOutcome.PossibleDuplicate]), after [ids] — every one the offer names — join the
+     * pre-send record of every other create of this device (§18.6): an id offered for one create is
+     * never a candidate for another, whatever its name, so no create adopts a playlist the person
+     * may delete, or may yet choose for the create it was offered for.
+     */
+    private fun offer(outcome: PlaylistEditOutcome.PossiblyCreated) = offer(outcome.localId, outcome.candidates, outcome)
+
+    private fun offer(outcome: PlaylistEditOutcome.PossibleDuplicate) = offer(outcome.localId, outcome.candidates, outcome)
+
+    private fun offer(localId: String, ids: List<String>, outcome: PlaylistEditOutcome) {
+        database.transaction {
+            outbox.all().filterIsInstance<PendingPlaylistRow.Create>().forEach { other ->
+                val seen = other.seenBeforeSend
+                // A create never sent records every playlist listed when it is sent: these among them.
+                if (other.playlistId == localId || seen == null) return@forEach
+                val missing = ids.filter { it !in seen }
+                if (missing.isNotEmpty()) outbox.rewrite(other.copy(seenBeforeSend = seen + missing))
+            }
+        }
+        emit(outcome)
+    }
+
+    /**
+     * Whether a create of this device other than [localId], whose send carried [sentName], is in
+     * doubt — sent, its answer lost, and not yet settled, whether it waits for the person or was
+     * deleted here: the playlist its send made may be the one the create [localId] finds. A row that
+     * never recorded the name it sent is counted as the same name.
+     */
+    private fun anotherCreateInDoubt(localId: String, sentName: String): Boolean =
+        outbox.all().any {
+            it is PendingPlaylistRow.Create && it.playlistId != localId && it.attempted &&
+                (it.sentName == null || it.sentName == sentName)
+        }
 
     /** Adds [fields] to [id]'s pending header change, keeping any other field already pending. */
     private fun putDetails(id: String, fields: Map<PlaylistDetailField, PendingFieldChange>) {
@@ -1716,12 +1805,14 @@ internal class PlaylistEditor(
     /**
      * After a create whose answer was lost: every playlist that may be what it made (§18.6) — named
      * [sentName], NOT in its pre-send record ([PendingPlaylistRow.Create.seenBeforeSend]: every
-     * playlist listed just before the send, and every one another create here has made since), and
-     * not mapped to another create of this session. The stated owner rules nothing out: a server may
-     * state this account in another form. No clock enters it: neither the server's `created` stamp,
-     * nor its timezone, nor the device's clock. A playlist another client makes under that name after
-     * the send is a candidate too, which is why a candidate is never deleted without the person, and
-     * adopted only when it is the only one, this account's and holds the songs sent.
+     * playlist listed just before the send, every one another create here has made since, and every
+     * one since offered to the person for another create), and not mapped to another create of this
+     * session. The stated owner rules nothing out: a server may state this account in another form.
+     * No clock enters it: neither the server's `created` stamp, nor its timezone, nor the device's
+     * clock. A playlist another client makes under that name after the send is a candidate too, and
+     * so is what another create's lost send made while that create is in doubt — which is why a
+     * candidate is never deleted without the person, and adopted only when it is the only one, no
+     * other create here is in doubt, and it is this account's and holds the songs sent.
      */
     private fun lostCreateCandidates(row: PendingPlaylistRow.Create, sentName: String, listing: List<ListedPlaylist>): List<ListedPlaylist> {
         val before = row.seenBeforeSend.orEmpty().toSet()
@@ -1744,10 +1835,12 @@ internal class PlaylistEditor(
 
     /**
      * A create in doubt, decided from its [candidates] and never on a guess (§18.6): the candidate
-     * the person chose; else the ONLY candidate when it is this account's (or states no owner) and
-     * holds the songs sent, in order, or some of them — never none ([holdsWhatWasSent]) — adopted;
-     * else, with no candidate at all, it is sent again; else the person is told the candidates
-     * ([PlaylistEditOutcome.PossibleDuplicate]) and it waits for their choice. A row whose pre-send
+     * the person chose; else the ONLY candidate when no other create of this device that sent the
+     * same name is in doubt, it
+     * is this account's (or states no owner) and it holds the songs sent, in order, or some of them —
+     * never none ([holdsWhatWasSent]) — adopted; else, with no candidate at all, it is sent again;
+     * else the person is told the candidates ([PlaylistEditOutcome.PossibleDuplicate]), none of which
+     * is then a candidate for another create, and it waits for their choice. A row whose pre-send
      * list was never recorded adopts nothing on its own.
      */
     private suspend fun resolveLostCreate(
@@ -1759,14 +1852,19 @@ internal class PlaylistEditor(
         row.chosen?.let { chosen -> if (candidates.any { it.id == chosen }) return LostCreate.Adopt(chosen) }
         if (candidates.isEmpty()) return LostCreate.NotLanded
         val only = candidates.singleOrNull()
-        // One whose stated owner is not this account is named, never adopted: the person says whether it is theirs.
-        if (only != null && (only.owner == null || isThisAccount(only.owner)) && row.seenBeforeSend != null && holdsWhatWasSent(only.id, sentSongs)) {
+        // Named, never adopted: while another create of this device that sent the same name is in
+        // doubt, since its send may have made this one; and one whose stated owner is not this
+        // account — the person says whether it is theirs.
+        if (
+            only != null && !anotherCreateInDoubt(row.playlistId, sentName) && (only.owner == null || isThisAccount(only.owner)) &&
+            row.seenBeforeSend != null && holdsWhatWasSent(only.id, sentSongs)
+        ) {
             return LostCreate.Adopt(only.id)
         }
         val ids = candidates.map { it.id }
         rewriteCurrent(row) { it.copy(candidates = ids, chosen = null) }
         changed(setOf(row.playlistId))
-        emit(PlaylistEditOutcome.PossibleDuplicate(row.playlistId, sentName, ids))
+        offer(PlaylistEditOutcome.PossibleDuplicate(row.playlistId, sentName, ids))
         return LostCreate.Choose
     }
 

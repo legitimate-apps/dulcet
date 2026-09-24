@@ -345,14 +345,18 @@ internal class LibraryReader(
      * never more than [LIBRARY_BUSY_CAP]: the floor starts at [LIBRARY_BUSY_FLOOR] and doubles with
      * each 429 of the run, so a server answering `Retry-After: 0` — or nothing — is not asked again
      * at once. A wait already running is never shortened: the later end of the two stands, so a 429
-     * that another flush meets meanwhile cannot bring a server's longer `Retry-After` forward. Until
-     * the wait has passed neither flush sends anything, whatever triggers it; then one flush of every
-     * outbox runs, as a reconnect's first step would. Returns whether this 429 began the run: each
-     * outbox tells the person once per run, not once per retry.
+     * that another flush meets meanwhile cannot bring a server's longer `Retry-After` forward. Each
+     * flush checks the wait before each change it sends, so neither begins sending a change until
+     * the wait has passed, whatever triggers it — a request already out when the wait begins is not
+     * recalled; then one flush of every outbox runs, as a reconnect's first step would, and a retry
+     * a later end replaced is cancelled. A 429 that does not [count] — its change was withdrawn or
+     * undone while the request was out, so nothing of it is queued — still sets the wait, but is no
+     * 429 of the run: it neither begins nor lengthens it. Returns whether this 429 began the run:
+     * each outbox tells the person once per run, not once per retry.
      */
-    internal fun noteBusy(run: BusyRun, retryAfter: Duration?): Boolean {
-        val streak = run.met()
-        val doublings = (streak - 1).coerceAtMost(BUSY_MAX_DOUBLINGS)
+    internal fun noteBusy(run: BusyRun, retryAfter: Duration?, count: Boolean = true): Boolean {
+        val streak = if (count) run.met() else run.streak
+        val doublings = (streak - 1).coerceIn(0, BUSY_MAX_DOUBLINGS)
         val floor = (LIBRARY_BUSY_FLOOR * (1 shl doublings)).coerceAtMost(LIBRARY_BUSY_CAP)
         val wait = maxOf(retryAfter ?: Duration.ZERO, floor).coerceAtMost(LIBRARY_BUSY_CAP)
         val until = config.monotonic.markNow() + wait
@@ -366,7 +370,7 @@ internal class LibraryReader(
                 if (online) flushOutboxes()
             }
         }
-        return streak == 1
+        return count && streak == 1
     }
 
     /**
@@ -923,10 +927,12 @@ internal val DomainError.refusesAccess: Boolean
     get() = (this is DomainError.Auth && this != DomainError.Auth.Forbidden) || (this is DomainError.Server.HttpStatus && refusesAccess)
 
 /**
- * One outbox's run of 429s (§18.6 "Failures"). It begins with the first 429 that outbox meets and
- * ends when a flush of that outbox sends something and meets no 429, or when its queue empties,
- * however that happens ([end]) — never on one delivery, so a limiter that admits one request per
- * window is one run: told once, its floor doubling throughout ([LibraryReader.noteBusy]).
+ * One outbox's run of 429s (§18.6 "Failures"). It begins with the first 429 that outbox meets for a
+ * change still queued — a 429 for one withdrawn or undone while its request was out begins nothing
+ * — and ends when a flush of that outbox sends something and meets no 429, when a flush finishes
+ * with nothing pending, or when the queue empties here ([end]) — never on one delivery, so a
+ * limiter that admits one request per window is one run: told once, its floor doubling throughout
+ * ([LibraryReader.noteBusy]).
  */
 internal class BusyRun {
     /** The 429s met in this run; 0 between runs. */
@@ -944,7 +950,7 @@ internal class BusyRun {
 
     /** A flush of the outbox finished: [met429] this flush, having [sent] requests, with [pending] changes left. */
     fun flushed(met429: Boolean, sent: Int, pending: Int) {
-        if (!met429 && (sent > 0 || pending == 0)) end()
+        if (pending == 0 || (!met429 && sent > 0)) end()
     }
 }
 

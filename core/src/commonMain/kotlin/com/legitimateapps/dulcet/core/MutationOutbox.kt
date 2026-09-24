@@ -128,9 +128,11 @@ internal enum class MutationRecord {
     NotRecorded,
 
     /**
-     * Withdrawn too late to undo: a send of the change has gone out — in flight now, or answered
-     * with nothing — so the server may hold it already. It is not sent again, and the item shows
-     * what the server answers, or its next read.
+     * Withdrawn too late to undo: a send of the change has gone out and was not answered with a 429,
+     * another 4xx or another answer proving it did not apply — it is in flight now, or its answer was
+     * lost — so the server may hold it already. It is not sent again, and the item shows what the
+     * server answers, or its next read. A change whose sends were all answered with a 429 or a 4xx is
+     * [CompactedAway].
      */
     AlreadySent,
 }
@@ -555,10 +557,11 @@ internal class LibraryFavourites(
      * Takes back the pending change of [field] on [target]: it is not sent again, and the item shows
      * the server's last value again. However a change is held or failing, the person can always
      * withdraw it (§18.6 "Failures").
-     * - [MutationRecord.CompactedAway]: no send of it had gone out, so it never reaches the server.
-     * - [MutationRecord.AlreadySent]: too late to undo — a send of it is in flight, or was answered
-     *   with nothing ([PendingMutation.attemptedValues]), so the server may hold it already; the item
-     *   shows what the server answers, or its next read.
+     * - [MutationRecord.CompactedAway]: no send of it had gone out, or each one was answered with a
+     *   429, another 4xx or another answer proving it did not apply, so it never reaches the server.
+     * - [MutationRecord.AlreadySent]: too late to undo — a send of it is in flight, or its answer was
+     *   lost ([PendingMutation.attemptedValues]), so the server may hold it already; the item shows
+     *   what the server answers, or its next read.
      * - [MutationRecord.Unchanged] when none was pending, [MutationRecord.NotRecorded] when the
      *   device's database failed and nothing changed.
      */
@@ -634,11 +637,15 @@ internal class LibraryFavourites(
      *   own — a rule in front of one endpoint — and the change fails on its own, as above, so it
      *   cannot hold every later change for ever. One ping per flush at most.
      * - When the server asks to wait (HTTP 429), the flush stops the same way, told once per run of
-     *   429s ([BusyRun]: it ends when a flush sends something and meets no 429, or when the queue
-     *   empties — not on one delivery). Neither this flush nor the playlist one sends until
+     *   429s ([BusyRun]: it ends when a flush sends something and meets no 429, or finishes with
+     *   nothing pending, or the queue empties here — not on one delivery). A 429 for a change
+     *   withdrawn or undone while its request was out stops the flush and sets the wait, but begins
+     *   no run and is not told. Neither this flush nor the playlist one begins sending a change until
      *   `max(Retry-After, a floor that doubles through the run from two seconds)` has passed, capped
-     *   at five minutes, and a later 429 never shortens that wait (§18.6 "Failures"); a change made
-     *   meanwhile does not send early. Then one flush of every outbox runs.
+     *   at five minutes — each checks the wait before each change, so one already running stops at
+     *   its next change; a request already out is not recalled — and a later 429 never shortens that
+     *   wait (§18.6 "Failures"); a change made meanwhile does not send early. Then one flush of every
+     *   outbox runs.
      * - When the server cannot be reached at all, the flush stops and keeps every change, in order,
      *   for the next flush — the next change made online, or the reconnect of §16.14.
      * - A failure of the device's own database is thrown, never reported as the server's; every
@@ -656,9 +663,13 @@ internal class LibraryFavourites(
         var accountAnswers = false
         // This flush met a 429 of its own: the run of them goes on.
         var met429 = false
-        // The server asked for quiet (a 429): nothing is sent until the wait has passed.
-        var stoppedBy: DomainError? = reader.busyError()
-        while (reader.online && stoppedBy == null) {
+        var stoppedBy: DomainError? = null
+        while (reader.online) {
+            // The server asked for quiet (a 429): nothing is sent until the wait has passed. Checked
+            // before each change, not once, so a wait the playlist flush's 429 sets meanwhile stops
+            // this flush too.
+            stoppedBy = reader.busyError()
+            if (stoppedBy != null) break
             val change = outbox.all().firstOrNull { "${it.target.rawId}|${it.key}" !in deferred } ?: break
             val server = outbox.serverState(change.target, change.field)
             when (val decision = decideDelivery(change, server?.first, server?.second)) {
@@ -726,10 +737,13 @@ internal class LibraryFavourites(
                         }
                         FailureClass.Held -> {
                             stoppedBy = error
-                            // A 429 is told once per run of them, not once per retry.
+                            // A 429 is told once per run of them, not once per retry. One for a change
+                            // withdrawn or undone while its request was out still sets the wait, but
+                            // nothing of it is queued: it begins no run and is not told.
                             val tell = if (error is DomainError.Server.Busy) {
-                                met429 = true
-                                reader.noteBusy(busyRun, error.retryAfter)
+                                val queued = outbox.pendingFor(change.target, change.field) != null
+                                if (queued) met429 = true
+                                reader.noteBusy(busyRun, error.retryAfter, count = queued)
                             } else {
                                 true
                             }

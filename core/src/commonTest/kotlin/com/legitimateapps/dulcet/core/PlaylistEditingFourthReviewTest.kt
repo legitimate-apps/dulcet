@@ -187,45 +187,10 @@ class PlaylistEditingFourthReviewTest {
         assertEquals(2, env.server.playlists.size)
     }
 
-    @Test
-    fun aCreateWaitingOnAChoiceThatNamedAnotherCreatesPlaylistLooksAgainWithoutIt() = hooked { env ->
-        val session = env.session()
-        session.setOnline(false)
-        val a = assertNotNull(session.playlists.create("Mix", listOf("song-1")).localId)
-        val b = assertNotNull(session.playlists.create("Mix", listOf("song-1")).localId)
-        session.setOnline(true)
-        var creates = 0
-        env.hooked.before = { endpoint, _ ->
-            if (endpoint == "createPlaylist") {
-                creates++
-                // The first lands and is answered 500 (its own failure: the flush moves on); the second
-                // lands and its answer is lost (the flush stops).
-                if (creates == 1) env.server.applyThenStatus["createPlaylist"] = 500
-                if (creates == 2) {
-                    env.server.applyThenStatus.clear()
-                    env.server.applyThenLose += "createPlaylist"
-                }
-            }
-            null
-        }
-        session.playlists.flush()
-        env.server.applyThenLose.clear()
-        val (first, second) = env.server.playlists.map { it.id }
-        // The first create's candidates are both — the second's playlist appeared after its send — so
-        // it waits on a choice; then the second create finds its own and settles.
-        session.playlists.flush()
-        advanceUntilIdle()
-        assertTrue(
-            PlaylistEditOutcome.PossibleDuplicate(a, "Mix", listOf(first, second)) in env.outcomes,
-            "fixture: the first create waited on a choice naming the second's playlist: ${env.outcomes}",
-        )
-        assertTrue(PlaylistEditOutcome.Created(b, second) in env.outcomes, "${env.outcomes}")
-        // Its choice no longer names the second's playlist: looked at again, it settles on its own.
-        assertTrue(PlaylistEditOutcome.Created(a, first) in env.outcomes, "still waiting on another create's playlist: ${env.outcomes}")
-        assertEquals(2, env.server.count("createPlaylist"))
-        assertEquals(2, env.server.playlists.size)
-        assertEquals(0L, session.playlists.pendingCount())
-    }
+    // A fourth-round test here had a create waiting on a choice look again once another create settled
+    // a playlist the choice named. The fifth round superseded it: a playlist offered to the person for
+    // one create is never a candidate for another, so the other create is sent again instead
+    // (PlaylistEditingFifthReviewTest.anIdOfferedToThePersonForOneCreateIsNeverACandidateForAnother).
 
     // ---- S2: an inferred id never produces a delete ----------------------------------------------------
 

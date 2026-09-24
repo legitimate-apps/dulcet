@@ -122,11 +122,14 @@ CREATE TABLE cache_playlist (
   issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
   last_access_wall INTEGER NOT NULL,
   gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
-  -- Appended last, so a table altered to add them has the same column order (spec §18.6).
-  -- Nullable: a server that omits `readonly` has told us nothing, which is not "editable".
+  -- Added by migrations/6.sqm (schema 7) and appended last, so an upgraded table has the same
+  -- column order as a fresh one (spec §18.6). Nullable: a server that omits `readonly` has told us
+  -- nothing, which is not "editable". No CHECK: this project's SQLDelight dialect cannot parse one
+  -- on a column that ALTER TABLE adds, and a fresh table must be the upgraded one exactly; the
+  -- store writes only 0, 1 or NULL.
   comment TEXT,
-  is_public INTEGER CHECK (is_public IS NULL OR is_public IN (0, 1)),
-  readonly INTEGER CHECK (readonly IS NULL OR readonly IN (0, 1)),
+  is_public INTEGER,
+  readonly INTEGER,
   PRIMARY KEY (server_id, raw_id)
 );
 

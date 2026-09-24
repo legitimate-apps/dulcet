@@ -126,6 +126,12 @@ PROTECTED_SINCE_VERSION = {
     "cache_pin": 6,
 }
 PIN_COVERAGE_SINCE_VERSION = 6
+# Cache tables are re-derivable and so not protected (§11.4), but a column a released schema added
+# to one is compared WITH DATA from the first fixture that holds it: every later migration must keep
+# those rows as they were. A cache rebuilt on purpose goes through §11.5 and changes this map.
+COMPARED_CACHE_ROWS_SINCE_VERSION = {
+    "cache_playlist": 7,
+}
 
 
 def protected_tables(version: int) -> tuple[str, ...]:
@@ -427,6 +433,108 @@ def pin_coverage_errors(connection: sqlite3.Connection) -> list[str]:
     return errors
 
 
+def table_structure(connection: sqlite3.Connection) -> dict[str, dict[str, object]]:
+    """Every table and index as SQLite reports its structure: a table's columns in order (name,
+    type, NOT NULL, default, key position, hidden) and its foreign keys; an index's table and
+    columns. The CREATE text is deliberately not compared: SQLite records `ALTER TABLE ... ADD
+    COLUMN` by editing the stored text, so an upgraded table and a fresh one are the same table with
+    different text."""
+    structure: dict[str, dict[str, object]] = {}
+    for kind, name, table in connection.execute(
+        "SELECT type, name, tbl_name FROM sqlite_master "
+        "WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY type, name"
+    ).fetchall():
+        entry: dict[str, object] = {"on": table}
+        if kind == "table":
+            entry["columns"] = [
+                list(column) for column in connection.execute(f'PRAGMA table_xinfo("{name}")')
+            ]
+            entry["foreign_keys"] = sorted(
+                list(foreign_key)[2:]
+                for foreign_key in connection.execute(f'PRAGMA foreign_key_list("{name}")')
+            )
+        else:
+            entry["columns"] = [
+                list(column) for column in connection.execute(f'PRAGMA index_xinfo("{name}")')
+            ]
+        structure[f"{kind} {name}"] = entry
+    return structure
+
+
+def fresh_install_structure(version: int) -> dict[str, dict[str, object]]:
+    """The schema a fresh install of [version] creates: SQLDelight's own snapshot of the .sq files."""
+    snapshot = SCHEMA_SNAPSHOTS / f"{version}.db"
+    connection = sqlite3.connect(f"file:{snapshot}?mode=ro", uri=True)
+    try:
+        structure = table_structure(connection)
+    finally:
+        connection.close()
+    # The instrument must have read a schema, or every comparison with it is vacuous.
+    if not any(key.startswith("table ") for key in structure):
+        raise MigrationGateError(f"fresh-install snapshot {snapshot.name} holds no tables")
+    return structure
+
+
+def upgrade_structure_errors(
+    expected: dict[str, dict[str, object]],
+    actual: dict[str, dict[str, object]],
+) -> list[str]:
+    """How an upgraded database differs from a fresh install of the same version."""
+    errors: list[str] = []
+    for key in sorted(set(expected) | set(actual)):
+        if key not in actual:
+            errors.append(f"{key}: missing")
+            continue
+        if key not in expected:
+            errors.append(f"{key}: not in a fresh install")
+            continue
+        for field in sorted(set(expected[key]) | set(actual[key])):
+            wanted, found = expected[key].get(field), actual[key].get(field)
+            if wanted == found:
+                continue
+            if field == "columns" and key.startswith("table "):
+                wanted_names = [column[1] for column in wanted or []]
+                found_names = [column[1] for column in found or []]
+                missing = [name for name in wanted_names if name not in found_names]
+                extra = [name for name in found_names if name not in wanted_names]
+                if missing:
+                    errors.append(f"{key}: missing columns {missing}")
+                if extra:
+                    errors.append(f"{key}: extra columns {extra}")
+                if not missing and not extra:
+                    errors.append(f"{key}: column definitions differ: fresh={wanted} upgraded={found}")
+            else:
+                errors.append(f"{key}: {field} differs: fresh={wanted} upgraded={found}")
+    return errors
+
+
+def compared_cache_rows(
+    connection: sqlite3.Connection,
+    version: int,
+) -> dict[str, tuple[list[str], list[dict[str, object]]]]:
+    """Each compared cache table the fixture [version] holds: its columns, and its rows by them."""
+    compared: dict[str, tuple[list[str], list[dict[str, object]]]] = {}
+    for table, since in COMPARED_CACHE_ROWS_SINCE_VERSION.items():
+        if version < since:
+            continue
+        columns = [column[1] for column in connection.execute(f'PRAGMA table_info("{table}")')]
+        compared[table] = (columns, cache_rows(connection, table, columns))
+    return compared
+
+
+def cache_rows(
+    connection: sqlite3.Connection,
+    table: str,
+    columns: list[str],
+) -> list[dict[str, object]]:
+    selected = ", ".join(f'"{column}"' for column in columns)
+    rows = [
+        {column: value.hex() if isinstance(value, bytes) else value for column, value in zip(columns, row, strict=True)}
+        for row in connection.execute(f'SELECT {selected} FROM "{table}"')
+    ]
+    return sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
+
+
 def assert_fixture_preserved(
     database: Path,
     files: Path,
@@ -435,6 +543,7 @@ def assert_fixture_preserved(
     source_metadata: tuple[int, int, int],
     target_version: int,
     target_cache_format_version: int,
+    expected_cache_rows: dict[str, tuple[list[str], list[dict[str, object]]]] | None = None,
 ) -> None:
     errors: list[str] = []
     source_version = source_metadata[0]
@@ -444,6 +553,28 @@ def assert_fixture_preserved(
         actual_schema = protected_schema(connection, source_version)
         if target_version >= PIN_COVERAGE_SINCE_VERSION:
             errors.extend(pin_coverage_errors(connection))
+        # An upgrade must end where a fresh install starts: the same tables, columns and indexes.
+        if target_version == current_schema_version():
+            structure_errors = upgrade_structure_errors(
+                fresh_install_structure(target_version), table_structure(connection)
+            )
+            if structure_errors:
+                errors.append(
+                    f"upgraded schema differs from a fresh install of v{target_version}:\n"
+                    + "\n".join(structure_errors)
+                )
+        for table, (columns, rows) in (expected_cache_rows or {}).items():
+            try:
+                found = cache_rows(connection, table, columns)
+            except sqlite3.DatabaseError as failure:
+                errors.append(f"{table}: cannot read compared cache rows: {failure}")
+                continue
+            if found != rows:
+                errors.append(
+                    f"{table}: compared cache rows changed\n"
+                    f"expected={json.dumps(rows, sort_keys=True)}\n"
+                    f"actual={json.dumps(found, sort_keys=True)}"
+                )
         metadata = connection.execute(
             "SELECT schema_version, cache_format_version, committed_generation "
             "FROM schema_meta WHERE singleton_id = 1"
@@ -515,6 +646,7 @@ def migrate_and_assert_fixture(
                     "invalid pre-migration fixture:\n" + "\n".join(fixture_errors)
                 )
             expected_schema = protected_schema(connection, fixture_version)
+            expected_cache_rows = compared_cache_rows(connection, fixture_version)
             apply_released_migrations(connection, fixture_version, target_version)
             reconcile_runtime_metadata(
                 connection,
@@ -532,6 +664,7 @@ def migrate_and_assert_fixture(
             source_metadata,
             target_version,
             target_cache_format_version,
+            expected_cache_rows,
         )
 
 
@@ -690,6 +823,25 @@ PIN_NEGATIVE_CONTROLS = (
         ("pinned track has no cache row",),
     ),
 )
+# The upgrade controls run on the fixture before the one that added the compared cache columns,
+# migrated to the current schema; the cache-row controls on the first fixture that holds them.
+UPGRADE_NEGATIVE_CONTROLS = (
+    (
+        "added_column_dropped",
+        "ALTER TABLE cache_playlist DROP COLUMN readonly;",
+        (
+            "upgraded schema differs from a fresh install",
+            "table cache_playlist: missing columns ['readonly']",
+        ),
+    ),
+)
+CACHE_ROW_NEGATIVE_CONTROLS = (
+    (
+        "added_fields_cleared",
+        "UPDATE cache_playlist SET comment = NULL, is_public = NULL, readonly = NULL;",
+        ("cache_playlist: compared cache rows changed",),
+    ),
+)
 # Once pins exist in a released fixture they are protected rows like any other.
 PROTECTED_PIN_NEGATIVE_CONTROLS = (
     (
@@ -789,6 +941,16 @@ def main() -> None:
         )
     for version, fixture in sorted(fixtures.items()):
         migrate_and_assert_fixture(version, fixture, current)
+    compared_since = COMPARED_CACHE_ROWS_SINCE_VERSION["cache_playlist"]
+    with sqlite3.connect(f"file:{fixtures[compared_since] / 'database.db'}?mode=ro", uri=True) as connection:
+        compared_rows = compared_cache_rows(connection, compared_since)["cache_playlist"][1]
+    # The control for the row comparison: the fixture carries the added fields WITH values, so the
+    # comparison above compared data, not two empty lists.
+    stated = [row for row in compared_rows if None not in (row["comment"], row["is_public"], row["readonly"])]
+    if not stated:
+        raise MigrationGateError(
+            f"fixture v{compared_since} holds no cache_playlist row with its added fields stated"
+        )
     prove_cache_format_bump_is_legal(fixtures[current], current)
     prove_destructive_migrations_are_rejected(fixtures[1], 1)
     pin_fixture_version = PIN_COVERAGE_SINCE_VERSION - 1
@@ -802,13 +964,27 @@ def main() -> None:
         current,
         PROTECTED_PIN_NEGATIVE_CONTROLS,
     )
+    prove_negative_controls(
+        fixtures[compared_since - 1], compared_since - 1, current, UPGRADE_NEGATIVE_CONTROLS
+    )
+    prove_negative_controls(
+        fixtures[compared_since], compared_since, current, CACHE_ROW_NEGATIVE_CONTROLS
+    )
     control_count = (
-        len(NEGATIVE_CONTROLS) + len(PIN_NEGATIVE_CONTROLS) + len(PROTECTED_PIN_NEGATIVE_CONTROLS)
+        len(NEGATIVE_CONTROLS)
+        + len(PIN_NEGATIVE_CONTROLS)
+        + len(PROTECTED_PIN_NEGATIVE_CONTROLS)
+        + len(UPGRADE_NEGATIVE_CONTROLS)
+        + len(CACHE_ROW_NEGATIVE_CONTROLS)
     )
     print(
         f"Migration gate valid: {len(fixtures)} fixture database(s), "
         f"{len(protected_tables(current))} protected table comparisons at v{current}, "
         f"pin coverage from v{PIN_COVERAGE_SINCE_VERSION}, "
+        f"every fixture upgraded to v{current} equal to a fresh install "
+        f"({len(fresh_install_structure(current))} tables and indexes), "
+        f"cache_playlist rows compared from v{compared_since} ({len(compared_rows)} rows, "
+        f"{len(stated)} with the added fields stated), "
         f"download file reconciliation, and {control_count} explicit destructive "
         "negative controls"
     )

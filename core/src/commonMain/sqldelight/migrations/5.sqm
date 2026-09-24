@@ -120,11 +120,6 @@ CREATE TABLE cache_playlist (
   issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
   last_access_wall INTEGER NOT NULL,
   gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
-  -- Appended last, so a table altered to add them has the same column order (spec §18.6).
-  -- Nullable: a server that omits `readonly` has told us nothing, which is not "editable".
-  comment TEXT,
-  is_public INTEGER CHECK (is_public IS NULL OR is_public IN (0, 1)),
-  readonly INTEGER CHECK (readonly IS NULL OR readonly IN (0, 1)),
   PRIMARY KEY (server_id, raw_id)
 );
 
