@@ -805,38 +805,30 @@
           "reason": "OBSERVED: declared conformance executes on this platform runtime in apple-ci. ASSUMED: production app playback on this platform driving the server play record; no platform-driven app run is recorded. Shared-engine tests and another platform run do not close that gap. Completion standard for all Apple playback cells: declared conformance on the platform runtime plus production app playback driven on that platform device or simulator through the threshold to an independently observed server play record. Audio output through the OS graph, HAL and speaker remains ASSUMED on every platform and is outside this bounded stream/scrobble completion claim. Gapless, crossfade, AirPlay routing and interrupted-session resume are not covered. The unmerged PCM measurement at 60cbaa8 is not evidence for this matrix."
         },
         "android": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-platform-observed-audio-rendering",
-            "reason": "Promotion requires an Android device or emulator workflow that drives playback through the production Media3 integration, validates the bytes consumed by the engine, and observes progressing media plus the server-side play record. The host controls do not execute Media3 or an Android app process."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-11", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
-            {"conformance": "CONF-12", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
-            {"conformance": "CONF-13", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
-            {"conformance": "CONF-14a", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
-            {"conformance": "CONF-14b", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
-            {"conformance": "CONF-15", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+            {"conformance": "CONF-11", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"},
+            {"observes": "on an API 34 phone emulator in core-ci, the production play entry starts the production Media3 engine against the disposable server, and media time advances in the foreground and again after Home under a foreground media notification; the engine's data source releases no byte before an audio signature validates, so the advancing media time was produced from validated bytes", "workflow": "core-ci", "job": "core-ci", "test": "AndroidEmulatorPlaybackConformanceTest/productionEntryPlaysThroughMedia3AndTheServerRecordsExactlyOnePlay"}
           ],
-          "reason": "All six declared stream controls execute from the Android target against the pinned live server after a fail-loud cold-cache reset. They prove the Android-compiled core's wire requests, validation, ranges, legacy offset, extension offset semantics, and opaque transcode parameters. They do not run Media3, inline engine-byte validation, or audio rendering on a device, so this is partial rather than shipped."
+          "reason": "OBSERVED: the six declared stream controls execute instrumented on the API 34 phone emulator's runtime, as PlaybackScrobbleAndroidPhoneConformanceTest, against the same pinned disposable server while its transcode cache is still cold, and the emulator proof drives the production phone app through the production Media3 engine to advancing media time, in the foreground and after Home under a foreground media notification, with the server recording the play. That the engine's bytes were validated is inferred from the data source, which throws before releasing any byte that has not matched an audio signature; no on-device marker records the validation itself. Audio output through the OS mixer and speaker remains ASSUMED and is outside this bounded stream completion claim, as on every platform. Gapless, crossfade, casting and interrupted-session resume are not covered."
         },
         "androidtv": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-platform-observed-audio-rendering",
-            "reason": "Promotion requires an Android TV device or emulator workflow that drives playback through the production Media3 and TV surfaces, validates the bytes consumed by the engine, and observes progressing media plus the server-side play record. The shared host controls do not execute Media3, focus, remote commands, or a TV app process."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-11", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
-            {"conformance": "CONF-12", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
-            {"conformance": "CONF-13", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
-            {"conformance": "CONF-14a", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
-            {"conformance": "CONF-14b", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
-            {"conformance": "CONF-15", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"}
+            {"conformance": "CONF-11", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes"},
+            {"conformance": "CONF-12", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf12DeliveryPathsRetainTheirDistinctMeasuredErrorShapes"},
+            {"conformance": "CONF-13", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf13RawAndTranscodedStreamsHonorTheSameExplicitByteRange"},
+            {"conformance": "CONF-14a", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf14aLegacyTranscodeOffsetReturnsAudioAtTheRequestedTimeOffset"},
+            {"conformance": "CONF-14b", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf14bTranscodingExtensionHasNoOffsetAndIgnoresLegacyTimeOffset"},
+            {"conformance": "CONF-15", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf15ClientInfoDecisionOpaqueParamsRoundTripUnmodifiedToTranscodeStream"},
+            {"observes": "on an API 34 Android TV emulator in core-ci, the production play entry opens the lean-back player on the production Media3 engine against the disposable server, the remote's pause key holds the same session mid-song and its play key resumes it, and media time advances again after Home; the engine's data source releases no byte before an audio signature validates, so the advancing media time was produced from validated bytes", "workflow": "core-ci", "job": "core-ci", "test": "AndroidTvEmulatorPlaybackConformanceTest/remoteControlledPlaybackSurvivesHomeAndTheServerRecordsExactlyOnePlay"}
           ],
-          "reason": "Android TV shares the Android core for which all six declared stream controls pass against the pinned live server after an independently proven cold reset. This is bounded wire/core evidence only; no TV device, Media3 engine, focus, remote commands, or audio rendering executes, so the cell is partial rather than shipped."
+          "reason": "OBSERVED: the six declared stream controls execute instrumented on the API 34 Android TV emulator's runtime, as PlaybackScrobbleAndroidTvConformanceTest, against the same pinned disposable server while its transcode cache is still cold, and the Android TV emulator proof drives the production TV app through the production Media3 engine to advancing media time under remote-control pause and play and after Home, with the server recording the play. That the engine's bytes were validated is inferred from the data source, which throws before releasing any byte that has not matched an audio signature; no on-device marker records the validation itself. Audio output through the OS mixer and speaker remains ASSUMED and is outside this bounded stream completion claim. Gapless, crossfade, casting and interrupted-session resume are not covered."
         }
       }
     },
@@ -891,30 +883,22 @@
           "reason": "OBSERVED: declared conformance executes on this platform runtime in apple-ci. ASSUMED: production app playback on this platform driving the server play record; no platform-driven app run is recorded. Shared-engine tests and another platform run do not close that gap. Completion standard for all Apple playback cells: declared conformance on the platform runtime plus production app playback driven on that platform device or simulator through the threshold to an independently observed server play record. Audio output through the OS graph, HAL and speaker remains ASSUMED on every platform and is outside this bounded stream/scrobble completion claim. Gapless, crossfade, AirPlay routing and interrupted-session resume are not covered. The unmerged PCM measurement at 60cbaa8 is not evidence for this matrix."
         },
         "android": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-playback-progress-integration",
-            "reason": "Promotion requires an Android device or emulator workflow that derives progressing media time from the production Media3 adapter, crosses the scrobble threshold, and observes exactly one submitted server play. The host controls issue protocol calls directly and do not observe that trigger chain."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-22", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
-            {"conformance": "CONF-23", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+            {"conformance": "CONF-22", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidPhoneConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"},
+            {"observes": "on an API 34 phone emulator in core-ci, playback started from the production entry crosses the scrobble threshold on media time sampled from the production Media3 adapter, partly after Home, and the disposable server's playCount for the canary song rises by exactly one and stays there five seconds after the queue ends", "workflow": "core-ci", "job": "core-ci", "test": "AndroidEmulatorPlaybackConformanceTest/productionEntryPlaysThroughMedia3AndTheServerRecordsExactlyOnePlay"}
           ],
-          "reason": "The Android target executes CONF-22 and CONF-23 against the live disposable server, proving the reference server's now-playing versus submitted-scrobble side effects and repeated same-time behavior through the Android-compiled wire client. The host run does not execute Media3 or the progressing-media threshold reducer in an Android app process, so the cell is partial rather than shipped."
+          "reason": "OBSERVED: CONF-22 and CONF-23 execute instrumented on the API 34 phone emulator's runtime, as PlaybackScrobbleAndroidPhoneConformanceTest, against the live disposable server, and the phone emulator proof closes the trigger chain the host run cannot: media time from the production Media3 adapter, accumulated by the threshold reducer in the app process across Home, produces exactly one server play. Delivery is at-least-once by design; the proof observes one delivered play, not an idempotent network call."
         },
         "androidtv": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-playback-progress-integration",
-            "reason": "Promotion requires an Android TV device or emulator workflow that derives progressing media time from the production Media3 adapter, crosses the threshold under TV lifecycle and remote control, and observes exactly one submitted server play. The shared host controls issue protocol calls directly."
-          },
+          "status": "shipped",
           "evidence": [
-            {"conformance": "CONF-22", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
-            {"conformance": "CONF-23", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"}
+            {"conformance": "CONF-22", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes"},
+            {"conformance": "CONF-23", "workflow": "core-ci", "job": "core-ci", "test": "PlaybackScrobbleAndroidTvConformanceTest/conf23RepeatedSameTimeScrobbleIsNotDeduplicatedByReferenceServer"},
+            {"observes": "on an API 34 Android TV emulator in core-ci, playback paused and resumed by the remote crosses the scrobble threshold on media time sampled from the production Media3 adapter, partly after Home, and the disposable server's playCount for the canary song rises by exactly one and stays there five seconds after the queue ends", "workflow": "core-ci", "job": "core-ci", "test": "AndroidTvEmulatorPlaybackConformanceTest/remoteControlledPlaybackSurvivesHomeAndTheServerRecordsExactlyOnePlay"}
           ],
-          "reason": "Android TV shares the Android-compiled core for which CONF-22 and CONF-23 pass against the live disposable server. That proves bounded protocol semantics, not Media3 progress, TV lifecycle, remote-control handling, or an app-process submission trigger, so the cell is partial rather than shipped."
+          "reason": "OBSERVED: CONF-22 and CONF-23 execute instrumented on the API 34 Android TV emulator's runtime, as PlaybackScrobbleAndroidTvConformanceTest, against the live disposable server, and the Android TV emulator proof closes the trigger chain under TV lifecycle and remote control: media time from the production Media3 adapter, accumulated across a remote pause and Home, produces exactly one server play. Delivery is at-least-once by design; the proof observes one delivered play, not an idempotent network call."
         }
       }
     },
@@ -931,11 +915,11 @@
             {"conformance": "CONF-51", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"},
             {"conformance": "CONF-52", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose"}
           ],
-          "reason": "The macOS executor has executed evidence for validated atomic promotion and byte-identical local playback. The SwiftUI background-session handoff and durable completion inbox are integrated, but killed-process relaunch reconciliation does not yet have executed evidence, so background continuity is not claimed as shipped.",
+          "reason": "The macOS executor has executed evidence for validated atomic promotion and byte-identical local playback. The SwiftUI background-session handoff and durable completion inbox are integrated, but killed-process relaunch reconciliation does not yet have executed evidence, so background continuity is not claimed as shipped. OBSERVED in test source: backgroundSessionHandoffWaitsUntilDelegateFinishesEvents plays the OS by calling urlSessionDidFinishEvents(forBackgroundURLSession:) itself and asserts waiter completion, not process termination or a durable downloaded row. Existing evidence does not close killed-process-background-session-handoff on macOS.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "killed-process-relaunch-harness",
-            "reason": "Promotion needs executed evidence that a background URLSession completion delivered after the app process is terminated is reconciled on relaunch. No harness in this repository can terminate the app and observe OS relaunch delivery, so this names the missing capability rather than a test that does not exist."
+            "blocked_on": "killed-process-background-session-handoff",
+            "reason": "killed-process-background-session-handoff remains open on macOS: execute process termination while a background URLSession download is outstanding, then explicitly relaunch the app and observe the production handoff reconciling the secured artifact into the durable downloaded row. Existing same-process delegate and core reconciliation tests do not observe that sequence. Closing this handoff alone cannot promote the cell: os-initiated-background-session-delivery remains independently open; see docs/download-background-blockers.md. macOS OS-initiated relaunch for a background session is ASSUMED, not established by the iOS simulator measurement; it needs separate macOS evidence."
           }
         },
         "ios": {
@@ -944,11 +928,11 @@
             {"conformance": "CONF-51", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"},
             {"conformance": "CONF-52", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIOS"}
           ],
-          "reason": "The production iOS composition retains the shared Apple download controller, exposes the download controls, prefers its local playback plan, and registers the SwiftUI background URLSession handoff. The iPhone simulator executes the platform controller against the disposable server and proves validated atomic promotion plus byte-identical local playback after network clients close. A completion delivered only after process termination and reconciled during an OS-driven relaunch is not evidenced, so background continuity is not claimed as shipped.",
+          "reason": "The production iOS composition retains the shared Apple download controller, exposes the download controls, prefers its local playback plan, and registers the SwiftUI background URLSession handoff. The iPhone simulator executes the platform controller against the disposable server and proves validated atomic promotion plus byte-identical local playback after network clients close. A completion delivered only after process termination and reconciled during an OS-driven relaunch is not evidenced, so background continuity is not claimed as shipped. OBSERVED in test source: backgroundSessionHandoffWaitsUntilDelegateFinishesEvents plays the OS by calling urlSessionDidFinishEvents(forBackgroundURLSession:) itself and asserts waiter completion, not process termination or a durable downloaded row. Existing evidence does not close killed-process-background-session-handoff on iOS.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "killed-process-relaunch-harness",
-            "reason": "Promotion needs executed iOS evidence that the app process is terminated while a background URLSession download remains outstanding, the OS later relaunches or resumes the app for that session's completion, and the production handoff reconciles the secured artifact into the durable downloaded row. The repository has no harness that can observe that OS-driven lifecycle across process death."
+            "blocked_on": "killed-process-background-session-handoff",
+            "reason": "killed-process-background-session-handoff remains open on iOS: execute process termination while a background URLSession download is outstanding, then explicitly relaunch the app and observe the production handoff reconciling the secured artifact into the durable downloaded row. Existing same-process delegate and core reconciliation tests do not observe that sequence. Closing this handoff alone cannot promote the cell: os-initiated-background-session-delivery remains independently open; see docs/download-background-blockers.md. OBSERVED in the supplied iOS 26.5 simulator measurement: simctl terminate routes through SpringBoard with domain:10 code:0xFBFBFBFB, and simctl exposes no jetsam verb. This is not OS-initiated reclaim; do not use it to infer OS delivery or repeat the probe."
           }
         },
         "ipados": {
@@ -957,11 +941,11 @@
             {"conformance": "CONF-51", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"},
             {"conformance": "CONF-52", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetAppleDownloadIntegrationTest/offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIPadOS"}
           ],
-          "reason": "The production iPadOS shell shares and retains the iOS Apple download controller, exposes the download controls, prefers its local playback plan, and registers the SwiftUI background URLSession handoff. An iPad simulator selected by the repository resolver executes the platform controller and proves validated atomic promotion plus byte-identical local playback after network clients close. A completion delivered only after process termination and reconciled during an OS-driven relaunch is not evidenced, so background continuity is not claimed as shipped.",
+          "reason": "The production iPadOS shell shares and retains the iOS Apple download controller, exposes the download controls, prefers its local playback plan, and registers the SwiftUI background URLSession handoff. An iPad simulator selected by the repository resolver executes the platform controller and proves validated atomic promotion plus byte-identical local playback after network clients close. A completion delivered only after process termination and reconciled during an OS-driven relaunch is not evidenced, so background continuity is not claimed as shipped. OBSERVED in test source: backgroundSessionHandoffWaitsUntilDelegateFinishesEvents plays the OS by calling urlSessionDidFinishEvents(forBackgroundURLSession:) itself and asserts waiter completion, not process termination or a durable downloaded row. Existing evidence does not close killed-process-background-session-handoff on iPadOS.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "killed-process-relaunch-harness",
-            "reason": "Promotion needs executed iPadOS evidence that the app process is terminated while a background URLSession download remains outstanding, the OS later relaunches or resumes the app for that session's completion, and the production handoff reconciles the secured artifact into the durable downloaded row. The repository has no harness that can observe that OS-driven lifecycle across process death."
+            "blocked_on": "killed-process-background-session-handoff",
+            "reason": "killed-process-background-session-handoff remains open on iPadOS: execute process termination while a background URLSession download is outstanding, then explicitly relaunch the app and observe the production handoff reconciling the secured artifact into the durable downloaded row. Existing same-process delegate and core reconciliation tests do not observe that sequence. Closing this handoff alone cannot promote the cell: os-initiated-background-session-delivery remains independently open; see docs/download-background-blockers.md. OBSERVED in the supplied iOS 26.5 simulator measurement: simctl terminate routes through SpringBoard with domain:10 code:0xFBFBFBFB, and simctl exposes no jetsam verb. This is not OS-initiated reclaim; do not use it to infer OS delivery or repeat the probe."
           }
         },
         "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},

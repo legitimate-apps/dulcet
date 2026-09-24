@@ -18,7 +18,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.core.AccountConnector
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -52,22 +56,24 @@ class TvSearchActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val account = runCatching { searchDependencies.loadAccount(this) }.getOrNull()
         setContent {
             MaterialTheme {
-                if (account == null) {
-                    Surface(modifier = Modifier.fillMaxSize()) {
-                        Text(
-                            "Connect an account before searching.",
-                            modifier = Modifier.padding(48.dp).testTag("search.account-required"),
-                        )
+                var account by remember { mutableStateOf(loadAccount()) }
+                val current = account
+                if (current == null) {
+                    val context = LocalContext.current
+                    val connector = remember { AccountConnector() }
+                    TvConnectScreen(connector::connect, remember { AndroidAccountCredentialStore(context) }) {
+                        account = loadAccount()
                     }
                 } else {
-                    com.legitimateapps.dulcet.library.LibraryEntry(account) { TvSearchRoute(account, searchDependencies) }
+                    com.legitimateapps.dulcet.library.LibraryEntry(current) { TvSearchRoute(current, searchDependencies) }
                 }
             }
         }
     }
+
+    private fun loadAccount(): SearchAccount? = runCatching { searchDependencies.loadAccount(this) }.getOrNull()
 }
 
 @Composable

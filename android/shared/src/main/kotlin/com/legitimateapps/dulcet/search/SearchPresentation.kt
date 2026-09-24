@@ -234,15 +234,19 @@ public class SearchDetailActivity : ComponentActivity() {
             finish()
             return
         }
-        setContent { SearchDetailContent(type, title, rawId) }
+        val provider = intent.getStringExtra(SearchDetailIntent.EXTRA_PROVIDER_INSTANCE_ID).orEmpty()
+        setContent { SearchDetailContent(type, title, rawId, provider) }
     }
 }
 
 @Composable
-private fun SearchDetailContent(type: SearchResultType, title: String, rawId: String) {
+private fun SearchDetailContent(type: SearchResultType, title: String, rawId: String, provider: String) {
     Column(modifier = Modifier.fillMaxSize().padding(32.dp)) {
         BasicText(type.name)
         BasicText(title)
         BasicText(rawId)
+        if (type == SearchResultType.Track) {
+            com.legitimateapps.dulcet.playback.PlaybackEntry(provider, rawId, title)
+        }
     }
 }

@@ -58,6 +58,9 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.media3.session)
     testImplementation(kotlin("test-junit"))
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.androidx.compose.bom))
@@ -78,4 +81,5 @@ tasks.withType<Test>().configureEach {
 }
 extensions.configure<ApplicationExtension> {
     sourceSets.getByName("test").kotlin.srcDir(rootProject.file("android/search-conformance"))
+    sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("android/emulator-conformance"))
 }

@@ -19,5 +19,16 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Not exported: only this package can start playback or open the player. -->
+        <activity
+            android:name=".TvPlaybackActivity"
+            android:exported="false"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="com.legitimateapps.dulcet.action.PLAY_TRACK" />
+                <action android:name="com.legitimateapps.dulcet.action.SHOW_NOW_PLAYING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

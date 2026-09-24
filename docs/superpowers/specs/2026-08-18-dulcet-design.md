@@ -747,6 +747,24 @@ intervals. Therefore the Android adapter **owns a periodic sampler** that emits 
 while the session is playing, uses the monotonic clock (§18.8), is suspended while paused or
 buffering, and continues at the same cadence during background playback.
 
+**The queue belongs to the core, so Media3 only ever holds the current item.** Three consequences,
+each easy to get wrong:
+
+- **Skip commands are advertised from the core queue.** The session player reports
+  `COMMAND_SEEK_TO_NEXT`/`PREVIOUS` and answers `hasNextMediaItem()` from the core's queue, because a
+  one-item timeline would otherwise offer no next or previous on the notification or lock screen.
+  **OBSERVED** 2026-09-22 on an Android 14 emulator: the media notification carries three actions
+  (previous, play/pause, next), and `cmd media_session dispatch next` advanced the core queue. That
+  the notification would lose the skip actions *without* this is **ASSUMED** from Media3's
+  documented command model and pinned by a host test, not observed on a device.
+- **In-app player UI reads the controller's published state, not the `Player`.** The
+  `media3-ui-compose` state holders were evaluated and not used for the queue and title surfaces,
+  because they observe the player, whose timeline is one item; they would show no Up Next.
+- **Cover art reaches the session as validated bytes (`artworkData`), never as `artworkUri`.** A URI
+  would be a signed `getCoverArt` request handed to the system UI process, credentials included
+  (CORPUS.md §4, line 5). The bytes come through the same validated artwork path as every other surface
+  (§18.2), after preparation has begun, so a slow cover never delays sound.
+
 ---
 
 ## 9. The provider seam
@@ -1936,8 +1954,12 @@ function `(state, event) -> (state, effects)`:
   **4 seconds** at rate 1, given `cadenceMax = 2 s` (§12.3). It is derived from `cadenceMax`, not from
   `cadenceTarget`, because an adapter is permitted to emit as slowly as `cadenceMax` and a legitimate
   2-second delta must not be discarded. A larger delta is a **discontinuity, not listening**: it is
-  discarded and counted, whether or not a `SeekCompleted` arrived. One rule covers app suspension, a
-  missed callback, a decoder timestamp jump, and a seek whose event was late or absent.
+  discarded and counted when no explicit seek observation has reset the anchor. This fallback covers
+  app suspension, a missed callback, a decoder timestamp jump, and a seek whose event was absent.
+- **Explicit seek:** `SeekCompleted` resets `lastPosition` to the destination and clears
+  `lastMonotonic`. Every forward seek is discarded and counted, including jumps below four seconds;
+  the next sample accrues only media progression after the destination. `SeekFailed` preserves the
+  anchor. A seek event carries no monotonic timestamp, so it cannot credit a now-playing interval.
 - **Backward delta** accrues nothing and resets `lastPosition`. Replaying a segment accrues normally —
   the accumulator measures time listened, not coverage of the track.
 - **Not progressing:** during `Buffering`, `Paused` or after `InterruptionBegan` nothing accrues, and
@@ -3730,6 +3752,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 102 (2026-09-23; written 2026-09-22)** — §8 records how the Android session relates to the core queue. Media3
+holds one item at a time, so skip commands are advertised from the core queue, in-app player UI
+reads the controller's state rather than `media3-ui-compose` state holders, and cover art is handed
+to the session as validated bytes, never a signed URL. The queue controller gains `jumpTo`, which
+addresses an Up Next entry by `QueueEntryId`: a row index goes stale when the queue changes, and a
+song queued twice would make a song-addressed jump ambiguous. No existing contract changes.
+
+**Revision 101 (2026-09-23; written 2026-09-08)** — explicit seek observations exclude small forward jumps from scrobbling.
+
+The §15.2 heuristic previously preserved the pre-seek anchor even after `SeekCompleted`, crediting
+3.5 seconds for a 10 → 13 → 13.5 second sequence. **OBSERVED** in
+`ScrobbleAccumulatorTest.explicitSmallForwardSeekCreditsOnlyProgressAfterTheDestination`: the
+pre-fix reducer credits 3.5 seconds instead of 0.5. Explicit destinations now reset the media anchor;
+the existing four-second fallback remains for unobserved discontinuities. Submission thresholds,
+identities, at-least-once delivery and clock persistence are unchanged.
 
 **Revision 100 (2026-09-23; written 2026-09-11)** — §4.3 records that every Xcode Run Script phase invokes Gradle through
 `tools/run-gradle-exclusive`. No design change: the same task runs with the same inputs, serialised.
