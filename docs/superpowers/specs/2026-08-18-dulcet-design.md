@@ -7407,6 +7407,65 @@ fresh disposable server before landing; items 11–14 are what that review chang
     trial admitted, where a guard applied only while a hold ran or a trial was out passed every
     earlier test.
 
+20. **Found while implementing R2a-core (the Apple facade over the reader,
+    `AppleLibraryReaderFacade.kt`).** The reader records the thread that constructs it and checks it at
+    every entry point, so the facade cannot build the session on the caller's thread and then hop: it
+    builds the session ON the reader's thread (`newLibraryReaderDispatcher`), from its constructor,
+    without waiting, and every entry point answers a session that could not be built with a closed kind
+    (`internalFailure`, or `notRecorded` for a change) — the build's exception text is dropped, because
+    it may carry the address. A home screen is one `openHome(listOf(row))` per `homeRow` subscription,
+    so each row has its own handle and publishes on its own (CONF-86). Two properties of §16.18's Apple
+    paragraph hold only because of where the facade reads state. "Nothing is delivered after `close()`"
+    needs the listener, and the client's closed flag, read at DELIVERY on the main thread: a
+    publication the reader built before the close is already queued for the main thread when the close
+    runs, and a check made when it was built passes. The first cut read only the subscription's
+    listener, which a client-level close cleared later on the reader's thread, so a closed client still
+    delivered what was queued; a test now queues a window frame and a search's rows, closes the client
+    and receives neither. The guarantee holds for a close made on the main thread; from another thread
+    a delivery already running may finish. And `setViewport(first, last)` indexes refer to the
+    publication the shell has RECEIVED, while the reader may already have emitted a newer one — a
+    prepended page moves every index by a page — so the facade carries the range over by item identity
+    (kind and opaque id) to the reader's latest publication before the reader rebases or looks ahead
+    around it.
+21. **Two core gaps the facade works around, recommended to the core so R3 inherits them.**
+    `LibraryReader.reconnect()` sets `online` itself, and open searches re-run only when
+    `LibraryReaderSession.setOnline` sees reachability CHANGE — so a caller that reconnects without
+    first reporting reachability, or reports it afterwards, leaves an offline search `deviceOffline`
+    until the next keystroke. The facade's `reconnect` calls the session's `setOnline(true)` before the
+    reader's `reconnect()`. And `LibraryFavourites.pendingCount()` answers a failed read with 0
+    (`guarded(0L)`), which is the one wrong answer for the sign-out offer (§14.7) — it tells the person
+    nothing will be lost; the facade reads the outbox's own count and completes with a null count and
+    an error kind instead. Both belong in the core; the facade's workarounds should go when the core
+    changes. **Also recorded:** playability is computed per track only — album, artist, playlist and
+    search rows carry none, so `playability` is null for them rather than a guess. The production
+    composition wires no download source (downloads join the reader in R4), so nothing crosses this
+    facade as `downloaded` yet. That, not a rule in the facade, is what keeps tvOS to `streamable` and
+    `unavailableOffline`: R4 must give tvOS no download source rather than rely on this. The reader's
+    error vocabulary keeps the existing facades' words and splits `invalidCredentials`/`forbidden`,
+    `serverBusy` (§18.12) and `notFound` (code 70), and adds the facade's own `internalFailure` and
+    `closed`. A transport that throws something other than a `DomainError` is mapped by the core's
+    `mapAccountConnectionFailure` to `unreachable`, so a defect in the transport reads to the person as
+    a network failure — correct for the boundary (nothing crosses, no text leaks), imprecise as copy.
+    **ASSUMED, from reading the code only:** a list opened offline and never read, then told
+    `setOnline(true)` without a `reconnect()`, republishes `loading` with no read in flight until the
+    next viewport change or refresh.
+22. **Evidence for R2a-core, and what it does not reach.** OBSERVED 2026-09-24 on macOS arm64:
+    `AppleLibraryReaderFacadeTest` (23 tests) drives the production `LibraryReaderSession` over the
+    core's `SessionTestServer` and `FakeReaderServer`, on the reader's real thread, with every delivery
+    made through the real main dispatcher: the tests run on the main thread and pump its run loop. The
+    one other facade test in `appleTest`, the playback queue's, delivers through an inline dispatcher,
+    which cannot tell a main-thread delivery from an inline one. Seventeen mutants of the facade's
+    rules were each compiled and run against a green unmutated baseline; sixteen were killed. The
+    survivor removes the client-level close guard, and survives because every step of the close
+    tolerates being repeated — the guard is not what makes `close()` idempotent; two tests call it
+    twice. The generated Objective-C header gained sixteen classes and three listener protocols, and
+    its additions are final classes, primitives, `NSString`, `NSArray`s of those classes, boxed numbers
+    for nullable counts and epoch-millis, the listener protocols, and completion blocks that take one
+    of the classes (§7.2's operation, as the existing facades use). **ASSUMED:** the public
+    constructor's own composition — the app's database opened by name and the live transport — is
+    compiled but run by no test, which inject the composition over a private in-memory database; the
+    Swift half is the first code that runs it. No Swift copy test exists yet (§7.1); that is the
+    DulcetKit brief's.
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
 ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
