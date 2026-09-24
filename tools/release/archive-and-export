@@ -1,0 +1,218 @@
+#!/bin/bash
+# Archive, sign, export and verify one release package. Run inside
+# tools/signing/with-temporary-keychain, which supplies DULCET_SIGNING_IDENTITY_SHA1 (and, for
+# macOS, DULCET_INSTALLER_IDENTITY_SHA1).
+#
+# Inputs (all required; release.yml takes them from tools/release_plan.py and
+# tools/app_store_connect.py):
+#   RELEASE_CHANNEL RELEASE_PLATFORM RELEASE_SCHEME RELEASE_BUNDLE_ID RELEASE_PROFILE_NAME
+#   RELEASE_DESTINATION RELEASE_PACKAGE_KIND RELEASE_MARKETING_VERSION RELEASE_BUILD_NUMBER
+#   RELEASE_INTERNAL_ONLY RELEASE_ROOT (an empty or absent output directory) RELEASE_DERIVED_DATA
+#
+# Prints RELEASE PACKAGE <path> on success. Every check below inspects the artifact actually
+# produced, never the settings that were supposed to produce it.
+
+set -euo pipefail
+
+readonly TEAM_ID="3LTL47SJ8C"
+
+die() {
+  printf 'RELEASE VALIDATION FAILED: %s\n' "$*" >&2
+  exit 1
+}
+
+for name in RELEASE_CHANNEL RELEASE_PLATFORM RELEASE_SCHEME RELEASE_BUNDLE_ID \
+  RELEASE_PROFILE_NAME RELEASE_DESTINATION RELEASE_PACKAGE_KIND RELEASE_MARKETING_VERSION \
+  RELEASE_BUILD_NUMBER RELEASE_INTERNAL_ONLY RELEASE_ROOT RELEASE_DERIVED_DATA \
+  DULCET_SIGNING_IDENTITY_SHA1; do
+  [[ -n "${!name:-}" ]] || die "required variable is empty: $name"
+done
+[[ "$RELEASE_BUILD_NUMBER" =~ ^[0-9]+$ ]] || die "build number is not an integer"
+if [[ "$RELEASE_PLATFORM" == macos ]]; then
+  [[ -n "${DULCET_INSTALLER_IDENTITY_SHA1:-}" ]] \
+    || die "a macOS App Store package must be installer-signed; no installer identity was imported"
+fi
+
+# The signing wrapper runs under umask 077. Archiving under it produces 0600 files inside the app,
+# which App Store Connect rejects after upload (error 90255). Every file here is either public
+# build output or already-signed, so 022 is the correct mask for everything from this point on.
+umask 022
+
+archive="$RELEASE_ROOT/Dulcet.xcarchive"
+export_dir="$RELEASE_ROOT/export"
+options="$RELEASE_ROOT/ExportOptions.plist"
+mkdir -p "$RELEASE_ROOT"
+[[ ! -e "$archive" && ! -e "$export_dir" ]] || die "$RELEASE_ROOT already holds a release"
+
+xcodebuild archive \
+  -project apple/Dulcet.xcodeproj \
+  -scheme "$RELEASE_SCHEME" \
+  -configuration Release \
+  -destination "$RELEASE_DESTINATION" \
+  -archivePath "$archive" \
+  -derivedDataPath "$RELEASE_DERIVED_DATA" \
+  -hideShellScriptEnvironment \
+  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"
+
+apps=("$archive"/Products/Applications/*.app)
+[[ ${#apps[@]} -eq 1 && -d "${apps[0]}" ]] || die "expected exactly one archived app"
+app="${apps[0]}"
+case "$RELEASE_PLATFORM" in
+  macos)
+    info="$app/Contents/Info.plist"
+    embedded_profile="$app/Contents/embedded.provisionprofile"
+    ;;
+  ios)
+    info="$app/Info.plist"
+    embedded_profile="$app/embedded.mobileprovision"
+    ;;
+  *) die "unsupported platform $RELEASE_PLATFORM" ;;
+esac
+
+plist() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
+
+[[ "$(plist "$info" CFBundleIdentifier)" == "$RELEASE_BUNDLE_ID" ]] \
+  || die "archived bundle identifier is $(plist "$info" CFBundleIdentifier), expected $RELEASE_BUNDLE_ID"
+[[ "$(plist "$info" CFBundleVersion)" == "$RELEASE_BUILD_NUMBER" ]] \
+  || die "archived CFBundleVersion is $(plist "$info" CFBundleVersion), expected $RELEASE_BUILD_NUMBER"
+[[ "$(plist "$info" CFBundleShortVersionString)" == "$RELEASE_MARKETING_VERSION" ]] \
+  || die "archived CFBundleShortVersionString does not match MARKETING_VERSION"
+[[ "$(plist "$info" ITSAppUsesNonExemptEncryption)" == "false" ]] \
+  || die "ITSAppUsesNonExemptEncryption must be declared false or the build parks at MISSING_EXPORT_COMPLIANCE"
+if [[ "$RELEASE_PLATFORM" == macos ]]; then
+  [[ -n "$(plist "$info" CFBundleIconName)" ]] || die "no asset-catalog app icon (ITMS-90546)"
+  [[ -n "$(plist "$info" LSApplicationCategoryType)" ]] || die "no LSApplicationCategoryType"
+else
+  [[ -n "$(plist "$info" CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName)" ]] \
+    || die "no asset-catalog app icon"
+fi
+
+# Spec §22.3: PROD ships NO preconfigured server. tools/verify_release_policy.py closes the
+# configuration routes statically; this checks the artifact itself. The archived PROD Info.plist
+# may hold only the keys the source plist is allowlisted for plus the ones Xcode stamps into every
+# build (both lists OBSERVED on the build-4 archive), and no value anywhere in it may be a URL.
+if [[ "$RELEASE_CHANNEL" == prod ]]; then
+  /usr/bin/plutil -convert json -o - "$info" | /usr/bin/python3 -c '
+import json, sys
+allowed = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIconFile",
+    "CFBundleIconName", "CFBundleIdentifier", "CFBundleInfoDictionaryVersion", "CFBundleName",
+    "CFBundlePackageType", "CFBundleShortVersionString", "CFBundleVersion",
+    "ITSAppUsesNonExemptEncryption", "LSApplicationCategoryType", "LSMinimumSystemVersion",
+    "NSHumanReadableCopyright",
+    "BuildMachineOSBuild", "CFBundleSupportedPlatforms", "DTCompiler", "DTPlatformBuild",
+    "DTPlatformName", "DTPlatformVersion", "DTSDKBuild", "DTSDKName", "DTXcode", "DTXcodeBuild",
+}
+document = json.load(sys.stdin)
+extra = sorted(set(document) - allowed)
+urls = sorted(key for key, value in document.items() if "://" in json.dumps(value))
+if extra or urls:
+    sys.exit(f"PROD Info.plist: unexpected keys {extra}, URL-valued keys {urls}")
+' || die "the PROD Info.plist is not the allowlisted, URL-free set; PROD must ship no preconfigured server"
+fi
+
+/usr/bin/codesign --verify --deep --strict "$app" || die "archived app signature does not verify"
+/usr/bin/codesign -d --entitlements - --xml "$app" > "$RELEASE_ROOT/entitlements.plist" 2>/dev/null
+signed_app_id="$(plist "$RELEASE_ROOT/entitlements.plist" application-identifier \
+  || plist "$RELEASE_ROOT/entitlements.plist" com.apple.application-identifier)"
+[[ "$signed_app_id" == "$TEAM_ID.$RELEASE_BUNDLE_ID" ]] \
+  || die "signed application identifier is $signed_app_id"
+if [[ "$RELEASE_PLATFORM" == macos ]]; then
+  [[ "$(plist "$RELEASE_ROOT/entitlements.plist" com.apple.security.app-sandbox)" == "true" ]] \
+    || die "the Mac App Store requires the App Sandbox entitlement"
+fi
+
+# The leaf certificate that signed the app must be the CI identity, not any other Apple
+# Distribution certificate that happens to share the name on the machine.
+(cd "$RELEASE_ROOT" && /usr/bin/codesign -d --extract-certificates=signer- "$app" 2>/dev/null)
+signer_sha1="$(/usr/bin/shasum -a 1 "$RELEASE_ROOT/signer-0" | /usr/bin/awk '{print toupper($1)}')"
+[[ "$signer_sha1" == "$DULCET_SIGNING_IDENTITY_SHA1" ]] \
+  || die "the app was signed by $signer_sha1, not the CI distribution identity"
+
+/usr/bin/security cms -D -i "$embedded_profile" > "$RELEASE_ROOT/embedded-profile.plist" \
+  || die "no embedded provisioning profile"
+[[ "$(plist "$RELEASE_ROOT/embedded-profile.plist" Name)" == "$RELEASE_PROFILE_NAME" ]] \
+  || die "embedded profile is not $RELEASE_PROFILE_NAME"
+
+internal_only=false
+[[ "$RELEASE_INTERNAL_ONLY" == true ]] && internal_only=true
+/usr/bin/python3 - "$options" <<PY
+import plistlib, sys
+options = {
+    "method": "app-store-connect",
+    "destination": "export",
+    "teamID": "$TEAM_ID",
+    "signingStyle": "manual",
+    "signingCertificate": "$DULCET_SIGNING_IDENTITY_SHA1",
+    "provisioningProfiles": {"$RELEASE_BUNDLE_ID": "$RELEASE_PROFILE_NAME"},
+    "uploadSymbols": True,
+    "manageAppVersionAndBuildNumber": False,
+    # DEV: Xcode marks the build ineligible for external TestFlight and App Store release.
+    "testFlightInternalTestingOnly": $([[ $internal_only == true ]] && echo True || echo False),
+}
+if "$RELEASE_PLATFORM" == "macos":
+    options["installerSigningCertificate"] = "${DULCET_INSTALLER_IDENTITY_SHA1:-}"
+with open(sys.argv[1], "wb") as handle:
+    plistlib.dump(options, handle)
+PY
+
+xcodebuild -exportArchive \
+  -archivePath "$archive" \
+  -exportPath "$export_dir" \
+  -exportOptionsPlist "$options" \
+  -hideShellScriptEnvironment
+
+packages=("$export_dir"/*."$RELEASE_PACKAGE_KIND")
+[[ ${#packages[@]} -eq 1 && -f "${packages[0]}" ]] \
+  || die "expected exactly one exported .$RELEASE_PACKAGE_KIND"
+package="${packages[0]}"
+
+# Check the payload that is uploaded, not the archive it came from.
+payload="$RELEASE_ROOT/payload"
+if [[ "$RELEASE_PACKAGE_KIND" == pkg ]]; then
+  # An App Store installer certificate reports "signed by a developer certificate issued by
+  # Apple (Development)"; that wording is expected. OBSERVED with this team's installer
+  # certificates on a local macOS 26 / Xcode 26.6 host (builds 4 and the DEV dry run);
+  # ASSUMED, not yet observed, to read the same on the hosted runner image. What must hold is that it is signed at all and
+  # that the leaf is this team's installer certificate.
+  /usr/sbin/pkgutil --check-signature "$package" > "$RELEASE_ROOT/pkg-signature.txt" \
+    || die "the package signature does not check"
+  /usr/bin/grep -Eq '^ +Status: signed by ' "$RELEASE_ROOT/pkg-signature.txt" \
+    || die "the package is not signed"
+  /usr/bin/grep -Eq "^ +1\. (3rd Party Mac Developer Installer|Mac Installer Distribution): .*\($TEAM_ID\)$" \
+    "$RELEASE_ROOT/pkg-signature.txt" \
+    || die "the package is not signed by this team's installer certificate"
+  /usr/sbin/pkgutil --expand-full "$package" "$payload"
+  payload_apps=()
+  while IFS= read -r candidate; do payload_apps+=("$candidate"); done \
+    < <(/usr/bin/find "$payload" -type d -name '*.app' -prune)
+  payload_info_suffix="Contents/Info.plist"
+else
+  /usr/bin/ditto -x -k "$package" "$payload"
+  payload_apps=("$payload"/Payload/*.app)
+  payload_info_suffix="Info.plist"
+fi
+[[ ${#payload_apps[@]} -eq 1 && -d "${payload_apps[0]}" ]] || die "expected one app inside the package"
+payload_app="${payload_apps[0]}"
+unreadable="$(/usr/bin/find "$payload_app" ! -perm -o+r | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+[[ "$unreadable" == 0 ]] || die "$unreadable paths inside the package are not world-readable (ITMS-90255)"
+[[ "$(plist "$payload_app/$payload_info_suffix" CFBundleIdentifier)" == "$RELEASE_BUNDLE_ID" ]] \
+  || die "packaged bundle identifier differs from the archive"
+[[ "$(plist "$payload_app/$payload_info_suffix" CFBundleVersion)" == "$RELEASE_BUILD_NUMBER" ]] \
+  || die "packaged CFBundleVersion differs from the archive"
+/usr/bin/codesign --verify --deep --strict "$payload_app" || die "packaged app signature does not verify"
+
+# Internal-only is read from the package that will be uploaded, not assumed from the export
+# options: Xcode records testFlightInternalTestingOnly as TFInternalTestingOnly in the app's
+# Info.plist (OBSERVED on both DEV packages). DEV must carry it; PROD must not.
+packaged_internal="$(plist "$payload_app/$payload_info_suffix" TFInternalTestingOnly || true)"
+if [[ "$internal_only" == true ]]; then
+  [[ "$packaged_internal" == true ]] || die "the DEV package is not marked internal-testing-only"
+else
+  [[ "$packaged_internal" != true ]] || die "the PROD package is marked internal-testing-only"
+fi
+
+printf 'RELEASE PACKAGE %s\n' "$package"
+printf 'RELEASE VERIFIED channel=%s platform=%s bundle-id=%s version=%s build=%s internal-only=%s\n' \
+  "$RELEASE_CHANNEL" "$RELEASE_PLATFORM" "$RELEASE_BUNDLE_ID" "$RELEASE_MARKETING_VERSION" \
+  "$RELEASE_BUILD_NUMBER" "$internal_only"

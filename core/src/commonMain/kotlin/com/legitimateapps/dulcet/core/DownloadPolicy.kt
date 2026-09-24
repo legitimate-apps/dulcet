@@ -532,6 +532,7 @@ internal class DownloadPolicyEngine(
             queries.deleteSyncCheckpointsForServer(serverId)
             queries.deleteDeletionReconciliationsForServer(serverId)
             queries.deleteSyncGenerationsForServer(serverId)
+            queries.deleteSeenCacheForServer(serverId)
         }
         check(queries.countRowsForServer(serverId).executeAsOne().sum == 0L)
     }

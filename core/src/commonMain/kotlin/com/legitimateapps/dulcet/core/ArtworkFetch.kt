@@ -89,6 +89,7 @@ internal class ArtworkFetcher private constructor(
                 SubsonicBinaryEnvelopeInspection.Malformed -> ArtworkFetchResult.Failed(
                     DomainError.Protocol.MalformedEnvelope,
                 )
+                SubsonicBinaryEnvelopeInspection.Unknown,
                 SubsonicBinaryEnvelopeInspection.NotEnvelope -> when {
                     response.statusCode == 404 -> ArtworkFetchResult.Unavailable
                     response.statusCode !in 200..299 -> ArtworkFetchResult.Failed(

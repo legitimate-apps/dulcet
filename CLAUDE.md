@@ -96,6 +96,8 @@ measured — several CONF tests exist precisely to do that promotion.
 python3 tools/parity_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
+python3 tools/verify_release_policy.py
+python3 tools/test-release-channel
 ```
 
 🚨 **`BUILD SUCCESSFUL` is not evidence that tests ran.** An up-to-date Gradle test task prints it in
@@ -112,8 +114,8 @@ run in `apple-ci` on the pinned hosted image.
 
 | | DEV | PROD |
 |---|---|---|
-| trigger | every merge to `main`, automatic | a hand-cut `vX.Y.Z` tag, never automatic |
-| bundle id | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
+| trigger | dispatched by hand on a significant merge to `main` (`release.yml`); the dispatcher tells the maintainer, the workflow sends nothing | a hand-cut `vX.Y.Z` tag, then a dispatch of that commit; never automatic |
+| bundle id (every platform — universal purchase, one ASC record per channel) | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
 | display name | **Dulcet DEV** (distinct icon) | **Dulcet** |
 | TestFlight | **internal** testers, no Beta App Review, minutes | **external** group, Beta App Review, slower **by design** |
 | expectation | expected to break — that is the point | someone else relies on it |
@@ -127,6 +129,11 @@ run in `apple-ci` on the pinned hosted image.
   make it **structurally impossible** for PROD to compile that value in — not a thing someone remembers.
 - **Cutting PROD is gated**: CI green, conformance suite passing, `FEATURES.yml` showing no undeclared
   regression. A tag failing any of those is deleted and re-cut, never shipped with a note.
+- **`release.yml` is `workflow_dispatch`-only, from `main`, in the approval-gated `release`
+  environment, with `dry_run` defaulting to `true`** (spec §22.6). An upload needs the App Store
+  Connect record for that bundle identifier, which is created in the web UI only. The environment
+  has administrator bypass off; `prevent_self_review` is off because there is one maintainer, so its
+  approval is a deliberate second click, **not** an independent review.
 - **Only these settings differ per channel**: bundle id, display name, icon, logging verbosity,
   diagnostics visibility, preconfigured server. Everything correctness-relevant is identical — a DEV
   build that behaves differently because of a build flag is not dogfooding, it is a different program.
@@ -245,11 +252,20 @@ They are deliberately not reproduced in this repository.**
     types are hand-written Swift structs in `DulcetKit`. Async is completion-handler plus a
     synchronously-returned `OperationHandle`; callbacks on the main thread; no Kotlin exception may
     cross (it terminates the process). Review the generated ObjC header diff on every facade change.
-18. **Sync has no change token, and offset paging is not a snapshot.** Dedupe cannot recover an omitted
-    row. Consistency comes from row versioning with reads pinned to a committed generation, one atomic
-    commit, and a stability witness with bounded retries (spec §16.3–§16.4). Bounded concurrency 4.
-19. **The freshness pass is a heuristic, not incremental sync** — it cannot see a tag change that
-    preserves count and duration. Do not describe it as incremental sync in UI copy.
+18. **There is no change token, and offset paging is not a snapshot.** Dedupe cannot recover an
+    omitted row. Dulcet is a reader, not a mirror (spec §16.8): a page is one server read, and a
+    window of pages is extended only when a `getScanStatus` read taken **after** each page shows the
+    window's stamp unchanged and `scanning == false`. A window whose stored stamp differs from the
+    current one is torn at its first live read and rebased around the viewport — never stitched.
+    While the server scans, pages append marked unverified and the list says so (spec §16.12).
+    Bounded concurrency 4.
+19. **The catalog epoch is a scan clock, not a change feed** (spec §16.11). `lastScan` is compared as
+    a raw string for equality only, together with the `getMusicFolders` id set; the sentinel
+    `0001-01-01T00:00:00Z`, an absent value or a failed read is "no epoch", never "unchanged". It never
+    covers user state (stars, ratings, play counts), so the visible screen is re-read when online.
+    `/rest` has no ETags or conditional requests. Gone-ness comes from a successful `getAlbum` no
+    longer listing a track, or code 70 — **never** from `getSong` answering `ok` or from `songCount`,
+    because a server keeping missing files answers both as if the file still existed.
 20. **Two clocks.** Monotonic for accumulation, timeouts, backoff and cadence; wall clock for scrobble
     timestamps and retention. Never persist a monotonic value.
 21. 🚨 **The Compose-for-TV artifact is `androidx.tv:tv-material` (1.1.0), NOT `androidx.tv:tv-material3`.**
@@ -395,6 +411,23 @@ They are deliberately not reproduced in this repository.**
     through `tools/run-gradle-exclusive`, which holds one flock beside each resource for the whole
     invocation; do not reintroduce a bare `./gradlew` there, and do not key a replacement lock on
     only one of the two resources.
+
+42. **Robolectric's TLS provider differs by host architecture.** It disables Conscrypt on macOS
+    Apple Silicon and enables it on Linux. **OBSERVED 2026-09-08:** the Android playback downgrade
+    fixture passed on ARM JDK 17/21 but failed on x64 Temurin 21 before recording a request:
+    Conscrypt reflected into `java.net.InetAddress.holder()` and hit `InaccessibleObjectException`.
+    The host-socket fixture uses method-scoped `@ConscryptMode(OFF)` to retain ordinary certificate
+    and hostname checks without opening JDK modules. Keep the exact source-request-count assertion:
+    a TLS failure also throws the expected playback exception and would otherwise counterfeit a pass.
+
+43. **A freshly installed Android app can have its foreground notification cancelled mid-test.**
+    The notification service answers `PACKAGE_ADDED` by cancelling *every* notification the
+    package holds, foreground-service ones included, and the service stays in the foreground with
+    no notification record. On a freshly booted emulator the app's own install broadcast can land
+    15 s into the first test. It presents as a flaky "no foreground notification" with the session
+    still playing. Device proofs wait on `am wait-for-broadcast-barrier` before playing
+    (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
+    (docs/verification/android-playback-surfaces.md).
 
 ## Review and delegation
 

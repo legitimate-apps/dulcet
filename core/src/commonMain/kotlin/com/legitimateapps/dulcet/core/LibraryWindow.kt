@@ -1,0 +1,1171 @@
+package com.legitimateapps.dulcet.core
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * Windows (spec §16.12): a contiguous run of pages presented as one list, all read under one epoch.
+ *
+ * The consistency rules, in the order this file enforces them:
+ *
+ * 1. **A page is one server read**, written in one transaction with its entities.
+ * 2. **Every page is bracketed**: the reading current when its request was sent (*before*) and a
+ *    `getScanStatus` issued after its response arrived (*after*). It joins a guarded window only
+ *    when both are idle and both carry the window's stamp ([checkPage]) — never on *after* alone.
+ * 3. **A window is torn** by a failed check, by a stored epoch that differs from the current one at
+ *    its first live read in this session, or by a changed folder set — and a torn window is never
+ *    extended. The check runs BEFORE the write that would advance the window. A torn window is
+ *    **rebased**: only the pages intersecting the viewport are re-read, under the current epoch,
+ *    every other page is dropped, and the first visible item stays first. The rebased window is
+ *    open on both sides: [LibraryPublication.leadingOffset] says where it starts, and
+ *    [LibraryWindowHandle.loadBefore] reads towards the top under the same check.
+ * 4. **While the server scans**, pages append unguarded and the window is `unverified(scanning)`;
+ *    the first reading with no scan running rebases it.
+ * 5. **A reading that fails concludes nothing**: the page is not used and nothing is relabelled.
+ *    Only a server that answers with no stamp is `unverified(noEpoch)`.
+ */
+internal abstract class ReaderHandle(
+    protected val reader: LibraryReader,
+    final override val query: LibraryQuery,
+    private val listener: (LibraryPublication) -> Unit,
+) : LibraryWindowHandle {
+    protected val cache: BoundSeenCache get() = reader.cache
+    private var sequence = 0
+    protected var closed = false
+        private set
+    private val jobs = mutableListOf<Job>()
+
+    /**
+     * One live operation at a time. A list window shares its lock with every other handle on the
+     * same list key ([LibraryReader.listLock]), so two screens on one list have one writer.
+     */
+    protected open val lock: Mutex by lazy { Mutex() }
+
+    /** In-flight live reads; while positive, cached content is `cached(revalidating)`. */
+    protected var inFlight = 0
+
+    /**
+     * Set when an open decided to revalidate, BEFORE its first publication: the cached content it
+     * paints is already `revalidating`, so no later frame has to correct it (§16.14).
+     */
+    protected var revalidationPending = false
+
+    /** The last live read's failure, shown beside the cached content until a read succeeds. */
+    protected var failure: DomainError? = null
+
+    /** Set when the reader itself threw while serving this screen; cleared by the next success. */
+    protected var internalFailure = false
+
+    /** The last publication's items, which [setViewport] indexes into. */
+    protected var published: List<LibraryItem> = emptyList()
+
+    /** Whether opening now would issue a live read; false when the screen is fresh (§16.11 rule 3). */
+    protected abstract fun needsRevalidation(): Boolean
+
+    /**
+     * The first publication is built from the cache and delivered synchronously, before any request
+     * is issued and before any loading state is published (CONF-76).
+     */
+    fun start() {
+        revalidationPending = reader.online && needsRevalidation()
+        emitSnapshot()
+        if (revalidationPending) {
+            launchRead {
+                try {
+                    performRevalidate(RevalidateCause.Open)
+                } finally {
+                    revalidationPending = false
+                }
+            }
+        }
+    }
+
+    /** Revalidates under this window's lock; the reader's reconnect and epoch refresh call this. */
+    suspend fun revalidate(cause: RevalidateCause) {
+        guarded { lock.withLock { performRevalidate(cause) } }
+    }
+
+    /** Whether this window is waiting for a reading with a stamp that holds still. */
+    open fun awaitsQuietEpoch(): Boolean = false
+
+    /** Called with the window's lock held. */
+    protected abstract suspend fun performRevalidate(cause: RevalidateCause)
+
+    /** Builds the publication from the cache as it stands now. */
+    protected abstract fun snapshot(): LibraryPublication
+
+    abstract fun mentionsAny(rawIds: Set<String>): Boolean
+
+    fun republish() {
+        if (!closed) emitSnapshot()
+    }
+
+    /**
+     * Publishes the cache as it stands. If building that publication itself throws, the screen is
+     * told so with a publication that needs nothing from the cache — never silence, never a crash.
+     */
+    protected fun emitSnapshot() {
+        if (closed) return
+        val publication = try {
+            snapshot()
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (thrown: Throwable) {
+            internalFailure = true
+            LibraryPublication(
+                query, 0, LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure), null, null, null,
+                emptyList(), LibraryItemsState.Unavailable, LibraryItemsOrder.Server,
+            )
+        }
+        emit(publication)
+    }
+
+    private fun emit(publication: LibraryPublication) {
+        if (closed) return
+        sequence += 1
+        published = publication.items
+        listener(publication.copy(sequence = sequence))
+    }
+
+    /** Converts anything a live operation throws into a publication that says the screen failed. */
+    private suspend fun guarded(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            inFlight = 0
+            revalidationPending = false
+            internalFailure = true
+            emitSnapshot()
+        }
+    }
+
+    protected fun launchRead(block: suspend () -> Unit) {
+        if (closed) return
+        val job = reader.scope.launch { guarded { lock.withLock { block() } } }
+        jobs += job
+        job.invokeOnCompletion { jobs -= job }
+    }
+
+    /** Runs one live read, publishing `revalidating` while it is in flight. */
+    protected suspend fun <T> live(block: suspend () -> T): T {
+        // From here the in-flight count carries "revalidating"; the open's pending flag must not
+        // outlive the read, or the final publication would still say revalidating.
+        revalidationPending = false
+        inFlight += 1
+        try {
+            return block()
+        } finally {
+            inFlight -= 1
+        }
+    }
+
+    override fun refresh() {
+        reader.checkConfined()
+        if (reader.online) launchRead { performRevalidate(RevalidateCause.Refresh) }
+    }
+
+    override fun close() {
+        reader.checkConfined()
+        if (closed) return
+        closed = true
+        jobs.toList().forEach { it.cancel() }
+        reader.lookAhead.windowClosed(this)
+        reader.closed(this)
+    }
+
+    // ---- Shared presentation ------------------------------------------------------------------------
+
+    /** Freshness of content that exists in the cache (§16.14). */
+    protected fun cachedFreshness(asOfWall: Long?, liveUnderCurrentEpoch: Boolean): LibraryFreshness {
+        val error = failure
+        return when {
+            !reader.online -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Offline)
+            inFlight > 0 || revalidationPending -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
+            internalFailure -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.InternalFailure)
+            error != null -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Failed(error))
+            liveUnderCurrentEpoch -> LibraryFreshness.Live
+            else -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Stale)
+        }
+    }
+
+    /** Freshness when nothing is cached. */
+    protected fun emptyFreshness(): LibraryFreshness {
+        val error = failure
+        return when {
+            !reader.online -> LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline)
+            internalFailure -> LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure)
+            error != null -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Failed(error))
+            else -> LibraryFreshness.Loading
+        }
+    }
+
+    /** Items for rows read in one batch; per-user state is overlaid, never written back. */
+    protected fun itemsOf(rows: List<CachedListRow>, dedupe: Boolean): Pair<List<LibraryItem>, List<Int>> {
+        val pending = reader.overlay.pending(cache.serverId, rows.mapTo(mutableSetOf()) { CacheListMember(it.kind, it.rawId) })
+        val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+        val seen = mutableSetOf<Pair<CacheItemKind, String>>()
+        val items = mutableListOf<LibraryItem>()
+        val positions = mutableListOf<Int>()
+        rows.forEach { row ->
+            // Deduplicated by opaque id within a window in any case (§16.12). A playlist keeps its
+            // duplicate entries (§18.6), so its caller passes dedupe = false.
+            if (dedupe && !seen.add(row.kind to row.rawId)) return@forEach
+            val overlay = pending[CacheListMember(row.kind, row.rawId)]
+            val item: LibraryItem = row.album?.toItem(overlay)
+                ?: row.artist?.toItem(overlay)
+                ?: row.track?.toItem(overlay, reader.trackPlayability(row.rawId, downloaded))
+                ?: row.playlist?.toItem()
+                ?: LibraryItem.Genre(row.rawId)
+            items += item
+            positions += row.position
+        }
+        return items to positions
+    }
+
+    /** Refreshes last access for a shown list, at most once per [LibraryReaderConfig.touchIntervalMillis]. */
+    protected fun touchShown(listKey: String) {
+        val now = cache.now()
+        val last = reader.lastTouches[listKey]
+        if (last != null && now - last < reader.config.touchIntervalMillis) return
+        reader.lastTouches[listKey] = now
+        cache.touchList(listKey)
+    }
+}
+
+/** How one list query is requested and cached. */
+internal data class ListRequestSpec(
+    val endpoint: String,
+    val parameters: Map<String, String>,
+    val listKey: String,
+    /** Offset-paged under the window rules, or one single response. */
+    val paged: Boolean,
+    /** The paging parameter's name: `size` for `getAlbumList2`, `count` for `getSongsByGenre`. */
+    val sizeParameter: String?,
+    /** For a single-page list: the size asked for (none for one-response endpoints). */
+    val singlePageSize: Int?,
+    val parse: (String) -> ParsedList,
+) {
+    companion object {
+        fun of(query: LibraryQuery): ListRequestSpec = when (query) {
+            is LibraryQuery.AlbumList -> albumList(query, homeRowSize = null)
+            is LibraryQuery.Artists -> whole("getArtists", listOfNotNull(query.musicFolderId?.let { "musicFolderId" to it }).toMap()) {
+                val artists = parseReaderArtists(it)
+                ParsedList(artists.map { a -> CacheListMember(CacheItemKind.Artist, a.rawId) }, CacheEntities(artists = artists))
+            }
+            LibraryQuery.Playlists -> whole("getPlaylists", emptyMap()) {
+                val playlists = parseReaderPlaylists(it)
+                ParsedList(playlists.map { p -> CacheListMember(CacheItemKind.Playlist, p.rawId) }, CacheEntities(playlists = playlists))
+            }
+            LibraryQuery.Starred -> whole("getStarred2", emptyMap()) {
+                val entities = parseReaderStarred(it)
+                ParsedList(
+                    entities.artists.map { a -> CacheListMember(CacheItemKind.Artist, a.rawId) } +
+                        entities.albums.map { a -> CacheListMember(CacheItemKind.Album, a.rawId) } +
+                        entities.tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) },
+                    entities,
+                )
+            }
+            LibraryQuery.Genres -> whole("getGenres", emptyMap()) {
+                ParsedList(parseReaderGenres(it).map { g -> CacheListMember(CacheItemKind.Genre, g) }, CacheEntities())
+            }
+            is LibraryQuery.SongsByGenre -> {
+                val parameters = listOfNotNull("genre" to query.genre, query.musicFolderId?.let { "musicFolderId" to it }).toMap()
+                ListRequestSpec("getSongsByGenre", parameters, canonicalListKey("getSongsByGenre", parameters), true, "count", null) {
+                    val tracks = parseReaderSongsByGenre(it)
+                    ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
+                }
+            }
+            is LibraryQuery.Album, is LibraryQuery.Artist, is LibraryQuery.Playlist ->
+                error("a detail query is not a list")
+        }
+
+        fun homeRow(row: LibraryHomeRow, homeRowSize: Int): ListRequestSpec = when (row) {
+            is LibraryHomeRow.Albums -> albumList(LibraryQuery.AlbumList(row.type), homeRowSize)
+            LibraryHomeRow.Favourites -> of(LibraryQuery.Starred)
+        }
+
+        private fun albumList(query: LibraryQuery.AlbumList, homeRowSize: Int?): ListRequestSpec {
+            val parameters = listOfNotNull(
+                "type" to query.type.wireName,
+                query.fromYear?.let { "fromYear" to it.toString() },
+                query.toYear?.let { "toYear" to it.toString() },
+                query.genre?.let { "genre" to it },
+                query.musicFolderId?.let { "musicFolderId" to it },
+            ).toMap()
+            val key = canonicalListKey("getAlbumList2", parameters)
+            val paged = query.type.paged && homeRowSize == null
+            return ListRequestSpec(
+                endpoint = "getAlbumList2",
+                parameters = parameters,
+                // A home row is one page of 20 and must not share a key with the windowed grid of
+                // the same request, or writing the row would replace the grid's cached pages.
+                listKey = if (homeRowSize != null) "$key#home" else key,
+                paged = paged,
+                sizeParameter = "size",
+                singlePageSize = if (paged) null else (homeRowSize ?: SINGLE_PAGE_SIZE),
+            ) {
+                val albums = parseReaderAlbumList(it)
+                ParsedList(albums.map { a -> CacheListMember(CacheItemKind.Album, a.rawId) }, CacheEntities(albums = albums))
+            }
+        }
+
+        private fun whole(endpoint: String, parameters: Map<String, String>, parse: (String) -> ParsedList) =
+            ListRequestSpec(endpoint, parameters, canonicalListKey(endpoint, parameters), false, null, null, parse)
+
+        /** Activity-ordered lists and `random` are one page of this size (§16.9). */
+        const val SINGLE_PAGE_SIZE = 100
+    }
+}
+
+internal data class ParsedList(val members: List<CacheListMember>, val entities: CacheEntities)
+
+/** A page read, bracketed by its two readings. */
+private data class PageRead(
+    val offset: Int,
+    val requested: Int,
+    val parsed: ParsedList,
+    val totalCount: Int?,
+    val before: ScanStatusReading?,
+    val after: ScanStatusReading?,
+    val afterError: DomainError?,
+    val issueSeq: Long,
+)
+
+private enum class PageMode { Append, Replace, Prepend }
+
+/** One list screen: a paged window, or a single response. */
+internal class ListWindow(
+    reader: LibraryReader,
+    query: LibraryQuery,
+    private val spec: ListRequestSpec,
+    listener: (LibraryPublication) -> Unit,
+) : ReaderHandle(reader, query, listener) {
+    private val pageSize = reader.config.pageSize
+
+    override val lock: Mutex get() = reader.listLock(spec.listKey)
+
+    /**
+     * The viewport, in server positions. A new handle opens at the TOP of its list, whatever depth
+     * a previous session's window was left at: a window that starts deeper is rebased around the
+     * top on its first live read, so the start of a list is never unreachable (review finding B2).
+     */
+    private var viewport: IntRange = 0..0
+
+    /** Positions of the last publication's items, parallel to [published]. */
+    private var publishedPositions: List<Int> = emptyList()
+
+    /** Bumped by every rebase; a page read from an older generation is discarded on arrival. */
+    private var generation = 0
+
+    private var pendingAnchor: LibraryAnchor? = null
+
+    /**
+     * Whether this list was read live in this session — by this handle or an earlier one for the
+     * same list (§16.12 tear rule 2 applies at the FIRST live read of the session).
+     */
+    private val liveThisSession: Boolean get() = spec.listKey in reader.liveListReads
+
+    override fun needsRevalidation(): Boolean {
+        val epoch = reader.sessionEpoch ?: return true
+        val state = cache.listState(spec.listKey) ?: return true
+        return mustRebase(state, epoch) || !readRecently(state, epoch)
+    }
+
+    override fun mentionsAny(rawIds: Set<String>): Boolean = published.any { it.rawId in rawIds }
+
+    override fun awaitsQuietEpoch(): Boolean = cache.listState(spec.listKey)?.coverage == CacheCoverage.UnverifiedChanging
+
+    // ---- Revalidation -------------------------------------------------------------------------------
+
+    /**
+     * Whether the stored window cannot be revalidated in place: its epoch is not the current one
+     * (tear rules 2 and 3), it holds unguarded pages and the server is no longer scanning, its stamp
+     * kept moving last time, or the viewport lies outside it.
+     */
+    private fun mustRebase(state: CachedListState, epoch: CatalogEpoch): Boolean =
+        state.windowEpoch != epoch.key ||
+            (state.coverage == CacheCoverage.UnverifiedScanning && !epoch.scanning) ||
+            state.coverage == CacheCoverage.UnverifiedChanging ||
+            viewport.first < state.firstLoadedOffset ||
+            (viewport.first >= state.endLoadedOffset && state.endLoadedOffset > state.firstLoadedOffset)
+
+    override suspend fun performRevalidate(cause: RevalidateCause) {
+        if (closed || !reader.online) return
+        if (cause != RevalidateCause.Open && cache.listState(spec.listKey) != null) {
+            inFlight += 1
+            emitSnapshot()
+            inFlight -= 1
+        }
+        live {
+            val epoch = reader.ensureEpoch()
+            if (epoch == null) {
+                failure = DomainError.Transport.Unreachable
+                return@live
+            }
+            if (!spec.paged) {
+                readWhole(epoch)
+                return@live
+            }
+            val state = cache.listState(spec.listKey)
+            val torn = state == null || mustRebase(state, epoch)
+            // The 60-second rule spares a fresh window a re-read; it never spares a torn one.
+            if (!torn && state != null && cause != RevalidateCause.Refresh && readRecently(state, epoch)) return@live
+            if (torn || state == null) rebase(epoch, attempt = 0) else revalidateViewport(epoch)
+        }
+        emitSnapshot()
+    }
+
+    private fun readRecently(state: CachedListState, epoch: CatalogEpoch): Boolean {
+        val readAt = reader.liveListReads[spec.listKey] ?: return false
+        return state.windowEpoch == epoch.key && cache.now() - readAt < reader.config.revalidateWithinMillis
+    }
+
+    private suspend fun readWhole(epoch: CatalogEpoch) {
+        val parameters = spec.parameters + listOfNotNull(spec.singlePageSize?.let { "size" to it.toString() })
+        val sent = try {
+            reader.sendChecked(spec.endpoint, parameters)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            failure = thrown.asReaderError()
+            return
+        }
+        val parsed = try {
+            spec.parse(sent.response.body)
+        } catch (thrown: LibraryRequestFailure) {
+            failure = thrown.error
+            return
+        }
+        val now = cache.now()
+        cache.writeWholeList(
+            CacheWriteStamp(sent.issueSeq, now, epoch.key),
+            CacheEntitySource.ListPage,
+            CachedListState(spec.listKey, epoch.key, epoch.folderIds, 0, parsed.members.size, sent.response.totalCount, CacheCoverage.Complete, now, now, sent.issueSeq),
+            parsed.members,
+            parsed.entities,
+        )
+        markLive()
+        cache.evictIfNeeded()
+    }
+
+    private suspend fun revalidateViewport(epoch: CatalogEpoch) {
+        for (offset in viewportPageOffsets()) {
+            val gen = generation
+            val read = readPage(offset) ?: return
+            if (gen != generation || closed) return
+            when (checkPage(epoch.stamp, read.before, read.after)) {
+                PageCheck.Unread -> {
+                    failure = read.afterError
+                    return
+                }
+                PageCheck.Fired, PageCheck.ScanEnded -> {
+                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                    return
+                }
+                PageCheck.Guarded -> writePage(read, CacheCoverage.Open, epoch, PageMode.Replace)
+                PageCheck.Scanning -> writePage(read, CacheCoverage.UnverifiedScanning, epoch, PageMode.Replace)
+                PageCheck.NoEpoch -> writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, PageMode.Replace)
+            }
+        }
+        markLive()
+    }
+
+    /**
+     * Rebase (§16.12): re-read only the pages intersecting the viewport under [epoch], and drop
+     * every other page, in one transaction per rebase. The first visible item stays first.
+     *
+     * A page whose stamp moved, or whose scan ended while it was read, is re-read under the newer
+     * reading, up to [LibraryReaderConfig.maxTearRetries] times. If the stamp is still moving after
+     * that with no scan reported, the window is written as `unverified(changing)` — an honest label,
+     * not "scanning" — and the next revalidation rebases it again.
+     */
+    private suspend fun rebase(epoch: CatalogEpoch, attempt: Int) {
+        generation += 1
+        val gen = generation
+        val anchorBefore = firstVisibleAnchorSource()
+        val offsets = viewportPageOffsets()
+        val reads = coroutineScope { offsets.map { offset -> async { readPage(offset) } }.awaitAll() }
+        if (gen != generation || closed) return
+        val pages = reads.filterNotNull().sortedBy { it.offset }
+        if (pages.size != reads.size) return
+        val checks = pages.map { checkPage(epoch.stamp, it.before, it.after) }
+        if (PageCheck.Unread in checks) {
+            failure = pages[checks.indexOf(PageCheck.Unread)].afterError
+            return
+        }
+        val moved = PageCheck.Fired in checks || PageCheck.ScanEnded in checks
+        val latest = reader.sessionEpoch ?: epoch
+        if (moved && attempt < reader.config.maxTearRetries) {
+            rebase(latest, attempt + 1)
+            return
+        }
+        val coverage = when {
+            PageCheck.Scanning in checks -> CacheCoverage.UnverifiedScanning
+            moved -> CacheCoverage.UnverifiedChanging
+            PageCheck.NoEpoch in checks -> CacheCoverage.UnverifiedNoEpoch
+            else -> CacheCoverage.Open
+        }
+        val windowEpoch = if (moved) latest else epoch
+        val first = pages.first().offset
+        val members = mutableListOf<CacheListMember>()
+        val ids = mutableSetOf<Pair<CacheItemKind, String>>()
+        var end = first
+        val entities = mutableListOf<CacheEntities>()
+        var lastRows = 0
+        for (page in pages) {
+            if (page.offset > end) break // a gap: keep the contiguous run only
+            page.parsed.members.forEach { if (ids.add(it.kind to it.rawId)) members += it }
+            end = page.offset + page.parsed.members.size
+            lastRows = page.parsed.members.size
+            entities += page.parsed.entities
+        }
+        val total = pages.lastOrNull { it.totalCount != null }?.totalCount
+        val complete = coverage == CacheCoverage.Open && first == 0 &&
+            (lastRows == 0 || (total != null && end >= total))
+        val now = cache.now()
+        val seq = pages.maxOf { it.issueSeq }
+        cache.writeWindowPage(
+            stamp = CacheWriteStamp(seq, now, windowEpoch.key),
+            source = CacheEntitySource.ListPage,
+            state = CachedListState(
+                spec.listKey, windowEpoch.key, windowEpoch.folderIds, first, end, total,
+                if (complete) CacheCoverage.Complete else coverage, now, now, seq,
+            ),
+            pageStart = first,
+            replacedEnd = end,
+            members = members,
+            entities = entities.merge(),
+            keepRange = first until maxOf(first + members.size, first + 1),
+        )
+        cache.evictIfNeeded()
+        markLive()
+        pendingAnchor = anchorAfterRebase(anchorBefore)
+    }
+
+    /**
+     * One page read and its *after* reading. The *before* is the reading that was current when the
+     * page request was SENT ([LibraryReader.send]); every successful *after* becomes the session's
+     * reading, and so the next page's *before*.
+     */
+    private suspend fun readPage(offset: Int): PageRead? {
+        val sizeParameter = spec.sizeParameter ?: return null
+        val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + ("offset" to offset.toString())
+        val sent = try {
+            reader.sendChecked(spec.endpoint, parameters)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            failure = thrown.asReaderError()
+            return null
+        }
+        val parsed = try {
+            spec.parse(sent.response.body)
+        } catch (thrown: LibraryRequestFailure) {
+            failure = thrown.error
+            return null
+        }
+        // The *after* reading is issued only once the page's response has arrived (§16.12).
+        var afterError: DomainError? = null
+        val after = try {
+            reader.epochReader.readScanStatus()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (thrown: Throwable) {
+            afterError = thrown.asReaderError()
+            null
+        }
+        after?.let(reader::adoptScanStatus)
+        return PageRead(offset, pageSize, parsed, sent.response.totalCount, sent.before, after, afterError, sent.issueSeq)
+    }
+
+    /** Writes one page into an intact window, deduplicating against the rest of it. */
+    private fun writePage(read: PageRead, coverage: CacheCoverage, epoch: CatalogEpoch, mode: PageMode) {
+        val state = cache.listState(spec.listKey)
+        val rows = read.parsed.members.size
+        val pageRange = read.offset until read.offset + read.requested
+        val existing = cache.listMembers(spec.listKey)
+        val elsewhere = existing
+            .filter { it.position !in pageRange }
+            .mapTo(mutableSetOf()) { it.member.kind to it.member.rawId }
+        val members = read.parsed.members.filter { elsewhere.add(it.kind to it.rawId) }
+        val previousRows = existing.count { it.position in pageRange }
+        val first = minOf(state?.firstLoadedOffset ?: read.offset, read.offset)
+        val end = when (mode) {
+            PageMode.Append -> read.offset + rows
+            PageMode.Replace -> maxOf(state?.endLoadedOffset ?: (read.offset + rows), read.offset + rows)
+            PageMode.Prepend -> state?.endLoadedOffset ?: (read.offset + rows)
+        }
+        val total = read.totalCount ?: state?.total
+        val complete = first == 0 && (
+            (rows == 0 && mode == PageMode.Append) ||
+                (total != null && end >= total) ||
+                // Re-reading a page of a complete window keeps it complete only if the page kept its size.
+                (mode == PageMode.Replace && state?.coverage == CacheCoverage.Complete && members.size == previousRows)
+            )
+        val mergedCoverage = when {
+            coverage != CacheCoverage.Open -> coverage
+            state != null && state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete -> state.coverage
+            complete -> CacheCoverage.Complete
+            else -> CacheCoverage.Open
+        }
+        val replacedEnd = when (mode) {
+            PageMode.Prepend -> minOf(read.offset + read.requested, state?.firstLoadedOffset ?: Int.MAX_VALUE)
+            else -> read.offset + read.requested
+        }
+        val now = cache.now()
+        cache.writeWindowPage(
+            stamp = CacheWriteStamp(read.issueSeq, now, epoch.key),
+            source = CacheEntitySource.ListPage,
+            state = CachedListState(
+                spec.listKey, state?.windowEpoch ?: epoch.key, state?.folderIds ?: epoch.folderIds,
+                first, end, total, mergedCoverage, minOf(state?.fetchedAtWall ?: now, now), now,
+                maxOf(state?.issueSeq ?: 0, read.issueSeq),
+            ),
+            pageStart = read.offset,
+            replacedEnd = replacedEnd,
+            members = members,
+            entities = read.parsed.entities,
+        )
+        reader.liveListReads[spec.listKey] = now
+        cache.evictIfNeeded()
+    }
+
+    // ---- Paging -------------------------------------------------------------------------------------
+
+    override fun loadMore() {
+        reader.checkConfined()
+        if (closed || !reader.online || !spec.paged) return
+        launchRead { extend(PageMode.Append, confirming = false) }
+    }
+
+    override fun loadBefore() {
+        reader.checkConfined()
+        if (closed || !reader.online || !spec.paged) return
+        launchRead { extend(PageMode.Prepend, confirming = false) }
+    }
+
+    /**
+     * Extends the window by one page at its end ([PageMode.Append]) or its start
+     * ([PageMode.Prepend]). The bracketed check runs BEFORE the write that would advance the
+     * window; anything but [PageCheck.Guarded] on an intact window leaves the window as it was.
+     */
+    private suspend fun extend(mode: PageMode, confirming: Boolean) {
+        val state = cache.listState(spec.listKey) ?: return
+        val offset = when (mode) {
+            PageMode.Append -> {
+                if (state.coverage == CacheCoverage.Complete) return
+                // Never more than one page beyond the viewport (§16.12).
+                if (!confirming && state.endLoadedOffset > viewport.last + pageSize) return
+                state.endLoadedOffset
+            }
+            PageMode.Prepend -> {
+                if (state.firstLoadedOffset == 0) return
+                if (viewport.first >= state.firstLoadedOffset + pageSize) return
+                maxOf(0, state.firstLoadedOffset - pageSize)
+            }
+            PageMode.Replace -> return
+        }
+        val epoch = reader.ensureEpoch() ?: return
+        // Tear rule 2: a window not yet read live this session is revalidated, not extended.
+        if (!liveThisSession) {
+            performRevalidate(RevalidateCause.Open)
+            return
+        }
+        live {
+            val gen = generation
+            val read = readPage(offset) ?: return@live
+            if (gen != generation || closed) return@live
+            val unguardedWindow = state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete
+            when (checkPage(windowStamp(state), read.before, read.after)) {
+                PageCheck.Unread -> failure = read.afterError
+                PageCheck.Fired, PageCheck.ScanEnded -> rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                PageCheck.Scanning -> writePage(read, CacheCoverage.UnverifiedScanning, epoch, mode)
+                PageCheck.NoEpoch -> writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, mode)
+                PageCheck.Guarded -> if (unguardedWindow) {
+                    // The window holds unguarded pages and the server is now idle under one stamp:
+                    // that is the reading that ends scanning mode, so the window is rebased.
+                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                } else {
+                    failure = null
+                    writePage(read, CacheCoverage.Open, epoch, mode)
+                    val rows = read.parsed.members.size
+                    val after = cache.listState(spec.listKey)
+                    // A short page is only a CANDIDATE end: with no total it is confirmed by one
+                    // more request, and only an empty page (or the total) completes the window.
+                    if (mode == PageMode.Append && !confirming && rows in 1 until read.requested &&
+                        after?.total == null && after?.coverage != CacheCoverage.Complete
+                    ) {
+                        extend(PageMode.Append, confirming = true)
+                    }
+                }
+            }
+        }
+        emitSnapshot()
+    }
+
+    private fun windowStamp(state: CachedListState): String? {
+        val key = state.windowEpoch ?: return null
+        return stampOfEpochKey(key)
+    }
+
+    override fun setViewport(firstIndex: Int, lastIndex: Int) {
+        reader.checkConfined()
+        if (closed || publishedPositions.isEmpty()) return
+        val first = publishedPositions[firstIndex.coerceIn(0, publishedPositions.lastIndex)]
+        val last = publishedPositions[lastIndex.coerceIn(firstIndex.coerceAtLeast(0), publishedPositions.lastIndex)]
+        viewport = first..last
+        if (query is LibraryQuery.AlbumList) {
+            val from = firstIndex.coerceIn(0, published.lastIndex)
+            val to = lastIndex.coerceIn(from, published.lastIndex)
+            reader.lookAhead.viewportChanged(this, published, from, to)
+        }
+    }
+
+    // ---- Presentation -------------------------------------------------------------------------------
+
+    private fun markLive() {
+        failure = null
+        internalFailure = false
+        reader.liveListReads[spec.listKey] = cache.now()
+    }
+
+    override fun snapshot(): LibraryPublication {
+        val state = cache.listState(spec.listKey)
+        if (state == null || (state.endLoadedOffset == state.firstLoadedOffset && !liveThisSession && state.coverage != CacheCoverage.Complete)) {
+            return localViewOrEmpty()
+        }
+        touchShown(spec.listKey)
+        val (items, positions) = itemsOf(cache.listRows(spec.listKey), dedupe = true)
+        publishedPositions = positions
+        val current = reader.sessionEpoch
+        val liveUnderCurrent = liveThisSession && current != null && state.windowEpoch == current.key
+        val anchor = pendingAnchor.also { pendingAnchor = null }
+        return LibraryPublication(
+            query = query,
+            sequence = 0,
+            freshness = cachedFreshness(state.fetchedAtWall, liveUnderCurrent),
+            coverage = state.coverage.toPublic(),
+            total = state.total,
+            header = null,
+            items = items,
+            itemsState = LibraryItemsState.Present,
+            order = LibraryItemsOrder.Server,
+            anchor = anchor,
+            leadingOffset = positions.firstOrNull() ?: state.firstLoadedOffset,
+        )
+    }
+
+    /**
+     * A list never read: offline, the local view of the cached entities of its kind, sorted
+     * locally and labelled as such (§16.14); otherwise nothing, loading or unavailable.
+     */
+    private fun localViewOrEmpty(): LibraryPublication {
+        val local: List<LibraryItem> = if (!reader.online) {
+            when (query) {
+                is LibraryQuery.AlbumList -> cache.localAlbums().let { albums ->
+                    val members = albums.map { CacheListMember(CacheItemKind.Album, it.record.rawId) }
+                    val pending = reader.overlay.pending(cache.serverId, members.toSet())
+                    albums.zip(members) { album, member -> album.toItem(pending[member]) }
+                }
+                is LibraryQuery.Artists -> cache.localArtists().let { artists ->
+                    val members = artists.map { CacheListMember(CacheItemKind.Artist, it.record.rawId) }
+                    val pending = reader.overlay.pending(cache.serverId, members.toSet())
+                    artists.zip(members) { artist, member -> artist.toItem(pending[member]) }
+                }
+                else -> emptyList()
+            }
+        } else {
+            emptyList()
+        }
+        publishedPositions = local.indices.toList()
+        val freshness = if (local.isNotEmpty()) {
+            LibraryFreshness.Cached(null, LibraryCachedReason.Offline)
+        } else {
+            emptyFreshness()
+        }
+        return LibraryPublication(
+            query = query,
+            sequence = 0,
+            freshness = freshness,
+            coverage = if (local.isNotEmpty()) LibraryCoverage.Open else null,
+            total = null,
+            header = null,
+            items = local,
+            itemsState = if (local.isEmpty() && freshness == LibraryFreshness.Loading) LibraryItemsState.Loading else LibraryItemsState.Present,
+            order = if (local.isNotEmpty()) LibraryItemsOrder.LocalView else LibraryItemsOrder.Server,
+        )
+    }
+
+    // ---- Viewport geometry --------------------------------------------------------------------------
+
+    /** Offsets of the pages intersecting the viewport, aligned to the page size. */
+    private fun viewportPageOffsets(): List<Int> {
+        val first = (viewport.first / pageSize) * pageSize
+        val last = (viewport.last / pageSize) * pageSize
+        return (first..last step pageSize).toList().ifEmpty { listOf(0) }
+    }
+
+    private data class AnchorSource(val firstVisibleIndex: Int, val firstVisiblePosition: Int, val order: List<String>)
+
+    private fun firstVisibleAnchorSource(): AnchorSource? {
+        if (published.isEmpty()) return null
+        val index = publishedPositions.indexOfFirst { it >= viewport.first }.takeIf { it >= 0 } ?: 0
+        return AnchorSource(index, publishedPositions.getOrElse(index) { 0 }, published.map { it.rawId })
+    }
+
+    /**
+     * Keeps the first visible item first across a rebase (§16.12): by id; else the nearest item
+     * that preceded it in the old order and survives; else the numeric offset, clamped.
+     */
+    private fun anchorAfterRebase(before: AnchorSource?): LibraryAnchor? {
+        before ?: return null
+        val members = cache.listMembers(spec.listKey)
+        val newIds = members.map { it.member.rawId }
+        val byId = newIds.indexOf(before.order[before.firstVisibleIndex])
+        if (byId >= 0) return LibraryAnchor(newIds[byId], byId)
+        for (index in before.firstVisibleIndex - 1 downTo 0) {
+            val found = newIds.indexOf(before.order[index])
+            if (found >= 0) return LibraryAnchor(newIds[found], found)
+        }
+        val start = members.firstOrNull()?.position ?: 0
+        val clamped = (before.firstVisiblePosition - start).coerceIn(0, (newIds.size - 1).coerceAtLeast(0))
+        return LibraryAnchor(null, clamped)
+    }
+}
+
+/** The stamp inside a stored epoch key (see [catalogEpochKey]). */
+private fun stampOfEpochKey(key: String): String? = try {
+    val array = LIBRARY_JSON.parseToJsonElement(key) as? kotlinx.serialization.json.JsonArray
+    (array?.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content
+} catch (_: IllegalArgumentException) {
+    null
+}
+
+private fun List<CacheEntities>.merge(): CacheEntities = CacheEntities(
+    artists = flatMap { it.artists },
+    albums = flatMap { it.albums },
+    tracks = flatMap { it.tracks },
+    playlists = flatMap { it.playlists },
+)
+
+private fun CacheCoverage.toPublic(): LibraryCoverage = when (this) {
+    CacheCoverage.Complete -> LibraryCoverage.Complete
+    CacheCoverage.Open -> LibraryCoverage.Open
+    CacheCoverage.UnverifiedScanning -> LibraryCoverage.UnverifiedScanning
+    CacheCoverage.UnverifiedNoEpoch -> LibraryCoverage.UnverifiedNoEpoch
+    CacheCoverage.UnverifiedChanging -> LibraryCoverage.UnverifiedChanging
+}
+
+// ---- Detail screens -----------------------------------------------------------------------------------
+
+/**
+ * One album. An album seen only in a grid opens with its cached summary header at once and only
+ * its track list loading (§16.14); one never seen publishes `unavailable` offline.
+ */
+internal class AlbumDetailWindow(
+    reader: LibraryReader,
+    private val album: LibraryQuery.Album,
+    listener: (LibraryPublication) -> Unit,
+) : ReaderHandle(reader, album, listener) {
+    private var gone = false
+
+    /** Fresh only when its MEMBERSHIP was read under the current epoch (review finding S1). */
+    private fun fresh(cached: CachedAlbum): Boolean =
+        cached.detailComplete && reader.detailIsFresh(album.rawId, cached.detailFetchedEpoch)
+
+    override fun needsRevalidation(): Boolean {
+        val cached = cache.album(album.rawId) ?: return true
+        return !fresh(cached)
+    }
+
+    override fun mentionsAny(rawIds: Set<String>): Boolean =
+        album.rawId in rawIds || published.any { it.rawId in rawIds }
+
+    override suspend fun performRevalidate(cause: RevalidateCause) {
+        if (closed || !reader.online) return
+        val cached = cache.album(album.rawId)
+        // A detail read live under the current epoch within the interval is not re-read — which is
+        // what lets a looked-ahead album open with zero requests (CONF-87).
+        if (cause != RevalidateCause.Refresh && cached != null && fresh(cached)) {
+            revalidationPending = false
+            emitSnapshot()
+            return
+        }
+        reader.lookAhead.cancel(album.rawId)
+        if (cached != null && cause != RevalidateCause.Open) {
+            inFlight += 1
+            emitSnapshot()
+            inFlight -= 1
+        }
+        val result = live {
+            reader.ensureEpoch()
+            reader.readAlbumDetail(album.rawId)
+        }
+        when (result) {
+            DetailReadResult.Read -> {
+                failure = null
+                internalFailure = false
+                gone = false
+            }
+            DetailReadResult.Gone -> {
+                failure = null
+                internalFailure = false
+                gone = true
+            }
+            is DetailReadResult.Failed -> failure = result.error
+        }
+        emitSnapshot()
+    }
+
+    override fun snapshot(): LibraryPublication {
+        val cached = cache.album(album.rawId)
+        if (cached == null || cached.row.gone) {
+            val freshness = when {
+                gone || cached?.row?.gone == true -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone)
+                else -> emptyFreshness()
+            }
+            return LibraryPublication(
+                query, 0, freshness, null, null, null, emptyList(),
+                if (freshness == LibraryFreshness.Loading) LibraryItemsState.Loading else LibraryItemsState.Unavailable,
+                LibraryItemsOrder.Server,
+            )
+        }
+        cache.touchAlbum(album.rawId)
+        val tracks = if (cached.detailComplete) cache.albumTracks(album.rawId) else emptyList()
+        val albumMember = CacheListMember(CacheItemKind.Album, album.rawId)
+        val pending = reader.overlay.pending(
+            cache.serverId,
+            tracks.mapTo(mutableSetOf(albumMember)) { CacheListMember(CacheItemKind.Track, it.rawId) },
+        )
+        val header = cached.toItem(pending[albumMember])
+        val itemsState: LibraryItemsState
+        val items: List<LibraryItem>
+        if (cached.detailComplete) {
+            val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+            items = tracks.map { it.toItem(pending[CacheListMember(CacheItemKind.Track, it.rawId)], reader.trackPlayability(it.rawId, downloaded)) }
+            itemsState = LibraryItemsState.Present
+        } else {
+            items = emptyList()
+            itemsState = if (reader.online && failure == null && !internalFailure) LibraryItemsState.Loading else LibraryItemsState.Unavailable
+        }
+        val current = reader.sessionEpoch
+        val live = reader.liveDetailReads.containsKey(album.rawId) && current != null &&
+            cached.detailFetchedEpoch == current.key
+        // A track list read while the server scanned is not a verified membership (review S2).
+        val coverage = if (cached.detailComplete && album.rawId in reader.detailsReadWhileScanning) {
+            LibraryCoverage.UnverifiedScanning
+        } else {
+            null
+        }
+        return LibraryPublication(
+            query, 0, cachedFreshness(cached.row.fetchedAtWall, live), coverage, null, header, items, itemsState,
+            LibraryItemsOrder.Server,
+        )
+    }
+
+    override fun loadMore() = Unit
+
+    override fun loadBefore() = Unit
+
+    override fun setViewport(firstIndex: Int, lastIndex: Int) = Unit
+}
+
+/** An artist (its albums) or a playlist (its entries, duplicates kept). One response each. */
+internal class CollectionDetailWindow(
+    reader: LibraryReader,
+    query: LibraryQuery,
+    listener: (LibraryPublication) -> Unit,
+) : ReaderHandle(reader, query, listener) {
+    private val rawId = when (query) {
+        is LibraryQuery.Artist -> query.rawId
+        is LibraryQuery.Playlist -> query.rawId
+        else -> error("not a collection detail")
+    }
+    private val listKey = when (query) {
+        is LibraryQuery.Artist -> canonicalListKey("getArtist", mapOf("id" to rawId))
+        else -> playlistDetailListKey(rawId)
+    }
+    override val lock: Mutex get() = reader.listLock(listKey)
+    private var gone = false
+    private val liveThisSession: Boolean get() = listKey in reader.liveListReads
+
+    override fun needsRevalidation(): Boolean {
+        val readAt = reader.liveListReads[listKey] ?: return true
+        val state = cache.listState(listKey) ?: return true
+        return state.windowEpoch != reader.sessionEpoch?.key || cache.now() - readAt >= reader.config.revalidateWithinMillis
+    }
+
+    override fun mentionsAny(rawIds: Set<String>): Boolean = rawId in rawIds || published.any { it.rawId in rawIds }
+
+    override suspend fun performRevalidate(cause: RevalidateCause) {
+        if (closed || !reader.online) return
+        if (cache.listState(listKey) != null && cause != RevalidateCause.Open) {
+            inFlight += 1
+            emitSnapshot()
+            inFlight -= 1
+        }
+        live {
+            val epoch = reader.ensureEpoch()
+            var seq = 0L
+            try {
+                if (query is LibraryQuery.Artist) {
+                    val sent = reader.send("getArtist", mapOf("id" to rawId))
+                    seq = sent.issueSeq
+                    sent.requireOk("getArtist", mapOf("id" to rawId))
+                    val now = cache.now()
+                    val (artist, albums) = parseReaderArtist(sent.response.body, rawId)
+                    cache.writeWholeList(
+                        CacheWriteStamp(seq, now, epoch?.key), CacheEntitySource.Detail,
+                        CachedListState(listKey, epoch?.key, epoch?.folderIds, 0, albums.size, null, CacheCoverage.Complete, now, now, seq),
+                        albums.map { CacheListMember(CacheItemKind.Album, it.rawId) },
+                        CacheEntities(artists = listOf(artist), albums = albums),
+                    )
+                } else {
+                    val sent = reader.send("getPlaylist", mapOf("id" to rawId))
+                    seq = sent.issueSeq
+                    sent.requireOk("getPlaylist", mapOf("id" to rawId))
+                    val now = cache.now()
+                    // Entries keep their duplicates (§18.6): positions are distinct, ids may repeat.
+                    val (playlist, entries) = parseReaderPlaylist(sent.response.body, rawId)
+                    cache.writeWholeList(
+                        CacheWriteStamp(seq, now, epoch?.key), CacheEntitySource.Detail,
+                        CachedListState(listKey, epoch?.key, epoch?.folderIds, 0, entries.size, null, CacheCoverage.Complete, now, now, seq),
+                        entries.map { CacheListMember(CacheItemKind.Track, it.rawId) },
+                        CacheEntities(playlists = listOf(playlist), tracks = entries.distinctBy { it.rawId }),
+                    )
+                    cache.markPlaylistDetail(seq, rawId)
+                }
+                failure = null
+                internalFailure = false
+                gone = false
+                reader.liveListReads[listKey] = cache.now()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (thrown: Throwable) {
+                val error = thrown.asReaderError()
+                // A not-found is only a finding once the request was actually sent with a sequence.
+                if (error.isNotFound() && seq > 0) {
+                    gone = true
+                    failure = null
+                    if (query is LibraryQuery.Artist) cache.markArtistNotFound(rawId) else cache.markPlaylistNotFound(seq, rawId)
+                } else {
+                    failure = error
+                }
+            }
+        }
+        cache.evictIfNeeded()
+        emitSnapshot()
+    }
+
+    override fun snapshot(): LibraryPublication {
+        val header: LibraryItem? = when (query) {
+            is LibraryQuery.Artist -> cache.artist(rawId)?.takeUnless { it.row.gone }?.toItem(
+                CacheListMember(CacheItemKind.Artist, rawId).let { reader.overlay.pending(cache.serverId, setOf(it))[it] },
+            )
+            else -> cache.playlist(rawId)?.takeUnless { it.row.gone }?.toItem()
+        }
+        val state = cache.listState(listKey)
+        if (gone) {
+            return LibraryPublication(
+                query, 0, LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone), null, null, null,
+                emptyList(), LibraryItemsState.Unavailable, LibraryItemsOrder.Server,
+            )
+        }
+        if (header == null && state == null) {
+            val freshness = emptyFreshness()
+            return LibraryPublication(
+                query, 0, freshness, null, null, null, emptyList(),
+                if (freshness == LibraryFreshness.Loading) LibraryItemsState.Loading else LibraryItemsState.Unavailable,
+                LibraryItemsOrder.Server,
+            )
+        }
+        touchShown(listKey)
+        // A playlist keeps its duplicate entries (§18.6); an artist's albums are distinct anyway.
+        val (items, _) = if (state != null) itemsOf(cache.listRows(listKey), dedupe = false) else emptyList<LibraryItem>() to emptyList()
+        val itemsState = when {
+            state != null -> LibraryItemsState.Present
+            reader.online && failure == null && !internalFailure -> LibraryItemsState.Loading
+            else -> LibraryItemsState.Unavailable
+        }
+        val live = liveThisSession && reader.sessionEpoch != null && state?.windowEpoch == reader.sessionEpoch?.key
+        return LibraryPublication(
+            query, 0, cachedFreshness(state?.fetchedAtWall, live), null, null, header, items, itemsState,
+            LibraryItemsOrder.Server,
+        )
+    }
+
+    override fun loadMore() = Unit
+
+    override fun loadBefore() = Unit
+
+    override fun setViewport(firstIndex: Int, lastIndex: Int) = Unit
+}
+
+// ---- Item mapping -------------------------------------------------------------------------------------
+
+internal fun CachedAlbum.toItem(pending: PendingUserState?): LibraryItem.Album {
+    val artist = record.credits.firstOrNull()
+    return LibraryItem.Album(
+        rawId = record.rawId,
+        title = record.title,
+        artistName = artist?.name,
+        artistRawId = artist?.artistRawId,
+        year = record.year,
+        genre = record.genre,
+        durationMilliseconds = record.durationMilliseconds,
+        songCount = record.songCount,
+        artworkKey = record.artworkKey,
+        starred = pending?.starred ?: record.userState.starred,
+        userRating = pending?.userRating ?: record.userState.userRating,
+        playCount = record.userState.playCount,
+        detailComplete = detailComplete,
+    )
+}
+
+internal fun CachedArtist.toItem(pending: PendingUserState?) = LibraryItem.Artist(
+    rawId = record.rawId,
+    name = record.name,
+    albumCount = record.albumCount,
+    artworkKey = record.artworkKey,
+    starred = pending?.starred ?: record.userState.starred,
+    userRating = pending?.userRating ?: record.userState.userRating,
+)
+
+internal fun CachedTrack.toItem(pending: PendingUserState?, playability: LibraryPlayability): LibraryItem.Track {
+    val artist = record?.credits?.firstOrNull()
+    return LibraryItem.Track(
+        rawId = rawId,
+        title = record?.title,
+        albumRawId = record?.albumRawId,
+        albumTitle = record?.albumTitle,
+        artistName = artist?.name,
+        artistRawId = artist?.artistRawId,
+        discNumber = record?.discNumber,
+        trackNumber = record?.trackNumber,
+        durationMilliseconds = record?.durationMilliseconds,
+        sourceContainer = record?.sourceContainer,
+        artworkKey = record?.artworkKey,
+        starred = pending?.starred ?: userState.starred,
+        userRating = pending?.userRating ?: userState.userRating,
+        playCount = record?.userState?.playCount,
+        playability = playability,
+        metadataMissing = metadataMissing,
+    )
+}
+
+internal fun CachedPlaylist.toItem() = LibraryItem.Playlist(
+    rawId = record.rawId,
+    name = record.name,
+    songCount = record.songCount,
+    durationMilliseconds = record.durationMilliseconds,
+    owner = record.owner,
+    artworkKey = record.artworkKey,
+)

@@ -1,0 +1,330 @@
+-- Revision 99, additive step (spec §16.17): the seen-cache beside the mirror, seeded from it.
+--
+-- Seeding copies the COMMITTED generation only when that generation is `verified`; an unverified
+-- or absent one seeds nothing but the pins. Seeded rows are stale and of unknown age
+-- (`fetched_epoch` and `fetched_at_wall` NULL, since `sync_generation` records no commit time),
+-- unpinned unless a download or queue entry names them, with per-user fields unknown (NULL) except
+-- `starred`, which is set to starred-time-unknown for exactly the items in `library_starred`.
+-- No list windows are created: the mirror holds no server order to rebuild one from.
+
+CREATE TABLE cache_binding (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  normalized_base_url TEXT NOT NULL,
+  username TEXT NOT NULL,
+  created_at_wall INTEGER NOT NULL
+);
+
+CREATE TABLE cache_meta (
+  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+  last_issued INTEGER NOT NULL CHECK (last_issued >= 0),
+  normalization_version INTEGER NOT NULL CHECK (normalization_version >= 0)
+);
+
+CREATE TABLE cache_epoch (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  last_scan TEXT,
+  folder_ids TEXT NOT NULL,
+  scanning INTEGER NOT NULL CHECK (scanning IN (0, 1)),
+  read_at_wall INTEGER NOT NULL
+);
+
+CREATE TABLE cache_artist (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  normalized_name TEXT,
+  album_count INTEGER,
+  artwork_key TEXT,
+  starred INTEGER CHECK (starred IS NULL OR starred IN (0, 1)),
+  starred_at TEXT,
+  user_rating INTEGER,
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_album (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  normalized_title TEXT,
+  artist_name TEXT,
+  artist_raw_id TEXT,
+  year INTEGER,
+  genre TEXT,
+  duration_milliseconds INTEGER CHECK (duration_milliseconds IS NULL OR duration_milliseconds >= 0),
+  song_count INTEGER CHECK (song_count IS NULL OR song_count >= 0),
+  artwork_key TEXT,
+  starred INTEGER CHECK (starred IS NULL OR starred IN (0, 1)),
+  starred_at TEXT,
+  user_rating INTEGER,
+  play_count INTEGER,
+  played TEXT,
+  detail_complete INTEGER NOT NULL DEFAULT 0 CHECK (detail_complete IN (0, 1)),
+  detail_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (detail_issue_seq >= 0),
+  detail_fetched_epoch TEXT,
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_track (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  album_raw_id TEXT,
+  album_ordinal INTEGER CHECK (album_ordinal IS NULL OR album_ordinal >= 0),
+  title TEXT,
+  normalized_title TEXT,
+  album_title TEXT,
+  normalized_album_title TEXT,
+  artist_name TEXT,
+  artist_raw_id TEXT,
+  disc_number INTEGER,
+  track_number INTEGER,
+  duration_milliseconds INTEGER CHECK (duration_milliseconds IS NULL OR duration_milliseconds >= 0),
+  source_container TEXT,
+  artwork_key TEXT,
+  starred INTEGER CHECK (starred IS NULL OR starred IN (0, 1)),
+  starred_at TEXT,
+  user_rating INTEGER,
+  play_count INTEGER,
+  played TEXT,
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  metadata_missing INTEGER NOT NULL DEFAULT 0 CHECK (metadata_missing IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id),
+  CHECK (metadata_missing = 1 OR title IS NOT NULL)
+);
+
+CREATE TABLE cache_playlist (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  song_count INTEGER CHECK (song_count IS NULL OR song_count >= 0),
+  duration_milliseconds INTEGER CHECK (duration_milliseconds IS NULL OR duration_milliseconds >= 0),
+  owner TEXT,
+  artwork_key TEXT,
+  detail_complete INTEGER NOT NULL DEFAULT 0 CHECK (detail_complete IN (0, 1)),
+  detail_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (detail_issue_seq >= 0),
+  fetched_at_wall INTEGER,
+  fetched_epoch TEXT,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_credit (
+  server_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('album', 'track')),
+  owner_raw_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('artist', 'album_artist')),
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+  name TEXT NOT NULL,
+  artist_raw_id TEXT,
+  normalized_name TEXT,
+  PRIMARY KEY (server_id, owner_kind, owner_raw_id, role, ordinal)
+);
+
+CREATE TABLE cache_list (
+  server_id TEXT NOT NULL,
+  list_key TEXT NOT NULL,
+  window_epoch TEXT,
+  folder_ids TEXT,
+  first_loaded_offset INTEGER NOT NULL CHECK (first_loaded_offset >= 0),
+  end_loaded_offset INTEGER NOT NULL CHECK (end_loaded_offset >= first_loaded_offset),
+  total INTEGER CHECK (total IS NULL OR total >= 0),
+  coverage TEXT NOT NULL CHECK (
+    coverage IN ('complete', 'open', 'unverified_scanning', 'unverified_no_epoch', 'unverified_changing')
+  ),
+  fetched_at_wall INTEGER,
+  last_access_wall INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  PRIMARY KEY (server_id, list_key)
+);
+
+CREATE TABLE cache_list_member (
+  server_id TEXT NOT NULL,
+  list_key TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track', 'playlist', 'genre')),
+  raw_id TEXT NOT NULL,
+  PRIMARY KEY (server_id, list_key, position),
+  FOREIGN KEY (server_id, list_key) REFERENCES cache_list(server_id, list_key) ON DELETE CASCADE
+);
+
+CREATE TABLE cache_pin (
+  server_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track', 'playlist')),
+  raw_id TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('download', 'queue', 'playing')),
+  PRIMARY KEY (server_id, item_kind, raw_id, reason)
+);
+
+CREATE INDEX cache_track_album ON cache_track(server_id, album_raw_id);
+CREATE INDEX cache_list_member_item ON cache_list_member(server_id, item_kind, raw_id);
+CREATE INDEX cache_list_access ON cache_list(server_id, last_access_wall);
+CREATE INDEX cache_album_access ON cache_album(server_id, last_access_wall);
+CREATE INDEX cache_track_access ON cache_track(server_id, last_access_wall);
+CREATE INDEX cache_artist_access ON cache_artist(server_id, last_access_wall);
+CREATE INDEX cache_artist_normalized_name ON cache_artist(server_id, normalized_name);
+CREATE INDEX cache_album_normalized_title ON cache_album(server_id, normalized_title);
+CREATE INDEX cache_track_normalized_title ON cache_track(server_id, normalized_title);
+CREATE INDEX cache_credit_normalized_name ON cache_credit(server_id, normalized_name);
+CREATE INDEX cache_album_detail_access ON cache_album(server_id, detail_complete, last_access_wall);
+
+-- normalization_version 0: the first open normalizes the seeded rows once (spec §18.1).
+INSERT OR IGNORE INTO cache_meta(singleton_id, last_issued, normalization_version) VALUES (1, 0, 0);
+
+-- Per account: each account's latest generation at or below the committed one. The mirror commits
+-- one account at a time, and another account's rows stay valid at its own last generation, so
+-- seeding only the globally committed generation would leave every other account unseeded.
+CREATE TEMP TABLE seed_generation AS
+SELECT g.generation AS generation, g.server_id AS server_id,
+  CAST(strftime('%s', 'now') AS INTEGER) * 1000 AS seeded_at
+FROM sync_generation AS g
+JOIN (
+  SELECT s.server_id AS server_id, max(s.generation) AS generation
+  FROM sync_generation AS s
+  JOIN schema_meta AS m ON m.singleton_id = 1 AND s.generation <= m.committed_generation
+  GROUP BY s.server_id
+) AS latest ON latest.server_id = g.server_id AND latest.generation = g.generation
+WHERE g.stability = 'verified';
+
+INSERT INTO cache_artist(
+  server_id, raw_id, name, normalized_name, album_count, artwork_key, starred, starred_at,
+  user_rating, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone
+)
+SELECT a.server_id, a.raw_id, a.name, a.normalized_name, NULL, NULL,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM library_starred AS s
+    WHERE s.server_id = a.server_id AND s.item_kind = 'artist' AND s.raw_id = a.raw_id
+      AND s.valid_from_generation <= g.generation
+      AND (s.valid_to_generation IS NULL OR g.generation < s.valid_to_generation)
+  ) THEN 1 ELSE NULL END,
+  NULL, NULL, NULL, NULL, 0, g.seeded_at, 0
+FROM artist AS a
+JOIN seed_generation AS g ON g.server_id = a.server_id
+WHERE a.valid_from_generation <= g.generation
+  AND (a.valid_to_generation IS NULL OR g.generation < a.valid_to_generation);
+
+INSERT INTO cache_album(
+  server_id, raw_id, title, normalized_title, artist_name, artist_raw_id, year, genre,
+  duration_milliseconds, song_count, artwork_key, starred, starred_at, user_rating, play_count,
+  played, detail_complete, detail_issue_seq, detail_fetched_epoch, fetched_at_wall, fetched_epoch,
+  issue_seq, last_access_wall, gone
+)
+SELECT a.server_id, a.raw_id, a.title, a.normalized_title, a.artist_name, a.artist_raw_id, a.year,
+  NULL, a.duration_milliseconds,
+  (
+    SELECT count(*) FROM track AS t
+    WHERE t.server_id = a.server_id AND t.album_raw_id = a.raw_id
+      AND t.valid_from_generation <= g.generation
+      AND (t.valid_to_generation IS NULL OR g.generation < t.valid_to_generation)
+  ),
+  a.artwork_key,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM library_starred AS s
+    WHERE s.server_id = a.server_id AND s.item_kind = 'album' AND s.raw_id = a.raw_id
+      AND s.valid_from_generation <= g.generation
+      AND (s.valid_to_generation IS NULL OR g.generation < s.valid_to_generation)
+  ) THEN 1 ELSE NULL END,
+  NULL, NULL, NULL, NULL,
+  -- A complete membership only when the generation holds tracks for it: an album with none is
+  -- not "an album with no tracks" (§16.11 rule 3), so its detail is simply unknown.
+  CASE WHEN EXISTS (
+    SELECT 1 FROM track AS t
+    WHERE t.server_id = a.server_id AND t.album_raw_id = a.raw_id
+      AND t.valid_from_generation <= g.generation
+      AND (t.valid_to_generation IS NULL OR g.generation < t.valid_to_generation)
+  ) THEN 1 ELSE 0 END,
+  0, NULL, NULL, NULL, 0, g.seeded_at, 0
+FROM album AS a
+JOIN seed_generation AS g ON g.server_id = a.server_id
+WHERE a.valid_from_generation <= g.generation
+  AND (a.valid_to_generation IS NULL OR g.generation < a.valid_to_generation);
+
+INSERT INTO cache_track(
+  server_id, raw_id, album_raw_id, album_ordinal, title, normalized_title, album_title,
+  normalized_album_title, artist_name, artist_raw_id, disc_number, track_number,
+  duration_milliseconds, source_container, artwork_key, starred, starred_at, user_rating,
+  play_count, played, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone,
+  metadata_missing
+)
+SELECT t.server_id, t.raw_id, t.album_raw_id,
+  -- The mirror's order within an album: disc, track number, title, id. Seeded rows are members.
+  (
+    SELECT count(*) FROM track AS o
+    WHERE o.server_id = t.server_id AND o.album_raw_id = t.album_raw_id
+      AND o.valid_from_generation <= g.generation
+      AND (o.valid_to_generation IS NULL OR g.generation < o.valid_to_generation)
+      AND (
+        coalesce(o.disc_number, 0) < coalesce(t.disc_number, 0) OR (
+          coalesce(o.disc_number, 0) = coalesce(t.disc_number, 0) AND (
+            coalesce(o.track_number, 0) < coalesce(t.track_number, 0) OR (
+              coalesce(o.track_number, 0) = coalesce(t.track_number, 0) AND (
+                o.title < t.title OR (o.title = t.title AND o.raw_id < t.raw_id)
+              )
+            )
+          )
+        )
+      )
+  ),
+  t.title, t.normalized_title, t.album_title,
+  t.normalized_album_title, t.artist_name, t.artist_raw_id, t.disc_number, t.track_number,
+  t.duration_milliseconds, t.source_container, t.artwork_key,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM library_starred AS s
+    WHERE s.server_id = t.server_id AND s.item_kind = 'track' AND s.raw_id = t.raw_id
+      AND s.valid_from_generation <= g.generation
+      AND (s.valid_to_generation IS NULL OR g.generation < s.valid_to_generation)
+  ) THEN 1 ELSE NULL END,
+  NULL, NULL, NULL, NULL, NULL, NULL, 0, g.seeded_at, 0, 0
+FROM track AS t
+JOIN seed_generation AS g ON g.server_id = t.server_id
+WHERE t.valid_from_generation <= g.generation
+  AND (t.valid_to_generation IS NULL OR g.generation < t.valid_to_generation);
+
+INSERT INTO cache_credit(
+  server_id, owner_kind, owner_raw_id, role, ordinal, name, artist_raw_id, normalized_name
+)
+SELECT c.server_id, c.owner_kind, c.owner_raw_id, c.role, c.ordinal, c.name, c.artist_raw_id,
+  c.normalized_name
+FROM credit AS c
+JOIN seed_generation AS g ON g.server_id = c.server_id
+WHERE c.valid_from_generation <= g.generation
+  AND (c.valid_to_generation IS NULL OR g.generation < c.valid_to_generation);
+
+-- A download or queue entry whose track the committed generation does not hold keeps an
+-- identity-only row marked metadata-missing, refilled by its next live read. It is never dropped.
+INSERT OR IGNORE INTO cache_track(server_id, raw_id, issue_seq, last_access_wall, gone, metadata_missing)
+SELECT d.server_id, d.raw_id, 0, CAST(strftime('%s', 'now') AS INTEGER) * 1000, 0, 1
+FROM download AS d;
+
+INSERT OR IGNORE INTO cache_track(server_id, raw_id, issue_seq, last_access_wall, gone, metadata_missing)
+SELECT q.server_id, q.raw_id, 0, CAST(strftime('%s', 'now') AS INTEGER) * 1000, 0, 1
+FROM queue_entry AS q;
+
+INSERT OR IGNORE INTO cache_pin(server_id, item_kind, raw_id, reason)
+SELECT d.server_id, 'track', d.raw_id, 'download' FROM download AS d;
+
+INSERT OR IGNORE INTO cache_pin(server_id, item_kind, raw_id, reason)
+SELECT q.server_id, 'track', q.raw_id, 'queue' FROM queue_entry AS q;
+
+INSERT OR IGNORE INTO cache_pin(server_id, item_kind, raw_id, reason)
+SELECT t.server_id, 'album', t.album_raw_id, p.reason
+FROM cache_pin AS p
+JOIN cache_track AS t ON t.server_id = p.server_id AND t.raw_id = p.raw_id
+JOIN cache_album AS a ON a.server_id = t.server_id AND a.raw_id = t.album_raw_id
+WHERE p.item_kind = 'track';
+
+DROP TABLE seed_generation;

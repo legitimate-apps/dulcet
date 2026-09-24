@@ -114,6 +114,9 @@ internal class PlaybackQueueController(
      */
     private var endHeldForPreload = false
 
+    /** The server whose queue is active, or null when none is. Owners use it to refuse a foreign queue. */
+    fun activeServerId(): ServerId? = queues.activeServerId()
+
     fun replaceAndStart(request: PlaybackQueueRequest): PlaybackQueueTransition {
         val serverId = ServerId(request.items.first().itemId.providerInstanceId)
         val previousRepeatMode = queues.load(serverId).repeatMode
@@ -218,15 +221,6 @@ internal class PlaybackQueueController(
         return editedTransition()
     }
 
-    /** Tapping a queue row: a next-item boundary, so the outgoing session is finalized (§12.1). */
-    fun jumpTo(queueEntryId: QueueEntryId): PlaybackQueueTransition {
-        val serverId = queues.activeServerId() ?: return emptyTransition()
-        val state = queues.load(serverId)
-        val index = state.entries.indexOfFirst { it.queueEntryId == queueEntryId }
-        require(index >= 0) { "Unknown queue entry" }
-        return startAt(state, index)
-    }
-
     /**
      * Starts the selected entry when no session exists — the state a finished queue leaves behind
      * (§14.3). Play after the last track therefore replays it, from the start, as a new session.
@@ -288,6 +282,22 @@ internal class PlaybackQueueController(
 
     fun previous(): PlaybackQueueTransition = moveBy(-1)
 
+    /**
+     * Starts the entry the user picked from Up Next — a next-item boundary, so the outgoing session
+     * is finalized (§12.1). Addressed by queue-entry identity, never by index: an index captured by
+     * a presentation goes stale as soon as the queue changes, and the same song may appear twice.
+     * Every entry keeps its identity; only a new session begins. An entry that is no longer in the
+     * queue (a tap on a row an edit just removed) changes nothing rather than throwing; a platform
+     * facade that must report it as a refusal checks the returned snapshot.
+     */
+    fun jumpTo(queueEntryId: QueueEntryId): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val index = state.entries.indexOfFirst { it.queueEntryId == queueEntryId }
+        if (index < 0) return emptyTransition()
+        return startAt(state, index)
+    }
+
     fun nextForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
         if (acceptsCommand(playbackSessionId)) moveBy(1) else emptyTransition()
 
@@ -310,6 +320,14 @@ internal class PlaybackQueueController(
             queues.setCurrentIndex(serverId, null)
         }
         return restoreCurrentPaused()
+    }
+
+    /** Transport restart keeps the persisted selection and every queue entry identity. */
+    fun restartCurrent(serverId: ServerId): PlaybackQueueTransition {
+        if (queues.activeServerId() != serverId) return emptyTransition()
+        val state = queues.load(serverId)
+        val entry = state.currentIndex?.let(state.entries::get) ?: return emptyTransition()
+        return beginSession(entry, replacingQueue = false)
     }
 
     fun restoreCurrentPaused(): PlaybackQueueTransition {

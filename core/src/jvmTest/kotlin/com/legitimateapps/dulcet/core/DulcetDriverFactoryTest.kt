@@ -149,6 +149,42 @@ class DulcetDriverFactoryTest {
                     )
                     """.trimIndent(),
                 )
+                // v2 also shipped the queue. v5 -> v6 legitimately reads queue_entry, to pin every
+                // queued track in the seen-cache (spec §16.17), so the fixture carries it verbatim.
+                statement.execute(
+                    """
+                    CREATE TABLE queue_state (
+                      server_id TEXT NOT NULL PRIMARY KEY,
+                      current_position INTEGER,
+                      repeat_mode TEXT NOT NULL CHECK (repeat_mode IN ('off', 'all', 'one')),
+                      shuffle_enabled INTEGER NOT NULL CHECK (shuffle_enabled IN (0, 1)),
+                      CHECK (current_position IS NULL OR current_position >= 0)
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    CREATE TABLE queue_entry (
+                      server_id TEXT NOT NULL,
+                      queue_entry_id TEXT NOT NULL,
+                      raw_id TEXT NOT NULL,
+                      source_context_kind TEXT NOT NULL CHECK (
+                        source_context_kind IN ('library', 'album', 'playlist', 'search', 'artist')
+                      ),
+                      source_context_raw_id TEXT,
+                      source_context_display_name TEXT NOT NULL,
+                      added_by TEXT NOT NULL CHECK (
+                        added_by IN ('play_now', 'play_next', 'add_to_queue', 'autoplay')
+                      ),
+                      original_position INTEGER NOT NULL CHECK (original_position >= 0),
+                      playback_position INTEGER NOT NULL CHECK (playback_position >= 0),
+                      PRIMARY KEY (server_id, queue_entry_id),
+                      UNIQUE (server_id, original_position),
+                      UNIQUE (server_id, playback_position),
+                      FOREIGN KEY (server_id) REFERENCES queue_state(server_id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
                 statement.execute("PRAGMA user_version = 2")
             }
         }

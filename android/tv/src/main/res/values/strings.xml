@@ -1,4 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Dulcet TV</string>
+    <string name="tv_connect_title">Connect your music server</string>
+    <string name="tv_connect_body">Enter the OpenSubsonic address and the account you use with that server.</string>
+    <string name="tv_server_address">Server address</string>
+    <string name="tv_server_address_hint">https://music.example.com</string>
+    <string name="tv_username">Username</string>
+    <string name="tv_password">Password</string>
+    <string name="tv_allow_local_http">Allow HTTP on this local network</string>
+    <string name="tv_connect">Connect</string>
+    <string name="tv_cancel">Cancel</string>
+    <string name="tv_connecting">Connecting to the server…</string>
+    <string name="tv_credential_note">After a successful connection, Dulcet encrypts these credentials with the Android Keystore.</string>
+    <string name="tv_error_address">Check the server address. Enter a complete HTTP or HTTPS address.</string>
+    <string name="tv_error_unreachable">The server could not be reached. Check that it is running and reachable from this TV.</string>
+    <string name="tv_error_timeout">The server took too long to respond. Check the server and network, then try again.</string>
+    <string name="tv_error_tls">The server certificate is not trusted by Android.</string>
+    <string name="tv_error_security">The connection was refused for security. Use HTTPS, or allow HTTP only for a server on this local network.</string>
+    <string name="tv_error_protocol">This is not a compatible OpenSubsonic server.</string>
+    <string name="tv_error_server">The server could not complete account setup.</string>
+    <string name="tv_error_auth">The account was not accepted. Check the username and password.</string>
+    <string name="tv_error_capability">This server does not provide a capability Dulcet requires.</string>
+    <string name="tv_error_persistence">The account could not be saved, so Dulcet stayed disconnected.</string>
 </resources>

@@ -12,19 +12,19 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
 
 #if os(iOS)
     func testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator() async throws {
-        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.ios.dev")
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .phone)
         try await assertLibrarySync(platform: "ios")
     }
 
     func testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator() async throws {
-        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.ios.dev")
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
         try await assertLibrarySync(platform: "ipados")
     }
 #elseif os(tvOS)
     func testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator() async throws {
-        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.tvos.dev")
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.dev")
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .tv)
         try await assertLibrarySync(platform: "tvos")
     }

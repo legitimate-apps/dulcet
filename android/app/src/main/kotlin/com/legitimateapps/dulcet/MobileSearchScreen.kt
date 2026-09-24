@@ -1,14 +1,19 @@
 package com.legitimateapps.dulcet
 
 import android.content.Context
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -21,7 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.ui.DulcetIcons
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.search.SearchAccount
@@ -33,6 +42,7 @@ import com.legitimateapps.dulcet.search.SearchPresenter
 internal fun MobileSearchRoute(
     account: SearchAccount,
     dependencies: SearchHostDependencies,
+    onPlay: ((SearchResultItem) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account, context) }
@@ -40,26 +50,31 @@ internal fun MobileSearchRoute(
     DisposableEffect(presenter) {
         onDispose(presenter::close)
     }
-    MobileSearchScreen(presenter, router)
+    MobileSearchScreen(presenter, router, account, onPlay)
 }
 
 @Composable
 internal fun MobileSearchScreen(
     presenter: SearchPresenter,
     router: SearchIntentRouter,
+    account: SearchAccount? = null,
+    onPlay: ((SearchResultItem) -> Unit)? = null,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium)
+            Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = state.query,
                 onValueChange = presenter::updateQuery,
-                label = { Text(stringResource(R.string.search_hint)) },
+                placeholder = { Text(stringResource(R.string.search_hint)) },
+                leadingIcon = { Icon(DulcetIcons.Search, null) },
                 singleLine = true,
+                shape = RoundedCornerShape(28.dp),
                 modifier = Modifier.fillMaxWidth().testTag("search.query"),
             )
             when {
@@ -78,13 +93,14 @@ internal fun MobileSearchScreen(
             }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results"),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 itemsIndexed(state.results) { index, result ->
                     MobileSearchResult(
                         result = result,
                         index = index,
+                        account = account,
                         onActivate = { router.activate(result) },
+                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track }?.let { play -> { play(result) } },
                     )
                 }
             }
@@ -96,18 +112,33 @@ internal fun MobileSearchScreen(
 private fun MobileSearchResult(
     result: SearchResultItem,
     index: Int,
+    account: SearchAccount?,
     onActivate: () -> Unit,
+    onPlay: (() -> Unit)?,
 ) {
-    Card(
-        onClick = onActivate,
-        modifier = Modifier.fillMaxWidth().testTag("search.result.$index"),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(result.title, style = MaterialTheme.typography.titleMedium)
-            Text(result.type.name, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
+    val kind = stringResource(when (result.type) {
+        SearchResultType.Artist -> R.string.search_kind_artist
+        SearchResultType.Album -> R.string.search_kind_album
+        SearchResultType.Track -> R.string.search_kind_track
+    })
+    val credits = result.credits.joinToString { it.name }
+    ListItem(
+        headlineContent = { Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = {
+            Text(listOf(kind, credits).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+        },
+        leadingContent = {
+            if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, result.title, 48.dp)
+            else Icon(if (result.type == SearchResultType.Artist) DulcetIcons.Person else DulcetIcons.MusicNote, null)
+        },
+        trailingContent = onPlay?.let { play ->
+            {
+                IconButton(onClick = play, modifier = Modifier.testTag("search.play.$index")) {
+                    Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, result.title))
+                }
+            }
+        },
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onActivate).testTag("search.result.$index"),
+    )
 }

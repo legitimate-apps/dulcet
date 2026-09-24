@@ -27,7 +27,7 @@ live `currentSession` and reaches the fallback. The phase mapping is now total �
 `Stopped` and `TornDown` present as `unavailable`, an unrecognised phase presents as
 `unavailable` rather than `preparing`, and `tools/verify-playback-phase-parity` fails
 the build when the Apple shell and the Kotlin enum stop naming the same set. Spec
-§12.2 carries the contract; revision 104 records it.
+§12.2 carries the contract; revision 105 records it.
 
 `DulcetCorePlaybackPresentationTests/testDisconnectIsNotOverwrittenByTheStopItIssued`
 drives the real ordering: a fixture engine that emits `.skipped` from its stop exactly

@@ -87,6 +87,28 @@ revision_records = [
     int(value)
     for value in re.findall(r"^\*\*Revision (\d+) \(\d{4}-\d{2}-\d{2}\)\*\*", spec, re.MULTILINE)
 ]
+# Every record header in §28 must be in the dated form the list above is built from. A header
+# the pattern does not match is not an error to it: it is simply absent, so a record written as
+# "(2026-09-23; written 2026-09-11)" was invisible to every rule below while the document claimed
+# the revision before it. Refuse the malformed header instead of silently not counting it.
+# A header is a line opening `**Revision N (` or `**Revision N**`; prose that merely starts with
+# "**Revision N" and goes on to say something about it ("**Revision 87 informed this.**") is not
+# one, and §28 bodies correct earlier revisions in exactly that idiom.
+section_start = spec.find("\n## 28. Revision record")
+revision_section = ""
+if section_start >= 0:
+    following_heading = re.search(r"^## (?!28\.)", spec[section_start + 1 :], re.MULTILINE)
+    section_end = section_start + 1 + following_heading.start() if following_heading else len(spec)
+    revision_section = spec[section_start:section_end]
+malformed_revision_headers = [
+    line
+    for line in re.findall(r"^\*\*Revision \d+(?: \(|\*\*).*$", revision_section, re.MULTILINE)
+    if not re.match(r"^\*\*Revision \d+ \(\d{4}-\d{2}-\d{2}\)\*\*", line)
+]
+if not revision_section:
+    errors.append("spec must contain the §28 revision record")
+for line in malformed_revision_headers:
+    errors.append(f"spec revision record header is not in the dated form: {line[:80]!r}")
 if declared_revision_match is None:
     errors.append("spec must declare its revision")
 elif declared_revision_match.group(0) != derived_revision_header:

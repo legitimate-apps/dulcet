@@ -65,3 +65,21 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-51 | live exact and cold-estimated bodies validate before atomic promotion; exact mismatch never reaches destination and duplicate delivery is idempotent |
 | CONF-52 | a live item promoted locally yields a `LocalPlaybackPlan` and identical bytes after all conformance network clients close |
 | CONF-61 | unknown response fields are preserved and ignored |
+| CONF-70 | a scanned deletion between two window pages changes the post-page `getScanStatus`; the race probe finds zero violations |
+| CONF-71 | `getScanStatus` readable by a non-admin user, unmoved by effective user-state writes, with its sentinel read as no epoch |
+| CONF-72 | per-user state in catalog payloads reflects the reading user only |
+| CONF-73 | `/rest` JSON reads carry no HTTP validators and a conditional request returns a full `200`, with a header positive control |
+| CONF-74 | album removal behaviour under both `PurgeMissing` settings |
+| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type |
+| CONF-76 | a cached open publishes before any request or loading state; a never-opened album offline is `unavailable` |
+| CONF-77 | reconnect performs only its declared reads, by counted requests |
+| CONF-78 | seen-cache eviction order, with pinned metadata surviving every ceiling |
+| CONF-79 | search scope is published correctly in each of its four cases |
+| CONF-80 | a seen-cache namespace bound to a different account is purged before any row is served |
+| CONF-81 | reader migrations preserve protected data, pin downloads and queue entries, and seed the verified mirror |
+| CONF-82 | production reader window tearing, rebasing, scanning mode and anchor keeping |
+| CONF-83 | production reader gone-ness under both server settings |
+| CONF-84 | optimistic favourite and rating overlay |
+| CONF-85 | download enqueue pins metadata atomically; downloaded albums rechecked after an epoch change |
+| CONF-86 | multi-list screen rows publish independently |
+| CONF-87 | bounded detail look-ahead |
