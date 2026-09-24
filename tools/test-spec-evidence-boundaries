@@ -91,10 +91,18 @@ revision_records = [
 # the pattern does not match is not an error to it: it is simply absent, so a record written as
 # "(2026-09-23; written 2026-09-11)" was invisible to every rule below while the document claimed
 # the revision before it. Refuse the malformed header instead of silently not counting it.
-revision_section = spec[spec.find("\n## 28. Revision record"):] if "\n## 28. Revision record" in spec else ""
+# A header is a line opening `**Revision N (` or `**Revision N**`; prose that merely starts with
+# "**Revision N" and goes on to say something about it ("**Revision 87 informed this.**") is not
+# one, and §28 bodies correct earlier revisions in exactly that idiom.
+section_start = spec.find("\n## 28. Revision record")
+revision_section = ""
+if section_start >= 0:
+    following_heading = re.search(r"^## (?!28\.)", spec[section_start + 1 :], re.MULTILINE)
+    section_end = section_start + 1 + following_heading.start() if following_heading else len(spec)
+    revision_section = spec[section_start:section_end]
 malformed_revision_headers = [
     line
-    for line in re.findall(r"^\*\*Revision \d+\b.*$", revision_section, re.MULTILINE)
+    for line in re.findall(r"^\*\*Revision \d+(?: \(|\*\*).*$", revision_section, re.MULTILINE)
     if not re.match(r"^\*\*Revision \d+ \(\d{4}-\d{2}-\d{2}\)\*\*", line)
 ]
 if not revision_section:

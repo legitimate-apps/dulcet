@@ -176,6 +176,45 @@ with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-malformed-") as di
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-undated-bold-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    records = re.findall(r"^\*\*Revision (\d+) \((\d{4}-\d{2}-\d{2})\)\*\*", spec, re.MULTILINE)
+    if not records:
+        raise AssertionError("revision undated-header fixture is missing")
+    number, date = records[0]
+    spec_path.write_text(spec.replace(f"**Revision {number} ({date})**", f"**Revision {number}**", 1))
+    result = invoke(root)
+    if result.returncode == 0 or "is not in the dated form" not in result.stdout:
+        raise AssertionError(
+            "undated revision header was accepted: "
+            f"returncode={result.returncode}, output={result.stdout!r}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="dulcet-spec-revision-prose-") as directory:
+    root = Path(directory)
+    materialize(root)
+    spec_path = root / "docs/superpowers/specs/2026-08-18-dulcet-design.md"
+    spec = spec_path.read_text()
+    # The opposite direction: §28 bodies correct earlier revisions in prose that begins a line with
+    # "**Revision N ...**". That is not a header and must not fail the gate. Without this case the
+    # header check could be widened back to every such line and every control above would pass.
+    records = re.findall(r"^\*\*Revision (\d+) \((\d{4}-\d{2}-\d{2})\)\*\*", spec, re.MULTILINE)
+    number, date = records[0]
+    marker = f"**Revision {number} ({date})**"
+    at = spec.index(marker)
+    paragraph_end = spec.index("\n\n", at) + 2
+    prose = f"**Revision {int(number) - 1} informed this decision and remains unchanged.** No further action.\n\n"
+    spec_path.write_text(spec[:paragraph_end] + prose + spec[paragraph_end:])
+    result = invoke(root)
+    if result.returncode != 0:
+        raise AssertionError(
+            "prose referring to a revision was rejected as a malformed header: "
+            f"output={result.stdout!r}"
+        )
+
 with tempfile.TemporaryDirectory(prefix="dulcet-live-app-boundary-") as directory:
     root = Path(directory)
     materialize(root)
