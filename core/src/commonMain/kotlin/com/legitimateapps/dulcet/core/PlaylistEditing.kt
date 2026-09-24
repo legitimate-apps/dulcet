@@ -51,14 +51,17 @@ import kotlinx.serialization.json.longOrNull
  * 4. After every write the playlist is read back. A removal is kept only if exactly the chosen
  *    entries went missing and nothing else changed; a whole list only if the entries are the ones
  *    sent and the name, comment and visibility are those the re-read saw. Anything else is told
- *    ([PlaylistEditOutcome.Diverged]) with the server's entries.
+ *    ([PlaylistEditOutcome.Diverged]) with the server's entries and the entries meant.
  *
  * **What remains, stated honestly.** Subsonic has no conditional write, so one round trip remains
  * between the re-read and the write in which another client's change can land:
- * - under a **removal**, a change that moves entries (another removal or an insert before the
- *   chosen position) makes the position name a different song, which is removed instead. The
- *   read-back always sees it and the person is told, with the server's list. A change that only
- *   appends is kept, and told.
+ * - under a **removal**, the positions sent name whatever sits there when the request arrives, so
+ *   another client's change can make one name a different song, which is removed instead. The
+ *   read-back detects this exactly when the list that results differs from the list meant, and the
+ *   person is told. It CANNOT when the other client changed nothing but the chosen positions — for
+ *   example, replaced the chosen entry with another song: that song is removed, the list that
+ *   results is the one meant, and it is reported saved. A change that only appends is kept, and
+ *   told.
  * - under a **whole list**, any entry change another client makes in that round trip is
  *   OVERWRITTEN, and an overwrite cannot be detected: the read-back equals what was sent by
  *   construction. A header change in the same round trip is detected and told, because it may mean
@@ -77,21 +80,28 @@ import kotlinx.serialization.json.longOrNull
  * even after a later edit changed `target`; or, for an append whose list changed elsewhere as well,
  * a list ending with the songs appended (ASSUMED to be this device's). A server still holding the
  * list the write was sent onto holds a write that never arrived, which is sent again. The songs an
- * append in doubt carried travel with its row through later edits. A create whose answer was
- * lost is adopted only on proof (below), so a lost answer may cost a duplicate playlist but never a
- * lost one.
+ * append in doubt carried travel with its row through later edits; one reshaped here (one of its
+ * songs removed or moved) is positional against the list it was sent onto, never appended again. A
+ * removal sent in batches records each verified batch as progress. A create whose answer was lost is
+ * adopted only when certain (below), so a lost answer may cost a duplicate playlist — named to the
+ * person — but never a lost one.
  *
- * **A lost create is identified by proof, never by resemblance.** A playlist is taken to be this
- * device's lost create only when it is the ONE playlist that is owned by this account, has the
- * name that send carried, has a server `created` time at or after the create was first sent, and
- * holds the songs sent — exactly, before it is deleted (a create deleted here while its send was in
- * doubt), or less song ids the server did not know, before it is adopted. What was sent is recorded
- * with the send, so a rename or song change made here meanwhile neither hides the create nor is
- * lost: it follows the adopted playlist as its own change. Without proof nothing is deleted:
- * the person is told a playlist of that name may have been created
- * ([PlaylistEditOutcome.PossiblyCreated]). ASSUMED: the server's and the device's clocks agree; a
- * server clock behind the device's makes a lost create unrecognisable (sent again, never deleted
- * wrongly), and one ahead of it admits a playlist created up to that skew before the send.
+ * **A create whose answer was lost is never deleted by inference.** The server is searched for
+ * CANDIDATES: playlists with the name that send carried, owned by this account (compared ignoring
+ * case; a server that states no owner cannot rule one out), whose server `created` time — when
+ * stated — lies in [first send − 5 min, failure seen + 5 min] ([CREATE_SKEW_TOLERANCE_MILLIS]).
+ * - A create deleted here while its send was in doubt deletes NOTHING. The person is told the
+ *   candidates' ids ([PlaylistEditOutcome.PossiblyCreated]) so a shell can offer to delete one; the
+ *   delete the person confirms is an ordinary delete by id.
+ * - A create still wanted adopts a candidate only when exactly one is CERTAIN: its owner and time are
+ *   stated and pass, and it holds the songs sent (or those less ids the server dropped, never none of
+ *   them). Otherwise it is sent again, and when any candidate exists the person is told
+ *   ([PlaylistEditOutcome.PossibleDuplicate]) rather than left with a silent duplicate.
+ * What was sent is recorded with the send, so a rename or song change made here meanwhile neither
+ * hides the create nor is lost: it follows the adopted playlist as its own change. ASSUMED: the
+ * server's clock and the device's agree within the tolerance; beyond it a lost create is not a
+ * candidate, and is sent again silently. A send whose failure was never seen (the app was killed)
+ * bounds the window by the first send.
  *
  * **Without `formPost`** every request stays within [QUERY_BUDGET_BYTES] of parameters: appends —
  * including a create's songs beyond the first request's — go in batches, in order; removals go in
@@ -103,7 +113,16 @@ import kotlinx.serialization.json.longOrNull
  * `readonly: true` and every edit of it answers code 50; another user's private playlist is code 70
  * to a non-admin; an ADMIN sees every user's playlists, `readonly: true` for those of others, and
  * the server would let the admin edit them anyway. Dulcet follows `readonly` and does not offer
- * that override. The shells show such a playlist's owner and present it read-only.
+ * that override. REQUIREMENT on the shells (not yet met by any shell): show such a playlist's owner
+ * and present it read-only, with no edit affordance.
+ *
+ * **Failures.** A refusal is dropped and told; a failure of this change alone is retried up to
+ * [MAX_FAILURES]; anything that says the server or the account cannot take ANY change now stops the
+ * flush with every change kept and counts toward nothing — no answer or a gateway that cannot reach
+ * it silently, and, told as [PlaylistEditOutcome.Held], credentials refused (HTTP 401, envelope code
+ * 40), a proxy refusing access (403) or asking for its own credentials (407), or a rate limit (429,
+ * whose `Retry-After` is honoured: neither this flush nor the favourites one sends before it has
+ * passed). A failure of the device's own database stops it too, reported as local.
  *
  * **Storage.** Rows live in `mutation_outbox` (protected, §11.4) under `field = playlist.<kind>`
  * and the playlist id; the favourites outbox ignores them, and the §16.10 username rebinding
@@ -175,6 +194,11 @@ internal sealed interface PendingPlaylistRow {
          * the server says it created earlier cannot be this one (the identity proof, §18.6).
          */
         val attemptedAt: Long? = null,
+        /**
+         * The device's wall clock when a send's failure was last seen: with [attemptedAt], the window
+         * in which a lost create can have been made on the server. Null when none was seen.
+         */
+        val failedAt: Long? = null,
         /**
          * The name and songs the latest send carried. A lost create is looked for as THAT playlist,
          * even after the person renamed it or changed its songs here; those edits then follow it.
@@ -306,10 +330,25 @@ internal sealed interface PlaylistEditOutcome {
      * song than the one chosen), or the server dropped a song id it does not know. For a whole list,
      * also when the entries are as sent but the name, comment or visibility changed in that round
      * trip — a sign another client was editing, whose entry changes, if any, the replace overwrote
-     * unseen (§18.6). [serverEntries] is the server's list, which the person now sees; null for a
-     * header change.
+     * unseen (§18.6); for a create, the songs it sent. [serverEntries] is the server's list, which
+     * the person now sees, and [intendedEntries] the list this device meant, so a shell can say what
+     * to put back; both null for a header change.
      */
-    data class Diverged(override val playlistId: String, val kind: PlaylistRowKind, val serverEntries: List<String>?) : PlaylistEditOutcome
+    data class Diverged(
+        override val playlistId: String,
+        val kind: PlaylistRowKind,
+        val serverEntries: List<String>?,
+        val intendedEntries: List<String>?,
+    ) : PlaylistEditOutcome
+
+    /**
+     * The flush stopped at this change and kept it, and every change after it, unsent: the server or
+     * a proxy in front of it refused ACCESS — [error] is an `Auth` error (credentials refused) or an
+     * `HttpStatus` 401, 403 or 407 — or asked to wait (`Server.Busy`). Nothing counts toward
+     * [PlaylistEditor.MAX_FAILURES]; the change is sent by a later flush — after the person signs in
+     * again, or once the server's `Retry-After` has passed. The shell tells the person why.
+     */
+    data class Held(override val playlistId: String, val kind: PlaylistRowKind, val error: DomainError) : PlaylistEditOutcome
 
     /** A header field another client changed after this device last saw it: the server wins (§18.3). */
     data class Superseded(override val playlistId: String, val fields: Set<PlaylistDetailField>) : PlaylistEditOutcome
@@ -317,14 +356,23 @@ internal sealed interface PlaylistEditOutcome {
     data class NotRecorded(override val playlistId: String) : PlaylistEditOutcome
 
     /**
-     * A create whose answer was lost was then deleted here, and the server holds a playlist of that
-     * name owned by this account that may be it but is not PROVEN to be (§18.6). Nothing was
-     * deleted, and the change is gone from the outbox: "A playlist named [name] may have been
-     * created; check it and delete it if you don't want it."
+     * A create whose answer was lost was then deleted here. Nothing is deleted on inference (§18.6):
+     * [candidates] are the server's playlists that may be what that create made — never empty —
+     * and the change is gone from the outbox. A shell offers "A playlist named [name] may have been
+     * created. Delete it on the server?"; the delete the person confirms is an ordinary
+     * [PlaylistEditor.delete] of the candidate's id.
      */
-    data class PossiblyCreated(val localId: String, val name: String) : PlaylistEditOutcome {
+    data class PossiblyCreated(val localId: String, val name: String, val candidates: List<String>) : PlaylistEditOutcome {
         override val playlistId: String get() = localId
     }
+
+    /**
+     * A create whose answer was lost was sent again and now exists as [playlistId], but the server
+     * also holds [candidates] — playlists that may be the one the lost send made, which could not be
+     * adopted with certainty (§18.6). The person may now have a duplicate and is told, never left
+     * with a silent one.
+     */
+    data class PossibleDuplicate(val localId: String, override val playlistId: String, val candidates: List<String>) : PlaylistEditOutcome
 }
 
 internal data class PlaylistFlushReport(
@@ -436,6 +484,7 @@ internal class PlaylistOutbox(
                     put("attempted", JsonPrimitive(row.attempted))
                     put("cancelled", JsonPrimitive(row.cancelled))
                     row.attemptedAt?.let { put("attemptedAt", JsonPrimitive(it)) }
+                    row.failedAt?.let { put("failedAt", JsonPrimitive(it)) }
                     row.sentName?.let { put("sentName", JsonPrimitive(it)) }
                     row.sentSongs?.let { put("sentSongs", it.json()) }
                 }
@@ -484,7 +533,7 @@ internal class PlaylistOutbox(
                 PlaylistRowKind.Create -> PendingPlaylistRow.Create(
                     targetId, text("name") ?: return null, text("comment"), bool("public"),
                     json["songs"].strings() ?: return null, bool("attempted") ?: false, bool("cancelled") ?: false,
-                    localSequence, wallClock, failures, number("attemptedAt"), text("sentName"), json["sentSongs"].strings(),
+                    localSequence, wallClock, failures, number("attemptedAt"), number("failedAt"), text("sentName"), json["sentSongs"].strings(),
                 )
                 PlaylistRowKind.Details -> {
                     val fields = (json["fields"] as? JsonObject ?: return null).entries.mapNotNull { (name, element) ->
@@ -759,14 +808,15 @@ internal class PlaylistEditor(
                             // An append in doubt is this device's own write only if it was sent onto
                             // that very list; one sent onto a list another client had changed is not,
                             // and this edit must meet that change, not write over it.
-                            sent = existing.sent?.takeIf { existing.sentAdded != null && it == base + existing.sentAdded }
+                            sent = existing.sent
                         } else {
                             base = existing?.base ?: cachedEntries!!
                             sent = existing?.sent
                         }
                         // The songs an append in doubt carried travel with its list: an edit that
-                        // still only adds at the end must not send them a second time.
-                        val sentAdded = existing?.sentAdded?.takeIf { sent != null }
+                        // still only adds at the end must not send them a second time, and one that
+                        // reshapes them is verified against the list they were sent onto.
+                        val sentAdded = existing?.sentAdded
                         val attempted = existing?.attempted ?: false
                         if (next == base && !attempted) {
                             outbox.remove(target.id, PlaylistRowKind.Entries)
@@ -806,8 +856,14 @@ internal class PlaylistEditor(
     private fun editable(record: CachePlaylistRecord): Boolean = when (record.readonly) {
         false -> true
         true -> false
-        null -> record.owner != null && record.owner == username
+        null -> isThisAccount(record.owner)
     }
+
+    /**
+     * Whether a stated owner is this account. Compared ignoring case: OBSERVED, the reference server
+     * accepts a login in any case and reports the owner as the account was created ("Admin").
+     */
+    private fun isThisAccount(owner: String?): Boolean = owner != null && username?.equals(owner, ignoreCase = true) == true
 
     /**
      * The server's entries as last read here and as the playlist screen shows them — the same rows,
@@ -987,15 +1043,17 @@ internal class PlaylistEditor(
     }
 
     private suspend fun flushLocked(tally: Tally): PlaylistFlushReport {
-        while (reader.online) {
+        // The server asked for quiet (a 429's Retry-After): nothing is sent until it has passed.
+        tally.stoppedBy = reader.busyError()
+        while (reader.online && tally.stoppedBy == null) {
             val row = outbox.all().firstOrNull { it.key !in tally.deferred } ?: break
+            // Only a failure of a request is the server's to classify; anything else — the device's
+            // own database — propagates to [flush], which reports it as local.
             val failure = try {
                 deliver(row, tally)
                 null
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (thrown: Throwable) {
-                thrown.asReaderError()
+            } catch (thrown: LibraryRequestFailure) {
+                thrown.error
             }
             if (failure == null) continue
             when (failure.failureClass()) {
@@ -1018,6 +1076,12 @@ internal class PlaylistEditor(
                         current?.let { outbox.rewrite(it.withFailures(failures)) }
                         tally.deferred += row.key
                     }
+                }
+                PlaylistFailureClass.Held -> {
+                    tally.stoppedBy = failure
+                    emit(PlaylistEditOutcome.Held(row.playlistId, row.kind, failure))
+                    if (failure is DomainError.Server.Busy) reader.noteBusy(failure.retryAfter)
+                    break
                 }
                 PlaylistFailureClass.Transport -> {
                     tally.stoppedBy = failure
@@ -1081,13 +1145,18 @@ internal class PlaylistEditor(
             return EntriesEnd.Finish(row, PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Entries))
         }
         val sent = row.sent
-        // An append in doubt that landed, then edited here among its own songs: against the list
-        // the server now holds, what remains is positional, not an append.
-        val landedThenEdited = row.attempted && sent != null && server == sent && target != null && !target.startsWith(sent)
-        if (row.appendOnly && !landedThenEdited) return sendAppend(row, server, send)
-        val rowBase = row.base!!
+        val inDoubt = row.sentAdded
+        // An append in doubt whose songs no longer head the songs still to add was reshaped here —
+        // one of its songs removed or moved. If it landed, those songs are on the server, so what
+        // remains is positional against that list, not an append.
+        val inDoubtStillHeads = inDoubt == null || row.added.drop(row.appended).take(inDoubt.size) == inDoubt
+        if (row.base == null || (row.appendOnly && inDoubtStillHeads)) return sendAppend(row, server, send)
+        val rowBase = row.base
         var base = rowBase
-        if (row.attempted && sent != null) {
+        // The list an append in doubt was sent onto must be the one this edit was made on: one sent
+        // onto a list another client had changed cannot vouch for this edit's base.
+        val ownList = inDoubt == null || sent == rowBase + inDoubt
+        if (row.attempted && sent != null && ownList) {
             if (server == sent) {
                 // This device's own write in doubt landed: the list is verified as that one.
                 base = sent
@@ -1095,7 +1164,7 @@ internal class PlaylistEditor(
                 // (A server still holding the list the write was sent onto holds a write that
                 // never arrived, which is sent again — never one whose every new id was dropped.)
                 // It landed, less song ids this device added that the server does not know.
-                if (target == sent) return EntriesEnd.Finish(row, PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, server))
+                if (target == sent) return EntriesEnd.Finish(row, PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, server, target))
                 base = server
             }
         }
@@ -1116,16 +1185,23 @@ internal class PlaylistEditor(
     private suspend fun sendRemoval(row: PendingPlaylistRow.Entries, base: List<String>, removed: List<Int>, send: EntriesSend): EntriesEnd {
         var current = row
         var expected = base
-        for (batch in batches(listOf("playlistId" to row.playlistId), removed.sortedDescending()) { "songIndexToRemove" to it.toString() }) {
+        val batches = batches(listOf("playlistId" to row.playlistId), removed.sortedDescending()) { "songIndexToRemove" to it.toString() }
+        for ((index, batch) in batches.withIndex()) {
             val positions = batch.toSet()
-            val after = expected.filterIndexed { index, _ -> index !in positions }
+            val after = expected.filterIndexed { position, _ -> position !in positions }
             current = mark(current) { it.copy(attempted = true, sent = after) } ?: return EntriesEnd.Replaced
             send.tally.sent += 1
             writeChecked(current, "updatePlaylist", listOf("playlistId" to row.playlistId) + batch.map { "songIndexToRemove" to it.toString() }, send.slot)
             val readBack = send.read(row.playlistId).ids
             // Kept only if exactly the chosen entries went missing and nothing else changed.
-            if (readBack != after) return EntriesEnd.Finish(current, PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, readBack))
+            if (readBack != after) return EntriesEnd.Finish(current, PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, readBack, row.target))
             expected = readBack
+            if (index < batches.lastIndex) {
+                // A verified batch is progress: the rest resumes from the list just read back, so a
+                // later batch that fails leaves a row the next flush continues, never a list that
+                // looks changed elsewhere.
+                current = rewriteCurrent(current) { it.copy(base = readBack, attempted = false, sent = null, sentAdded = null) } ?: return EntriesEnd.Replaced
+            }
         }
         return EntriesEnd.Finish(current, PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Entries))
     }
@@ -1149,8 +1225,8 @@ internal class PlaylistEditor(
         writeChecked(attempted, "createPlaylist", parameters, send.slot)
         val after = send.read(row.playlistId)
         val outcome = when {
-            after.ids != target -> PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, after.ids)
-            after.playlist.header() != before.playlist.header() -> PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, after.ids)
+            after.ids != target -> PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, after.ids, target)
+            after.playlist.header() != before.playlist.header() -> PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, after.ids, target)
             else -> PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Entries)
         }
         return EntriesEnd.Finish(attempted, outcome)
@@ -1168,7 +1244,8 @@ internal class PlaylistEditor(
         var dropped = false
         val inDoubt = row.sentAdded
         val sent = row.sent
-        if (row.attempted && inDoubt != null && sent != null && row.added.drop(appended).take(inDoubt.size) == inDoubt) {
+        // The caller sends an append here only while the songs in doubt still head those to add.
+        if (row.attempted && inDoubt != null && sent != null) {
             val onto = sent.subList(0, sent.size - inDoubt.size)
             val landed = when {
                 server == sent -> true
@@ -1185,7 +1262,7 @@ internal class PlaylistEditor(
         }
         val pending = row.added.drop(appended)
         if (pending.isEmpty()) {
-            val outcome = if (dropped) PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, server) else PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Entries)
+            val outcome = if (dropped) PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, server, sent) else PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Entries)
             return EntriesEnd.Finish(row, outcome)
         }
         var current = row
@@ -1206,7 +1283,7 @@ internal class PlaylistEditor(
         }
         val readBack = send.read(row.playlistId).ids
         val outcome = if (readBack == expected && !dropped) PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Entries)
-            else PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, readBack)
+            else PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Entries, readBack, expected)
         return EntriesEnd.Finish(current, outcome)
     }
 
@@ -1242,7 +1319,7 @@ internal class PlaylistEditor(
         finish(
             attempted,
             if (toSend.all { (field, change) -> readBack[field] == change.value }) PlaylistEditOutcome.Saved(row.playlistId, PlaylistRowKind.Details)
-            else PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Details, null),
+            else PlaylistEditOutcome.Diverged(row.playlistId, PlaylistRowKind.Details, null, null),
             tally,
         )
     }
@@ -1265,29 +1342,18 @@ internal class PlaylistEditor(
         // What an earlier send carried — looked for as sent, whatever was edited here since.
         val earlierName = row.sentName ?: row.name
         val earlierSongs = row.sentSongs ?: createSongs(row)
+        val candidates = if (row.attempted) lostCreateCandidates(row, earlierName) else emptyList()
         if (row.cancelled) {
-            // Deleted here after a send whose answer was lost. What that send made is deleted only
-            // on PROOF that it made it; short of proof nothing is deleted and the person is told.
-            if (row.attempted) {
-                when (val found = findLostCreate(row, earlierName, earlierSongs, forDelete = true)) {
-                    is LostCreate.Proven -> {
-                        tally.sent += 1
-                        try {
-                            writeChecked(row, "deletePlaylist", listOf("id" to found.id))
-                        } catch (thrown: LibraryRequestFailure) {
-                            if (!thrown.error.isNotFound()) throw thrown
-                        }
-                    }
-                    LostCreate.Unproven -> emit(PlaylistEditOutcome.PossiblyCreated(row.playlistId, earlierName))
-                    LostCreate.None -> Unit
-                }
-            }
+            // Deleted here after a send whose answer was lost. Nothing is deleted on inference, however
+            // strong: every playlist that may be what that send made is named to the person, who can
+            // delete one by its id — an ordinary delete, confirmed by them (§18.6).
+            if (candidates.isNotEmpty()) emit(PlaylistEditOutcome.PossiblyCreated(row.playlistId, earlierName, candidates.map { it.id }))
             outbox.removeIfUnchanged(outbox.current(row) ?: row)
             changed(setOf(row.playlistId))
             reader.rereadList(LibraryQuery.Playlists)
             return
         }
-        val adopted = if (row.attempted) (findLostCreate(row, earlierName, earlierSongs, forDelete = false) as? LostCreate.Proven)?.id else null
+        val adopted = certainLostCreate(candidates, earlierSongs)
         val id: String
         val sentName: String
         val sentSongs: List<String>
@@ -1299,12 +1365,19 @@ internal class PlaylistEditor(
             val songs = createSongs(row)
             val attempted = mark(row) { it.copy(attempted = true, attemptedAt = it.attemptedAt ?: cache.now(), sentName = it.name, sentSongs = songs) } ?: return
             tally.sent += 1
-            val answer = writeChecked(attempted, "createPlaylist", listOf("name" to attempted.name) + songs.map { "songId" to it })
-            // OpenSubsonic answers with the playlist; a server that answers with an empty `ok` is
-            // looked up by the same proof a lost answer needs.
-            id = createdPlaylistId(answer.response.body)
-                ?: (findLostCreate(attempted, attempted.name, songs, forDelete = false) as? LostCreate.Proven)?.id
-                ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+            val answer = try {
+                writeChecked(attempted, "createPlaylist", listOf("name" to attempted.name) + songs.map { "songId" to it })
+            } catch (thrown: LibraryRequestFailure) {
+                // When the failure was seen bounds when a send in doubt can have made its playlist.
+                if (!thrown.error.provesNotApplied()) rewriteCurrent(attempted) { it.copy(failedAt = cache.now()) }
+                throw thrown
+            }
+            // OpenSubsonic answers with the playlist. A server that answers with an empty `ok` made
+            // one it does not name: found as a lost answer's would be, or looked for again next flush.
+            id = createdPlaylistId(answer.response.body) ?: run {
+                val seen = rewriteCurrent(attempted) { it.copy(failedAt = cache.now()) } ?: attempted
+                certainLostCreate(lostCreateCandidates(seen, attempted.name), songs)
+            } ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
             sentName = attempted.name
             sentSongs = songs
         }
@@ -1319,9 +1392,7 @@ internal class PlaylistEditor(
                 try {
                     tally.sent += 1
                     reader.sendChecked("updatePlaylist", mapOf("playlistId" to id) + extra.map { (f, v) -> f.wireName to v })
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
+                } catch (thrown: LibraryRequestFailure) {
                     database.transaction { putDetails(id, extra.associate { (f, v) -> f to PendingFieldChange(v, null) }) }
                 }
             }
@@ -1335,8 +1406,12 @@ internal class PlaylistEditor(
         reader.rereadList(LibraryQuery.Playlists)
         changed(setOf(row.playlistId, id))
         emit(PlaylistEditOutcome.Created(row.playlistId, id))
+        // Sent again while playlists that may be the lost send's exist: the person is told, with
+        // their ids, rather than left with a duplicate nobody named.
+        val others = candidates.map { it.id } - id
+        if (others.isNotEmpty()) emit(PlaylistEditOutcome.PossibleDuplicate(row.playlistId, id, others))
         val entries = cachedEntries(id)
-        if (entries != null && entries != sentSongs) emit(PlaylistEditOutcome.Diverged(id, PlaylistRowKind.Create, entries))
+        if (entries != null && entries != sentSongs) emit(PlaylistEditOutcome.Diverged(id, PlaylistRowKind.Create, entries, sentSongs))
     }
 
     /** The songs a create's own request carries: all, or — without `formPost` — those that fit. */
@@ -1371,35 +1446,38 @@ internal class PlaylistEditor(
         outbox.put(PendingPlaylistRow.Details(id, existing?.fields.orEmpty() + fields, 0, 0))
     }
 
-    private sealed interface LostCreate {
-        data class Proven(val id: String) : LostCreate
-
-        /** A playlist of that name that may be this account's exists, but nothing proves it is this one. */
-        data object Unproven : LostCreate
-
-        data object None : LostCreate
+    /**
+     * After a create whose answer was lost: every playlist that may be what it made (§18.6) — named
+     * [sentName], owned by this account or by nobody stated, and created — when the server says —
+     * within [CREATE_SKEW_TOLERANCE_MILLIS] of the time between the first send and the failure
+     * being seen. The tolerance absorbs a server clock that disagrees with this device's, and a
+     * `created` stamped in whole seconds. A playlist made elsewhere in that time is a candidate too,
+     * which is why a candidate is never deleted without the person.
+     */
+    private suspend fun lostCreateCandidates(row: PendingPlaylistRow.Create, sentName: String): List<ListedPlaylist> {
+        val from = row.attemptedAt?.minus(CREATE_SKEW_TOLERANCE_MILLIS)
+        val until = (row.failedAt ?: row.attemptedAt)?.plus(CREATE_SKEW_TOLERANCE_MILLIS)
+        return parseListedPlaylists(reader.sendChecked("getPlaylists").response.body).filter { listed ->
+            listed.name == sentName &&
+                (listed.owner == null || isThisAccount(listed.owner)) &&
+                (listed.createdAt == null || from == null || until == null || listed.createdAt in from..until)
+        }
     }
 
     /**
-     * After a create whose answer was lost: the playlist it made, on PROOF (§18.6) — the ONE playlist
-     * owned by this account, named [sentName], with a server `created` time at or after the create
-     * was first sent, holding [sentSongs]: exactly, [forDelete]; otherwise less song ids the server
-     * did not know. Nothing about what the device has seen enters into it.
+     * The lost create's playlist when that is certain enough to adopt instead of sending again: the
+     * ONLY candidate, its owner stated as this account, its `created` stated, and holding the songs
+     * sent — exactly, or less song ids the server did not know. Adopting wrongly can only merge
+     * this create into an identical playlist of this account; anything less certain is sent again
+     * and the candidates named ([PlaylistEditOutcome.PossibleDuplicate]).
      */
-    private suspend fun findLostCreate(row: PendingPlaylistRow.Create, sentName: String, sentSongs: List<String>, forDelete: Boolean): LostCreate {
-        val named = parseListedPlaylists(reader.sendChecked("getPlaylists").response.body)
-            .filter { it.name == sentName && (it.owner == null || it.owner == username) }
-        if (named.isEmpty()) return LostCreate.None
-        val since = row.attemptedAt ?: return LostCreate.Unproven
-        val proven = named
-            .filter { it.owner != null && it.owner == username && it.createdAt != null && it.createdAt >= since }
-            .filter { candidate ->
-                val entries = entriesOf(candidate.id) ?: return@filter false
-                // Adopting allows ids the server dropped, but not all of them: an empty playlist
-                // proves nothing about a create that carried songs.
-                if (forDelete) entries == sentSongs else entries == sentSongs || (entries.isNotEmpty() && droppedOnly(entries, sentSongs, introduced = sentSongs.toSet()))
-            }
-        return proven.singleOrNull()?.let { LostCreate.Proven(it.id) } ?: LostCreate.Unproven
+    private suspend fun certainLostCreate(candidates: List<ListedPlaylist>, sentSongs: List<String>): String? {
+        val only = candidates.singleOrNull() ?: return null
+        if (only.owner == null || !isThisAccount(only.owner) || only.createdAt == null) return null
+        val entries = entriesOf(only.id) ?: return null
+        // An empty playlist proves nothing about a create that carried songs.
+        val holdsWhatWasSent = entries == sentSongs || (entries.isNotEmpty() && droppedOnly(entries, sentSongs, introduced = sentSongs.toSet()))
+        return only.id.takeIf { holdsWhatWasSent }
     }
 
     /** A playlist's entries, read raw (never cached: it may not be the one looked for); null when gone. */
@@ -1448,15 +1526,12 @@ internal class PlaylistEditor(
         slot: LibraryReader.HeldSlot? = null,
     ): SentResponse = try {
         slot?.sendRepeatedChecked(endpoint, parameters, formPost) ?: reader.sendRepeatedChecked(endpoint, parameters, formPost)
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (thrown: Throwable) {
-        val error = thrown.asReaderError()
-        if (error.provesNotApplied()) {
+    } catch (thrown: LibraryRequestFailure) {
+        if (thrown.error.provesNotApplied()) {
             val prior = beforeMark[row.key]?.takeIf { it.localSequence == row.localSequence }
             if (prior != null && outbox.current(row) != null) outbox.rewrite(prior)
         }
-        throw LibraryRequestFailure(error)
+        throw thrown
     } finally {
         beforeMark.remove(row.key)
     }
@@ -1523,6 +1598,13 @@ internal class PlaylistEditor(
          * leaves about 1 KiB of it for the address, the path and the credentials.
          */
         const val QUERY_BUDGET_BYTES = 7_000
+
+        /**
+         * How far a lost create's server `created` time may fall outside [first send, failure seen]
+         * and still make it a candidate (§18.6): a server clock ahead of or behind this device's, and
+         * a `created` stamped in whole seconds. ASSUMED: clocks agree within five minutes.
+         */
+        const val CREATE_SKEW_TOLERANCE_MILLIS = 5 * 60_000L
     }
 }
 
@@ -1588,23 +1670,27 @@ private fun epochMillisOrNull(text: String): Long? = try {
     null
 }
 
-private enum class PlaylistFailureClass { Refused, ThisChange, Transport }
+private enum class PlaylistFailureClass { Refused, ThisChange, Held, Transport }
 
 private fun DomainError.failureClass(): PlaylistFailureClass = when (this) {
     // Code 0 is the server's generic error — the reference server uses it for a busy limit.
     is DomainError.Server.Known -> if (code == 0) PlaylistFailureClass.ThisChange else PlaylistFailureClass.Refused
     is DomainError.Server.Unknown -> if (code == 0) PlaylistFailureClass.ThisChange else PlaylistFailureClass.Refused
-    is DomainError.Server.Busy -> PlaylistFailureClass.ThisChange
+    // A rate limit holds every change until its Retry-After, and counts toward nothing.
+    is DomainError.Server.Busy -> PlaylistFailureClass.Held
     // An HTTP status with no envelope: a gateway that cannot reach the server stops the flush like
-    // no answer at all; a request too large never fits, so it is refused and told; anything else
-    // is this change's failure.
+    // no answer at all; a proxy refusing access holds every change; a request too large never
+    // fits, so it is refused and told; anything else is this change's failure.
     is DomainError.Server.HttpStatus -> when {
         gatewayCannotReachServer -> PlaylistFailureClass.Transport
+        refusesAccess -> PlaylistFailureClass.Held
         tooLarge -> PlaylistFailureClass.Refused
         else -> PlaylistFailureClass.ThisChange
     }
-    // Code 50: this user may not edit this playlist.
+    // Code 50 in an envelope: this user may not edit this playlist.
     DomainError.Auth.Forbidden -> PlaylistFailureClass.Refused
+    // Credentials refused: every change is held for the person to sign in again.
+    is DomainError.Auth -> PlaylistFailureClass.Held
     is DomainError.Protocol -> PlaylistFailureClass.ThisChange
     else -> PlaylistFailureClass.Transport
 }

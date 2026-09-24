@@ -7,13 +7,16 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Regression tests from the independent review of the first R1c/R1d cut: a1–a5 are the reviewer's
@@ -362,7 +365,9 @@ class MutationOutboxReviewTest {
         val (session, _) = online(env)
         val outcomes = mutableListOf<MutationOutcome>()
         session.favourites.addOutcomeListener { outcomes += it }
-        env.server.failWithStatus["setRating"] = 429
+        // A 400: a refusal of the request itself. (A 429 is not this proof's case: it asks for the
+        // change to be sent again after its Retry-After, and holds it — see below.)
+        env.server.failWithStatus["setRating"] = 400
         session.favourites.setRating(album4, 4)
         advanceUntilIdle()
         env.server.failWithStatus.clear()
@@ -442,5 +447,90 @@ class MutationOutboxReviewTest {
         assertTrue(pubs.all.none { it.value.query == "Album 002" && it.value.rows.any { r -> r.item.id.rawId == albumId(15) } },
             "rows answering Album 001 were published under Album 002")
         assertTrue(pubs.all.none { it.value.query == "Album 001" && it.value.scope == SearchScope.ServerAndDevice })
+    }
+
+    // ---- Second review, S4 and S6: access refusals hold; a 429 is honoured; a local failure is local ----
+
+    /** A star and a rating recorded offline, then the server answering the star with [status]. */
+    private suspend fun TestScope.favouritesHeldBy(env: SessionEnv, status: Int, retryAfter: String? = null): Pair<LibraryReaderSession, MutableList<MutationOutcome>> {
+        val session = env.session(config = LibraryReaderConfig(lookAheadMaxPerViewport = 0, monotonic = testScheduler.timeSource))
+        online(env, session)
+        val outcomes = mutableListOf<MutationOutcome>()
+        session.favourites.addOutcomeListener { outcomes += it }
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        session.favourites.setRating(album4, 2)
+        session.setOnline(true)
+        env.server.failWithStatus["star"] = status
+        env.server.retryAfter = retryAfter
+        return session to outcomes
+    }
+
+    private suspend fun TestScope.favouritesHeldAcrossFlushes(env: SessionEnv, status: Int, error: DomainError) {
+        val (session, outcomes) = favouritesHeldBy(env, status)
+        repeat(LibraryFavourites.MAX_FAILURES + 1) {
+            assertEquals(error, session.favourites.flush().stoppedBy)
+            runCurrent()
+        }
+        assertEquals(List(LibraryFavourites.MAX_FAILURES + 1) { "star" }, sends(env).map { it.endpoint }, "the rating waits behind the held star")
+        assertEquals(2L, session.favourites.pendingCount(), "every change kept, none counted toward a drop")
+        assertEquals(MutationOutcome.Held(album4, MutationField.Starred, error), outcomes.last())
+        assertTrue(outcomes.none { it is MutationOutcome.NotSaved }, "$outcomes")
+        env.server.failWithStatus.clear()
+        session.favourites.flush()
+        assertEquals(0L, session.favourites.pendingCount(), "sent once access is back")
+    }
+
+    @Test
+    fun aProxy401HoldsEveryFavouriteForSignInAgain() = sessionTest { env ->
+        favouritesHeldAcrossFlushes(env, 401, DomainError.Auth.InvalidCredentials)
+    }
+
+    @Test
+    fun aProxy403HoldsEveryFavouriteAndIsTold() = sessionTest { env ->
+        favouritesHeldAcrossFlushes(env, 403, DomainError.Server.HttpStatus(403))
+    }
+
+    @Test
+    fun aProxy407HoldsEveryFavourite() = sessionTest { env ->
+        favouritesHeldAcrossFlushes(env, 407, DomainError.Server.HttpStatus(407))
+    }
+
+    @Test
+    fun a429WithoutRetryAfterHoldsEveryFavouriteAndCountsTowardNothing() = sessionTest { env ->
+        favouritesHeldAcrossFlushes(env, 429, DomainError.Server.Busy(null))
+    }
+
+    @Test
+    fun a429IsHonouredUntilItsRetryAfterThenOneFlushSendsEveryFavourite() = sessionTest { env ->
+        val (session, outcomes) = favouritesHeldBy(env, 429, retryAfter = "5")
+        assertEquals(DomainError.Server.Busy(5.seconds), session.favourites.flush().stoppedBy)
+        assertEquals(MutationOutcome.Held(album4, MutationField.Starred, DomainError.Server.Busy(5.seconds)), outcomes.last())
+        env.server.failWithStatus.clear()
+        advanceTimeBy(2_000)
+        val early = session.favourites.flush()
+        assertIs<DomainError.Server.Busy>(early.stoppedBy, "within the Retry-After nothing is sent")
+        assertEquals(0, early.sent)
+        assertEquals(listOf("star"), sends(env).map { it.endpoint })
+        advanceTimeBy(3_001)
+        runCurrent()
+        assertEquals(listOf("star", "star", "setRating"), sends(env).map { it.endpoint }, "the flush the Retry-After scheduled sent both")
+        assertEquals(0L, session.favourites.pendingCount())
+    }
+
+    @Test
+    fun aDatabaseFailureInsideAFavouritesSendIsNotReportedAsTheServers() = sessionTest { env ->
+        val (session, _) = online(env)
+        val outcomes = mutableListOf<MutationOutcome>()
+        session.favourites.addOutcomeListener { outcomes += it }
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        session.setOnline(true)
+        env.driver.execute(null, "DROP TABLE cache_meta", 0) // the issue sequence, taken as a request goes out
+        val thrown = runCatching { session.favourites.flush() }
+        assertTrue(thrown.isFailure, "a local failure is thrown, never reported as the server's: ${thrown.getOrNull()}")
+        assertTrue(thrown.exceptionOrNull() !is LibraryRequestFailure, "${thrown.exceptionOrNull()}")
+        assertTrue(outcomes.isEmpty(), "$outcomes")
+        assertTrue(sends(env).isEmpty())
     }
 }

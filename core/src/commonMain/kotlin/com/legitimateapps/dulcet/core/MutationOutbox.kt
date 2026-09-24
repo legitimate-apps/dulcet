@@ -148,6 +148,15 @@ internal sealed interface MutationOutcome {
      */
     data class Superseded(override val target: LibraryEntityRef, override val field: MutationField, val serverValue: Int) : MutationOutcome
 
+    /**
+     * The flush stopped at this change and kept it, and every change after it, unsent: the server or
+     * a proxy in front of it refused ACCESS — [error] is an `Auth` error (credentials refused) or an
+     * `HttpStatus` 401, 403 or 407 — or asked to wait (`Server.Busy`). Nothing counts toward
+     * [LibraryFavourites.MAX_FAILURES]; a later flush sends it — after the person signs in again, or
+     * once the server's `Retry-After` has passed. The shell tells the person why.
+     */
+    data class Held(override val target: LibraryEntityRef, override val field: MutationField, val error: DomainError) : MutationOutcome
+
     /** The device could not record the change at all. Nothing is shown as changed. */
     data class NotRecorded(override val target: LibraryEntityRef, override val field: MutationField) : MutationOutcome
 }
@@ -414,7 +423,13 @@ private enum class FailureClass {
     /** The server answered for this change without applying it; retry it later, move on now. */
     ThisChange,
 
-    /** The server could not be reached, or not as this account; nothing else can be sent now. */
+    /**
+     * The server or a proxy refused ACCESS, or asked to wait: nothing else can be sent now, every
+     * change is kept, and the person is told ([MutationOutcome.Held]).
+     */
+    Held,
+
+    /** The server could not be reached; nothing else can be sent now. */
     Transport,
 }
 
@@ -422,16 +437,21 @@ private fun DomainError.failureClass(): FailureClass = when (this) {
     // Code 0 is the server's generic error — the reference server uses it for a busy limit.
     is DomainError.Server.Known -> if (code == 0) FailureClass.ThisChange else FailureClass.Refused
     is DomainError.Server.Unknown -> if (code == 0) FailureClass.ThisChange else FailureClass.Refused
-    is DomainError.Server.Busy -> FailureClass.ThisChange
+    // A rate limit holds every change until its Retry-After, and counts toward nothing.
+    is DomainError.Server.Busy -> FailureClass.Held
     // An HTTP status with no envelope: a gateway that cannot reach the server stops the flush like
-    // no answer at all; a request too large never fits; anything else is this change's failure.
+    // no answer at all; a proxy refusing access holds every change; a request too large never
+    // fits; anything else is this change's failure.
     is DomainError.Server.HttpStatus -> when {
         gatewayCannotReachServer -> FailureClass.Transport
+        refusesAccess -> FailureClass.Held
         tooLarge -> FailureClass.Refused
         else -> FailureClass.ThisChange
     }
-    // Code 50: this user may not make this change.
+    // Code 50 in an envelope: this user may not make this change.
     DomainError.Auth.Forbidden -> FailureClass.Refused
+    // Credentials refused: every change is held for the person to sign in again.
+    is DomainError.Auth -> FailureClass.Held
     is DomainError.Protocol -> FailureClass.ThisChange
     else -> FailureClass.Transport
 }
@@ -545,11 +565,18 @@ internal class LibraryFavourites(
      * Sends every pending change, oldest first, one at a time.
      *
      * - A change the server refuses is dropped and told ([MutationOutcome.NotSaved]).
-     * - A change the server answers for without applying (a busy error, a malformed answer) stays
-     *   pending, and the flush **moves on** to the next change; after [MAX_FAILURES] such answers in
-     *   a row it is dropped and told, so one change cannot hold the queue for ever.
+     * - A change the server answers for without applying (the generic error code 0, a malformed
+     *   answer) stays pending, and the flush **moves on** to the next change; after [MAX_FAILURES]
+     *   such answers in a row it is dropped and told, so one change cannot hold the queue for ever.
+     * - When the server refuses ACCESS — credentials refused (HTTP 401 or envelope code 40), a proxy
+     *   answering 403 or 407 — or asks to wait (HTTP 429), the flush stops, keeps every change, counts
+     *   toward nothing, and tells the person ([MutationOutcome.Held]). A 429's `Retry-After` is
+     *   honoured: neither this flush nor the playlist one sends before it has passed, and one flush
+     *   of every outbox runs when it has.
      * - When the server cannot be reached at all, the flush stops and keeps every change, in order,
      *   for the next flush — the next change made online, or the reconnect of §16.14.
+     * - A failure of the device's own database is thrown, never reported as the server's; every
+     *   change is kept.
      * - Offline it does nothing.
      */
     suspend fun flush(): MutationFlushReport = confined { lock.withLock {
@@ -559,8 +586,9 @@ internal class LibraryFavourites(
         var refused = 0
         var superseded = 0
         val deferred = mutableSetOf<String>()
-        var stoppedBy: DomainError? = null
-        while (reader.online) {
+        // The server asked for quiet (a 429's Retry-After): nothing is sent until it has passed.
+        var stoppedBy: DomainError? = reader.busyError()
+        while (reader.online && stoppedBy == null) {
             val change = outbox.all().firstOrNull { "${it.target.rawId}|${it.key}" !in deferred } ?: break
             val server = outbox.serverState(change.target, change.field)
             when (val decision = decideDelivery(change, server?.first, server?.second)) {
@@ -578,13 +606,13 @@ internal class LibraryFavourites(
                 DeliveryDecision.Send -> {
                     val attempted = outbox.markAttempted(change) ?: continue
                     sent += 1
+                    // Only a failure of the request is the server's; the device's own database failing
+                    // propagates, with every change kept.
                     val failure = try {
                         reader.sendChecked(change.endpoint(), change.parameters())
                         null
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Throwable) {
-                        error.asReaderError()
+                    } catch (thrown: LibraryRequestFailure) {
+                        thrown.error
                     }
                     if (failure == null) {
                         outbox.acknowledge(attempted, reader.cache.issue())
@@ -611,6 +639,12 @@ internal class LibraryFavourites(
                             } else {
                                 deferred += "${change.target.rawId}|${change.key}"
                             }
+                        }
+                        FailureClass.Held -> {
+                            stoppedBy = failure
+                            emit(MutationOutcome.Held(change.target, change.field, failure))
+                            if (failure is DomainError.Server.Busy) reader.noteBusy(failure.retryAfter)
+                            break
                         }
                         FailureClass.Transport -> {
                             stoppedBy = failure

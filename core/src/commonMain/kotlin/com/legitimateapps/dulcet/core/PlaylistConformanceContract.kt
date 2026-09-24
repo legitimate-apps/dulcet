@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import io.ktor.http.URLBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -114,11 +115,23 @@ public data class PlaylistLostCreateResult(
     val adoptedPlaylistsNamed: Int,
     /** Whether the adopted id is the one server playlist of that name. */
     val adoptedIdIsTheServers: Boolean,
-    /** Lost, then deleted here: the outcomes told, and the playlists of that name left. */
+    /**
+     * Lost, then deleted here: the outcomes told, the deletes the flush sent (none: nothing is
+     * deleted on inference), and whether the candidates named are exactly the server's playlists of
+     * that name — then, after the person confirms a delete of the candidate by its id, that delete's
+     * outcome and the playlists of that name left.
+     */
     val cancelledOutcomes: List<String>,
-    val cancelledPlaylistsNamedAfter: Int,
-    /** A create that never arrived, deleted here, beside an OLDER playlist of that name and songs. */
+    val cancelledDeleteWrites: Int,
+    val cancelledCandidatesAreTheServers: Boolean,
+    val confirmedDeleteOutcome: String,
+    val cancelledPlaylistsNamedAfterConfirm: Int,
+    /**
+     * A create that never arrived, deleted here, beside an OLDER playlist of that name and songs:
+     * the outcomes told, whether the older one is named as a candidate, and that it survived.
+     */
     val olderOutcomes: List<String>,
+    val olderNamedAsCandidate: Boolean,
     val olderSurvived: Boolean,
     val olderDeleteWrites: Int,
 )
@@ -330,31 +343,41 @@ public object PlaylistConformanceContract {
             return localId
         }
 
-        // Adopted: the create lands, its answer is lost, and the next flush finds it by proof.
+        // Adopted: the create lands, its answer is lost, and the next flush finds it — certain: the
+        // one candidate, owned by this account, created in the window, holding the songs sent.
         val adoptedName = "CONF-89 lost create"
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val writesBefore = env.writes.size
         val adoptedLocal = createOffline(adoptedName, listOf(songs[0], songs[1], songs[0]))
         env.session.playlists.flush() // delivered; the answer lost
-        env.session.playlists.flush() // found by proof
+        env.session.playlists.flush() // found, and certain
         val adopted = named(adoptedName)
         adopted.forEach { env.cleanup += it.rawId }
         val adoptedOutcome = env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none"
         val adoptedCreates = env.writes.drop(writesBefore).count { it == "createPlaylist" }
         val adoptedId = env.session.reader.playlistOverlay.resolve(adoptedLocal)
 
-        // Cancelled: the create lands, its answer is lost, then the person deletes it here.
+        // Cancelled: the create lands, its answer is lost, then the person deletes it here. Nothing
+        // is deleted on inference: the candidate is named, and the person confirms its delete by id.
         val cancelledName = "CONF-89 lost then deleted"
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val cancelledLocal = createOffline(cancelledName, listOf(songs[2]))
         env.session.playlists.flush() // delivered; the answer lost
+        val cancelledDeletesBefore = env.writes.count { it == "deletePlaylist" }
         env.session.playlists.delete(cancelledLocal)
         env.session.playlists.flush()
+        val cancelledDeleteWrites = env.writes.count { it == "deletePlaylist" } - cancelledDeletesBefore
         val cancelledOutcomes = env.outcomes.map(::outcomeName)
-        val cancelledAfter = named(cancelledName)
-        cancelledAfter.forEach { env.cleanup += it.rawId }
+        val cancelledBefore = named(cancelledName)
+        cancelledBefore.forEach { env.cleanup += it.rawId }
+        val candidates = env.outcomes.filterIsInstance<PlaylistEditOutcome.PossiblyCreated>().singleOrNull()?.candidates.orEmpty()
+        env.outcomes.clear()
+        candidates.forEach { env.session.setOnline(false); env.session.playlists.delete(it); env.session.setOnline(true) }
+        env.session.playlists.flush()
+        val confirmedDeleteOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
+        val cancelledAfterConfirm = named(cancelledName)
 
         // Older: a playlist of the same name and songs made BEFORE the attempt, which never arrived.
         val olderName = "CONF-89 older namesake"
@@ -369,6 +392,7 @@ public object PlaylistConformanceContract {
         env.session.playlists.delete(olderLocal)
         env.session.playlists.flush()
         val olderOutcomes = env.outcomes.map(::outcomeName)
+        val olderNamed = env.outcomes.filterIsInstance<PlaylistEditOutcome.PossiblyCreated>().any { older in it.candidates }
         val olderLeft = named(olderName)
         olderLeft.forEach { env.cleanup += it.rawId }
 
@@ -378,8 +402,12 @@ public object PlaylistConformanceContract {
             adoptedPlaylistsNamed = adopted.size,
             adoptedIdIsTheServers = adopted.singleOrNull()?.rawId == adoptedId,
             cancelledOutcomes = cancelledOutcomes,
-            cancelledPlaylistsNamedAfter = cancelledAfter.size,
+            cancelledDeleteWrites = cancelledDeleteWrites,
+            cancelledCandidatesAreTheServers = candidates.isNotEmpty() && candidates.sorted() == cancelledBefore.map { it.rawId }.sorted(),
+            confirmedDeleteOutcome = confirmedDeleteOutcome,
+            cancelledPlaylistsNamedAfterConfirm = cancelledAfterConfirm.size,
             olderOutcomes = olderOutcomes,
+            olderNamedAsCandidate = olderNamed,
             olderSurvived = olderLeft.map { it.rawId } == listOf(older),
             olderDeleteWrites = env.writes.count { it == "deletePlaylist" } - deletesBefore,
         )
@@ -532,6 +560,8 @@ public object PlaylistConformanceContract {
         is PlaylistEditOutcome.Superseded -> "Superseded"
         is PlaylistEditOutcome.NotRecorded -> "NotRecorded"
         is PlaylistEditOutcome.PossiblyCreated -> "PossiblyCreated"
+        is PlaylistEditOutcome.PossibleDuplicate -> "PossibleDuplicate"
+        is PlaylistEditOutcome.Held -> "Held(${outcome.error})"
     }
 
     private suspend fun <T> withRaw(
@@ -614,7 +644,9 @@ public object PlaylistConformanceContract {
                 requests += endpoint
                 if (endpoint in WRITES) {
                     writes += endpoint
-                    writeParameterBytes += encodedLength(parameters)
+                    // Measured by the HTTP client's own query encoding — independent of the editor's
+                    // estimate, which is what it checks.
+                    writeParameterBytes += queryStringBytes(parameters)
                 }
                 // A timeout proves nothing about delivery: the editor must treat both alike.
                 if (take(dropRequest, endpoint)) throw LibraryRequestFailure(DomainError.Transport.Timeout)
@@ -757,3 +789,8 @@ private class RawPlaylistClient(request: PlaylistConformanceRequest) {
         return ((envelope.payload["error"] as? JsonObject)?.get("code") as? JsonPrimitive)?.content?.toIntOrNull() ?: -1
     }
 }
+
+/** The bytes [parameters] take as a query string, encoded by the HTTP client the requests go out on. */
+internal fun queryStringBytes(parameters: List<Pair<String, String>>): Int =
+    URLBuilder("http://query.invalid/").apply { parameters.forEach { (name, value) -> this.parameters.append(name, value) } }
+        .build().encodedQuery.length

@@ -18,7 +18,7 @@ package com.legitimateapps.dulcet.core
  */
 internal class FakePlaylistServer(
     val user: String = "listener",
-    val songs: Set<String> = (1..3000).map { "song-$it" }.toSet(),
+    val songs: MutableSet<String> = (1..3000).map { "song-$it" }.toMutableSet(),
     /** The server's clock, epoch milliseconds: the `created` stamp of every playlist it makes. */
     var now: () -> Long = { 0L },
 ) : LibraryEndpointTransport {
@@ -47,6 +47,9 @@ internal class FakePlaylistServer(
     /** Endpoint -> a transport failure thrown instead of answering (nothing applied). */
     val failWithError = mutableMapOf<String, DomainError>()
 
+    /** Endpoint -> what the HTTP client itself throws instead of answering (nothing applied). */
+    val failWithThrowable = mutableMapOf<String, Throwable>()
+
     /** Endpoints whose change IS applied but whose answer is lost: the at-least-once case. */
     val applyThenLose = mutableSetOf<String>()
 
@@ -71,7 +74,13 @@ internal class FakePlaylistServer(
     /** Endpoint -> an HTTP status answered AFTER the change was applied (a gateway timing out on it). */
     val applyThenStatus = mutableMapOf<String, Int>()
 
-    /** Every request's parameter bytes, as a query string would carry them. */
+    /** The `Retry-After` header sent with every [httpStatus] answer. */
+    var retryAfter: String? = null
+
+    /** How `created` is written; by default ISO-8601 in UTC to the millisecond, as a stamp allows. */
+    var createdText: (Long) -> String = { kotlin.time.Instant.fromEpochMilliseconds(it).toString() }
+
+    /** Every request's parameter bytes as a query string carries them, encoded by the HTTP client. */
     val urlLengths = mutableListOf<Int>()
 
     fun playlist(id: String): Playlist = playlists.first { it.id == id }
@@ -94,11 +103,12 @@ internal class FakePlaylistServer(
 
     private suspend fun answer(request: Request): LibraryEndpointResponse {
         log += request
-        urlLengths += request.parameters.sumOf { it.first.length + it.second.length + 2 }
+        urlLengths += queryStringBytes(request.parameters)
         // A real transport suspends: other coroutines may run while a request is out.
         kotlinx.coroutines.yield()
         failWithError[request.endpoint]?.let { throw LibraryRequestFailure(it) }
-        httpStatus[request.endpoint]?.let { return LibraryEndpointResponse(it, "<html>request rejected</html>", "http://fixture.invalid/rest") }
+        failWithThrowable[request.endpoint]?.let { throw it }
+        httpStatus[request.endpoint]?.let { return LibraryEndpointResponse(it, "<html>request rejected</html>", "http://fixture.invalid/rest", retryAfter = retryAfter) }
         failWithCode[request.endpoint]?.let { return error(it) }
         if (request.endpoint in WRITES) beforeWrite(request)
         val response = respond(request)
@@ -182,7 +192,7 @@ internal class FakePlaylistServer(
         if (!omitOwner) append(""","owner":"${p.owner}"""")
         p.comment?.let { append(""","comment":"$it"""") }
         if (p.isPublic) append(""","public":true""")
-        append(",\"created\":\"" + kotlin.time.Instant.fromEpochMilliseconds(p.created) + "\"")
+        append(",\"created\":\"" + createdText(p.created) + "\"")
         if (!omitReadonly) append(",\"readonly\":" + (p.owner != user))
         append(",\"coverArt\":\"pl-" + p.id + "\"}")
     }

@@ -38,63 +38,104 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun aCancelledLostCreateDeletesOnlyItsProvenOwnPlaylist() = playlistTest { env ->
-        // The positive control every negative below stands on: one candidate passing every test.
-        val (session, _) = cancelledLostCreate(env, "Road", listOf("song-1", "song-2"), landed = true)
+    fun aCancelledLostCreateDeletesNothingAndNamesItsCandidate() = playlistTest { env ->
+        // The owner's rule (second review, B1): never delete on inference, whatever the proof. The
+        // positive control is the delete the person then confirms: an ordinary delete by id.
+        val (session, localId) = cancelledLostCreate(env, "Road", listOf("song-1", "song-2"), landed = true)
         session.playlists.flush()
         advanceUntilIdle()
-        assertTrue(env.server.playlists.isEmpty(), "the proven create was deleted: ${env.server.playlists.map { it.name }}")
-        assertEquals(1, env.server.count("deletePlaylist"))
-        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated })
+        val made = env.server.playlists.single()
+        assertEquals(0, env.server.count("deletePlaylist"), "nothing is deleted by inference")
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(made.id)), env.outcomes.last())
+        assertEquals(0L, session.playlists.pendingCount())
+        assertEquals(PlaylistEditRecord.Pending, session.playlists.delete(made.id), "the candidate can be deleted by its id")
+        advanceUntilIdle()
+        assertTrue(env.server.playlists.isEmpty())
+        assertEquals(listOf(made.id), env.server.log.filter { it.endpoint == "deletePlaylist" }.map { it.one("id") })
+        assertEquals(PlaylistEditOutcome.Saved(made.id, PlaylistRowKind.Delete), env.outcomes.last())
     }
 
     @Test
-    fun aPlaylistCreatedBeforeTheAttemptIsNeverDeleted() = playlistTest { env ->
-        // The probe's case: an empty "New Playlist" made elsewhere earlier, never seen here.
+    fun p2_aRetryElsewhereAfterACreateThatNeverArrivedIsNamedNeverDeleted() = playlistTest { env ->
+        // Reviewer probe p2: the create never arrives; 30 s later the person makes the same playlist
+        // in another client, then deletes the stuck one here. That playlist passes every test a
+        // "proof" could apply — which is why nothing is deleted without the person.
+        val session = env.session()
+        env.server.failWithError["createPlaylist"] = DomainError.Transport.Timeout
+        val localId = assertNotNull(session.playlists.create("New Playlist").localId)
+        advanceUntilIdle()
+        env.server.failWithError.clear()
+        env.clock.now += 30_000
+        val web = env.server.add("New Playlist", emptyList())
+        session.playlists.delete(localId)
+        session.playlists.flush()
+        advanceUntilIdle()
+        assertEquals(listOf(web.id), env.server.playlists.map { it.id }, "the other client's playlist survives")
+        assertEquals(0, env.server.count("deletePlaylist"))
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist", listOf(web.id)), env.outcomes.last())
+    }
+
+    @Test
+    fun aNamesakeCreatedShortlyBeforeTheAttemptIsNamedNeverDeleted() = playlistTest { env ->
+        // Within the tolerance a server clock needs, an older namesake cannot be told apart.
         val older = env.server.add("New Playlist", emptyList(), created = env.clock.now - 60_000)
         val (session, localId) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(listOf(older.id), env.server.playlists.map { it.id })
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist"), env.outcomes.last())
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist", listOf(older.id)), env.outcomes.last())
     }
 
     @Test
-    fun twoCandidatesAreNeverDeleted() = playlistTest { env ->
+    fun aNamesakeCreatedLongBeforeTheAttemptIsNotACandidate() = playlistTest { env ->
+        env.server.add("New Playlist", emptyList(), created = env.clock.now - PlaylistEditor.CREATE_SKEW_TOLERANCE_MILLIS - 60_000)
+        val (session, _) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
+        session.playlists.flush()
+        advanceUntilIdle()
+        assertEquals(1, env.server.playlists.size)
+        assertEquals(0, env.server.count("deletePlaylist"))
+        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "outside the window: nothing to tell: ${env.outcomes}")
+    }
+
+    @Test
+    fun aNamesakeCreatedLongAfterTheFailureWasSeenIsNotACandidate() = playlistTest { env ->
+        // The window's upper bound (second review, B1): a send cannot make a playlist after its
+        // failure was seen, plus the clock tolerance.
+        val (session, _) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
+        env.clock.now += PlaylistEditor.CREATE_SKEW_TOLERANCE_MILLIS + 60_000
+        env.server.add("New Playlist", emptyList())
+        session.playlists.flush()
+        advanceUntilIdle()
+        assertEquals(1, env.server.playlists.size)
+        assertEquals(0, env.server.count("deletePlaylist"))
+        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "outside the window: nothing to tell: ${env.outcomes}")
+    }
+
+    @Test
+    fun twoCandidatesAreBothNamedNeitherDeleted() = playlistTest { env ->
         val (session, localId) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = true)
         env.server.add("New Playlist", emptyList()) // another device, after the attempt
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(2, env.server.playlists.size)
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist"), env.outcomes.last())
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist", env.server.playlists.map { it.id }), env.outcomes.last())
     }
 
     @Test
-    fun aCandidateWithOtherEntriesIsNeverDeleted() = playlistTest { env ->
-        val (session, _) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = false)
-        env.server.add("Road", listOf("song-1", "song-9"))
-        session.playlists.flush()
-        advanceUntilIdle()
-        assertEquals(1, env.server.playlists.size)
-        assertEquals(0, env.server.count("deletePlaylist"))
-    }
-
-    @Test
-    fun aCandidateWithTheSameCountButOtherSongsIsNeverDeleted() = playlistTest { env ->
-        // A song count is not an identity: the entries themselves must be the ones sent.
+    fun aCandidateWithOtherEntriesIsNamedNeverDeleted() = playlistTest { env ->
         val (session, localId) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = false)
-        env.server.add("Road", listOf("song-2"))
+        val other = env.server.add("Road", listOf("song-1", "song-9"))
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(1, env.server.playlists.size)
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road"), env.outcomes.last())
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(other.id)), env.outcomes.last())
     }
 
     @Test
-    fun aCandidateOfAnotherOwnerIsNeverDeleted() = playlistTest { env ->
+    fun aCandidateOfAnotherOwnerIsNeverNamed() = playlistTest { env ->
         val (session, _) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = false)
         env.server.add("Road", listOf("song-1"), owner = "someone-else", isPublic = true)
         session.playlists.flush()
@@ -105,19 +146,18 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun aCandidateWhoseOwnerTheServerDoesNotStateIsNeverDeleted() = playlistTest { env ->
-        // Ownership is part of the proof: a server that does not state it cannot supply it.
+    fun aCandidateWhoseOwnerTheServerDoesNotStateIsNamedNeverDeleted() = playlistTest { env ->
         val (session, localId) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = true)
         env.server.omitOwner = true
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(1, env.server.playlists.size)
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road"), env.outcomes.last())
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(env.server.playlists.single().id)), env.outcomes.last())
     }
 
     @Test
-    fun aCandidateOfAnotherNameIsNeverDeleted() = playlistTest { env ->
+    fun aCandidateOfAnotherNameIsNeverNamed() = playlistTest { env ->
         val (session, _) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = false)
         env.server.add("Road 2", listOf("song-1"))
         session.playlists.flush()
@@ -128,14 +168,16 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun aCancelledCreateWhoseSongsTheServerDroppedIsToldNotDeleted() = playlistTest { env ->
-        // Adopting may allow a dropped unknown id; an irreversible delete requires identical entries.
-        val (session, localId) = cancelledLostCreate(env, "Odd", listOf("song-1", "song-unknown"), landed = true)
+    fun p5_anOwnerTheServerSpellsInAnotherCaseIsThisAccount() = playlistTest(serverUser = "Listener") { env ->
+        // Reviewer probe p5. OBSERVED: the reference server signs `u=listener` in as "Listener" and
+        // states that as the owner. Compared exactly, the candidate vanished and nobody was told.
+        val (session, localId) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = true)
         session.playlists.flush()
         advanceUntilIdle()
-        assertEquals(listOf("song-1"), env.server.playlists.single().entries)
+        val made = env.server.playlists.single()
+        assertEquals("Listener", made.owner, "fixture: the server's spelling of this account")
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Odd"), env.outcomes.last())
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(made.id)), env.outcomes.last())
     }
 
     // ---- 2: the lost-create search finds the normal cases -----------------------------------------------
@@ -765,7 +807,7 @@ class PlaylistEditingReviewTest {
         advanceUntilIdle()
         session.playlists.setComment(p.id, "never kept")
         advanceUntilIdle()
-        assertEquals(PlaylistEditOutcome.Diverged(p.id, PlaylistRowKind.Details, null), env.outcomes.last())
+        assertEquals(PlaylistEditOutcome.Diverged(p.id, PlaylistRowKind.Details, null, null), env.outcomes.last())
     }
 
     // ---- Adjacent: an edit made while its playlist's create is in flight -------------------------------------
@@ -829,7 +871,7 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun aCreateRenamedThenDeletedWhileInDoubtDeletesWhatWasSent() = playlistTest { env ->
+    fun aCreateRenamedThenDeletedWhileInDoubtNamesWhatWasSent() = playlistTest { env ->
         val session = env.session()
         env.server.applyThenLose += "createPlaylist"
         val localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
@@ -843,8 +885,10 @@ class PlaylistEditingReviewTest {
         session.setOnline(true)
         session.playlists.flush()
         advanceUntilIdle()
-        assertTrue(env.server.playlists.isEmpty(), "the playlist the send made is proven and deleted")
-        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated })
+        val made = env.server.playlists.single()
+        assertEquals("Road", made.name, "looked for as it was sent, not as renamed here")
+        assertEquals(0, env.server.count("deletePlaylist"))
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(made.id)), env.outcomes.last())
     }
 
     // ---- Nits: reconnect order and a failing outbox --------------------------------------------------------------

@@ -14,6 +14,9 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlin.time.ComparableTimeMark
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 /**
  * The reader of spec §16.8–§16.20, one per account: live source, seen-cache, catalog epoch,
@@ -128,13 +131,7 @@ internal class LibraryReader(
         checkConfined()
         online = true
         // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
-        try {
-            outboxes.flush()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            uncaughtFailures += failure
-        }
+        flushOutboxes()
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
         val epoch = readEpoch() ?: return
         visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
@@ -316,11 +313,68 @@ internal class LibraryReader(
             issue { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
     }
 
-    /** Takes the issue sequence and the *before* reading as the request goes out, on a held slot. */
+    /**
+     * Takes the issue sequence and the *before* reading as the request goes out, on a held slot. A
+     * failure of the request itself is thrown as a [LibraryRequestFailure]; anything else thrown here
+     * — the device's own database failing — is not, so a caller never reports it as the server's.
+     */
     private suspend fun issue(request: suspend () -> LibraryEndpointResponse): SentResponse {
         val seq = cache.issue()
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
-        return SentResponse(seq, before, request())
+        val response = try {
+            request()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: LibraryRequestFailure) {
+            throw failure
+        } catch (failure: Throwable) {
+            throw LibraryRequestFailure(failure.asReaderError())
+        }
+        return SentResponse(seq, before, response)
+    }
+
+    /** When the server's `Retry-After` ends, on [LibraryReaderConfig.monotonic]; null when none holds. */
+    private var busyUntil: ComparableTimeMark? = null
+    private var busyRetry: Job? = null
+
+    /**
+     * The server asked for [retryAfter] of quiet (an HTTP 429). Until it has passed, the favourites
+     * and playlist flushes send nothing ([busyFor]); then one flush of every outbox runs, as a
+     * reconnect's first step would. Without a `Retry-After`, the next flush started anyway retries.
+     */
+    internal fun noteBusy(retryAfter: Duration?) {
+        if (retryAfter == null) return
+        busyUntil = config.monotonic.markNow() + retryAfter
+        busyRetry?.cancel()
+        busyRetry = scope.launch {
+            delay(retryAfter)
+            if (online) flushOutboxes()
+        }
+    }
+
+    /**
+     * [busyFor] as the error a flush stops with. Typed as the supertype on purpose: OBSERVED, a
+     * Kotlin/Native build downcast a `DomainError?` variable initialised from a `Server.Busy?`
+     * expression inside the suspending flush, and threw when the variable later held another error.
+     */
+    internal fun busyError(): DomainError? = busyFor()?.let { DomainError.Server.Busy(it) }
+
+    /** How much longer the server asked outbox flushes to wait; null when they may send. */
+    internal fun busyFor(): Duration? {
+        val left = busyUntil?.let { -it.elapsedNow() } ?: return null
+        if (left.isPositive()) return left
+        busyUntil = null
+        return null
+    }
+
+    private suspend fun flushOutboxes() {
+        try {
+            outboxes.flush()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            uncaughtFailures += failure
+        }
     }
 
     private val bounded = LibraryEndpointTransport { endpoint, parameters -> send(endpoint, parameters).response }
@@ -477,6 +531,8 @@ internal data class LibraryReaderConfig(
     val epochIntervalMillis: Long = 5 * 60_000,
     /** How often showing a list refreshes its rows' last access (LRU needs minutes, not frames). */
     val touchIntervalMillis: Long = 60_000,
+    /** The monotonic clock a `Retry-After` is measured on; a test passes its scheduler's. */
+    val monotonic: TimeSource.WithComparableMarks = TimeSource.Monotonic,
 ) {
     init {
         require(pageSize in 1..500)
@@ -689,10 +745,10 @@ internal sealed interface LibraryItem {
         val isPublic: Boolean? = null,
         /**
          * Whether this account may edit it: the server said `readonly: false`, or — for a server that
-         * does not say — the account owns it. Never true for another user's playlist (§18.6).
-         * The shells show [owner] and present a playlist that is not editable as read-only — no
-         * edit affordance at all, never one that fails when used — so another user's playlist is
-         * recognisable as theirs.
+         * does not say — the account owns it, its [owner] compared ignoring case. Never true for
+         * another user's playlist (§18.6). REQUIREMENT on the shells, not yet met by any: show
+         * [owner], and present a playlist that is not editable as read-only — no edit affordance at
+         * all, never one that fails when used — so another user's playlist is recognisable as theirs.
          */
         val editable: Boolean = false,
         /** Edits made on this device that the server has not yet confirmed are shown (§18.6). */
@@ -820,6 +876,12 @@ internal fun Throwable.asReaderError(): DomainError = when (this) {
     is AuthenticatedEndpointFailure -> error
     else -> mapAccountConnectionFailure(this)
 }
+
+/**
+ * 401, 403 or 407 with no envelope: the server or a proxy in front of it refused ACCESS, not this
+ * change — credentials, a proxy's own authentication, or a block. Every other change would meet it.
+ */
+internal val DomainError.Server.HttpStatus.refusesAccess: Boolean get() = status == 401 || status == 403 || status == 407
 
 /** 413 or 414: the request was too large for the server or a proxy. The same request never fits. */
 internal val DomainError.Server.HttpStatus.tooLarge: Boolean get() = status == 413 || status == 414

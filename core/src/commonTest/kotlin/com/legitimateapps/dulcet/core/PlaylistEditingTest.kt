@@ -567,14 +567,15 @@ internal class PlaylistEnv(
     }
 }
 
-internal fun playlistTest(block: suspend TestScope.(PlaylistEnv) -> Unit) = runTest {
+/** [serverUser] is the account as the server names it; the device signs in as "listener". */
+internal fun playlistTest(serverUser: String = "listener", block: suspend TestScope.(PlaylistEnv) -> Unit) = runTest {
     val driver = createTestDriver()
     val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
     try {
         val database = DulcetDatabaseStore.open(driver)
         val clock = ManualWallClock(now = 3_000_000)
-        // The device and the server share one clock here; §18.6 states what a skew costs.
-        val server = FakePlaylistServer(now = { clock.now })
+        // The device and the server share one clock here unless a test skews it (§18.6).
+        val server = FakePlaylistServer(user = serverUser, now = { clock.now })
         block(PlaylistEnv(server, database, SeenCacheStore(database, clock), scope, clock, driver))
     } finally {
         scope.cancel()

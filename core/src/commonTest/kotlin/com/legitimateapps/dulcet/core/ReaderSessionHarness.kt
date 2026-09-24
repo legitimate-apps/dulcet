@@ -41,6 +41,9 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     /** Endpoint -> an HTTP status answered with no envelope, the change NOT applied (a proxy's refusal). */
     val failWithStatus = mutableMapOf<String, Int>()
 
+    /** The `Retry-After` header sent with every [failWithStatus] answer. */
+    var retryAfter: String? = null
+
     /** Endpoint -> an HTTP status answered with no envelope AFTER the change was applied (a gateway timing out). */
     val applyThenStatus = mutableMapOf<String, Int>()
 
@@ -81,7 +84,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
         log += Request(endpoint, parameters)
         failWithError[endpoint]?.let { throw LibraryRequestFailure(it) }
         failWithCode[endpoint]?.let { return envelope(""""error":{"code":$it,"message":"refused"}""") }
-        failWithStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>refused</html>", "http://fixture.invalid/rest") }
+        failWithStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>refused</html>", "http://fixture.invalid/rest", retryAfter = retryAfter) }
         if (endpoint in holdBeforeApply) hold()
         val response = when (endpoint) {
             "search3" -> search(parameters)

@@ -3821,7 +3821,7 @@ server's behaviour and are R0's; *reader* ids drive the production code.
 | CONF-86 | a home screen's rows publish independently, each with its own freshness; one row failing leaves the others live | reader | R1b, R2b, R3 |
 | CONF-87 | detail look-ahead never exceeds 24 per settled viewport or 2 in flight, fetches nothing during an unsettled fling or on a constrained network, and a looked-ahead album opens with zero requests | reader | R1b |
 | CONF-88 | the reference server's playlist writes: positional removal against the list as found, silent past the end; a replace by `playlistId` keeps the playlist and cannot empty it; a 2,400-entry replace as one form body keeps its order; empty name ignored, empty comment clears; the stale-index hazard reproduced; `lastScan` unmoved | server fact | playlists (§18.6) |
-| CONF-89 | every playlist operation through the production editor is read back raw as meant; appends are appends, removals verified positions, moves and inserts one whole list, offline edits one replay; without `formPost` removals and appends are batched within the budget and an oversized whole list refused unwritten; a lost create adopted and deleted only on proof | reader | playlists |
+| CONF-89 | every playlist operation through the production editor is read back raw as meant; appends are appends, removals verified positions, moves and inserts one whole list, offline edits one replay; without `formPost` removals and appends are batched within the budget, measured by the HTTP client's encoding, and an oversized whole list refused unwritten; a lost create adopted when certain, and — deleted here — never deleted by inference: its candidate named, then removed by the person's confirmed delete by id | reader | playlists |
 | CONF-90 | a removal recorded on a view that another client then changes is refused with nothing written and no song removed; the unchanged-list control removes exactly the intended entry | reader | playlists |
 | CONF-91 | another user's playlist is published not editable, refused by the editor and (code 50/70) by the server; the admin override is recorded; the user's own playlist is edited as the control | reader | playlists |
 
@@ -4006,9 +4006,12 @@ retry loop.
   `playlist.details`, `playlist.entries` and `playlist.delete` (§18.6); the favourites delivery
   ignores those rows and the username rebinding of §16.10 discards them with the rest.
 - **One failing change does not hold the queue.** Changes are sent oldest first; a change the server
-  answers for without applying (a busy error, a malformed answer) stays pending and the flush moves
-  on, and after three such answers in a row (ASSUMED) it is dropped and the person told. Only a
-  server that cannot be reached stops the flush, keeping every change in order.
+  answers for without applying (the generic error code 0, a malformed answer) stays pending and the
+  flush moves on, and after three such answers in a row (ASSUMED) it is dropped and the person told.
+  A server that cannot be reached stops the flush, keeping every change in order; so does one that
+  refuses ACCESS or asks to wait — credentials refused, a proxy's 403 or 407, an HTTP 429 — which
+  also counts toward nothing and is told (`Held`), with a 429's `Retry-After` honoured (§18.6,
+  "Failures", which applies to favourites unchanged).
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
   at-least-once is safe here — unlike scrobbles (§15.3).
 - On logout the outbox is offered for submission (§14.7).
@@ -4084,7 +4087,9 @@ removes index 0, and a removal of index 2 — aimed at `c` — removes `d`.
    - the server holds `target` already → saved, nothing sent (a lost answer, or the same edit
      elsewhere);
    - the change only **adds at the end** → `updatePlaylist?songIdToAdd=`, sent whatever the server now
-     holds, because an append is not positional;
+     holds, because an append is not positional. (Over an append in doubt whose songs no longer head
+     those to add — one of them removed or moved here — the change is positional instead: see "At
+     least once".);
    - the server does not hold exactly `base` → **not written**: the outbox row goes, the person sees
      the server's list and is told it changed elsewhere (`ChangedElsewhere`). This is the §18.6
      lost-update rule, with the whole id sequence as the check rather than a count and a hash;
@@ -4095,7 +4100,8 @@ removes index 0, and a removal of index 2 — aimed at `c` — removes `d`.
    - a **move, an insert, or a mix** → the **whole desired list** in one `createPlaylist?playlistId=`.
      Reordering has no other expression in the protocol.
 4. **Every write is read back** and compared with what was meant; a difference is told (`Diverged`,
-   with the server's list, which the person now sees). A removal is kept only if exactly the chosen
+   with the server's list, which the person now sees, and the list meant, so the shell can say what
+   to put back). A removal is kept only if exactly the chosen
    entries went missing and nothing else changed. A whole-list write is also compared with the
    header read in step 3: a name, comment or visibility that changed in the round trip means another
    client was editing, and is told.
@@ -4104,18 +4110,20 @@ removes index 0, and a removal of index 2 — aimed at `c` — removes `d`.
 another client makes between step 3's read and its write lands inside the window, and what it costs
 depends on the write:
 
-- **A removal** sends positions. If the other client moved entries in the window, a position can now
-  hold a different song, and **that song is removed** — the stale-index hazard, narrowed to one round
-  trip. It is never silent: the read-back is not the list meant, and the person is told with the
-  server's list. An append by the other client in the window survives (the positions sent are below
-  it) and is told the same way.
+- **A removal** sends positions. If the other client changed the list in the window, a position can
+  now hold a different song, and **that song is removed** — the stale-index hazard, narrowed to one
+  round trip. The read-back sees it and the person is told, with the server's list and the list
+  meant — **except when the other client changed nothing but the chosen positions**: then the
+  read-back is exactly the list meant, and nothing can tell. For example, another client replaces
+  the chosen entry with song X in the window; X is removed and the outcome is `Saved`. An append by
+  the other client in the window survives (the positions sent are below it) and is told.
 - **A whole-list write** (a move or an insert) replaces the list. **An overwrite by a whole-list
   replace cannot be detected in the window**: the read-back is the list sent, so another client's
   entry change made in that round trip is lost and nothing reports it. A header change in the same
   round trip is detected and told.
 
-Removal-by-position was chosen for removals because it can only ever cost the entries it names and
-every failure is seen; a whole list was kept for moves and inserts because nothing else can express
+Removal-by-position was chosen for removals because it can only ever cost the entries at the
+positions it names, and every such loss is seen except the one above; a whole list was kept for moves and inserts because nothing else can express
 them.
 
 **Header fields** (`rename`, `setComment`, `setPublic`) are set-to-value and follow §18.3: one row per
@@ -4130,8 +4138,8 @@ takes neither. The shell is told the server's id (`Created`); a screen opened on
 working and reads the new id. Edits made while the create is in flight fold into its row too; once
 the create is on the server, what changed since it was sent — a later name, comment, visibility or
 songs, or a delete — becomes a pending change of the new playlist, never a second create. Deleting a
-playlist not yet created sends nothing — unless a send of its create is in doubt, in which case what
-that send made is deleted **only on proof** (below).
+playlist not yet created sends nothing — and when a send of its create is in doubt, nothing is
+deleted either: the person is told which playlists that send may have made (below).
 
 **Offline — decided in this revision, reversing the earlier "disabled offline".** Every edit queues
 with the base it was made on, so replaying it is exactly as safe as sending it online: written only if
@@ -4152,46 +4160,79 @@ those silently, OBSERVED) — this device's own write, even after a later edit c
 server still holding the list the write was sent onto holds a write that never arrived, and it is sent
 again: that list is also what a write whose every new id was dropped would leave, and sending that
 again is harmless. The songs an append in doubt carried travel with its row through later edits, so
-an edit that still only adds at the end never appends them twice, and one that reshapes them is
-written against the list the server holds. An append whose list ALSO changed elsewhere is taken as
-landed when the server's list ends with the songs it appended (ASSUMED: those are this device's own
-songs). A delete answered code 70 is already done.
+an edit that still only adds at the end, with those songs still at the head of the songs to add,
+never appends them twice. One that reshapes them — removes or moves one of them — is positional:
+written against the list they were sent onto when the server holds it, and otherwise not written
+and told as changed elsewhere; never appended again. An append whose list ALSO changed elsewhere is
+taken as landed when the server's list ends with the songs it appended (ASSUMED: those are this
+device's own songs). A removal sent in batches records each verified batch as progress, so a later
+batch that fails resumes from the list read back, never reads as changed elsewhere. A delete answered
+code 70 is already done.
 
-**A lost create is identified by proof, never by resemblance.** A playlist is taken to be this
-device's create whose answer was lost only when it is the **one** playlist that is owned by this
-account, has the name that send carried, has a server `created` time at or after the device's clock
-when the create was first sent, and holds the songs sent — **exactly**, before it is deleted (a
-create deleted here while its send was in doubt); or less song ids the server did not know, before
-it is adopted. Whether the device has seen the playlist does not enter into it. The name and songs a
-send carried are recorded with it, so a rename or a song change made here while it is in doubt
-neither hides the create nor is lost: once adopted, it follows as the new playlist's own change.
-Without proof:
+**A lost create is never deleted by inference — whatever the evidence** (maintainer's decision,
+second review round). After a create whose answer was lost, the server's playlists are searched for
+**candidates**: those with the name that send carried; owned by this account — the owner compared
+ignoring case, since the reference server signs a login in whatever its case and states the account
+as it was created (`u=admin` is owner "Admin"; `u=DULCET-ADMIN` is owner "dulcet-admin"; both
+OBSERVED 2026-09-24, the first by the review; CONF-88..91 pass signed in with the second spelling) — or with no owner stated; and
+whose server
+`created` time, when it can be read, lies in **[first send − 5 min, failure seen + 5 min]**. The five
+minutes absorb a server clock ahead of or behind the device's and a `created` stamped in whole
+seconds. Whether the device has seen a playlist does not enter into it.
 
-- a create still wanted is sent again — a lost answer may cost a duplicate playlist, never a lost one;
-- a create deleted here deletes **nothing**, and the person is told (`PossiblyCreated`): "A playlist
-  named *X* may have been created; check it and delete it if you don't want it."
+- A create **deleted here** while its send was in doubt deletes **nothing**. The person is told the
+  candidates' ids (`PossiblyCreated`): the shell offers "A playlist named *X* may have been created.
+  Delete it on the server?", and a delete the person confirms is an ordinary delete by id. A
+  candidate can be a playlist another client made in the window — the person retrying elsewhere is
+  the natural reaction to a stuck create — which is why no rule, however strict, decides alone.
+- A create **still wanted** adopts a candidate only when that is certain enough: it is the **only**
+  candidate, its owner and `created` are stated and pass, and it holds the songs sent — exactly, or
+  less song ids the server did not know, never none of them. A wrong adoption can only merge the
+  create into an identical playlist of this account. Otherwise the create is sent again, and when
+  any candidate exists the person is told (`PossibleDuplicate`, with the new id and the
+  candidates'), never left with a silent duplicate.
 
-ASSUMED: the server's clock and the device's agree. A server clock behind the device's makes a lost
-create unrecognisable — sent again, never deleted wrongly; one ahead of it admits a playlist created up
-to that skew before the send, which the name, owner, songs and uniqueness tests must still all pass.
+The name and songs a send carried are recorded with it, so a rename or a song change made here while
+it is in doubt neither hides the create nor is lost: once adopted, it follows as the new playlist's
+own change. ASSUMED: the server's clock and the device's agree within five minutes. Beyond that a
+lost create is not a candidate — sent again, it costs a duplicate nobody names. A `created` the
+device cannot read never makes a candidate certain.
 
 **Permissions (§10.4).** Editing needs the server's `readonly: false`, or — from a server that does not
 send `readonly` — ownership by this account. Dulcet follows `readonly` even for an admin, whom the
 reference server would let edit other users' playlists: editing someone else's playlist is not a
-feature Dulcet offers. The shells show a playlist's owner and present one whose `editable` is false
-as read-only, with no edit controls; the core refuses an edit of one (`NotEditable`); the server's
-code 50 is told like any refusal.
+feature Dulcet offers. An owner is compared with the account ignoring case (above). **REQUIREMENT on
+the shells, not yet met by any shell:** show a playlist's owner, and present one whose `editable` is
+false as read-only, with no edit controls. The core refuses an edit of one (`NotEditable`); the
+server's code 50 is told like any refusal.
 
-**Failures.** A server error envelope is classified as in §18.3. An HTTP error status with no envelope
-is `Server.HttpStatus`: 502–504 (a gateway that cannot reach the server) stops the flush like no answer
-at all; 413 and 414 (a request too large) never fit, so the change is refused and told; any other
-status is this change's failure, retried up to three times. Only a 4xx proves the request was not
-applied.
+**Failures.** An HTTP 429 is `Server.Busy`, named from the status whatever the body (the reference
+server's transcode limiter answers 429 with an envelope carrying only the generic code 0, §18.12), with its
+`Retry-After`. Any other status with an envelope is judged by the envelope, as in §18.3. An HTTP error
+status with no envelope is `Auth.InvalidCredentials` for a 401, as playback names it, and
+`Server.HttpStatus` otherwise. Then, for playlists and favourites alike:
+
+- **held** — the flush stops, every change is kept, nothing counts toward a drop, and the person is
+  told (`Held`): credentials refused (a 401, envelope code 40), a proxy refusing access (403) or
+  asking for its own credentials (407), a rate limit (429). A 429's `Retry-After` is honoured: until
+  it has passed neither the favourites nor the playlist flush sends anything, and then one flush of
+  every outbox runs. A bare 403 stays a status rather than playback's `Auth.Forbidden`, because
+  `Auth.Forbidden` is envelope code 50 — this user may not make this change — which is a refusal,
+  not a hold;
+- **stopped** — no answer, or a gateway that cannot reach the server (502–504): every change kept;
+- **refused** and told — the §18.3 refusals, and 413 or 414 (a request too large never fits);
+- **this change's failure**, retried up to three times — any other status, and the generic code 0.
+
+Only a 4xx proves the request was not applied. A failure of the device's own database during a
+delivery is reported as local (`interruptedLocally` for playlists; thrown, never classified, for
+favourites), never as the server's.
 
 **Large playlists.** A whole-list write is about 30 bytes per song. When the server advertises
 `formPost` every write goes as a form body, credentials included, one request whatever its size, and no
 proxy URL limit applies; the session is told which (`formPost` is a required parameter, never a
-default). **Without `formPost`**, every request keeps its parameters within 7,000 bytes (ASSUMED: a
+default). No production code constructs a session yet — only the conformance contract does, from a
+fixture fact. **When the R2/R3 facades construct it, `formPost` must come from the server's
+advertised extensions (§10.4), never be assumed.** **Without `formPost`**, every request keeps its parameters within 7,000 bytes (ASSUMED: a
 proxy in front of the server accepts an 8 KiB request line, a common default, leaving about 1 KiB for
 the address, path and credentials):
 
@@ -4204,12 +4245,16 @@ the address, path and credentials):
   in which the list is wrong on the server.
 
 OBSERVED against the reference server (CONF-89): without `formPost`, removing 500 of 600 entries took
-two verified batches and appending 450 songs three, every request at most 6,999 bytes of parameters;
-a move in that 550-entry list was refused with nothing written.
+two verified batches and appending 450 songs three, every request at most 6,998 bytes of parameters
+as the HTTP client itself encodes them (re-measured 2026-09-24; the editor's own estimate is one byte
+higher, counting a trailing separator); a move in that 550-entry list was refused with nothing
+written.
 
 **Pinned by** CONF-88 (the table above), CONF-89 (every operation through the production editor, read
-back raw — with and without `formPost` — and a create whose answer is lost, adopted and deleted on
-proof against the server's real `created` times, beside an older namesake that is never deleted),
+back raw — with and without `formPost`, every write's size measured by the HTTP client's own query
+encoding — and a create whose answer is lost: adopted when certain against the server's real
+`created` times; deleted here, deleting nothing and naming the playlist it made, which the person's
+confirmed delete by id then removes; beside an older namesake that is named, never deleted),
 CONF-90 (the hazard reproduced raw, then refused by the editor with nothing written, and a positive
 control), CONF-91 (another user's playlist is published not editable, refused locally and by the
 server, the admin override recorded, and the same user's own playlist edited as a control).
@@ -4734,7 +4779,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-86 | a multi-list screen's rows publish independently with their own freshness; one failing row leaves the others live (§16.9) |
 | CONF-87 | detail look-ahead stays within 24 per settled viewport and 2 in flight, fetches nothing during an unsettled fling or on a constrained network, and a looked-ahead album opens with zero requests (§16.13) |
 | CONF-88 | playlist writes on the reference server: removal by position against the list as found and silent past the end, the stale-index hazard reproduced, replace by `playlistId` keeping the playlist and unable to empty it, empty-name and empty-comment handling, `formPost` including a 2,400-entry replace kept in order, `lastScan` unmoved — server fact (§18.6) |
-| CONF-89 | every playlist operation through the production editor, including an offline replay, is read back raw as meant; without `formPost`, batched or refused within the query budget; a lost create adopted or deleted only on proof (§18.6) |
+| CONF-89 | every playlist operation through the production editor, including an offline replay, is read back raw as meant; without `formPost`, batched or refused within the query budget as the HTTP client encodes it; a lost create adopted when certain, never deleted by inference — its candidate named and removed only by a confirmed delete by id (§18.6) |
 | CONF-90 | a positional edit whose base another client changed is refused with no write and no song removed; the unchanged-list control removes exactly the intended entry (§18.6) |
 | CONF-91 | another user's playlist is not editable to the reader, the editor or the server (code 50/70); the admin override recorded; the own-playlist control saved (§18.6, §10.4) |
 | CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
@@ -6205,10 +6250,12 @@ fresh disposable server before landing; items 11–14 are what that review chang
     (a) **Blocker: deleting a create whose answer was lost could delete someone else's playlist.**
     What that create made was found by resemblance — one playlist of this account, of that name and
     song count, never seen by the device — so an older playlist of the same name (an empty
-    "New Playlist" is the common case) was deleted. A lost create is now identified only by proof
-    (§18.6: the one candidate owned by this account, of that name, with a server `created` time at or
-    after the first send, holding exactly the songs sent), and without proof nothing is deleted and
-    the person is told (`PossiblyCreated`). (b) The same search missed the ordinary cases: a list read
+    "New Playlist" is the common case) was deleted. This round replaced resemblance with a "proof"
+    (the one candidate owned by this account, of that name, with a server `created` time at or after
+    the first send, holding exactly the songs sent) and deleted on it. **Withdrawn by the second
+    review round below: that proof had only a lower bound, so a playlist made in another client
+    after the send passed it and was deleted, and its claim "identified by proof, never by
+    resemblance" was false. Nothing is now deleted by inference at all.** (b) The same search missed the ordinary cases: a list read
     in between marked the new playlist "seen", and a song id the server dropped changed its count.
     Adoption now uses the same proof, allowing only dropped ids this device sent. (c) **Maintainer's
     decision:** a remove-only edit sends verified positions, highest first, and is read back; a move
@@ -6245,6 +6292,48 @@ fresh disposable server before landing; items 11–14 are what that review chang
     fallback, where either answer is a guess. An earlier run on this round's first commit left 8
     survivors; each of the other 6 was killed by a new or strengthened test, and analysing one of
     them exposed the two in-doubt defects above.
+
+    **Item 20, second review round — an independent re-review of the round above.** (i) **Blocker:
+    the lost-create "proof" had only a lower time bound.** A create that never arrived, then the same
+    playlist made in another client 30 s later, then a delete of the stuck one here: the flush
+    deleted the other client's playlist and told nobody. **Maintainer's decision: never delete on
+    inference, whatever the proof.** A create deleted while its send is in doubt now deletes
+    nothing; the person is told the candidates' ids (`PossiblyCreated`), and a delete they confirm
+    is an ordinary delete by id (§18.6). (j) Recognising a lost create was fragile: a server clock
+    1 ms behind the device's, or a `created` stamped in whole seconds, made it unrecognisable, and
+    the owner was compared case-sensitively although the reference server states it as created
+    ("Admin" for `u=admin`, OBSERVED). Candidates now lie in [first send − 5 min, failure seen + 5
+    min], owners compare ignoring case, and a create adopts only a certain candidate; otherwise it is
+    sent again and the duplicate is named (`PossibleDuplicate`) — on an owner-unstated server it was
+    silent. (k) A batched removal interrupted after a verified batch was reported changed elsewhere
+    and its remainder dropped; each verified batch is now recorded as progress. (l) An append in
+    doubt, a change elsewhere, then a local edit reshaping the appended songs appended a song twice
+    and reported `Saved`: a reshaped append is now positional against the list it was sent onto.
+    The second survivor of the round above ("reachable only through the ASSUMED ends-with
+    fallback") was **not** equivalent: that probe distinguishes it. (m) A proxy's 401, 403, 407 or 429
+    without an envelope counted toward a drop, so a favourite or a rename was discarded after three
+    flushes. Access refusals and 429 now hold every change, count toward nothing and are told
+    (`Held`); a 401 is `Auth.InvalidCredentials` and a 429 `Server.Busy` from the status, as
+    playback names them; a 429's `Retry-After` gates the favourites and playlist flushes (§18.6
+    "Failures"). (n) Six of the reviewer's seven mutants survived the suite; each now has a test
+    that kills it, and CONF-89's size check measures the HTTP client's encoding rather than the
+    editor's own estimate.
+    This round's run, on its final code, compile-gated and restored by `git checkout` after each:
+    **116 mutants** (74 carried from the earlier rounds and adapted, 42 new) — **115 killed, 1
+    survived, 0 failed to compile**, the control reported as not compiling and not counted. The
+    survivor is the guard around the playlist flush inside the reconnect composition, which the
+    review accepted as equivalent. Two of the new mutants first matched nothing, because the code
+    they named had changed after they were written; they were corrected and run, and both were
+    killed. The owner-case mutant was also run live: CONF-89, signed in as `DULCET-ADMIN`, sent the
+    create twice under it.
+    (o) A failure of the device's own database inside a delivery was reported as an unreachable
+    server; it is now local. (p) Claims corrected in place: the commit message, §18.6 and the
+    `editable` documentation said the shells show a playlist's owner and present other users'
+    playlists read-only — no shell does yet, so it is stated as a requirement on them; the removal's
+    residual is stated exactly (undetectable when the other client changed only the chosen
+    positions — "always sees it" and "never silent" were false); `Diverged` now also carries the list
+    meant; `HttpStatus`'s documentation now says what each path actually maps; and `formPost` must
+    come from the advertised extensions when the facades construct the session.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

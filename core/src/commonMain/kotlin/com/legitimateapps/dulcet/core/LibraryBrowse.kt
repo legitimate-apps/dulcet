@@ -126,6 +126,8 @@ internal data class LibraryEndpointResponse(
      * it opportunistically as its total and never as its termination signal (spec §16.9, §16.12).
      */
     val totalCount: Int? = null,
+    /** The server's `Retry-After` header, raw; read only with an HTTP 429 (spec §18.6). */
+    val retryAfter: String? = null,
 )
 
 internal fun interface LibraryEndpointTransport {
@@ -434,6 +436,7 @@ internal class KtorLibraryEndpointTransport(
             response.body.decodeToString(),
             response.redactedUrl,
             totalCount = response.headers.totalCount?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
+            retryAfter = response.headers.retryAfter,
         )
     }
 
@@ -443,7 +446,12 @@ internal class KtorLibraryEndpointTransport(
         formPost: Boolean,
     ): LibraryEndpointResponse {
         val response = client.requestRepeated(endpoint, parameters, formPost)
-        return LibraryEndpointResponse(response.statusCode, response.body.decodeToString(), response.redactedUrl)
+        return LibraryEndpointResponse(
+            response.statusCode,
+            response.body.decodeToString(),
+            response.redactedUrl,
+            retryAfter = response.headers.retryAfter,
+        )
     }
 
     override fun close() {
@@ -465,12 +473,20 @@ internal suspend fun LibraryEndpointTransport.checkedRequest(
     parameters: Map<String, String> = emptyMap(),
 ): String {
     val response = request(endpoint, parameters)
-    // An error status with no envelope is the server or a proxy refusing the HTTP request itself —
-    // a 414 for a URL too long, a 502 from a gateway — and is named as such, never as a malformed
-    // answer (spec §18.6). An envelope, whatever the status, is judged as an envelope.
+    // A rate limit is named from the STATUS, whatever the body: the reference server's own limiter
+    // answers 429 with an envelope carrying only the generic code 0. Its `Retry-After` is honoured.
+    if (response.statusCode == 429) throw LibraryRequestFailure(DomainError.Server.Busy(parseRetryAfterSeconds(response.retryAfter)))
+    // An error status with no envelope is the server or a proxy refusing the HTTP request itself,
+    // and is named as such, never as a malformed answer (spec §18.6): a 401 as refused credentials,
+    // as playback names it; anything else — a 414 for a URL too long, a 502 from a gateway, a 403 or
+    // 407 from a proxy — by its status. An envelope, whatever the status, is judged as an envelope.
     val envelope = parseLibraryEnvelope(response.body)
         ?: throw LibraryRequestFailure(
-            if (response.statusCode in 400..599) DomainError.Server.HttpStatus(response.statusCode) else DomainError.Protocol.MalformedEnvelope,
+            when (response.statusCode) {
+                401 -> DomainError.Auth.InvalidCredentials
+                in 400..599 -> DomainError.Server.HttpStatus(response.statusCode)
+                else -> DomainError.Protocol.MalformedEnvelope
+            },
         )
     if (envelope.status != "ok") {
         val error = envelope.payload["error"] as? JsonObject

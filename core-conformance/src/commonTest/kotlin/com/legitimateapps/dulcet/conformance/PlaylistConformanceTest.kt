@@ -81,19 +81,25 @@ class PlaylistConformanceTest {
     }
 
     @Test
-    fun conf89ALostCreateIsAdoptedOrDeletedOnlyOnProof() = runTest(timeout = 5.minutes) {
+    fun conf89ALostCreateIsAdoptedWhenCertainAndNeverDeletedByInference() = runTest(timeout = 5.minutes) {
         val result = PlaylistConformanceContract.lostCreate(request())
-        // Adopted by proof, against the server's real `created` times: one create, one playlist.
+        println("CONF-89 lost create: $result")
+        // Adopted when certain, against the server's real `created` times: one create, one playlist.
         assertEquals("Created", result.adoptedOutcome, "CONF-89 lost create: $result")
-        assertEquals(1, result.adoptedCreateWrites, "CONF-89: a proven lost create is never sent again: $result")
+        assertEquals(1, result.adoptedCreateWrites, "CONF-89: a certain lost create is never sent again: $result")
         assertEquals(1, result.adoptedPlaylistsNamed, "CONF-89: $result")
         assertTrue(result.adoptedIdIsTheServers, "CONF-89: $result")
-        // Deleted here after its answer was lost: proven, so deleted; nothing to tell.
-        assertEquals(0, result.cancelledPlaylistsNamedAfter, "CONF-89 cancelled lost create: $result")
-        assertTrue(result.cancelledOutcomes.none { it == "PossiblyCreated" }, "CONF-89: $result")
-        // The negative beside it: an older namesake with the same songs is never deleted, and is told.
+        // Deleted here after its answer was lost: nothing deleted by inference; the candidate is named,
+        // and the delete the person confirms by its id removes it.
+        assertEquals(0, result.cancelledDeleteWrites, "CONF-89 cancelled lost create: $result")
+        assertEquals("PossiblyCreated", result.cancelledOutcomes.lastOrNull(), "CONF-89: $result")
+        assertTrue(result.cancelledCandidatesAreTheServers, "CONF-89: the candidate named is the playlist the send made: $result")
+        assertEquals("Saved", result.confirmedDeleteOutcome, "CONF-89: $result")
+        assertEquals(0, result.cancelledPlaylistsNamedAfterConfirm, "CONF-89: $result")
+        // An older namesake with the same songs, beside a create that never arrived: named, never deleted.
         assertTrue(result.olderSurvived, "CONF-89: an older playlist of that name must survive: $result")
         assertEquals(0, result.olderDeleteWrites, "CONF-89: $result")
+        assertTrue(result.olderNamedAsCandidate, "CONF-89: $result")
         assertEquals("PossiblyCreated", result.olderOutcomes.lastOrNull(), "CONF-89: $result")
     }
 
