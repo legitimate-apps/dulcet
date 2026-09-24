@@ -28,7 +28,7 @@ ios-deployment = "17.0"
 tvos-deployment = "17.0"
 navidrome = "0.63.2"
 ffmpeg-linux = "6.1.1"
-ffmpeg-darwin = "9.0.1"
+ffmpeg-darwin = "9.0.2"
 okio = "3.18.1"
 
 [libraries]

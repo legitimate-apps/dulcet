@@ -491,6 +491,18 @@ androidTarget(); jvm()   // jvm exists only for the conformance suite (S20)
   with a confusing error message. **Consequence, stated out loud:** Xcode builds are not hermetic —
   they require a JDK and the Gradle wrapper on the build machine. GitHub's macOS runner images ship
   both, so this is free in CI; it is a stated contributor prerequisite in `CLAUDE.md`.
+- **Every Run Script phase invokes Gradle through `tools/run-gradle-exclusive`, never a bare
+  `./gradlew`.** OBSERVED: eight targets own the phase, Xcode builds independent targets in parallel,
+  and Gradle queues behind its own locks for only about 60 s before failing the build if the owner
+  has not yielded — most pairs fit inside that window (green run 34596556005 ran a tvOS pair
+  concurrently for over four minutes), and the failure is the long tail. Run
+  34635969077 (2026-09-11) lost the checkout-scoped configuration-cache lock and run 34127121022
+  (2026-09-07) the user-home-scoped journal lock, both with `DulcetiOS` and `DulcetKitIOSTests`
+  building together. The runner holds one flock beside each resource for the whole invocation, in a
+  fixed order, inherited by the exec'd Gradle process so a killed holder releases both.
+  `tools/verify_xcode_script_phases.py` (parity-gate) keeps the committed project's script bodies
+  equal to `apple/project.yml`'s, because nothing regenerates the project during a build and the
+  build-order guard reads only the committed project.
 - **`assembleXCFramework` is not part of the app build** and is not run in app CI. It exists only to
   produce a distributable artifact if we ever publish the core separately, and until we do, the task
   is not wired into any workflow. (Revision 1 listed it in `apple-ci.yml`; that was redundant build
@@ -3046,7 +3058,8 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci`, 5 `parity-gate`, 60
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 since
+2026-09-06, with per-step caps on the heavy steps — see §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
@@ -3071,7 +3084,7 @@ API key used by `release.yml`. Both live in **GitHub Actions secrets scoped to t
 environment**, which requires a maintainer's approval for every run, DEV and PROD alike, accepts
 deployments from protected branches only, and has administrator bypass turned off
 (`can_admins_bypass: false`, read back from the API on 2026-09-22). `release.yml` is
-`workflow_dispatch`-only (revision 99). No other workflow can read the secrets, so a fork PR — which
+`workflow_dispatch`-only (revision 103). No other workflow can read the secrets, so a fork PR — which
 cannot access secrets at all, and cannot dispatch a workflow — has no path to them even in principle.
 `tools/verify_release_policy.py` fails CI if any of those properties drifts.
 
@@ -3157,6 +3170,58 @@ that is doing anything else; serialise them rather than fanning out locally.
 **Maintainers building on a shared or managed machine follow that machine's own operational rules,
 which are deliberately not reproduced in this repository.**
 
+### 21.5 apple-ci reliability: sequencing, fail-fast, and what gates a pull request — 2026-09-22
+
+`main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the
+head pull request, and a red run costs a full re-run. **MEASURED 2026-09-08..09-22** (every attempt,
+classified at test identity; `docs/investigations/2026-09-22-apple-ci-host-contention.md`): **47 of
+111 attempts passed (42.3%)**; passes took median 91.6 and max 118.8 minutes against the 120-minute
+job cap. The largest single class, **28 of 63 failures**, is one host-contention stall reported by
+whichever client's budget it crossed first; the restart-sequencing experiment located it next to a
+freshly booted simulator (SUPPORTED, n=23).
+
+**Normative, and each rule names the failure it answers:**
+
+1. **Deterministic environment checks run before any build.** The Homebrew closure install and its
+   drift check run immediately after Xcode selection. A pin drift fails every run by construction
+   (§20, CLAUDE.md trap 36) and used to be discovered after ~55 minutes of builds.
+2. **At most one simulator is booted while a phase talks to the loopback fixtures, and it is fully
+   booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
+   does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
+   composite starts with that call. This is sequencing, not a budget: no timeout was raised for it.
+3. **A test binary is linked by a Gradle invocation that exits before the suite runs**, so the
+   compiler's JVM is not resident while the tests execute on a 7 GB runner.
+4. **Every run records host pressure** (`tools/ci/host-pressure`, per phase, green or red). A stall
+   claim about memory or CPU cites those numbers or says ASSUMED.
+5. **Timeouts are not the remedy for this class.** The proxy observation's 10 s bound fired on a
+   genuine host-wide stall in which the fixture answered 200 six seconds in and the client could not
+   read it; a larger bound converts a named stall into an unnamed one.
+
+**Considered and NOT adopted — with the condition under which each becomes right.**
+
+- **Splitting `apple-ci` into parallel hosted jobs** (platform legs | conformance composite, behind a
+  required `apple-ci` aggregator as `core-ci` already does). Estimated from the median step times of
+  26 green runs: wall time ~92 -> ~65 minutes (the composite and its own builds become the critical
+  path), at ~+25% runner-minutes because each job repeats the framework build and the conformance
+  job must build the app schemes its `test-without-building` legs reuse today. Runner-minutes are free
+  on this public repository (§21.1), but **hosted macOS concurrency is not**: each pull-request run
+  would hold two slots. Under strict up-to-date protection only the head pull request's run can lead
+  to a merge, so shorter head-of-queue latency is worth more than concurrency — which argues *for* the
+  split. It is deferred rather than rejected because rules 2–3 attack the same contention at no slot
+  cost, and their effect must be measured first (§21.5 soak, then 30 post-merge runs). **Adopt it if,
+  after rules 1–4, pass rate is at or above 80% and median wall time is still above 75 minutes**;
+  if the pass rate is still low, the split's isolation benefit is the stronger argument and it should
+  be adopted regardless. Either way it is a change to §21.1's "one serial job" and lands here first.
+- **Moving legs off the pull-request gate to a scheduled or dispatch-only soak.** Every leg except
+  two carries `FEATURES.yml` evidence or a product assertion, and the corpus rule is that CI fails on
+  an undeclared regression; moving those would let a regression merge. The two measurement-only
+  candidates — the §12.4 resource-loader recording (~1.5 min, 1 failure in 63) and the
+  non-deterministic macOS shipping reference (~0.9 min, 0 failures) — would save ~2.5 minutes and one
+  failure in 63. **Not worth weakening the gate for; not adopted.** A scheduled workflow is also
+  standing automation, which this project adds only by explicit maintainer decision. Soaks remain
+  `workflow_dispatch` instruments (`capture-soak`, `apple-contention-soak`) for measuring flake
+  rates, never a place to move an assertion.
+
 ---
 
 ## 22. Release channels: DEV and PROD
@@ -3169,7 +3234,7 @@ TestFlight actually works rather than onto a naming convention.
 
 | | **DEV** | **PROD** |
 |---|---|---|
-| trigger | **dispatched by hand on a significant merge to `main`** (maintainer decision 2026-09-11, revision 99). Not every merge. The workflow sends no notification: whoever dispatches it tells the maintainer, and TestFlight notifies internal testers | **a `vX.Y.Z` tag**, cut by hand every few days or few iterations, once DEV has accumulated genuinely finished features, then a dispatch of that commit. **Never automatic** |
+| trigger | **dispatched by hand on a significant merge to `main`** (maintainer decision 2026-09-11, revision 103). Not every merge. The workflow sends no notification: whoever dispatches it tells the maintainer, and TestFlight notifies internal testers | **a `vX.Y.Z` tag**, cut by hand every few days or few iterations, once DEV has accumulated genuinely finished features, then a dispatch of that commit. **Never automatic** |
 | TestFlight group | **internal** testers (up to 100; maintainer devices only) | **external** group (the wider trusted testers) |
 | Beta App Review | **not required** — internal builds are available within minutes | **required** — so PROD is slower by design |
 | purpose | dogfooding against a real library (§22.4) | a build other people are asked to rely on |
@@ -3287,7 +3352,7 @@ Machine-specific paths and addresses for either instance live in maintainer-loca
 - **Not yet built:** generated DEV release notes. `release.yml` sets no TestFlight "What to Test"
   text; the bullet above describes the intent, not a mechanism.
 
-### 22.6 `release.yml` as built (revision 99)
+### 22.6 `release.yml` as built (revision 103)
 
 **Dispatch** (from `main` only; anything else is refused before a secret is decoded):
 
@@ -3759,7 +3824,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 99 (2026-09-22; renumber at merge if another branch lands a revision 99 first)** — the
+**Revision 103 (2026-09-23; written 2026-09-22)** — the
 delivery channel is built, and its trigger changed. §22.1 said DEV
 ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
 2026-09-11 that DEV is instead dispatched on significant merges, with a notification. `release.yml` is
@@ -3775,6 +3840,32 @@ the two-record statement above), numbers builds from App Store Connect across bo
 a committed floor, separates the DEV and PROD Mac plists so the server guard is structural for
 configuration and says what it does not cover, and records that the release environment's approval
 is not independent review with a single maintainer.
+
+**Revision 100 (2026-09-23; written 2026-09-11)** — §4.3 records that every Xcode Run Script phase invokes Gradle through
+`tools/run-gradle-exclusive`. No design change: the same task runs with the same inputs, serialised.
+OBSERVED on `main`: run 34635969077 failed a required check with `Timeout waiting to lock
+Configuration Cache` when `DulcetiOS` and `DulcetKitIOSTests` built concurrently, each running the
+`Compile Kotlin Framework` phase; run 34127121022 had lost the journal lock the same way on
+2026-09-07. Measured over the 40 most recent `apple-ci` runs: 1 of 40 carries the string in its
+failed-step logs (6 cancelled runs expose no failed-step log to that instrument). The lock timeout
+was NOT reproduced locally: five attempts starting two bare
+`:core:embedAndSignAppleFrameworkForXcode` invocations together, cold and warm, all stored the
+configuration cache concurrently. What was OBSERVED locally is serialisation under the runner — the
+second invocation waits, names the holder, and both complete —
+`docs/verification/serialised-kotlin-script-phases.md`. The committed
+project is regenerated with the pinned XcodeGen, and `tools/verify_xcode_script_phases.py` now
+fails the parity gate when `apple/project.yml`'s script bodies and the committed project disagree.
+
+**Revision 99 (2026-09-22)** — §21.5 added; §21.1's apple-ci timeout corrected in place.
+
+1. §21.1 said `apple-ci` is capped at 30 minutes. It has been 120 since 2026-09-06, with per-step caps
+   on the heavy steps. Corrected in place.
+2. §21.5 records the measured failure classification (47/111 attempts passed 2026-09-08..09-22; 28 of
+   63 failures are one host-contention stall) and four normative rules: deterministic environment
+   checks first, at most one fully booted simulator per loopback phase, links in their own JVM, and a
+   host-pressure record in every run. It also records two considered-and-deferred changes (splitting
+   the job, moving legs off the pull-request gate), each with its adoption condition.
+3. The restart-sequencing experiment is closed SUPPORTED against its pre-registered table (n=23).
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

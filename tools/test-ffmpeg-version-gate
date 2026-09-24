@@ -11,10 +11,10 @@ from ffmpeg_version import parse_ffmpeg_version, require_ffmpeg_version  # noqa:
 
 
 def main() -> None:
-    expected_version = "9.0.1"
-    observed_banner = "ffmpeg version 9.0.10 forged-banner"
+    expected_version = "9.0.2"
+    observed_banner = "ffmpeg version 9.0.20 forged-banner"
     observed_version = parse_ffmpeg_version(observed_banner)
-    expected_detail = "ffmpeg version mismatch: expected 9.0.1, observed 9.0.10"
+    expected_detail = "ffmpeg version mismatch: expected 9.0.2, observed 9.0.20"
     expected_rejected = True
     observed_rejected = False
     observed_detail = ""
