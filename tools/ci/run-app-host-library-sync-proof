@@ -57,10 +57,13 @@ proof() {
 
     # Reuse the products built earlier; the disposable server is live only here.
     #
-    # -project/-scheme, NOT -xctestrun. MEASURED 2026-09-07: those earlier steps use
-    # `xcodebuild test`, which does not leave a .xctestrun in Build/Products -- only
-    # `build-for-testing` does. An -xctestrun form failed the whole job with
-    # "no DulcetiOS_*.xctestrun under .../DulcetiOSDerivedData/Build/Products".
+    # -project/-scheme, NOT -xctestrun. MEASURED 2026-09-07: while these proofs shared one job
+    # with the platform legs, the products came from those legs' `xcodebuild test`, which does not
+    # leave a .xctestrun in Build/Products -- only `build-for-testing` does. An -xctestrun form
+    # failed the whole job with "no DulcetiOS_*.xctestrun under .../DulcetiOSDerivedData/Build/Products".
+    # Since the split (spec §21.5) the conformance job builds these products itself with
+    # `build-for-testing`, so a .xctestrun does exist now; -project/-scheme stays because it works
+    # with either producer, and the producer is a workflow detail this script should not assume.
     #
     # A simulator test process does not inherit this shell's environment. TEST_RUNNER_-prefixed
     # variables must be in XCODEBUILD's OWN environment; the prefix is stripped on the way into the

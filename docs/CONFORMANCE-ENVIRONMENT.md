@@ -258,9 +258,11 @@ That job uploads a separate Android-only JUnit artifact. The required `core-ci` 
 artifact and resolves every Android/AndroidTV `FEATURES.yml` evidence identity against an executed,
 passing, non-skipped testcase before checking the upstream results. It runs even after an upstream
 failure or skip and passes only when the evidence verification succeeds and both `core-build` and
-`conformance-env-linux` report `success`. The Darwin preconditions and the macOS, iOS simulator, and
-tvOS simulator native conformance tasks are a serial tail of the sole `apple-ci` job in
-`.github/workflows/apple-ci.yml`; they do not allocate a second hosted-macOS job. That tail restarts
+`conformance-env-linux` report `success`. `.github/workflows/apple-ci.yml` has the same shape (spec
+§21.5): the Darwin preconditions and the macOS, iOS simulator, and tvOS simulator native conformance
+tasks run serially in hosted-macOS job `apple-conformance`, in parallel with the platform legs in
+`apple-platform`, and the required `apple-ci` context is a Linux aggregator that resolves the Apple
+evidence identities and passes only when both legs report `success`. The conformance job restarts
 the Darwin server against the same root after clearing its stopped transcode cache, then requires an
 observed `cached=false` record before every platform task. Both workflows use standard hosted
 runners, explicit job timeouts, and cancel-in-progress concurrency.

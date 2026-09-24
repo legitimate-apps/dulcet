@@ -14,25 +14,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  apple-ci:
-    name: apple-ci
+  # spec §21.5: two parallel legs on the standard hosted image behind the required `apple-ci`
+  # job below. This leg is the platform half -- the macOS presentation and captures, then the
+  # iPhone, iPadOS and tvOS shells and the compact shell. It talks to no loopback fixture.
+  #
+  # Cap history of the single job this was split from: 30 -> 45 on 2026-08-27 after a legitimate
+  # 30m36s run, then 75, then 120 once a healthy 77.9m run was killed (34040853135). A job timeout
+  # implicates whichever step is active rather than a failed assertion, which is why the heavy
+  # steps carry their own caps; those are unchanged by the split.
+  #
+  # 90 = ceil(1.5 x 60 / 5) x 5. 60 minutes is this leg's PROJECTED maximum, not a measurement: the
+  # sum, per green single-job run since #136, of the steps now in this job and the job's own
+  # overhead, plus a framework link costed at the whole `Build all Apple frameworks` step. The
+  # largest is 58.7 (run 35955374570), plus 1.5 for the compact-shell isolation step that run
+  # predates. Re-measure once the leg has history.
+  apple-platform:
+    name: apple-platform
     runs-on: macos-26
-    # Cap history: 30 -> 45 on 2026-08-27 after a legitimate 30m36s run;
-    # later 45 -> 75 -> 120 as healthy runner-condition variance remained visible.
-    # A job timeout can implicate whichever step is active rather than a failed assertion:
-    # twice this looked like Darwin conformance failing. Step caps localize the eleven
-    # measured heavy steps, but this misattribution risk remains for uncapped steps.
-    # MEASURED 2026-09-06: slowest successful job 73.9m; the old 75m cap
-    # killed run 34040853135 (77.9m). Use 120m = 1.624x the successful maximum
-    # as the compound-workload backstop, not the sum of individual step caps.
-    # Eleven steps with supplied healthy maxima >=1m get ceil(2 * maximum)
-    # minute caps, using the 25 most recent SUCCESSFUL runs across step renames.
-    # In particular iPadOS uses 11.30m from its regular-width account-layout
-    # predecessor, not just the current name's 7.87m; tvOS uses max(8.37, 8.62)
-    # and iOS uses max(5.63, 8.07). The commit records every maximum and ratio.
-    # Leave the other 42 steps uncapped individually; the job bounds them.
-    # Re-measure across renames when observed healthy maxima or workloads change.
-    timeout-minutes: 120
+    timeout-minutes: 90
+    # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
+    outputs:
+      attempt: ${{ github.run_attempt }}
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -44,16 +46,6 @@ jobs:
         run: python3 tools/test-account-removal-recovery
       - name: Prove nonexistent promotion targets are rejected
         run: python3 tools/test-promotion-condition-resolvability
-      - name: Prove conformance access logging and structural redaction
-        run: python3 tools/test-conformance-access-log
-      - name: Prove the conformance wrapper collects host stacks
-        run: python3 tools/test-capture-conformance-stall
-      - name: Prove phase-gap calibration rejects invalid evidence
-        run: python3 tools/test-measure-conformance-phase-gaps
-      - name: Prove the host-pressure summary reports a known delta and refuses an empty record
-        run: python3 tools/test-host-pressure
-      - name: Prove simulator isolation keeps the device OS=latest would pick and shuts down the rest
-        run: python3 tools/test-isolate-simulator
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
@@ -65,22 +57,6 @@ jobs:
           nohup python3 tools/ci/host-pressure sample \
             --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
           python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
-      - name: Prove ffmpeg version gate rejects prefix collisions
-        run: python3 tools/test-ffmpeg-version-gate
-      - name: Prove corpus probes reject mislabeled containers and empty tags
-        run: python3 tools/test-seed-corpus-gates
-      - name: Prove fresh-pour gate rejects a retained keg
-        run: python3 tools/test-darwin-fresh-pour-gate
-      - name: Prove Darwin bottle integrity gate rejects a tampered blob
-        run: python3 tools/test-darwin-bottle-integrity-gate
-      - name: Prove Homebrew name resolution is asserted against the pin before any pour
-        run: python3 tools/test-darwin-resolver-drift-gate
-      - name: Prove every Darwin bottle pin is validated before any download
-        run: python3 tools/test-darwin-pin-prevalidation-gate
-      - name: Prove authenticated bottle metadata fails closed without formula-index access
-        run: python3 tools/test-darwin-embedded-formula-gate
-      - name: Prove Darwin live-shape drift and outage remain advisory
-        run: python3 tools/test-darwin-live-shape-advisory
       - name: Prove app-hosted execution guard rejects a missing control
         run: python3 tools/test-xcode-test-execution-guard
       - name: Prove uncataloged SwiftUI copy fails the source policy
@@ -95,39 +71,23 @@ jobs:
         run: python3 tools/verify_dulcet_core_build_order.py
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
-      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (CLAUDE.md
-      # trap 36), and this step used to sit behind ~55 minutes of platform builds and UI tests: run
-      # 35796413810 on main (2026-09-22) spent 55.6 minutes of a hosted macOS slot before this
-      # step reported six drifted formulae in 49 seconds. Nothing between Xcode selection and the
-      # old position reads Homebrew, the conformance root, or the pinned ffmpeg.
-      - name: Create isolated Darwin conformance root
-        id: conformance_root
-        run: >-
-          echo "path=$(tools/conformance-env/new-class-root
-          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
-      - name: Install and verify checksum-pinned Darwin conformance closure
-        timeout-minutes: 9
-        env:
-          ROOT: ${{ steps.conformance_root.outputs.path }}
-        run: |
-          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
-          tools/conformance-env/install-darwin-ffmpeg
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: ${{ steps.pins.outputs.jdk }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         timeout-minutes: 5
-      - name: Build all Apple frameworks
+      # The frameworks this job reads: macOS for the restoration check and the captures, and the
+      # macOS, iOS-simulator and tvOS-simulator ones for the OS-floor assertion. Jobs share no files,
+      # so this job links its own. `Build all Apple frameworks` -- the two device links and
+      # `:core:macosArm64Test` -- runs once, in apple-conformance. 10, the cap that step carries.
+      - name: Build the Apple frameworks the platform legs read
         timeout-minutes: 10
         run: >-
           ./gradlew --no-daemon
           :core:linkDebugFrameworkMacosArm64
-          :core:linkDebugFrameworkIosArm64
           :core:linkDebugFrameworkIosSimulatorArm64
-          :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
-          :core:macosArm64Test
       - name: Build macOS shell
         timeout-minutes: 6
         run: >-
@@ -608,6 +568,211 @@ jobs:
           --macos-app "$RUNNER_TEMP/DulcetMacDerivedData/Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV"
           --ios-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app/Dulcet DEV"
           --tvos-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Dulcet DEV"
+      # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
+      # machine, so every JUnit directory this job wrote travels as one artifact named per job and
+      # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
+      # leg that did not succeed, and the failure diagnostics below carry the same directories.
+      - name: Upload Apple parity evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-*-junit
+          if-no-files-found: error
+          retention-days: 14
+      # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
+      # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
+      - name: Summarise host pressure by phase
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
+          || echo "host-pressure record unavailable; see the summary line above"
+      # Every Apple test step here writes an .xcresult and discards it with the runner -- including
+      # the platform download and Keychain runs -- along with the JUnit directories
+      # `verify-parity-evidence` consumes
+      # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
+      # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
+      # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.
+      # This does not attempt to fix that flake -- two proposed causes have already been refuted.
+      #
+      # `!success()` covers BOTH failure and cancellation. A `timeout-minutes` expiry cancels the job
+      # rather than failing it (observed in the 2026-08-30 sample of 12 runs).
+      # A `failure()`-only condition would therefore miss the long-hang case, which is the one
+      # worth the most here. `concurrency.cancel-in-progress` supersessions also land in this branch,
+      # but they are killed early and so have little on disk for the globs to match.
+      #
+      # NOTE these globs are duplicated in the inventory step below. Keep the two lists in step.
+      - name: Inventory the Apple failure diagnostics
+        if: ${{ !success() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          # Sizes, not just names: a killed `tee` leaves a partial .log and a killed xcodebuild an
+          # unfinalized .xcresult, and a name-only listing renders both exactly like healthy ones.
+          # Globs are collected into one array rather than passed to a single `ls`: `ls a/*.x b/*.y`
+          # exits non-zero when EITHER pattern fails to expand, which printed the files it found and
+          # then reported "NONE" underneath them.
+          shopt -s nullglob
+          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log)
+          echo "APPLE FAILURE DIAGNOSTICS count=${#found[@]}"
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "  NONE - nothing was written before the job stopped"
+          else
+            du -sk "${found[@]}" | sed 's/^/  /'
+          fi
+      - name: Upload Apple failure diagnostics
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/*/logs/*.log
+          if-no-files-found: warn
+          # .xcresult payload is already-compressed media; the three sibling binary uploads in this
+          # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
+          compression-level: 0
+          retention-days: 14
+
+  # The conformance half: the checksum-pinned Darwin closure and the native Navidrome fixtures,
+  # `:core:macosArm64Test`, the macOS, iOS and tvOS conformance suites, and every app-host and UI
+  # proof that talks to the disposable server. It builds the app schemes its
+  # `test-without-building` legs reuse, so it is the longer leg and the run's critical path.
+  #
+  # 110 = ceil(1.5 x 71.3 / 5) x 5. 71.3 minutes is this leg's PROJECTED maximum, not a
+  # measurement: the largest per-run sum, over the green single-job runs since #136, of the steps
+  # now in this job and the job's own overhead (62.3 in run 36010624442, framework build
+  # included), plus 9 minutes ASSUMED for the three app builds above the composite. It must stay
+  # above the composite's own 67-minute cap plus the rest of the leg, or a slow-but-healthy
+  # composite would be killed by the job and reported against whichever step was active.
+  # Re-measure once the leg has history.
+  apple-conformance:
+    name: apple-conformance
+    runs-on: macos-26
+    timeout-minutes: 110
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prove conformance access logging and structural redaction
+        run: python3 tools/test-conformance-access-log
+      - name: Prove the conformance wrapper collects host stacks
+        run: python3 tools/test-capture-conformance-stall
+      - name: Prove phase-gap calibration rejects invalid evidence
+        run: python3 tools/test-measure-conformance-phase-gaps
+      - name: Prove the host-pressure summary reports a known delta and refuses an empty record
+        run: python3 tools/test-host-pressure
+      - name: Prove simulator isolation keeps the device OS=latest would pick and shuts down the rest
+        run: python3 tools/test-isolate-simulator
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      # Samples vm_stat, swap and load every 5 s for the rest of the job. The file ends in .log so the
+      # failure upload's `$RUNNER_TEMP/*.log` glob carries it; the summary step prints it per phase.
+      - name: Start host-pressure sampling
+        run: |
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample \
+            --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+          python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
+      - name: Prove ffmpeg version gate rejects prefix collisions
+        run: python3 tools/test-ffmpeg-version-gate
+      - name: Prove corpus probes reject mislabeled containers and empty tags
+        run: python3 tools/test-seed-corpus-gates
+      - name: Prove fresh-pour gate rejects a retained keg
+        run: python3 tools/test-darwin-fresh-pour-gate
+      - name: Prove Darwin bottle integrity gate rejects a tampered blob
+        run: python3 tools/test-darwin-bottle-integrity-gate
+      - name: Prove Homebrew name resolution is asserted against the pin before any pour
+        run: python3 tools/test-darwin-resolver-drift-gate
+      - name: Prove every Darwin bottle pin is validated before any download
+        run: python3 tools/test-darwin-pin-prevalidation-gate
+      - name: Prove authenticated bottle metadata fails closed without formula-index access
+        run: python3 tools/test-darwin-embedded-formula-gate
+      - name: Prove Darwin live-shape drift and outage remain advisory
+        run: python3 tools/test-darwin-live-shape-advisory
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (CLAUDE.md
+      # trap 36), and this step used to sit behind ~55 minutes of platform builds and UI tests: run
+      # 35796413810 on main (2026-09-22) spent 55.6 minutes of a hosted macOS slot before this
+      # step reported six drifted formulae in 49 seconds. Nothing between Xcode selection and the
+      # old position reads Homebrew, the conformance root, or the pinned ffmpeg.
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Install and verify checksum-pinned Darwin conformance closure
+        timeout-minutes: 9
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      - name: Build all Apple frameworks
+        timeout-minutes: 10
+        run: >-
+          ./gradlew --no-daemon
+          :core:linkDebugFrameworkMacosArm64
+          :core:linkDebugFrameworkIosArm64
+          :core:linkDebugFrameworkIosSimulatorArm64
+          :core:linkDebugFrameworkTvosArm64
+          :core:linkDebugFrameworkTvosSimulatorArm64
+          :core:macosArm64Test
+      # The composite below runs the iPhone, iPadOS and tvOS app-host and UI proofs with
+      # `test-without-building`, against products the platform legs built when this was one job.
+      # Jobs share no files, so the same three schemes are built here, into the same derived-data
+      # roots the composite names. Nothing is tested by these steps and a build boots no simulator.
+      # Not measured as steps of their own: the build half of the platform legs' first
+      # `xcodebuild test` took about 2 to 4 minutes in run 36010624442. 10 bounds a hang.
+      - name: Resolve the iPadOS simulator the conformance legs use
+        id: ipados_conformance_destination
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          echo "iPadOS conformance destination: udid=$IPAD_UDID"
+          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
+      - name: Build the iOS shell for the iPhone conformance legs
+        timeout-minutes: 10
+        run: >-
+          xcodebuild build-for-testing
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetiOS
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+          -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
+      - name: Build the iOS shell for the iPadOS conformance legs
+        timeout-minutes: 10
+        env:
+          IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
+        run: >-
+          xcodebuild build-for-testing
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetiOS
+          -configuration Debug
+          -destination "platform=iOS Simulator,id=$IPAD_UDID"
+          -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData"
+      - name: Build DulcetTV for the tvOS conformance legs
+        timeout-minutes: 10
+        run: >-
+          xcodebuild build-for-testing
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetTV
+          -configuration Debug
+          -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
+          -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData"
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
       - name: Prove the measurement rejects the observed first-only state
@@ -666,7 +831,7 @@ jobs:
           # ${{ }} expression is a TEMPLATE, and a template is capped far lower than a plain block:
           # MEASURED 2026-09-07, this 29,212-character script was rejected with an expression in it
           # and main's 29,893-character version loads without one.
-          IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
+          IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
           DULCET_CONFORMANCE_DISPOSABLE: "true"
         run: |
@@ -1205,9 +1370,10 @@ jobs:
           IPAD_PLAYBACK_DESTINATION="$(python3 tools/resolve-ipad-destination)"
           echo "iPadOS playback destination: $IPAD_PLAYBACK_DESTINATION"
           python3 tools/ci/isolate-simulator --phase playback-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
-          # test-without-building: the iPadOS step above already built this scheme into this same
-          # derived-data tree. Rebuilding re-enters the Gradle run-script phase while Navidrome and
-          # three python servers are live, consuming the conformance step budget.
+          # test-without-building: `Build the iOS shell for the iPadOS conformance legs` already
+          # built this scheme into this same derived-data tree. Rebuilding re-enters the Gradle
+          # run-script phase while Navidrome and three python servers are live, consuming the
+          # conformance step budget.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -1320,31 +1486,17 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
-          python3 tools/verify-parity-evidence \
-            core-conformance/build/test-results/macosArm64Test \
-            core-conformance/build/test-results/iosSimulatorArm64Test \
-            core-conformance/build/test-results/tvosSimulatorArm64Test \
-            "$RUNNER_TEMP/dulcet-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
-            "$RUNNER_TEMP/dulcet-ios-search-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
-            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
-            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
-            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
-            "$RUNNER_TEMP/dulcet-mac-download-junit" \
-            "$RUNNER_TEMP/dulcet-ios-download-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-download-junit"
+      # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
+      # machine, so every JUnit directory this job wrote travels as one artifact named per job and
+      # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
+      # leg that did not succeed, and the failure diagnostics below carry the same directories.
+      - name: Upload Apple parity evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-*-junit
+          if-no-files-found: error
+          retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
       - name: Summarise host pressure by phase
@@ -1389,7 +1541,7 @@ jobs:
         if: ${{ !success() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dulcet-apple-failure-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/*.xcresult
             ${{ runner.temp }}/*.log
@@ -1424,3 +1576,86 @@ jobs:
           path: core-conformance/build/test-results/tvosSimulatorArm64Test
           if-no-files-found: error
           retention-days: 14
+
+  # The required status check. Branch protection matches it by NAME and FEATURES.yml cites it by job
+  # id, so both are `apple-ci`. It needs every leg and runs `if: always()`: without that, a failed
+  # leg SKIPS this job, and a skipped required check does not block a merge. Any leg result other
+  # than `success` -- `failure`, `cancelled` (a timeout reports as cancelled) or `skipped` -- fails
+  # it. It then resolves every apple-ci evidence row against the JUnit the legs uploaded, as
+  # `core-ci` does for Android. It runs no Apple tooling, so it takes no macOS runner.
+  apple-ci:
+    name: apple-ci
+    if: ${{ always() }}
+    needs: [apple-platform, apple-conformance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      APPLE_PLATFORM_RESULT: ${{ needs.apple-platform.result }}
+      APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every Apple leg
+        run: |
+          echo "apple-platform=$APPLE_PLATFORM_RESULT"
+          echo "apple-conformance=$APPLE_CONFORMANCE_RESULT"
+          test "$APPLE_PLATFORM_RESULT" = success
+          test "$APPLE_CONFORMANCE_RESULT" = success
+          echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance=$APPLE_CONFORMANCE_RESULT"
+      # Each download names the attempt that PRODUCED the artifact, read from that leg's `attempt`
+      # output -- never this job's own `github.run_attempt`. Re-running failed jobs re-runs the
+      # failed leg and this job; the leg that passed is not re-run and keeps its earlier artifact
+      # and output, so an artifact named after this job's attempt would never have been written.
+      # The JUnit directories land in RUNNER_TEMP and the conformance results in the workspace,
+      # exactly where the evidence check below read them when this was one job.
+      - name: Download platform parity evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-apple-platform-${{ github.run_id }}-${{ needs.apple-platform.outputs.attempt }}
+          path: ${{ runner.temp }}
+      - name: Download conformance parity evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-apple-conformance-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          path: ${{ runner.temp }}
+      - name: Download macosArm64 core-conformance JUnit results
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          path: core-conformance/build/test-results/macosArm64Test
+      - name: Download iosSimulatorArm64 core-conformance JUnit results
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          path: core-conformance/build/test-results/iosSimulatorArm64Test
+      - name: Download tvosSimulatorArm64 core-conformance JUnit results
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          path: core-conformance/build/test-results/tvosSimulatorArm64Test
+      - name: Verify Apple parity evidence executed and passed
+        run: |
+          python3 tools/verify-parity-evidence \
+            core-conformance/build/test-results/macosArm64Test \
+            core-conformance/build/test-results/iosSimulatorArm64Test \
+            core-conformance/build/test-results/tvosSimulatorArm64Test \
+            "$RUNNER_TEMP/dulcet-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-search-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
+            "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
+            "$RUNNER_TEMP/dulcet-mac-download-junit" \
+            "$RUNNER_TEMP/dulcet-ios-download-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-download-junit"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import fnmatch
 import json
 import re
 import shlex
@@ -210,21 +211,17 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
     return steps
 
 
-def blocking_controls(step: dict[str, str]) -> set[str]:
-    """Recognize direct shell commands, not arbitrary shell programs as proofs.
+def direct_commands(run: str) -> list[list[str]]:
+    """The run script's direct shell commands, as words, that a failure would propagate from.
 
-    Commands in compound statements, pipelines, command lists or substitutions do
-    not certify wiring. Runtime behavior inside the invoked tool remains its tests'
-    responsibility. GitHub's default bash/sh run shell enables errexit.
+    Commands in compound statements, pipelines, command lists or substitutions are not
+    direct. GitHub's default bash/sh run shell enables errexit, so a command after
+    `set +e` is not direct either until errexit is restored.
     """
-    if step.get("continue-on-error", "false") != "false" or "if" in step:
-        return set()
-    if step.get("shell", "bash") not in {"bash", "sh"}:
-        return set()
-    found: set[str] = set()
+    commands: list[list[str]] = []
     depth = 0
     errexit = True
-    for line in step.get("run", "").replace("\\\n", " ").splitlines():
+    for line in run.replace("\\\n", " ").splitlines():
         code = code_before_comment(line).strip()
         if not code:
             continue
@@ -258,12 +255,140 @@ def blocking_controls(step: dict[str, str]) -> set[str]:
             words = shlex.split(code, comments=True)
         except ValueError:
             continue
-        if not words:
-            continue
+        if words:
+            commands.append(words)
+    return commands
+
+
+def blocking_controls(step: dict[str, str]) -> set[str]:
+    """Recognize direct shell commands, not arbitrary shell programs as proofs.
+
+    Commands in compound statements, pipelines, command lists or substitutions do
+    not certify wiring. Runtime behavior inside the invoked tool remains its tests'
+    responsibility. GitHub's default bash/sh run shell enables errexit.
+    """
+    if step.get("continue-on-error", "false") != "false" or "if" in step:
+        return set()
+    if step.get("shell", "bash") not in {"bash", "sh"}:
+        return set()
+    found: set[str] = set()
+    for words in direct_commands(step.get("run", "")):
         command = words[1] if words[0] == "python3" and len(words) > 1 else words[0]
         if re.fullmatch(r"(?:\./)?tools/test-[\w.-]+", command):
             found.add(command.removeprefix("./"))
     return found
+
+
+BLOCK_SCALARS = {"|", "|-", "|+", ">", ">-", ">+"}
+
+
+def job_spans(lines: list[str]) -> list[tuple[str, int, int]]:
+    """Each direct job under the top-level `jobs:` mapping, as (id, first line, end line)."""
+    jobs_index = next((i for i, line in enumerate(lines) if mapping_entry(line) == (0, "jobs", "")),
+                      None)
+    if jobs_index is None:
+        return []
+    jobs_end = block_end(lines, jobs_index + 1, 0)
+    entries = [(i, entry) for i in range(jobs_index + 1, jobs_end)
+               if (entry := mapping_entry(lines[i])) is not None]
+    if not entries:
+        return []
+    indent = min(entry[0] for _, entry in entries)
+    starts = [(i, entry[1]) for i, entry in entries if entry[0] == indent]
+    return [(name, start, starts[k + 1][0] if k + 1 < len(starts) else jobs_end)
+            for k, (start, name) in enumerate(starts)]
+
+
+def nested_mapping(lines: list[str], index: int, indent: int, stop: int) -> dict[str, str]:
+    """The scalar entries of the block mapping that starts after lines[index], one level deeper."""
+    end = min(block_end(lines, index + 1, indent), stop)
+    entries = [(i, entry) for i in range(index + 1, end)
+               if (entry := mapping_entry(lines[i])) is not None]
+    if not entries:
+        return {}
+    child = min(entry[0] for _, entry in entries)
+    result: dict[str, str] = {}
+    for i, (entry_indent, key, value) in entries:
+        if entry_indent != child:
+            continue
+        if value in BLOCK_SCALARS:
+            last = min(block_end(lines, i + 1, entry_indent), end)
+            value = "\n".join(line.strip() for line in lines[i + 1:last] if line.strip())
+        result[key] = value
+    return result
+
+
+def job_properties(lines: list[str], start: int, end: int) -> dict[str, object]:
+    """A job's direct properties: scalars as text, block mappings as dicts, block lists as lists."""
+    entries = [(i, entry) for i in range(start + 1, end)
+               if (entry := mapping_entry(lines[i])) is not None]
+    properties: dict[str, object] = {}
+    if not entries:
+        return properties
+    indent = min(entry[0] for _, entry in entries)
+    for i, (entry_indent, key, value) in entries:
+        if entry_indent != indent:
+            continue
+        if value:
+            properties[key] = value
+            continue
+        block = lines[i + 1:min(block_end(lines, i + 1, entry_indent), end)]
+        items = [code_before_comment(line).strip()[2:].strip() for line in block
+                 if code_before_comment(line).strip().startswith("- ")]
+        properties[key] = items if items and key != "steps" else nested_mapping(lines, i, entry_indent, end)
+    return properties
+
+
+def listed(value: object) -> list[str]:
+    """`needs: a`, `needs: [a, b]` or a block list, as names."""
+    if isinstance(value, list):
+        return [item.strip("'\"") for item in value]
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        return [item.strip().strip("'\"") for item in text.split(",") if item.strip()]
+    return []
+
+
+def job_steps(lines: list[str], start: int, end: int) -> list[dict[str, object]]:
+    """Each step of one job: direct properties as text, `with`/`env` as dicts of scalars."""
+    steps_index = next((i for i in range(start + 1, end)
+                        if (entry := mapping_entry(lines[i])) and entry[1:] == ("steps", "")), None)
+    if steps_index is None:
+        return []
+    step_indent = mapping_entry(lines[steps_index])[0] + 2
+    stop = min(block_end(lines, steps_index + 1, step_indent - 2), end)
+    item = " " * step_indent + "- "
+    starts = [i for i in range(steps_index + 1, stop) if lines[i].startswith(item)]
+    steps: list[dict[str, object]] = []
+    for position, first in enumerate(starts):
+        last = starts[position + 1] if position + 1 < len(starts) else stop
+        body = [" " * (step_indent + 2) + lines[first][len(item):]] + lines[first + 1:last]
+        properties: dict[str, object] = {}
+        index = 0
+        while index < len(body):
+            entry = mapping_entry(body[index])
+            if entry and entry[0] == step_indent + 2:
+                _, key, value = entry
+                if value in BLOCK_SCALARS or not value:
+                    block_stop = block_end(body, index + 1, step_indent + 2)
+                    if value:
+                        properties[key] = "\n".join(body[index + 1:block_stop])
+                    else:
+                        properties[key] = nested_mapping(body, index, step_indent + 2, len(body))
+                    index = block_stop
+                    continue
+                properties[key] = value
+            index += 1
+        steps.append(properties)
+    return steps
+
+
+def expression(value: str) -> str:
+    """Normalise the whitespace inside every ${{ }} so equal expressions compare equal."""
+    return re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda m: "${{ " + " ".join(m[1].split()) + " }}",
+                  value.strip().strip("'\""))
 
 
 def evidence_commands(source: str) -> list[list[str]]:
@@ -379,22 +504,50 @@ def release_cancellation_exempt(workflow: Path, text: str) -> bool:
     )
 
 
+def cancels_in_progress(lines: list[str]) -> bool:
+    """A TOP-LEVEL `concurrency:` mapping whose own `cancel-in-progress` is true.
+
+    A substring test accepted the phrase anywhere -- in a comment, or on one job's concurrency
+    while the others queue behind superseded runs holding a capped macOS slot.
+    """
+    for index, line in enumerate(lines):
+        if mapping_entry(line) == (0, "concurrency", ""):
+            return nested_mapping(lines, index, 0, len(lines)).get("cancel-in-progress") == "true"
+    return False
+
+
+# spec §21.1 caveat 1: runs-on for every job is a STANDARD hosted label and nothing else. A larger
+# runner is billed even on a public repository and fails as a bill, not as a red build, so this is
+# an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
+# including larger-runner spellings nobody thought to forbid. Self-hosted labels are judged by the
+# workflow_dispatch-only rule below instead (spec §21.3.1).
+STANDARD_RUNNER = re.compile(r"ubuntu-latest|macos-latest|macos-[0-9]+")
+
 for workflow in workflows:
     text = workflow.read_text()
-    if "cancel-in-progress: true" not in text and not release_cancellation_exempt(workflow, text):
-        errors.append(f"{workflow}: missing cancel-in-progress")
-    if "timeout-minutes:" not in text:
-        errors.append(f"{workflow}: missing per-job timeout")
+    lines = text.splitlines()
+    if not cancels_in_progress(lines) and not release_cancellation_exempt(workflow, text):
+        errors.append(f"{workflow}: missing cancel-in-progress: true in a top-level concurrency block")
+    # Per JOB, not per file: one job's timeout used to satisfy a check that read the whole file, so a
+    # second job with no cap -- holding a hosted macOS slot until GitHub's six-hour default -- passed.
+    for job, start, end in job_spans(lines):
+        if "timeout-minutes" not in job_properties(lines, start, end):
+            errors.append(f"{workflow}: job {job} missing per-job timeout")
     for forbidden in ("-large", "-xlarge"):
         if forbidden in text:
             errors.append(f"{workflow}: forbidden runner token {forbidden}")
-    lines = text.splitlines()
     dispatch_only = workflow_triggers(lines) == {"workflow_dispatch"}
     for job, runner_value in job_runner_values(lines):
-        if contains_runner_label(runner_value, "self-hosted") and not dispatch_only:
+        if contains_runner_label(runner_value, "self-hosted"):
+            if not dispatch_only:
+                errors.append(
+                    f"{workflow}: job {job} uses a self-hosted runner in a workflow "
+                    "that is not workflow_dispatch-only",
+                )
+        elif not STANDARD_RUNNER.fullmatch(runner_value.strip().strip("'\"")):
             errors.append(
-                f"{workflow}: job {job} uses a self-hosted runner in a workflow "
-                "that is not workflow_dispatch-only",
+                f"{workflow}: job {job} runs on {runner_value.strip()!r}; only the standard hosted "
+                "labels ubuntu-latest, macos-latest and macos-<version> are allowed",
             )
     for action, ref in re.findall(r"uses:\s+([^@\s]+)@([^\s#]+)", text):
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
@@ -445,16 +598,20 @@ def ci_script_invocations(text: str) -> set[Path]:
 # (the step-ordering check) is built on top of it, because the second rule inherits the blind spot
 # rather than introducing it, and nothing would point at the cause.
 # The `seen` guard makes a cycle terminate rather than spin.
-invoked_set: set[Path] = set()
-frontier = ci_script_invocations(apple_ci)
-while frontier:
-    script = frontier.pop()
-    if script in invoked_set:
-        continue
-    invoked_set.add(script)
-    if script.is_file():
-        frontier |= ci_script_invocations(script.read_text()) - invoked_set
-invoked = sorted(invoked_set)
+def invoked_scripts(text: str) -> list[Path]:
+    invoked_set: set[Path] = set()
+    frontier = ci_script_invocations(text)
+    while frontier:
+        script = frontier.pop()
+        if script in invoked_set:
+            continue
+        invoked_set.add(script)
+        if script.is_file():
+            frontier |= ci_script_invocations(script.read_text()) - invoked_set
+    return sorted(invoked_set)
+
+
+invoked = invoked_scripts(apple_ci)
 for script in invoked:
     if not script.is_file():
         errors.append(
@@ -481,6 +638,183 @@ for missing in sorted(read - written):
         f".github/workflows/apple-ci.yml: verify-parity-evidence reads {missing}, which no step "
         "writes",
     )
+
+# spec §21.5: apple-ci is parallel macOS legs behind ONE required job, and that job is the only
+# thing branch protection sees. Every property below is one whose loss would let a red or absent
+# leg merge, or would break the evidence handoff only at the end of a 70-minute run.
+APPLE_AGGREGATOR = "apple-ci"
+# §21.5 adopts two legs. Hosted macOS concurrency is shared by every run on the account, and main's
+# post-merge run plus the head pull request's already take four slots; a third leg is a spec change
+# that lands in §21.5 first, then here.
+MAX_APPLE_MACOS_JOBS = 2
+VERIFY_CALL = re.compile(r"(?m)^\s*(?:-\s+)?(?:run:\s*)?python3\s+tools/verify-parity-evidence\b")
+if apple_ci:
+    apple_lines = apple_ci.splitlines()
+    apple_jobs = {name: (start, end) for name, start, end in job_spans(apple_lines)}
+    apple_runners = dict(job_runner_values(apple_lines))
+    macos_jobs = sorted(name for name in apple_jobs
+                        if re.match(r"macos-", apple_runners.get(name, "").strip()))
+    if len(macos_jobs) > MAX_APPLE_MACOS_JOBS:
+        errors.append(
+            f"{apple_ci_path}: {len(macos_jobs)} macOS jobs {macos_jobs}; at most "
+            f"{MAX_APPLE_MACOS_JOBS} per run (spec §21.5), because every one holds a hosted slot",
+        )
+    legs = sorted(set(apple_jobs) - {APPLE_AGGREGATOR})
+
+    def job_text(name: str) -> str:
+        start, end = apple_jobs[name]
+        return "\n".join(line for line in apple_lines[start:end]
+                         if not line.lstrip().startswith("#"))
+
+    def job_scope(name: str) -> str:
+        text = job_text(name)
+        return text + "".join(script.read_text() for script in invoked_scripts(text)
+                              if script.is_file())
+
+    if APPLE_AGGREGATOR not in apple_jobs:
+        errors.append(
+            f"{apple_ci_path}: the required aggregator job {APPLE_AGGREGATOR} is missing; branch "
+            "protection requires a check with exactly that name",
+        )
+        aggregator_steps: list[dict[str, object]] = []
+    else:
+        start, end = apple_jobs[APPLE_AGGREGATOR]
+        aggregator = job_properties(apple_lines, start, end)
+        aggregator_steps = job_steps(apple_lines, start, end)
+        if str(aggregator.get("name", "")).strip("'\"") != APPLE_AGGREGATOR:
+            errors.append(
+                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must be named exactly {APPLE_AGGREGATOR}; "
+                "branch protection matches the check by name",
+            )
+        # Without always(), a failed leg SKIPS the aggregator, and a skipped required check does not
+        # block a merge. `!cancelled()` fails the same way for a cancelled run, and success() is the
+        # default this replaces.
+        if expression(str(aggregator.get("if", ""))) not in ("${{ always() }}", "always()"):
+            errors.append(
+                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must run if: ${{{{ always() }}}}; otherwise a "
+                "failed leg skips it, and a skipped required check does not block a merge",
+            )
+        needed = listed(aggregator.get("needs"))
+        if sorted(needed) != legs:
+            errors.append(
+                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must need every leg {legs}, "
+                f"and needs {sorted(needed)}",
+            )
+        environment = aggregator.get("env") if isinstance(aggregator.get("env"), dict) else {}
+        required = {
+            words[1].strip("${}")
+            for step in aggregator_steps
+            if "if" not in step and step.get("continue-on-error", "false") == "false"
+            and str(step.get("shell", "bash")) in {"bash", "sh"}
+            for words in direct_commands(str(step.get("run", "")))
+            if len(words) == 4 and words[0] == "test" and words[2] in {"=", "=="}
+            and words[3] == "success"
+        }
+        for leg in legs:
+            bound = {name for name, value in environment.items()
+                     if expression(value) == f"${{{{ needs.{leg}.result }}}}"}
+            if not bound & required:
+                errors.append(
+                    f"{apple_ci_path}: job {APPLE_AGGREGATOR} must require needs.{leg}.result to "
+                    "equal success in an unconditional step; any other test lets a cancelled or "
+                    "skipped leg pass",
+                )
+
+    # Evidence is verified in the required job, and only there: FEATURES.yml cites job apple-ci,
+    # and verify-parity-evidence resolves citations against GITHUB_JOB.
+    for leg in legs:
+        if VERIFY_CALL.search(job_text(leg)):
+            errors.append(
+                f"{apple_ci_path}: leg {leg} calls verify-parity-evidence; evidence is resolved in "
+                f"the required {APPLE_AGGREGATOR} job, which FEATURES.yml cites",
+            )
+
+    # The handoff. A JUnit directory written on one machine is read on another only if the leg
+    # uploads it, the aggregator downloads it to the path the verify call reads, and the download
+    # names the attempt that produced it. Each break here fails only after both legs have run.
+    downloads = [step for step in aggregator_steps
+                 if str(step.get("uses", "")).startswith("actions/download-artifact@")]
+    download_names = {expression(str((step.get("with") or {}).get("name", ""))):
+                      expression(str((step.get("with") or {}).get("path", "")))
+                      for step in downloads}
+    writers: dict[str, list[str]] = {}
+    produced: dict[str, str] = {}
+    for leg in legs:
+        start, end = apple_jobs[leg]
+        leg_steps = job_steps(apple_lines, start, end)
+        attempt = expression(str((job_properties(apple_lines, start, end).get("outputs") or {})
+                                 .get("attempt", "")))
+        for step in leg_steps:
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                name = expression(str((step.get("with") or {}).get("name", "")))
+                name = name.replace("${{ github.job }}", leg)
+                produced[name.replace("${{ github.run_attempt }}",
+                                      f"${{{{ needs.{leg}.outputs.attempt }}}}")] = leg
+        written_here = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", job_scope(leg)))
+        for directory in written_here:
+            writers.setdefault(directory, []).append(leg)
+        if not written_here:
+            continue
+        if attempt != "${{ github.run_attempt }}":
+            errors.append(
+                f"{apple_ci_path}: leg {leg} writes parity evidence but has no output "
+                "attempt: ${{ github.run_attempt }}, so the aggregator cannot name the artifact a "
+                "re-run of failed jobs left in place",
+            )
+        evidence_name = (f"dulcet-apple-parity-evidence-{leg}-${{{{ github.run_id }}}}-"
+                         f"${{{{ github.run_attempt }}}}")
+        uploads = [step for step in leg_steps
+                   if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+                   and expression(str((step.get("with") or {}).get("name", "")))
+                   .replace("${{ github.job }}", leg) == evidence_name]
+        patterns = [line.strip() for step in uploads
+                    for line in str((step.get("with") or {}).get("path", "")).splitlines()]
+        for directory in sorted(written_here):
+            if not any(pattern.startswith("${{ runner.temp }}/")
+                       and fnmatch.fnmatchcase(directory, pattern.split("/", 1)[1])
+                       for pattern in patterns):
+                errors.append(
+                    f"{apple_ci_path}: leg {leg} writes JUnit directory {directory} but no "
+                    f"upload named {evidence_name} carries it to {APPLE_AGGREGATOR}",
+                )
+        wanted = (f"dulcet-apple-parity-evidence-{leg}-${{{{ github.run_id }}}}-"
+                  f"${{{{ needs.{leg}.outputs.attempt }}}}")
+        if download_names.get(wanted) != "${{ runner.temp }}":
+            errors.append(
+                f"{apple_ci_path}: {APPLE_AGGREGATOR} must download {wanted} to "
+                "${{ runner.temp }}, where the verify call reads the JUnit directories",
+            )
+    for directory, owners in sorted(writers.items()):
+        if len(owners) > 1:
+            errors.append(
+                f"{apple_ci_path}: JUnit directory {directory} is written by {sorted(owners)}; one "
+                "download would overwrite the other",
+            )
+    for name, path in sorted(download_names.items()):
+        if "${{ github.run_attempt }}" in name:
+            errors.append(
+                f"{apple_ci_path}: {APPLE_AGGREGATOR} downloads {name} by its OWN attempt; a "
+                "re-run of failed jobs does not re-run the leg that produced it",
+            )
+        elif name not in produced:
+            errors.append(
+                f"{apple_ci_path}: {APPLE_AGGREGATOR} downloads {name}, which no leg uploads",
+            )
+    verify_arguments = [
+        argument
+        for step in aggregator_steps
+        for words in evidence_commands(str(step.get("run", "")))
+        if words[:2] == ["python3", "tools/verify-parity-evidence"]
+        for argument in words[2:]
+    ]
+    for argument in verify_arguments:
+        if argument.startswith("$RUNNER_TEMP/"):
+            continue
+        if argument not in download_names.values():
+            errors.append(
+                f"{apple_ci_path}: verify-parity-evidence reads {argument}, which "
+                f"{APPLE_AGGREGATOR} never downloads; it would be empty on that machine",
+            )
 
 # The directory wiring above is necessary and was not sufficient. verify-parity-evidence matches on
 # (class, method), and the macOS emissions passed the TARGET name DulcetMacTests where the evidence
@@ -598,8 +932,9 @@ if apple_ci:
 
 
 # JUnit-directory coverage does not establish that standalone diagnostic controls execute.
-# Keep these in unconditional steps of the required Apple job: macOS must run the real stack
-# control. This is an explicit contract for these suites, not discovery of every tools/test-* file.
+# Keep these in unconditional steps of a macOS leg the required Apple job needs: macOS must run the
+# real stack control, and a leg the aggregator does not need can fail without blocking a merge.
+# This is an explicit contract for these suites, not discovery of every tools/test-* file.
 # Synthetic policy fixtures opt in by creating core-conformance, as the real repository does.
 DIAGNOSTIC_CONTROLS = (
     "tools/test-conformance-access-log",
@@ -607,25 +942,30 @@ DIAGNOSTIC_CONTROLS = (
     "tools/test-measure-conformance-phase-gaps",
 )
 if Path("core-conformance").is_dir():
-    job = re.search(r"(?m)^  apple-ci:\s*$", apple_ci)
-    job_text = ""
-    if job:
-        lines = apple_ci[job.end():].splitlines()
-        job_text = "\n".join(lines[:block_end(lines, 0, 2)])
-    job_unconditional = not re.search(r"(?m)^    (?:if|continue-on-error):", job_text)
-    job_mac = any(name == "apple-ci" and re.search(r"macos-", runner)
-                  for name, runner in job_runner_values(apple_ci.splitlines()))
-    steps = re.split(r"(?m)^      - ", job_text)[1:]
+    apple_lines = apple_ci.splitlines()
+    spans = {name: (start, end) for name, start, end in job_spans(apple_lines)}
+    runners = dict(job_runner_values(apple_lines))
+    aggregator_needs: list[str] = []
+    if "apple-ci" in spans:
+        aggregator_needs = listed(job_properties(apple_lines, *spans["apple-ci"]).get("needs"))
+    gating_legs = [
+        name for name, (start, end) in spans.items()
+        if name in aggregator_needs
+        and re.match(r"macos-", runners.get(name, "").strip())
+        and not {"if", "continue-on-error"} & set(job_properties(apple_lines, start, end))
+    ]
+    pull_request = "pull_request" in workflow_triggers(apple_lines)
     for control in DIAGNOSTIC_CONTROLS:
         invoked = any(
-            not re.search(r"(?m)^        (?:if|continue-on-error):", step)
-            and re.search(r"(?m)^        run: python3 " + re.escape(control) + r"\s*$", step)
-            for step in steps
+            "if" not in step and "continue-on-error" not in step
+            and str(step.get("run", "")).strip() == "python3 " + control
+            for name in gating_legs
+            for step in job_steps(apple_lines, *spans[name])
         )
-        if (not Path(control).is_file() or not invoked or not job_unconditional or not job_mac
-                or "pull_request" not in workflow_triggers(apple_ci.splitlines())):
+        if not Path(control).is_file() or not invoked or not pull_request:
             errors.append(f".github/workflows/apple-ci.yml: required diagnostic control {control} "
-                          "must exist and run unconditionally in the macOS apple-ci PR job")
+                          "must exist and run unconditionally in a macOS leg that the required "
+                          "apple-ci job needs, on pull requests")
 
 # A control that no workflow names never runs. There is no glob runner here -- every control is
 # wired by an explicit `run: python3 tools/test-<name>` line -- so an unwired control is INERT while

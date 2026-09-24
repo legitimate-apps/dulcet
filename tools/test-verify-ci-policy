@@ -174,6 +174,9 @@ def run_case(case: Case) -> None:
 # cannot distinguish "reported and rejected" from "reported and accepted" is not checking the thing
 # its name claims.
 
+# The fixture has apple-ci's split shape (spec §21.5): a macOS leg writes the evidence and uploads
+# it, and the required `apple-ci` aggregator downloads it and verifies it. The bijection cases
+# below vary only the leg's `Produce evidence` step; the shape cases further down vary the rest.
 APPLE_WORKFLOW = """name: apple-ci
 on:
   pull_request:
@@ -181,13 +184,38 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  apple-ci:
+  apple-leg:
+    name: apple-leg
     runs-on: macos-latest
     timeout-minutes: 10
+    outputs:
+      attempt: ${{ github.run_attempt }}
     steps:
       - name: Produce evidence
         run: |
           %(invocation)s
+      - name: Upload Apple parity evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-*-junit
+  apple-ci:
+    name: apple-ci
+    if: ${{ always() }}
+    needs: [apple-leg]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      APPLE_LEG_RESULT: ${{ needs.apple-leg.result }}
+    steps:
+      - name: Require every Apple leg
+        run: |
+          test "$APPLE_LEG_RESULT" = success
+      - name: Download parity evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-apple-leg-${{ github.run_id }}-${{ needs.apple-leg.outputs.attempt }}
+          path: ${{ runner.temp }}
       - name: Verify evidence
         run: |
           python3 tools/verify-parity-evidence \\
@@ -742,6 +770,177 @@ run_transitive_invocation_case()
 
 run_orphan_control_case()
 
+
+# ---------------------------------------------------------------------------------------------
+# apple-ci's split shape (spec §21.5). The aggregator is the ONLY thing branch protection sees, so
+# every property of it is a merge gate: its name, `if: always()`, needing every leg, and requiring
+# each leg's result to equal `success` -- anything weaker lets a cancelled or skipped leg through,
+# and a skipped required check does not block a merge. The evidence handoff between machines is
+# checked too, because each break in it fails only after both legs have run. Every case asserts the
+# exit status AND the rule's own sentence, and the positive cases prove the shape is satisfiable.
+SHAPE_WRITE = ('python3 tools/swift-testing-junit a '
+               '"$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" Example')
+SHAPE_BASE = APPLE_WORKFLOW % {"invocation": SHAPE_WRITE}
+LEG_START = "  apple-leg:\n"
+AGGREGATOR_START = "  apple-ci:\n"
+
+
+def with_second_leg(text: str, directory: str) -> str:
+    """Add leg apple-leg-b, fully wired, writing `directory`."""
+    leg = text[text.index(LEG_START):text.index(AGGREGATOR_START)]
+    leg = leg.replace("apple-leg", "apple-leg-b").replace("dulcet-example-junit", directory)
+    text = text.replace(AGGREGATOR_START, leg + AGGREGATOR_START)
+    text = text.replace("needs: [apple-leg]", "needs: [apple-leg, apple-leg-b]")
+    text = text.replace(
+        "      APPLE_LEG_RESULT: ${{ needs.apple-leg.result }}\n",
+        "      APPLE_LEG_RESULT: ${{ needs.apple-leg.result }}\n"
+        "      APPLE_LEG_B_RESULT: ${{ needs.apple-leg-b.result }}\n")
+    text = text.replace(
+        '          test "$APPLE_LEG_RESULT" = success\n',
+        '          test "$APPLE_LEG_RESULT" = success\n'
+        '          test "$APPLE_LEG_B_RESULT" = success\n')
+    download = text[text.index("      - name: Download parity evidence\n"):
+                    text.index("      - name: Verify evidence\n")]
+    text = text.replace(download, download + download.replace("apple-leg", "apple-leg-b"))
+    return text.replace(
+        '            "$RUNNER_TEMP/dulcet-example-junit"\n',
+        '            "$RUNNER_TEMP/dulcet-example-junit" \\\n'
+        f'            "$RUNNER_TEMP/{directory}"\n')
+
+
+def edit(old: str, new: str, count: int = 1):
+    def apply(text: str) -> str:
+        if text.count(old) != count:
+            raise AssertionError(f"shape fixture edit expected {count} x {old!r}")
+        return text.replace(old, new)
+    return apply
+
+
+def extra_macos_legs(text: str) -> str:
+    for name in ("apple-leg-2", "apple-leg-3"):
+        text = text.replace(AGGREGATOR_START, f"  {name}:\n    runs-on: macos-latest\n"
+                            "    timeout-minutes: 5\n    steps:\n      - run: true\n"
+                            + AGGREGATOR_START)
+    return text
+
+
+SHAPE_CASES = (
+    ("the split shape is accepted", lambda t: t, ""),
+    ("two fully wired legs are accepted", lambda t: with_second_leg(t, "dulcet-other-junit"), ""),
+    ("an aggregator under another job id is rejected",
+     edit("  apple-ci:\n    name: apple-ci\n", "  apple-gate:\n    name: apple-ci\n"),
+     "the required aggregator job apple-ci is missing"),
+    ("an aggregator whose check name differs is rejected",
+     edit("    name: apple-ci\n", "    name: Apple CI\n"),
+     "must be named exactly apple-ci"),
+    ("an aggregator without if: always() is rejected",
+     edit("    if: ${{ always() }}\n", ""), "must run if: ${{ always() }}"),
+    ("an aggregator skipped when the run is cancelled is rejected",
+     edit("    if: ${{ always() }}\n", "    if: ${{ !cancelled() }}\n"), "must run if: ${{ always() }}"),
+    ("an aggregator that does not need every leg is rejected",
+     edit("    needs: [apple-leg]\n", "    needs: []\n"), "must need every leg"),
+    ("a result check that admits a cancelled leg is rejected",
+     edit('test "$APPLE_LEG_RESULT" = success', 'test "$APPLE_LEG_RESULT" != failure'),
+     "must require needs.apple-leg.result to equal success"),
+    ("a result check that cannot fail is rejected",
+     edit('test "$APPLE_LEG_RESULT" = success', 'test "$APPLE_LEG_RESULT" = success || true'),
+     "must require needs.apple-leg.result to equal success"),
+    ("a result check in a conditional step is rejected",
+     edit("      - name: Require every Apple leg\n",
+          "      - name: Require every Apple leg\n        if: ${{ success() }}\n"),
+     "must require needs.apple-leg.result to equal success"),
+    ("a result check bound to something other than the leg's result is rejected",
+     edit("APPLE_LEG_RESULT: ${{ needs.apple-leg.result }}",
+          "APPLE_LEG_RESULT: ${{ needs.apple-leg.outputs.attempt }}"),
+     "must require needs.apple-leg.result to equal success"),
+    ("a larger runner label is rejected",
+     edit("    runs-on: macos-latest\n", "    runs-on: macos-latest-xlarge\n"),
+     "forbidden runner token -xlarge"),
+    ("a runner label outside the standard allowlist is rejected",
+     edit("    runs-on: macos-latest\n", "    runs-on: macos-26-arm64-pro\n"),
+     "only the standard hosted labels"),
+    ("one job without a timeout is rejected although another has one",
+     edit("    timeout-minutes: 10\n", ""), "job apple-leg missing per-job timeout"),
+    ("cancel-in-progress on a job instead of the workflow is rejected",
+     lambda t: edit("concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n"
+                    "  cancel-in-progress: true\n", "")(t).replace(
+         "    timeout-minutes: 10\n",
+         "    timeout-minutes: 10\n    concurrency:\n      group: leg\n      cancel-in-progress: true\n"),
+     "missing cancel-in-progress: true in a top-level concurrency block"),
+    ("a third macOS leg is rejected", extra_macos_legs, "3 macOS jobs"),
+    ("a leg that writes evidence and uploads none is rejected",
+     lambda t: t.replace(t[t.index("      - name: Upload Apple parity evidence\n"):
+                           t.index(AGGREGATOR_START)], ""),
+     "no upload named dulcet-apple-parity-evidence-apple-leg-"),
+    ("an upload that misses a written directory is rejected",
+     edit("          path: ${{ runner.temp }}/dulcet-*-junit\n",
+          "          path: ${{ runner.temp }}/dulcet-*-results\n"),
+     "writes JUnit directory dulcet-example-junit but no upload"),
+    ("a download named after the aggregator's own attempt is rejected",
+     edit("${{ needs.apple-leg.outputs.attempt }}", "${{ github.run_attempt }}"),
+     "by its OWN attempt"),
+    ("a leg without an attempt output is rejected",
+     edit("    outputs:\n      attempt: ${{ github.run_attempt }}\n", ""), "has no output attempt"),
+    ("evidence downloaded anywhere but RUNNER_TEMP is rejected",
+     edit("          path: ${{ runner.temp }}\n", "          path: evidence\n"),
+     "to ${{ runner.temp }}, where the verify call reads"),
+    ("a download that no leg uploads is rejected",
+     edit("dulcet-apple-parity-evidence-apple-leg-${{ github.run_id }}",
+          "dulcet-apple-parity-evidence-apple-leg-${{ github.run_id }}-renamed"),
+     "which no leg uploads"),
+    ("verify-parity-evidence inside a leg is rejected",
+     edit("      - name: Upload Apple parity evidence\n",
+          '      - run: python3 tools/verify-parity-evidence "$RUNNER_TEMP/dulcet-example-junit"\n'
+          "      - name: Upload Apple parity evidence\n"),
+     "leg apple-leg calls verify-parity-evidence"),
+    ("a workspace path the aggregator never downloads is rejected",
+     edit('            "$RUNNER_TEMP/dulcet-example-junit"\n',
+          '            core-conformance/build/test-results/macosArm64Test \\\n'
+          '            "$RUNNER_TEMP/dulcet-example-junit"\n'),
+     "reads core-conformance/build/test-results/macosArm64Test, which apple-ci never downloads"),
+    ("one directory written by two legs is rejected",
+     lambda t: with_second_leg(t, "dulcet-example-junit"),
+     "is written by ['apple-leg', 'apple-leg-b']"),
+)
+EXPECTED_SHAPE_CASES = 25
+shape_cases_run: list[str] = []
+
+
+def run_shape_case(name: str, mutate, expected: str) -> None:
+    text = mutate(SHAPE_BASE)
+    if expected and text == SHAPE_BASE:
+        raise AssertionError(f"{name}: the mutation changed nothing, so it proves nothing")
+    with tempfile.TemporaryDirectory(prefix="dulcet-apple-shape-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(text)
+        (workflows / "core-ci.yml").write_text(workflow_for(next(c for c in CASES if c.accepted)))
+        result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root, text=True,
+                                capture_output=True, check=False)
+    if not expected:
+        if result.returncode != 0:
+            raise AssertionError(f"{name}: expected acceptance, got {result.returncode}\n"
+                                 f"{result.stderr}")
+    else:
+        if result.returncode != 1:
+            raise AssertionError(f"{name}: expected exit 1, got {result.returncode} -- a rule that "
+                                 f"reports and still exits 0 is not a gate\n{result.stderr}")
+        if expected not in result.stderr:
+            raise AssertionError(f"{name}: rejected, but not by the rule under test; expected "
+                                 f"{expected!r}\n{result.stderr}")
+    shape_cases_run.append(name)
+    print(f"PASS: apple-ci shape: {name}")
+
+
+for shape_case in SHAPE_CASES:
+    run_shape_case(*shape_case)
+# Counted against a declared constant, not the tuple's length: emptying SHAPE_CASES must fail.
+assert len(shape_cases_run) == EXPECTED_SHAPE_CASES == len(set(shape_cases_run)), (
+    f"apple-ci shape controls ran {len(shape_cases_run)} of {EXPECTED_SHAPE_CASES}: {shape_cases_run}"
+)
+print(f"apple-ci shape controls passed: {len(shape_cases_run)}/{EXPECTED_SHAPE_CASES}")
+
 if "--completion-child" not in sys.argv:
     run_completion_mutation_case(("core",))
     run_completion_mutation_case(("apple",))
@@ -781,11 +980,23 @@ concurrency:
   group: controls
   cancel-in-progress: true
 jobs:
-  apple-ci:
-    name: apple-ci
+  apple-conformance:
+    name: apple-conformance
     runs-on: macos-26
     timeout-minutes: 5
     steps:
+'''
+# The leg above only gates a merge through the required job, so the fixture carries one.
+DIAGNOSTIC_AGGREGATOR = '''  apple-ci:
+    name: apple-ci
+    if: ${{ always() }}
+    needs: [apple-conformance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}
+    steps:
+      - run: test "$APPLE_CONFORMANCE_RESULT" = success
 '''
 
 def diagnostic_case(control=None, mutation=None):
@@ -813,13 +1024,16 @@ def diagnostic_case(control=None, mutation=None):
                 elif mutation == 'allowed-failure':
                     condition = '        continue-on-error: true\n'
             steps.append('      - name: control\n' + condition + command)
-        apple = DIAGNOSTIC_WORKFLOW + ''.join(steps)
+        apple = DIAGNOSTIC_WORKFLOW + ''.join(steps) + DIAGNOSTIC_AGGREGATOR
         if mutation == 'job-disabled':
-            apple = apple.replace('    name: apple-ci', '    if: false\n    name: apple-ci')
+            apple = apple.replace('    name: apple-conformance', '    if: false\n    name: apple-conformance')
         if mutation == 'linux-only':
             apple = apple.replace('macos-26', 'ubuntu-latest')
         if mutation == 'manual-only':
             apple = apple.replace('pull_request:', 'workflow_dispatch:')
+        if mutation == 'not-needed':
+            # A leg the required job does not need can fail and still let the pull request merge.
+            apple = apple.replace('    needs: [apple-conformance]\n', '')
         (workflows / 'apple-ci.yml').write_text(apple)
         (workflows / 'core-ci.yml').write_text(workflow_for(CASES[0]))
         result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root,
@@ -866,15 +1080,15 @@ assert len(DIAGNOSTIC_CONTROLS) >= MINIMUM_DIAGNOSTIC_CONTROLS, (
     f"at least {MINIMUM_DIAGNOSTIC_CONTROLS} are required"
 )
 
-# 1 unmutated baseline + one per (control x mutation) + 3 job-level mutations.
-EXPECTED_DIAGNOSTIC_CASES = 1 + len(DIAGNOSTIC_CONTROLS) * 6 + 3
+# 1 unmutated baseline + one per (control x mutation) + 4 job-level mutations.
+EXPECTED_DIAGNOSTIC_CASES = 1 + len(DIAGNOSTIC_CONTROLS) * 6 + 4
 diagnostic_cases_run: list[tuple[str | None, str | None]] = []
 
 diagnostic_case()
 for control in DIAGNOSTIC_CONTROLS:
     for mutation in ('missing', 'comment', 'echo', 'disabled', 'allowed-failure', 'missing-file'):
         diagnostic_case(control, mutation)
-for mutation in ('job-disabled', 'linux-only', 'manual-only'):
+for mutation in ('job-disabled', 'linux-only', 'manual-only', 'not-needed'):
     diagnostic_case(mutation=mutation)
 
 # The count is asserted against a declared constant, not printed from one. An independent review

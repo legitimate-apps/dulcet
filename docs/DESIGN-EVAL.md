@@ -10,7 +10,8 @@ fixture identifiers. All human-facing view copy and compound formatting route th
 
 ## 1. Evidence contract
 
-The `apple-ci` job produces the artifact named `dulcet-macos-design-captures-<run>-<attempt>`. Its
+Job `apple-platform` of workflow `apple-ci` produces the artifact named
+`dulcet-macos-design-captures-<run>-<attempt>`. Its
 `run-a` directory is the evidence set. The job renders a second complete `run-b` directory and
 requires a recursive byte comparison before uploading `run-a`.
 
@@ -83,7 +84,7 @@ The fixed sibling therefore remains the deterministic regression-evidence path. 
 that artifact is a rating of the fixed capture sibling, not of the shipping view, and no stronger
 shipping-UI claim should be made from it.
 
-`apple-ci` separately publishes
+The same job separately publishes
 `dulcet-macos-shipping-reference-<run>-<attempt>`. This second artifact captures the actual
 `DulcetRootView` balanced `NavigationSplitView` composition once per state and appearance through
 `SCScreenshotManager`; it is not compared with another render and its variability cannot fail CI.
@@ -524,7 +525,7 @@ aggregate accessibility score are `null`; neither may be inferred from standard-
 | Text scaling and reflow | 25 | Unscored until Dulcet implements and captures a platform-applicable macOS text-resizing mechanism. |
 | Non-color communication | 15 | Selection, source, error, offline state, and unavailable playback use labels or symbols in addition to color. |
 | Labels and roles | 15 | Source evidence assigns a concise VoiceOver label to every control and uses native control roles; pixels alone cannot earn full credit. |
-| Keyboard and focus | 15 | Native controls are traversable, primary actions have expected shortcuts, and focus has a visible cue. The account-connect behavior stays `ASSUMED` until workflow `apple-ci`, job `apple-ci`, executes test `DulcetMacTests/DulcetMacAccountConnectAppTest/accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction` in its app host with macOS Full Keyboard Access enabled and the exact-execution guard records one passing test. That trace promotes only initial Server Address focus; forward and reverse Server Address → Username → Password → Allow Local HTTP → Connect traversal; Return invoking Connect; focus moving to Cancel while connecting; and Escape cancelling and restoring focus to Connect. Visible-focus-cue pixels, behavior with Full Keyboard Access disabled, assistive-technology interaction, other account states, and every other surface remain `ASSUMED` without their own evidence. |
+| Keyboard and focus | 15 | Native controls are traversable, primary actions have expected shortcuts, and focus has a visible cue. The account-connect behavior stays `ASSUMED` until workflow `apple-ci` executes test `DulcetMacTests/DulcetMacAccountConnectAppTest/accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction` in its app host with macOS Full Keyboard Access enabled (in job `apple-conformance`), the exact-execution guard records one passing test, and job `apple-ci` resolves that evidence. That trace promotes only initial Server Address focus; forward and reverse Server Address → Username → Password → Allow Local HTTP → Connect traversal; Return invoking Connect; focus moving to Cancel while connecting; and Escape cancelling and restoring focus to Connect. Visible-focus-cue pixels, behavior with Full Keyboard Access disabled, assistive-technology interaction, other account states, and every other surface remain `ASSUMED` without their own evidence. |
 
 Report `accessibility_score` independently only when every category has evidence. The design does not
 pass accessibility while the score is unreportable, when it is below 90, when any essential text or
