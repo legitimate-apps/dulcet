@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Probe the reader's page-then-scan-status check (design spec §16.12) against a DISPOSABLE server.
+
+Repeatedly reads one list page followed by getScanStatus while a background thread moves one album
+directory out of and back into the server's music folder, so the watcher's scans race the reads.
+A violation is two page reads whose post-read status reports the same `lastScan` with
+`scanning == false` but whose contents differ: a page the check would have accepted under an epoch
+it does not belong to.
+
+It asserts two things, so a run that measured nothing cannot pass:
+  * the toggler actually fired and at least two distinct stamps were observed (the race happened);
+  * zero violations.
+
+Never point this at a personal or production server: it moves files in the music folder.
+
+usage: window-epoch-race --base-url URL --user U --password P --music-dir DIR --album-dir NAME
+                         [--holding-dir DIR] [--seconds N] [--interval S]
+"""
+
+import argparse, hashlib, json, os, secrets, shutil, sys, threading, time, urllib.parse, urllib.request
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base-url", required=True)
+    ap.add_argument("--user", required=True)
+    ap.add_argument("--password", required=True)
+    ap.add_argument("--music-dir", required=True)
+    ap.add_argument("--album-dir", required=True, help="path of one album directory, relative to --music-dir")
+    ap.add_argument("--holding-dir", default=None)
+    ap.add_argument("--seconds", type=float, default=300)
+    ap.add_argument("--interval", type=float, default=7)
+    a = ap.parse_args()
+    holding = a.holding_dir or os.path.join(os.path.dirname(os.path.abspath(a.music_dir)), "race-holding")
+    os.makedirs(holding, exist_ok=True)
+    inside = os.path.join(a.music_dir, a.album_dir)
+    outside = os.path.join(holding, os.path.basename(a.album_dir))
+    if not os.path.isdir(inside):
+        sys.exit(f"album directory not found: {inside}")
+
+    def call(endpoint, **params):
+        salt = secrets.token_hex(16)
+        token = hashlib.md5((a.password + salt).encode()).hexdigest()
+        query = dict(u=a.user, t=token, s=salt, v="1.16.1", c="dulcet-race-probe", f="json", **params)
+        url = f"{a.base_url}/rest/{endpoint}?" + urllib.parse.urlencode(query)
+        with urllib.request.urlopen(url) as response:
+            return json.loads(response.read())["subsonic-response"]
+
+    stop = threading.Event()
+    toggles = [0]
+
+    def toggler():
+        while not stop.wait(a.interval):
+            if os.path.isdir(inside):
+                shutil.move(inside, outside)
+            else:
+                shutil.move(outside, inside)
+            toggles[0] += 1
+
+    thread = threading.Thread(target=toggler)
+    thread.start()
+    samples = []
+    started = time.monotonic()
+    try:
+        while time.monotonic() - started < a.seconds:
+            page = call("getAlbumList2", type="alphabeticalByName", size=100)
+            ids = tuple(sorted(album["id"] for album in page["albumList2"].get("album", [])))
+            status = call("getScanStatus")["scanStatus"]
+            samples.append((ids, status.get("lastScan"), status.get("scanning")))
+    finally:
+        stop.set()
+        thread.join()
+        if os.path.isdir(outside) and not os.path.isdir(inside):
+            shutil.move(outside, inside)
+
+    accepted = {}
+    for ids, stamp, scanning in samples:
+        if not scanning:
+            accepted.setdefault(stamp, set()).add(ids)
+    violations = {stamp: len(contents) for stamp, contents in accepted.items() if len(contents) > 1}
+    scanning_samples = sum(1 for sample in samples if sample[2])
+    print(json.dumps(dict(samples=len(samples), scanning_samples=scanning_samples, toggles=toggles[0],
+                          distinct_stamps=len(accepted), violations=violations)))
+    if toggles[0] < 2 or len(accepted) < 2:
+        sys.exit("the race did not happen: fewer than two toggles or two distinct stamps")
+    if violations:
+        sys.exit("a stamp accepted two different page contents")
+
+
+if __name__ == "__main__":
+    main()

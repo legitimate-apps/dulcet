@@ -42,6 +42,16 @@ SCHEMA_INTENT_TABLES = {
     "sync_generation",
     "deletion_reconciliation",
     "schema_meta",
+    "cache_binding",
+    "cache_epoch",
+    "cache_artist",
+    "cache_album",
+    "cache_track",
+    "cache_playlist",
+    "cache_credit",
+    "cache_list",
+    "cache_list_member",
+    "cache_pin",
 }
 REQUIRED_IMPLEMENTED_TABLES = {
     "music_folder",
@@ -64,6 +74,9 @@ REQUIRED_IMPLEMENTED_TABLES = {
     "sync_generation",
     "deletion_reconciliation",
     "schema_meta",
+    "cache_pin",
+    "cache_track",
+    "cache_album",
 }
 PROTECTED_COLUMNS = {
     "scrobble_outbox": (
@@ -98,7 +111,29 @@ PROTECTED_COLUMNS = {
         "raw_id",
         "position_milliseconds",
     ),
+    # Revision 99 (spec §11.4): the pins of downloaded and queued items are protected, because a
+    # downloaded file with nothing to display is exactly the case offline use exists for.
+    "cache_pin": (
+        "server_id",
+        "item_kind",
+        "raw_id",
+        "reason",
+    ),
 }
+# A protected table that a released schema introduced is compared only from that version on; the
+# migration that introduces it is held to the pin-coverage contract instead.
+PROTECTED_SINCE_VERSION = {
+    "cache_pin": 6,
+}
+PIN_COVERAGE_SINCE_VERSION = 6
+
+
+def protected_tables(version: int) -> tuple[str, ...]:
+    return tuple(
+        table
+        for table in PROTECTED_COLUMNS
+        if version >= PROTECTED_SINCE_VERSION.get(table, 1)
+    )
 
 
 class MigrationGateError(AssertionError):
@@ -257,9 +292,9 @@ def normalized_sql(sql: str | None) -> str | None:
     return " ".join(tokens)
 
 
-def protected_schema(connection: sqlite3.Connection) -> dict[str, object]:
+def protected_schema(connection: sqlite3.Connection, version: int) -> dict[str, object]:
     tables: dict[str, object] = {}
-    for table in PROTECTED_COLUMNS:
+    for table in protected_tables(version):
         table_sql_row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
             (table,),
@@ -354,10 +389,11 @@ def reconcile_download_files(
 def protected_state(
     connection: sqlite3.Connection,
     files: Path,
+    version: int,
 ) -> tuple[dict[str, list[dict[str, object]]], list[str]]:
     state: dict[str, list[dict[str, object]]] = {}
     errors: list[str] = []
-    for table in PROTECTED_COLUMNS:
+    for table in protected_tables(version):
         try:
             state[table] = canonical_rows(connection, table)
         except sqlite3.DatabaseError as failure:
@@ -367,6 +403,28 @@ def protected_state(
     state["download"] = downloads
     errors.extend(file_errors)
     return state, errors
+
+
+def pin_coverage_errors(connection: sqlite3.Connection) -> list[str]:
+    """CONF-81: every download and queue entry pins its track, and every pin names a cached row."""
+    errors: list[str] = []
+    for table, reason in (("download", "download"), ("queue_entry", "queue")):
+        for server_id, raw_id in connection.execute(
+            f'SELECT server_id, raw_id FROM "{table}" AS source WHERE NOT EXISTS ('
+            "SELECT 1 FROM cache_pin AS pin WHERE pin.server_id = source.server_id "
+            "AND pin.item_kind = 'track' AND pin.raw_id = source.raw_id AND pin.reason = ?)",
+            (reason,),
+        ):
+            errors.append(f"missing pin: {table} row {server_id}/{raw_id} has no {reason} pin")
+    for server_id, kind, raw_id in connection.execute(
+        "SELECT server_id, item_kind, raw_id FROM cache_pin AS pin WHERE "
+        "(item_kind = 'track' AND NOT EXISTS (SELECT 1 FROM cache_track AS t "
+        "WHERE t.server_id = pin.server_id AND t.raw_id = pin.raw_id)) OR "
+        "(item_kind = 'album' AND NOT EXISTS (SELECT 1 FROM cache_album AS a "
+        "WHERE a.server_id = pin.server_id AND a.raw_id = pin.raw_id))"
+    ):
+        errors.append(f"pinned {kind} has no cache row: {server_id}/{raw_id}")
+    return errors
 
 
 def assert_fixture_preserved(
@@ -379,16 +437,19 @@ def assert_fixture_preserved(
     target_cache_format_version: int,
 ) -> None:
     errors: list[str] = []
+    source_version = source_metadata[0]
     with sqlite3.connect(database) as connection:
-        actual, state_errors = protected_state(connection, files)
+        actual, state_errors = protected_state(connection, files, source_version)
         errors.extend(state_errors)
-        actual_schema = protected_schema(connection)
+        actual_schema = protected_schema(connection, source_version)
+        if target_version >= PIN_COVERAGE_SINCE_VERSION:
+            errors.extend(pin_coverage_errors(connection))
         metadata = connection.execute(
             "SELECT schema_version, cache_format_version, committed_generation "
             "FROM schema_meta WHERE singleton_id = 1"
         ).fetchone()
         actual["schema_meta"] = list(metadata) if metadata is not None else None
-    for table in PROTECTED_COLUMNS:
+    for table in protected_tables(source_version):
         if actual[table] != expected_state[table]:
             errors.append(
                 f"{table}: protected rows changed\n"
@@ -448,12 +509,12 @@ def migrate_and_assert_fixture(
                     f"fixture v{fixture_version} schema_meta has the wrong source version: "
                     f"actual={source_metadata}"
                 )
-            expected_state, fixture_errors = protected_state(connection, files)
+            expected_state, fixture_errors = protected_state(connection, files, fixture_version)
             if fixture_errors:
                 raise MigrationGateError(
                     "invalid pre-migration fixture:\n" + "\n".join(fixture_errors)
                 )
-            expected_schema = protected_schema(connection)
+            expected_schema = protected_schema(connection, fixture_version)
             apply_released_migrations(connection, fixture_version, target_version)
             reconcile_runtime_metadata(
                 connection,
@@ -573,7 +634,7 @@ NEGATIVE_CONTROLS = (
         DELETE FROM download WHERE state IN ('queued', 'stale');
         DELETE FROM resume_position WHERE position_milliseconds < 1000;
         """,
-        tuple(f"{table}: protected rows changed" for table in PROTECTED_COLUMNS),
+        tuple(f"{table}: protected rows changed" for table in protected_tables(1)),
     ),
     (
         "download_resume_data_nulled",
@@ -615,13 +676,58 @@ NEGATIVE_CONTROLS = (
 )
 
 
+# Pin controls run on the first fixture that the pin rules apply to, migrated to the current
+# schema, so they exercise the introducing migration and every later one.
+PIN_NEGATIVE_CONTROLS = (
+    (
+        "queue_pins_dropped",
+        "DELETE FROM cache_pin WHERE reason = 'queue';",
+        ("missing pin: queue_entry row",),
+    ),
+    (
+        "pinned_rows_dropped",
+        "DELETE FROM cache_track WHERE metadata_missing = 1;",
+        ("pinned track has no cache row",),
+    ),
+)
+# Once pins exist in a released fixture they are protected rows like any other.
+PROTECTED_PIN_NEGATIVE_CONTROLS = (
+    (
+        "download_pins_dropped",
+        "DELETE FROM cache_pin WHERE reason = 'download';",
+        ("cache_pin: protected rows changed", "missing pin: download row"),
+    ),
+)
+
+
+def prove_negative_controls(
+    fixture: Path,
+    fixture_version: int,
+    target_version: int,
+    controls: tuple[tuple[str, str, tuple[str, ...]], ...],
+) -> None:
+    for name, sql, required_evidence in controls:
+        try:
+            migrate_and_assert_fixture(fixture_version, fixture, target_version, sql)
+        except MigrationGateError as failure:
+            message = str(failure)
+            missing = {marker for marker in required_evidence if marker not in message}
+            if missing:
+                raise MigrationGateError(
+                    f"negative control {name} failed for incomplete reasons; "
+                    f"missing {sorted(missing)}\n{message}"
+                ) from failure
+            continue
+        raise MigrationGateError(f"negative control {name} was unexpectedly accepted")
+
+
 def write_forged_expected_file(fixture: Path, version: int, sql: str) -> None:
     with tempfile.TemporaryDirectory(prefix="dulcet-forged-golden-") as temp:
         shadow_database = Path(temp) / "database.db"
         shutil.copy2(fixture / "database.db", shadow_database)
         with sqlite3.connect(shadow_database) as connection:
             connection.executescript(sql)
-            forged_state, errors = protected_state(connection, fixture / "files")
+            forged_state, errors = protected_state(connection, fixture / "files", version)
             if errors:
                 raise MigrationGateError(
                     "cannot build forged expected file:\n" + "\n".join(errors)
@@ -685,10 +791,25 @@ def main() -> None:
         migrate_and_assert_fixture(version, fixture, current)
     prove_cache_format_bump_is_legal(fixtures[current], current)
     prove_destructive_migrations_are_rejected(fixtures[1], 1)
+    pin_fixture_version = PIN_COVERAGE_SINCE_VERSION - 1
+    prove_negative_controls(
+        fixtures[pin_fixture_version], pin_fixture_version, current, PIN_NEGATIVE_CONTROLS
+    )
+    protected_pin_version = PROTECTED_SINCE_VERSION["cache_pin"]
+    prove_negative_controls(
+        fixtures[protected_pin_version],
+        protected_pin_version,
+        current,
+        PROTECTED_PIN_NEGATIVE_CONTROLS,
+    )
+    control_count = (
+        len(NEGATIVE_CONTROLS) + len(PIN_NEGATIVE_CONTROLS) + len(PROTECTED_PIN_NEGATIVE_CONTROLS)
+    )
     print(
         f"Migration gate valid: {len(fixtures)} fixture database(s), "
-        f"{len(PROTECTED_COLUMNS)} protected table comparisons per fixture, "
-        f"download file reconciliation, and {len(NEGATIVE_CONTROLS)} explicit destructive "
+        f"{len(protected_tables(current))} protected table comparisons at v{current}, "
+        f"pin coverage from v{PIN_COVERAGE_SINCE_VERSION}, "
+        f"download file reconciliation, and {control_count} explicit destructive "
         "negative controls"
     )
 

@@ -28,10 +28,10 @@ Surfaces: iOS, iPadOS, macOS, tvOS (SwiftUI) and Android + Android TV (Compose).
 
 A Kotlin Multiplatform **fat core** plus **genuinely native UI shells**. The core owns everything that
 is a decision; the platform owns everything that is an OS service. One protocol implementation, one
-cache, one sync engine, one scrobble policy — six real apps on top of it.
+read path and cache, one scrobble policy — six real apps on top of it.
 
 The bet: the expensive, correctness-critical 80% of a music client is platform-independent (protocol,
-capability negotiation, cache, sync, queue, download and playback *policy*, scrobble rules, error
+capability negotiation, the read path and its cache, queue, download and playback *policy*, scrobble rules, error
 model), and the remaining 20% is exactly the part that must not be shared, because a D-pad, a trackpad
 and a thumb are not the same input.
 
@@ -87,11 +87,14 @@ Binding. A violation is a stop-work, not a style note.
    `ProviderItemId(providerInstanceId, rawId)`.
 10. **Three playback identities, never one:** `QueueEntryId`, `PlaybackSessionId`, `AttemptId`. Collapse
     them and the scrobble accounting races.
-11. **Reads of the local library are pinned to a committed sync generation.** A partially completed
-    scan is never visible. The interactive library read is a separate thing and is **not** a read of
-    the local database: it is an uncached read-through of the server, complete and self-consistent
-    at one moment, and it is never presented as a committed generation. It paints first and the
-    committed snapshot replaces it — never the other way round, and never with less (spec §16.7).
+11. **The server is the library; the device holds only what was seen.** Dulcet reads the server
+    live and caches what the person has browsed; it keeps no whole-library mirror. A list shown as
+    one list was read under one unchanged server scan stamp with no scan running; a list read while
+    the server was scanning says so, and a server that reports no scan stamp is stated once for its
+    account. A page is never stitched to a page read under a different stamp. Cached content is
+    published with its age and never as live; an error never replaces cached content; a slower
+    answer never overwrites a newer one; a pending local change is shown over both. Metadata of
+    anything downloaded, queued or playing is pinned. (spec §16.8–§16.20)
 12. **Identity separation.** Repo under `legitimate-apps` (`github-legit`), commits authored as
     `legitimate-apps` **per-command, never global config**, Apple team 3LTL47SJ8C (Legitimate LLC). The
     maintainer's legal name, home address and system username appear nowhere — not in code, commits,

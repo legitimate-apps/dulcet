@@ -53,7 +53,7 @@ class LocalLibrarySearchTest {
         store.driver.execute(null, "UPDATE track SET normalized_title = NULL, normalized_album_title = NULL", 0)
         store.driver.execute(null, "UPDATE search_index_meta SET normalization_version = 0", 0)
         val reopened = DulcetDatabaseStore.open(store.driver)
-        assertEquals(5, reopened.metadata().schemaVersion)
+        assertEquals(DULCET_SCHEMA_VERSION, reopened.metadata().schemaVersion)
         assertEquals(listOf("legacy"), LocalLibrarySearch(reopened).search(SERVER, "ec").map { it.id.rawId })
         assertEquals(emptyList(), reopened.database.libraryQueries.selectTrackSearchBackfill().executeAsList())
     }

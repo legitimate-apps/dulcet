@@ -39,6 +39,8 @@ internal data class AuthenticatedEndpointResponseHeaders(
     val retryAfter: String?,
     val acceptRanges: String?,
     val contentRange: String?,
+    /** `X-Total-Count`, which `getAlbumList2` carries as a header and never in the body (spec §16.9). */
+    val totalCount: String? = null,
 )
 
 private data class AuthenticatedEndpointHttpSnapshot(
@@ -267,6 +269,7 @@ internal class AuthenticatedEndpointClient(
             retryAfter = headers[HttpHeaders.RetryAfter],
             acceptRanges = headers[HttpHeaders.AcceptRanges],
             contentRange = headers[HttpHeaders.ContentRange],
+            totalCount = headers["X-Total-Count"],
         ),
         location = headers[HttpHeaders.Location],
     )
