@@ -747,7 +747,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             attemptID: DulcetPlaybackAttemptID(preload.attemptID)
         ))
         preloadLog.append("discarded:\(reason)")
-        if false, startsHeldEnd, let directive = transition.startDirective {
+        if startsHeldEnd, let directive = transition.startDirective {
             // The end was already held for this preload; nothing else will advance the queue.
             preloadLog.append("resumed-held-end")
             start(directive)
