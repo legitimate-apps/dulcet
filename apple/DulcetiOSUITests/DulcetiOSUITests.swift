@@ -316,11 +316,15 @@ final class DulcetiOSUITests: XCTestCase {
 
     /// The player survives the window crossing the compact/regular boundary while it is open --
     /// a large iPhone turned sideways here, iPad Split View and Stage Manager in use. The two
-    /// presentation styles flip in one update, and once left the player asked for with nothing on
-    /// screen, so the bar's tap changed nothing and the player could not be opened again.
+    /// presentation styles flip in one update; the shell hands the player from one to the other.
+    ///
+    /// This is a behaviour check, not a regression proof for that handover: on iOS 26.5 it also
+    /// passes with the handover removed, so it cannot tell whether the handover is needed. What
+    /// it asserts is the outcome: the player is on screen after each crossing, and the bar opens
+    /// it again once it is closed.
     ///
     /// Requires an iPhone whose landscape width is regular (a Pro Max or Plus model); a device
-    /// that stays compact when turned cannot express the defect, and the test says so rather than
+    /// that stays compact when turned never crosses the boundary, and the test says so rather than
     /// passing.
     @MainActor
     func testThePlayerFollowsTheWindowAcrossASizeClassChange() {
@@ -383,7 +387,7 @@ final class DulcetiOSUITests: XCTestCase {
             && app.staticTexts["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
         XCTAssertTrue(regularShell,
                       "Landscape must be a regular-width window (sidebar, no tab bar); a device that"
-                        + " stays compact cannot express this defect. width=\(landscapeWidth)")
+                        + " stays compact never crosses the boundary. width=\(landscapeWidth)")
         attachScreenshot(named: "regular-shell-landscape", app: app)
 
         // The defect's own symptom: after the flip, the bar must still open the player.

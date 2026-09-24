@@ -310,11 +310,17 @@ private struct DulcetIOSShell: View {
 
     /// A window crossing the compact/regular boundary with the player open: iPad Split View or
     /// Stage Manager, or a large iPhone turned sideways. Both presentation styles flip in the same
-    /// update, and the new one cannot present while the old one is still being dismissed -- which
-    /// left `playerPresented` true with nothing on screen, so the bar's tap changed nothing and
-    /// the player could not be opened again. The player is taken down instead, and presented
-    /// again in the new style once the old presentation has gone: from its dismissal when one was
-    /// on screen, on the next pass of the run loop when none was.
+    /// update, so the new one is asked to present while the old one is still being dismissed.
+    /// The player is taken down instead, and presented again in the new style once the old
+    /// presentation has gone: from its dismissal when one was on screen, on the next pass of the
+    /// run loop when none was.
+    ///
+    /// This is a precaution, not a measured repair. A large iPhone turned sideways on iOS 26.5
+    /// hands the player over correctly without it -- the rotation UI test passes with this
+    /// handler removed -- and the Split View and Stage Manager crossings, which a simulator
+    /// cannot drive, are unobserved. The failure it guards against (the player asked for with
+    /// nothing on screen, and the bar unable to open it) is reasoned from the two presentations
+    /// sharing one flag, and has not been reproduced.
     private func sizeClassChanged() {
         guard playerPresented else { return }
         playerPresented = false

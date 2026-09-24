@@ -397,9 +397,12 @@ horizontal size class**, never by the device:
   at a time, and deriving the stack from it reset Library to its grid on every return.
 - **A window crossing the size-class boundary loses nothing.** The shell swaps between tab bar and
   sidebar keeping the selected destination and every stack; an open player is taken down and
-  presented again in the other style once the old presentation has gone. Both styles flip in one
-  update, and the new one cannot present while the old one is still being dismissed -- which left
-  the player asked for with nothing on screen and the bar unable to open it again.
+  presented again in the other style once the old presentation has gone, because both styles flip
+  in one update and the new one would otherwise be asked to present while the old one is still
+  being dismissed. **ASSUMED:** that this handover is needed. **OBSERVED:** a 6.9-inch iPhone turned
+  sideways on iOS 26.5 keeps the player on screen and the bar able to reopen it *with the handover
+  removed* as well as with it, so the one crossing a simulator can drive does not exhibit the
+  failure; the iPad Split View and Stage Manager crossings are not driven.
 - **A failed track is not a dead end.** The bar and the player name the track that failed and offer
   Try Again and Skip (Skip only when an entry follows it, or the queue repeats); the bar can be
   dismissed until the person starts something else. A player reporting `ready` with no current item
@@ -3889,9 +3892,12 @@ wrong:
    Now Playing a presentation rather than a destination, a navigation stack per destination that
    survives leaving it and returns to its root when chosen again, a player that survives the window
    crossing the size-class boundary, and a failed track that offers Try Again and Skip. None of these
-   was written down, and three were broken: the stack was derived from a one-destination snapshot and
-   reset on every return, the size-class flip left the player unopenable, and a failed track
-   offered only disabled play and next buttons and a generic message.
+   was written down, and two were observed broken: the stack was derived from a one-destination
+   snapshot and reset on every return, and a failed track offered only disabled play and next
+   buttons and a generic message. A third -- the size-class flip leaving the player unopenable --
+   was first recorded here as broken; it was reasoned from the code, and removing the handover
+   that guards it did not reproduce it on the one crossing a simulator can drive (§3.1). The
+   handover is kept as a precaution and the claim is ASSUMED.
 
 **Revision 104 (2026-09-23; written 2026-09-11)** — §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a
