@@ -222,8 +222,9 @@ class MutationOutboxReviewTest {
 
     /**
      * Both changes are made while connected and neither send reaches the server, so a read issued
-     * after them can land before the next flush. (An offline change cannot: a reconnect flushes it
-     * before anything is read, §16.14 step 1.)
+     * after them can land before the next flush. (So can an offline change whose send fails: a
+     * reconnect flushes before it reads, §16.14 step 1, but a failed send does not stop the
+     * reconnect — MutationOutboxTest's `anOfflineChangeWhoseSend…IsSuperseded` cases.)
      */
     @Test
     fun aSendThatNeverReachedTheServerDoesNotShieldTheChangeFromANewerServerValue() = sessionTest { env ->

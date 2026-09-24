@@ -209,7 +209,9 @@ internal sealed interface DeliveryDecision {
  *   that may be this device's own earlier send, not another client's: the change is sent.
  * - When it shows the value the change was made over, the server did not change: the change is sent.
  * - Otherwise the server changed after this device last saw it, and **the server wins**. ASSUMED,
- *   and stated: a value first seen after the change was set after it.
+ *   and stated: a value first seen after the change was set after it. That is weaker for a change
+ *   made offline whose send then failed: the first read after an offline period can show a value
+ *   set at any time during it, possibly before the change (§18.3).
  */
 internal fun decideDelivery(
     change: PendingMutation,
@@ -611,9 +613,10 @@ internal class LibraryFavourites(
             if (record == MutationRecord.CompactedAway) endRunIfIdle()
             // Synchronously, before any send is launched: the tap's publication carries the change.
             changed(setOf(target.rawId))
-            // Reachable, not merely online: a change made while a reconnect runs is sent too, by
-            // that reconnect's flush or right behind it (the flush lock orders them).
-            if (reader.reachable) launchFlush(reader.scope)
+            // Not merely online: a change made while a reconnect runs is sent too, by that
+            // reconnect's flush or right behind it (the flush lock orders them). Never while the
+            // platform's last report says unreachable and no reconnect is running.
+            if (reader.canSend) launchFlush(reader.scope)
         }
         return record
     }
@@ -672,8 +675,9 @@ internal class LibraryFavourites(
      *   for the next flush — the next change made while reachable, or the reconnect of §16.14.
      * - A failure of the device's own database is thrown, never reported as the server's; every
      *   change is kept.
-     * - While the platform reports the server unreachable it does nothing. It runs while the server
-     *   is [LibraryReader.reachable] — the reconnect's first step, before the reader is online again.
+     * - It runs while [LibraryReader.canSend]: the platform reports the server reachable, the reader
+     *   is online, or a reconnect is running — its first step, before the reader is online again.
+     *   Otherwise (the platform's last report says unreachable) it does nothing.
      */
     suspend fun flush(): MutationFlushReport = confined { lock.withLock {
         var sent = 0
@@ -687,7 +691,7 @@ internal class LibraryFavourites(
         // This flush met a 429 of its own: the run of them goes on.
         var met429 = false
         var stoppedBy: DomainError? = null
-        while (reader.reachable) {
+        while (reader.canSend) {
             // The server asked for quiet (a 429): nothing is sent until the wait has passed. Checked
             // before each change, not once, so a wait the playlist flush's 429 sets meanwhile stops
             // this flush too.

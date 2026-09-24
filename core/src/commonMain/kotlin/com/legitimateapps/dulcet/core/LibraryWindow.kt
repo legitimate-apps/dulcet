@@ -116,8 +116,9 @@ internal abstract class ReaderHandle(
      * The reader has just come back online and is about to revalidate every screen in turn
      * ([LibraryReader.reconnect]). Republished now, so a screen whose read is coming says
      * `cached(revalidating)` or `loading` at once rather than `offline` until its turn, and a fresh
-     * one says `live`. Never a spinner with nothing coming: the flag set here is cleared by that
-     * revalidation, which the reconnect runs next.
+     * one says `live`. Never a spinner with nothing coming: the flag is set here only when
+     * [readsOnReconnect] says a read is coming, the revalidation decides the same way before it
+     * publishes anything, and it clears the flag whether or not it reads.
      */
     fun prepareForReconnect() {
         if (closed) return
@@ -152,11 +153,21 @@ internal abstract class ReaderHandle(
         emit(publication)
     }
 
+    /**
+     * Delivers to the listener. A listener that throws is the listener's failure, not this
+     * screen's or the reader's: it is dropped here, so it can never abort the step that published —
+     * a reconnect, a revalidation, a page (the facade guards its own listeners the same way).
+     */
     private fun emit(publication: LibraryPublication) {
         if (closed) return
         sequence += 1
         published = publication.items
-        listener(publication.copy(sequence = sequence))
+        try {
+            listener(publication.copy(sequence = sequence))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+        }
     }
 
     /** Converts anything a live operation throws into a publication that says the screen failed. */
@@ -427,8 +438,30 @@ internal class ListWindow(
             viewport.first < state.firstLoadedOffset ||
             (viewport.first >= state.endLoadedOffset && state.endLoadedOffset > state.firstLoadedOffset)
 
+    /**
+     * Whether this revalidation will read, decided BEFORE anything says `revalidating`: a whole list
+     * always; a paged one when it is torn, not read recently under the current epoch, or refreshed.
+     * The same rule as [readsOnReconnect], and the one [performRevalidate] applies once it has the
+     * epoch.
+     */
+    private fun readComing(cause: RevalidateCause): Boolean {
+        if (!spec.paged) return true
+        val epoch = reader.sessionEpoch ?: return true
+        val state = cache.listState(spec.listKey) ?: return true
+        return cause == RevalidateCause.Refresh || mustRebase(state, epoch) || !readRecently(state, epoch)
+    }
+
     override suspend fun performRevalidate(cause: RevalidateCause) {
         if (closed || !reader.online) return
+        if (!readComing(cause)) {
+            // Fresh: nothing is read, so nothing says `revalidating` — and nothing is republished,
+            // unless a `revalidating` this handle already published must be taken back.
+            if (revalidationPending) {
+                revalidationPending = false
+                emitSnapshot()
+            }
+            return
+        }
         if (cause != RevalidateCause.Open && cache.listState(spec.listKey) != null) {
             inFlight += 1
             emitSnapshot()
@@ -517,10 +550,9 @@ internal class ListWindow(
      * that with no scan reported, the window is written as `unverified(changing)` — an honest label,
      * not "scanning" — and the next revalidation rebases it again.
      */
-    private suspend fun rebase(epoch: CatalogEpoch, attempt: Int) {
+    private suspend fun rebase(epoch: CatalogEpoch, attempt: Int, anchorBefore: AnchorSource? = firstVisibleAnchorSource()) {
         generation += 1
         val gen = generation
-        val anchorBefore = firstVisibleAnchorSource()
         val offsets = viewportPageOffsets()
         val reads = coroutineScope { offsets.map { offset -> async { readPage(offset) } }.awaitAll() }
         if (gen != generation || closed) return
@@ -534,7 +566,7 @@ internal class ListWindow(
         val moved = PageCheck.Fired in checks || PageCheck.ScanEnded in checks
         val latest = reader.sessionEpoch ?: epoch
         if (moved && attempt < reader.config.maxTearRetries) {
-            rebase(latest, attempt + 1)
+            rebase(latest, attempt + 1, anchorBefore)
             return
         }
         val coverage = when {
@@ -558,6 +590,16 @@ internal class ListWindow(
             entities += page.parsed.entities
         }
         val total = pages.lastOrNull { it.totalCount != null }?.totalCount
+        if (first > 0 && (members.isEmpty() || (total != null && first >= total))) {
+            // The anchor lies at or past the list's end — it shrank. Re-anchor on the last page that
+            // exists, so no stored row at or beyond the total the server just reported is kept,
+            // shown or labelled live. With no total to go by (or one that contradicts the empty
+            // page), on the top. Each re-anchor reads a page strictly before this one, so it ends.
+            val lastExisting = if (total != null && total in 1..first) total - 1 else 0
+            viewport = lastExisting..lastExisting
+            rebase(if (moved) latest else epoch, attempt, anchorBefore)
+            return
+        }
         val complete = coverage == CacheCoverage.Open && first == 0 &&
             (lastRows == 0 || (total != null && end >= total))
         val now = cache.now()
@@ -573,7 +615,8 @@ internal class ListWindow(
             replacedEnd = end,
             members = members,
             entities = entities.merge(),
-            keepRange = first until maxOf(first + members.size, first + 1),
+            // Exactly the rows just read: an empty read keeps nothing.
+            keepRange = first until first + members.size,
         )
         cache.evictIfNeeded()
         markLive()

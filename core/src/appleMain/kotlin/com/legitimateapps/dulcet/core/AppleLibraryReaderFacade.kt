@@ -48,10 +48,15 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * platform reports, and [reconnect] when the app returns to the foreground online. Nothing else is
  * needed, and neither the order nor a duplicate matters: reporting the server reachable while the
  * reader is offline requests the reconnect itself, a reconnect already running is joined, and a
- * reconnect is the only way back online — so nothing is read before its outbox flush and epoch read.
+ * reconnect is the only way back online — so for a reader that was offline, nothing is read before
+ * its outbox flush and epoch read. A foreground reconnect of a reader that is already online leaves
+ * it online throughout: its screens and searches keep reading, so a read can go out before the
+ * flush's send, and a change made while connected can be overtaken (§18.3).
  * A reconnect whose epoch read fails says why in its completion, and nothing after that read runs:
  * the reader stays offline and no screen is revalidated or relabelled, though the outbox flush
- * before it may already have sent changes. The next report or reconnect tries again.
+ * before it may already have sent changes. A reconnect in which the reader itself fails completes
+ * with `internalFailure`; if that happened after the reader came back online, it is offline again,
+ * every screen saying so. Either way the next report or reconnect runs the whole sequence again.
  */
 @OptIn(ExperimentalAtomicApi::class, DelicateCoroutinesApi::class)
 public class AppleLibraryReaderClient internal constructor(
@@ -184,7 +189,11 @@ public class AppleLibraryReaderClient internal constructor(
 
     // ---- Connection lifecycle --------------------------------------------------------------------------------
 
-    /** The connect-time epoch reading (two requests, §16.11); the completion says whether THIS call read it. */
+    /**
+     * The connect-time epoch reading (two requests, §16.11); the completion says whether THIS call
+     * read it. While the reader is offline it reads the device only — no request — and completes
+     * with the epoch not known and `unreachable`; the reconnect that brings the reader back reads it.
+     */
     public fun connect(completion: (AppleLibraryReaderConnection) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = ::failedConnection) { session ->
             session.connection(session.reader.connectReporting())
@@ -196,7 +205,10 @@ public class AppleLibraryReaderClient internal constructor(
      * if that read succeeded, back online and the visible screen revalidated (open windows, then
      * open searches) and the downloaded-album recheck — and nothing else. A reconnect already
      * running (one [setOnline] requested) is joined. The completion names the failure when the epoch
-     * could not be read; cancelling this operation stops only the wait, not the reconnect.
+     * could not be read, and says `internalFailure` when the reader itself failed — after the
+     * transition, that leaves the reader offline again. It never overwrites the platform's
+     * reachability: after a failed reconnect the reader acts on the last [setOnline]. Cancelling
+     * this operation stops only the wait, not the reconnect.
      */
     public fun reconnect(completion: (AppleLibraryReaderConnection) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = ::failedConnection) { session ->
@@ -205,8 +217,10 @@ public class AppleLibraryReaderClient internal constructor(
 
     /**
      * Reachability as the platform reports it; call it on every change. Unreachable takes the reader
-     * offline at once — no request is issued offline. Reachable while offline requests a
-     * [reconnect]; the reader is back online only once that reconnect has read the epoch.
+     * offline at once: from then on nothing is read or sent — no window, search, look-ahead,
+     * [connect] or change — until a reachable report or a [reconnect] starts the reconnect, whose
+     * outbox flush and epoch read come first. Reachable while offline requests a [reconnect]; the
+     * reader is back online only once that reconnect has read the epoch.
      */
     public fun setOnline(reachable: Boolean) {
         onReader { composition?.session?.setOnline(reachable) }
@@ -228,8 +242,10 @@ public class AppleLibraryReaderClient internal constructor(
      * a publication already queued for the main thread is dropped when it arrives — provided it is
      * called on the main thread; from another thread, a delivery already running may finish.
      *
-     * The teardown runs on the reader's thread BEHIND every call already queued there, which still
-     * runs first. So each pending completion is delivered exactly once, possibly after this returns:
+     * The teardown runs on the reader's thread BEHIND every call already queued there. A window or
+     * search subscription call among them does nothing when it runs — no SQL, no request, no
+     * delivery; every other call still runs first. So each pending completion is delivered exactly
+     * once, possibly after this returns:
      * an operation that finished before the teardown with its result (a success that has already
      * completed wins, §7.2), one still in flight at the teardown as `cancelled`, and one requested
      * after this call as `closed`. The reader may still write to the database until the teardown has
@@ -687,6 +703,10 @@ public class AppleLibraryWindowSubscription internal constructor(
         }
     }
 
+    /**
+     * Idempotent. Called on the main thread, nothing is delivered after it returns; and a call on
+     * this subscription queued before it does nothing when it runs.
+     */
     public fun close() {
         if (listener.exchange(null) == null) return
         client.onReader(::closeOnReader)
@@ -746,6 +766,9 @@ public class AppleLibraryWindowSubscription internal constructor(
     private fun call(publishFailure: Boolean = true, action: (LibraryWindowHandle) -> Unit) {
         if (listener.load() == null) return
         client.onReader {
+            // Checked again when it RUNS: a call queued before a close of this subscription or of
+            // the client does nothing once that close has returned — no SQL, no request.
+            if (listener.load() == null || client.isClosed) return@onReader
             val current = handle ?: return@onReader
             try {
                 action(current)
@@ -825,6 +848,10 @@ public class AppleLibrarySearchSubscription internal constructor(
         call { it.refresh() }
     }
 
+    /**
+     * Idempotent. Called on the main thread, nothing is delivered after it returns; and a call on
+     * this subscription queued before it does nothing when it runs.
+     */
     public fun close() {
         if (listener.exchange(null) == null) return
         client.onReader(::closeOnReader)
@@ -865,6 +892,9 @@ public class AppleLibrarySearchSubscription internal constructor(
     private fun call(action: (LibrarySearchSession) -> Unit) {
         if (listener.load() == null) return
         client.onReader {
+            // Checked again when it RUNS: a call queued before a close of this subscription or of
+            // the client does nothing once that close has returned — no SQL, no request.
+            if (listener.load() == null || client.isClosed) return@onReader
             val current = session ?: return@onReader
             try {
                 action(current)

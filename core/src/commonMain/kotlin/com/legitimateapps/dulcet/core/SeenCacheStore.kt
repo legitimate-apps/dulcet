@@ -697,8 +697,11 @@ internal class BoundSeenCache internal constructor(
     /**
      * Writes one page of a window and its entities in one transaction (spec §16.10: a cached window
      * never references an entity that is not cached). [members] replace positions
-     * `[pageStart, pageStart + members.size)`; when [keepRange] is given, every member outside it is
-     * dropped in the same transaction (a rebase, §16.12).
+     * `[pageStart, maxOf(replacedEnd, pageStart + members.size))`; when [keepRange] is given, every
+     * member outside it is dropped in the same transaction (a rebase, §16.12) — an empty [keepRange]
+     * keeps nothing. And when the state carries the server's total, every member at or beyond it is
+     * dropped: a page that came back short or empty names positions the server no longer has, and
+     * the replaced range alone can be empty (a page of no rows at its own start replaces nothing).
      */
     fun writeWindowPage(
         stamp: CacheWriteStamp,
@@ -718,6 +721,9 @@ internal class BoundSeenCache internal constructor(
         }
         if (keepRange != null) {
             queries.deleteListMembersOutside(serverId, state.listKey, keepRange.first.toLong(), keepRange.last.toLong() + 1)
+        }
+        state.total?.let { total ->
+            queries.deleteListMembersInRange(serverId, state.listKey, maxOf(total, 0).toLong(), Long.MAX_VALUE)
         }
     }
 

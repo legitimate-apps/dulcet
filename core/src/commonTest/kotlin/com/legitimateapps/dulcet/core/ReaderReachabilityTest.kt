@@ -14,10 +14,12 @@ import kotlin.test.assertTrue
 
 /**
  * The reader's one reachability model (§16.14), driven through the production
- * [LibraryReaderSession]: a reconnect is the only way back online, so in every order a shell can
- * report reachability and call reconnect, nothing reads the server before the outbox flush and the
- * epoch read have finished; a reconnect that cannot read the epoch says so and strands nothing; and
- * a surface that is current is not re-read. Request counts and orders are asserted, never wall time.
+ * [LibraryReaderSession]: a reconnect is the only way back online, so for a reader coming back
+ * from offline, in every order a shell can report reachability and call reconnect, nothing reads
+ * the server before the outbox flush and the epoch read have finished (a reader that is already
+ * online keeps reading, §18.3); a reconnect that cannot read the epoch says so and strands nothing;
+ * and a surface that is current is not re-read. Request counts and orders are asserted, never wall
+ * time.
  */
 class ReaderReachabilityTest {
     private val grid = LibraryQuery.AlbumList(AlbumListType.AlphabeticalByName)
