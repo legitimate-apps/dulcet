@@ -11,6 +11,8 @@ enum DulcetQueueStrings {
     static let playLater = text("queue.playLater", "Play Last")
     static let moveUp = text("queue.moveUp", "Move Up")
     static let moveDown = text("queue.moveDown", "Move Down")
+    static let previouslyPlayed = text("queue.history", "Previously Played")
+    static let playAgain = text("queue.playAgain", "Play Again")
     static let airPlay = text("queue.airPlay", "AirPlay")
     static let volume = text("queue.volume", "Volume")
 
@@ -172,10 +174,63 @@ public struct DulcetUpNextList: View {
     public var body: some View {
         List {
             DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit)
+#if !os(tvOS)
+            DulcetQueueHistorySection(nowPlaying: nowPlaying, onEdit: onEdit)
+#endif
         }
         .accessibilityIdentifier("dulcet.upNext")
     }
 }
+
+#if !os(tvOS)
+/// What has already played from this queue, most recent first, under Up Next. Collapsed until
+/// asked for, so a long album played to its middle does not push Up Next off the screen; a row
+/// plays that track again, from there. Nothing when nothing has played yet.
+struct DulcetQueueHistorySection: View {
+    private let model: DulcetUpNextModel
+    private let onEdit: (DulcetQueueEditIntent) -> Void
+    @State private var expanded = false
+
+    init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void) {
+        model = DulcetUpNextModel(nowPlaying: nowPlaying)
+        self.onEdit = onEdit
+    }
+
+    var body: some View {
+        if !model.recentHistory.isEmpty {
+            Section {
+                // A disclosure group, so VoiceOver reads it as expanded or collapsed.
+                DisclosureGroup(isExpanded: $expanded) {
+                    ForEach(Array(model.recentHistory.enumerated()), id: \.element.id) { offset, entry in
+                        Button {
+                            onEdit(model.jumpIntent(to: entry))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.track.title)
+                                    .lineLimit(1)
+                                Text(DulcetStrings.artistNames(entry.track.artistNames))
+                                    .font(.caption)
+                                    .dulcetForeground(.secondaryTextOnWindow)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .dulcetHoverEffect()
+                        .accessibilityHint(DulcetQueueStrings.playAgain)
+                        .accessibilityIdentifier("dulcet.history.row.\(offset)")
+                    }
+                } label: {
+                    Text(DulcetQueueStrings.previouslyPlayed)
+                        .font(.headline)
+                        .accessibilityIdentifier("dulcet.history.toggle")
+                }
+            }
+        }
+    }
+}
+#endif
 
 extension View {
     /// Says so, briefly and to VoiceOver, when the playback controller refuses a queue edit: a

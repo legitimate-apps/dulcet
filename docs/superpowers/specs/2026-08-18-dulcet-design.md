@@ -427,6 +427,13 @@ horizontal size class**, never by the device:
   cannot be edited at all, every tile still lifts with a card that says it cannot be added, and
   there is no drop target: the bar and Up Next do not accept a drop, so the card is the refusal. **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
   tap in flight when a library read replaces every tile; it was not reproduced.
+- **The player.** A swipe across the cover plays the next track (left) or the previous one
+  (right), and a downward swipe closes a full-screen player; a diagonal drag does nothing. Up Next
+  is followed by what has already played from the queue, most recent first, collapsed until asked
+  for. The cover's own colours glow out from behind it, and only there: every text colour on the
+  player is a registered contrast pair measured against the window colour, so a blurred cover under
+  the text would void the measurement. Reduce Transparency removes the glow. Beside a regular-width
+  player, the queue column spans the player's height rather than the window's.
 
 ---
 
@@ -5399,6 +5406,10 @@ wrong:
    replay, a new session from the start, and it has its own row.
 8. **A drag onto the queue never drops silently** (§3.1). Attaching the drag interaction to every
    tile made disabled ones lift and drop nothing without a word; the drop is now refused out loud.
+9. **The player's cover and history** (§3.1): swipes on the cover change track, what has played is
+   listed under Up Next, and the cover tints the player with a glow confined to the cover -- not a
+   blurred background, which would put arbitrary colour under text whose contrast is measured
+   against the window.
 
 **Revision 105 (2026-09-24)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a

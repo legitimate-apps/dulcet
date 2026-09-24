@@ -416,6 +416,72 @@ final class DulcetiOSUITests: XCTestCase {
             + " closed-portrait=\(closedInPortrait) reopened-portrait=\(reopenedInPortrait)")
     }
 
+    /// A swipe across the player's artwork changes track, as the system player's does: left for
+    /// the next track, right for the previous one. On the deterministic fixture, so the titles
+    /// are known and no server is involved.
+    @MainActor
+    func testSwipingThePlayerArtworkChangesTrack() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments.append("-dulcet-account-connect-layout-fixture")
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertLessThan(window.frame.width, 700,
+                          "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+            return
+        }
+        let album = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
+        ).firstMatch
+        guard album.waitForExistence(timeout: 10),
+              scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
+            XCTFail("The fixture's Double Lines album must be reachable in the grid")
+            return
+        }
+        album.tap()
+        let firstTrack = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Disc 1 Track 1")
+        ).firstMatch
+        guard firstTrack.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must list its first track")
+            return
+        }
+        firstTrack.tap()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 10) else {
+            XCTFail("Playing must bring up the bar")
+            return
+        }
+        bar.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        guard title.waitForExistence(timeout: 10), waitForLabel("Disc 1 Track 1", of: title, timeout: 5) else {
+            XCTFail("The player must open on the track that was played")
+            return
+        }
+        attachScreenshot(named: "player-sheet-artwork-glow", app: app)
+
+        // The artwork is decorative and hidden from accessibility, so the swipe is placed by the
+        // title under it: the cover ends one spacing step above the title and is at least 120
+        // points tall, so 70 points above the title's top is on the cover.
+        func swipe(from startX: CGFloat, to endX: CGFloat) {
+            let y = title.frame.minY - 70
+            let origin = window.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: startX, dy: y))
+            let end = origin.withOffset(CGVector(dx: endX, dy: y))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        let width = window.frame.width
+        swipe(from: width * 0.8, to: width * 0.2)
+        let nextBySwipe = waitForLabel("Disc 1 Track 2", of: title, timeout: 5)
+        XCTAssertTrue(nextBySwipe, "Swiping left must play the next track; title=\(title.label)")
+        swipe(from: width * 0.2, to: width * 0.8)
+        let previousBySwipe = waitForLabel("Disc 1 Track 1", of: title, timeout: 5)
+        XCTAssertTrue(previousBySwipe, "Swiping right must play the previous track; title=\(title.label)")
+        print("DULCET ARTWORK SWIPE OBSERVED next=\(nextBySwipe) previous=\(previousBySwipe)")
+    }
+
     @MainActor
     private func waitForLabelContaining(
         _ text: String, of element: XCUIElement, timeout: TimeInterval
@@ -763,6 +829,29 @@ final class DulcetiOSUITests: XCTestCase {
             app.buttons["dulcet.now-playing.up-next"].exists,
             "With Up Next already beside the player there is no toggle for it"
         )
+        // What has played is kept under Up Next, collapsed, most recent first.
+        // The player's own Next: the window also carries zero-size keyboard-shortcut buttons
+        // with the same label, which a first match can land on.
+        let playerNext = app.buttons.matching(NSPredicate(format: "label == %@", "Next Track"))
+            .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+        XCTAssertNotNil(playerNext, "The full-screen player must offer Next")
+        playerNext?.tap()
+        let advanced = waitForLabel("Thirty One Seconds", of: title, timeout: 15)
+        XCTAssertTrue(advanced, "Next must advance the player; title=\(title.label)")
+        let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
+        let historyShown = historyToggle.waitForExistence(timeout: 5)
+        XCTAssertTrue(historyShown, "A played track must be listed under Previously Played")
+        var historyRow = "<none>"
+        if historyShown {
+            historyToggle.tap()
+            let row = app.buttons["dulcet.history.row.0"].firstMatch
+            historyRow = row.waitForExistence(timeout: 5) ? row.label : "<none>"
+            XCTAssertTrue(historyRow.hasPrefix("Twenty Nine Seconds"),
+                          "The most recent track leads the history; row=\(historyRow)")
+            attachScreenshot(named: "ipad-full-screen-player-history", app: app)
+        }
+        print("DULCET IPAD HISTORY OBSERVED advanced=\(advanced) history-shown=\(historyShown)"
+            + " row-0=\(historyRow.debugDescription)")
         close.tap()
         XCTAssertTrue(title.waitForNonExistence(timeout: 10), "Closing must dismiss the player")
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
