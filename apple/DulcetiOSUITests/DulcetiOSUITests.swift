@@ -546,9 +546,9 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     /// A grid tile opens its album on a phone against a live library, by element tap -- the path
-    /// a device run reported dead. Two cases: a tile in the first row, and, with playback running
-    /// so the now-playing bar is on screen, a tile whose frame reaches under the bar or the tab
-    /// bar, which the tap must scroll to rather than lose to the controls on top of it.
+    /// a device run reported dead. Two cases: a tile in the first row, and, with the now-playing
+    /// bar on screen, a tile whose centre lies under the bar or the tab bar, which the tap must
+    /// scroll to rather than lose to the controls on top of it.
     ///
     /// Every tile's frame is printed with the bar's and the tab bar's, so the geometry here can be
     /// compared with a device build's.
@@ -604,10 +604,14 @@ final class DulcetiOSUITests: XCTestCase {
         let firstOpened = firstLabel.hasPrefix(albumTitle.label)
         XCTAssertTrue(firstOpened,
                       "The first tile must open its own album; tile=\(firstLabel) page=\(albumTitle.label)")
+        // Playing puts the bar on screen, which the second case needs. The bar is the condition,
+        // not a Pause label: this album's four tracks last two seconds in all, so the queue has
+        // usually finished -- and the bar is back on Play, still showing -- before a label query
+        // returns on a loaded host. (A queue restored from an earlier run can have the bar up
+        // already; either way the second case runs with it on screen, which is what it needs.)
         app.buttons["dulcet.album.play"].firstMatch.tap()
-        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        guard playPause.waitForExistence(timeout: 20), waitForLabel("Pause", of: playPause, timeout: 30) else {
-            XCTFail("Playback must start so the bar is on screen; play/pause=\(playPause.label)")
+        guard app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The now-playing bar must be on screen after Play: " + app.debugDescription)
             return
         }
         app.navigationBars.buttons.firstMatch.tap()
