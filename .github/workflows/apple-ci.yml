@@ -884,6 +884,24 @@ jobs:
             "$RUNNER_TEMP/dulcet-playback-failure-delivery.xcresult" \
             DulcetPlaybackIntegrationTests.DulcetCorePlaybackPresentationTests \
             testEngineFailureAfterPlayingReachesPresentationStore
+          # The playback system's boundary, preload and queue-end contracts. This class ran in no
+          # workflow once, and a disabled branch it catches reached a TestFlight build. Every test
+          # method declared in the source must be proven to have executed and passed; the count
+          # floor stops an extraction that finds nothing from verifying nothing.
+          xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetPlaybackIntegration \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
+              -parallel-testing-enabled NO \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-playback-system.xcresult" \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetCorePlaybackSystemTests 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-playback-system.log"
+          python3 tools/verify-xcode-test-class \
+            "$RUNNER_TEMP/dulcet-playback-system.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetCorePlaybackSystemTests \
+            apple/DulcetPlaybackIntegrationTests/DulcetCorePlaybackSystemTests.swift \
+            9
           download_xctestrun="$(find \
             "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData/Build/Products" \
             -name 'DulcetPlaybackIntegration_*.xctestrun' -print -quit)"
