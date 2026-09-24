@@ -1092,7 +1092,13 @@ the watch, not from what the account status shows: opening a saved account's lib
 refusal there with "saved", and that person is still owed the retry. Nothing but the retry says
 "connecting" while it runs, so opening the library again does not make it look saved and idle, and
 a library read that lands after it does not overwrite how it ended. An in-place retry that
-fails is recorded where Connection shows it. Open Settings goes to the
+fails is recorded where Connection shows it. The privacy check's own answers -- the refusal, or
+"not denied" and the original failure -- are recorded the same way: the check can wait on the
+person answering the system's prompt, and someone who has left the spinner meanwhile is not pulled
+back to Connection by it. Editing what the refused connection would send ends the refusal as
+pressing Connect or Cancel does: the retry would connect with the old values and write them back
+into the field, so it is not made, the edit is kept, and the status stops promising a connection.
+Open Settings goes to the
 app's own Settings page on iOS and iPadOS; on the Mac it goes to the Privacy & Security pane, and
 **ASSUMED**: that its `Privacy_LocalNetwork` anchor lands on the Local Network row. Apple documents
 no URL for that row. On macOS 26.7 the installed Privacy & Security extension declares the legacy
@@ -1223,6 +1229,7 @@ server-offset seek). **Every engine event carries its `AttemptId`; the core maps
 | start playing an entry | new | new | starts at zero |
 | plan refresh (expiry / mid-stream 401) | same | new | preserved |
 | retry after a failure (`FailedBeforeStart` or `FailedAfterPartial`) | same | new | preserved; a partial failure resumes from its saved position |
+| retry after a failure at or past the end (a replay) | outgoing finalized, then new | new | outgoing evaluated, then new at zero; plays from the start |
 | server-offset seek (§12.7) | same | new | preserved |
 | next queue item (manual or auto) | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
 | repeat-one | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
@@ -1234,7 +1241,12 @@ before start evaluated nothing. A failure after partial playback is terminal for
 failure saved (§15.5) with the accumulator carried across. So a listen that took several attempts is
 evaluated as the one listen it was -- submitted once when its time crosses the threshold, however
 the attempts divide it -- and `submitted` keeps an evaluation at the failure from being followed by
-a second submission. The shell only asks to retry (revision 106).
+a second submission. The one exception is a failure **at or past the end** of a track whose length is
+known: nothing of that listen is left to resume, so Try Again is a replay, and a replay is a new
+play -- a new session from the start, as repeat-one is. Kept in the old session, it played the track
+again from zero into an accumulator that had already submitted, and the second listen never counted.
+The core decides which from the failed attempt's position; the shell only asks to retry
+(revision 106).
 
 **Event acceptance rule (this is the fix for the drop-stale-events race):** an event for a superseded
 `AttemptId` is **not** discarded outright. It is routed to its **session**, which is still live during a
@@ -2245,8 +2257,9 @@ implied.
 
 **v1 scope: local only.** `resume_position` is written on pause, on `FailedAfterPartial`, on session
 finalization, and on a 30-second cadence while progressing; restored when the same item is started
-again, and when Try Again retries a partial failure (§12.1); cleared on
-`EndedNaturally` and on a submitted play that reached the end. It is protected data (§11.4).
+again, and when Try Again retries a partial failure (§12.1) -- unless that failure came at or past
+the end, where Try Again replays the track from the start and the saved position is cleared; cleared
+on `EndedNaturally` and on a submitted play that reached the end. It is protected data (§11.4).
 
 **Server-side bookmarks (`getBookmarks` / `createBookmark` / `deleteBookmark`) are not implemented in
 v1**, so cross-device resume is not a v1 feature and is not claimed. This is stated explicitly because
@@ -4391,6 +4404,10 @@ freshly booted simulator (SUPPORTED, n=23).
    booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
    does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
    composite starts with that call. This is sequencing, not a budget: no timeout was raised for it.
+   The compact-shell launch that follows the iPhone, iPadOS and tvOS legs makes the same call,
+   although it talks to no fixture. OBSERVED on run 35985802454: its runner launch took 579.9 s,
+   with load1 196-562 on 3 CPUs and about 2 GB of swap, while nothing had shut the three legs'
+   devices down. That those devices caused the slow launch is ASSUMED.
 3. **A test binary is linked by a Gradle invocation that exits before the suite runs**, so the
    compiler's JVM is not resident while the tests execute on a 7 GB runner.
 4. **Every run records host pressure** (`tools/ci/host-pressure`, per phase, green or red). A stall
@@ -5048,7 +5065,10 @@ wrong:
    place; an in-place retry never moves them, even when they come to Connection before it lands,
    where it shows as connecting. **Corrected (2026-09-24):** the retry waited for the refusal to be
    showing, and opening a saved account's library replaces it with "saved", so for that person a
-   grant retried nothing. The watch that reported the refusal now decides (§10.3).
+   grant retried nothing. The watch that reported the refusal now decides (§10.3). Two further
+   corrections the same day: the refusal took a person who had left the spinner back to
+   Connection, and an address edited while the refusal showed was replaced by the old one when the
+   grant retried it. The refusal is now recorded where the person is, and an edit ends it.
 6. **The iOS and iPadOS shell is specified** (§3.1): tab bar or sidebar by the window's size class,
    Now Playing a presentation rather than a destination, a navigation stack per destination that
    survives leaving it and returns to its root when chosen again, a player that survives the window
@@ -5070,6 +5090,10 @@ wrong:
    no single session reached the threshold. Try Again after any failure now keeps the session, and
    one row says so; §15.2 and §15.5 say what a retried partial failure evaluates and restores. The
    two cases are tests in the core, with the one uninterrupted listen as their positive control.
+   **Corrected again (2026-09-24):** "any failure" was too broad by one case. A failure at or past
+   the end left nothing to resume, and keeping its session replayed the track from zero into an
+   accumulator that had already submitted, so the second listen never counted. That retry is a
+   replay, a new session from the start, and it has its own row.
 8. **A drag onto the queue never drops silently** (§3.1). Attaching the drag interaction to every
    tile made disabled ones lift and drop nothing without a word; the drop is now refused out loud.
 

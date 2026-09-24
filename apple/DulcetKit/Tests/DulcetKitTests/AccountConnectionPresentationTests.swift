@@ -3437,6 +3437,76 @@ func aHeldLibraryReadDoesNotOverwriteHowAnInPlaceRetryEnded() {
     #expect(store.snapshot.state != .accountConnecting, "nothing is connecting any more")
 }
 
+/// The person corrects the address while the refusal shows, and has not pressed Connect yet.
+@Test @MainActor
+func editingTheAddressWhileTheRefusalShowsEndsItAndKeepsTheEdit() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied, "the experiment needs the refusal showing")
+
+    store.accountServerURL = "http://10.0.0.99:4533"
+    #expect(probe.watches.last?.cancelled == true, "the edit ends the watch")
+    #expect(shownFailureKind(store) == nil, "Connection no longer promises to connect on its own")
+    #expect(store.snapshot.selectedDestination == .settings)
+
+    // A grant from the ended watch retries nothing, and the edit stays in the field.
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 1)
+    #expect(store.accountServerURL == "http://10.0.0.99:4533")
+    // ...and is still there after the person goes somewhere and comes back.
+    store.navigate(to: .library)
+    store.navigate(to: .settings)
+    #expect(store.accountServerURL == "http://10.0.0.99:4533")
+
+    // Connect sends what was edited.
+    store.submitAccountConnection()
+    #expect(connector.requests.last?.serverURL == "http://10.0.0.99:4533")
+}
+
+/// An edit that changes nothing is not an edit: the retry still comes.
+@Test @MainActor
+func settingTheAddressToWhatItAlreadyIsKeepsTheRetry() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.accountServerURL = "http://10.0.0.20:4533"
+    #expect(probe.watches.last?.cancelled == false)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried the connection")
+}
+
+/// The privacy check can take as long as the person takes to answer the system's prompt; someone
+/// who has left the spinner meanwhile is not pulled back to Connection by its answer.
+@Test @MainActor
+func thePrivacyChecksAnswerArrivingAfterThePersonLeftDoesNotMoveThem() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    #expect(store.snapshot.state == .accountConnecting, "the spinner waits for the privacy check")
+    store.navigate(to: .library)
+    probe.answer(.denied)
+    #expect(store.snapshot.selectedDestination == .library, "a denial does not move them")
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied, "it is recorded on the status")
+    store.navigate(to: .settings)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied, "Connection shows it")
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant still retries")
+
+    // The other answer -- privacy was never the obstacle -- is recorded the same way.
+    let (other, otherConnector, otherProbe) = localNetworkStore()
+    other.submitAccountConnection()
+    otherConnector.complete(.failed(accountFailure(.transportUnreachable)))
+    other.navigate(to: .search)
+    otherProbe.answer(.notDenied)
+    #expect(other.snapshot.selectedDestination == .search)
+    #expect(shownFailureKind(other) == .transportUnreachable)
+    other.navigate(to: .settings)
+    #expect(shownFailureKind(other) == .transportUnreachable)
+}
+
 @Test @MainActor
 func anInPlaceRetryCanBeCancelledFromConnection() {
     let (store, connector, probe) = localNetworkStore()

@@ -77,6 +77,8 @@ class PlaybackRetryScrobbleTest {
             }
         }
 
+        fun savedPosition(): Duration? = resumePositions.restore(request.items[0].itemId)
+
         val submittedPlays: Int
             get() = effects.count { effect ->
                 (effect as? PlaybackCoreEffect.RecordPlaybackEvent)?.event is RecordedPlaybackEvent.SubmittedPlay
@@ -187,6 +189,66 @@ class PlaybackRetryScrobbleTest {
             rig.event(PlaybackEngineEvent.EndedNaturally(retried.attemptId, 180.seconds))
             assertEquals(1, rig.submittedPlays)
         }
+
+    /**
+     * A failure at the end finished the listen it belonged to: Try Again then plays the track
+     * again, which -- like repeat-one -- is a new session, from the start, and a second listen.
+     */
+    @Test
+    fun tryingAgainAfterAFailureAtTheEndPlaysItAgainAsANewListen() = rig(300.seconds) { rig ->
+        val start = assertNotNull(rig.controller.replaceAndStart(rig.request).startDirective)
+        rig.play(start.attemptId, 300.seconds, 0, 300)
+        assertEquals(1, rig.submittedPlays, "the case needs the first listen already counted")
+        rig.event(
+            PlaybackEngineEvent.FailedAfterPartial(start.attemptId, 300.seconds, DomainError.Transport.Unreachable),
+        )
+
+        val replay = rig.retry()
+        assertEquals(start.queueEntryId, replay.queueEntryId)
+        assertNotEquals(start.playbackSessionId, replay.playbackSessionId, "a replay is a new session")
+        assertEquals(null, replay.resumePosition, "from the start")
+        rig.play(replay.attemptId, 300.seconds, 0, 300)
+        rig.event(PlaybackEngineEvent.EndedNaturally(replay.attemptId, 300.seconds))
+
+        assertEquals(2, rig.submittedPlays, "two listens, two plays")
+    }
+
+    /**
+     * The same when the listen at the end was not a play -- started a few seconds from the end --
+     * so its position was saved rather than cleared: the replay still starts from the beginning,
+     * and the saved end position does not outlive it.
+     */
+    @Test
+    fun aFailureAtTheEndIsRetriedFromTheStartEvenWhenItWasNotAPlay() = rig(300.seconds) { rig ->
+        val start = assertNotNull(rig.controller.replaceAndStart(rig.request).startDirective)
+        rig.play(start.attemptId, 300.seconds, 290, 300)
+        rig.event(
+            PlaybackEngineEvent.FailedAfterPartial(start.attemptId, 300.seconds, DomainError.Transport.Unreachable),
+        )
+        assertEquals(0, rig.submittedPlays, "the case needs a listen too short to count")
+        assertEquals(300.seconds, rig.savedPosition(), "and its end position saved")
+
+        val replay = rig.retry()
+        assertNotEquals(start.playbackSessionId, replay.playbackSessionId)
+        assertEquals(null, replay.resumePosition, "from the start, not from the end")
+        assertEquals(null, rig.savedPosition(), "the end position is not kept for next time")
+    }
+
+    /** A failure one second short of the end is partway: it is resumed inside its session. */
+    @Test
+    fun aFailureJustBeforeTheEndIsStillResumedInItsSession() = rig(300.seconds) { rig ->
+        val start = assertNotNull(rig.controller.replaceAndStart(rig.request).startDirective)
+        rig.play(start.attemptId, 300.seconds, 0, 299)
+        rig.event(
+            PlaybackEngineEvent.FailedAfterPartial(start.attemptId, 299.seconds, DomainError.Transport.Unreachable),
+        )
+        val retried = rig.retry()
+        assertEquals(start.playbackSessionId, retried.playbackSessionId)
+        assertEquals(299.seconds, retried.resumePosition)
+        rig.play(retried.attemptId, 300.seconds, 299, 300)
+        rig.event(PlaybackEngineEvent.EndedNaturally(retried.attemptId, 300.seconds))
+        assertEquals(1, rig.submittedPlays)
+    }
 
     private companion object {
         val SERVER = ServerId("server:retry-scrobble")

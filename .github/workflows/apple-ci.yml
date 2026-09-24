@@ -548,24 +548,32 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit/TEST-DulcetKeychainTVOSTests.xml" \
             DulcetKeychainTVOSTests
+      - name: Leave only the iPhone booted before the compact-shell launch
+        # Not measured -- the tool's own bounds: 120 s per `simctl shutdown` and for the boot, 300 s
+        # for `bootstatus -b`, so 13 minutes with the three devices the earlier legs booted. A cap
+        # here reports a hang as this step instead of as the launch after it.
+        timeout-minutes: 15
+        # The iPhone, iPadOS and tvOS legs above each boot a device and nothing shuts them down, and
+        # this is the first simulator launch after all three. spec 21.5 rule 2 is scoped to phases
+        # that talk to the loopback fixtures; this one does not, but the launch it precedes ran on a
+        # starved host (see the next step), and isolation is the mechanism the host-contention
+        # finding supports. It prints `SIMULATOR ISOLATION ... isolated=true|false` and marks the
+        # host-pressure record with the phase.
+        run: python3 tools/ci/isolate-simulator --phase compact-iphone --keep-name "iPhone 17 Pro"
       - name: Verify the compact shell keeps the album and opens Now Playing from the bar
-        # 12, not 5, and this is INHERITED rather than measured -- the step is new, so there is no
-        # CI duration history for it yet. It was first written at 5 because the control takes ~21s
-        # locally; CI simulator launch-and-test is a different regime, and 5 was already known to be
-        # below the working range of its nearest peer. OBSERVED on run 34562626457: this step was
-        # killed at 5 minutes with a 4-byte log, i.e. during launch, before the test produced
-        # anything at all.
-        #
-        # 12 matched `Verify iPhone uses the full display`, whose 165-290s range was measured over
-        # seven runs, because this step does the same work: launch the iOS simulator app and run one
-        # XCUITest. That inherited budget was too small. OBSERVED on run 35985802454: the step was
-        # killed at 12.05 minutes, seconds after its test had passed and its execution check had
-        # printed "valid". It spent 8.8 minutes before the test started, booting the iPhone
-        # simulator again after the tvOS step, and the test ran for 150s. Under this step's earlier
-        # name its shorter test took 2.80-9.58 minutes, median 5.77, across the 20 most recent
-        # successful runs that have the step. 25 is ceil(2 x 12.05), the rule the job-level
-        # comment applies to its measured steps. The input is a single observation of this
-        # workload, so re-measure it once the step has its own history.
+        # 12 was inherited from `Verify iPhone uses the full display` and was too small. OBSERVED on
+        # run 35985802454: the step was killed at 12.05 minutes, seconds after its test had passed
+        # and its execution check had printed "valid". Its xcresult times the launch actions at
+        # 688.5 s: `Launch DulcetiOSUITests` 579.9 s and `Launch Dulcet DEV` 128.7 s, before a
+        # 150.3 s test. Over that launch window the host-pressure record shows load1 196-562 on 3
+        # CPUs and 1,715-2,261 MB of swap. The same iPhone had run the two iPhone steps above, and no
+        # step shut it or the iPad and Apple TV down. That a re-boot or the other booted devices
+        # caused the slow launch is ASSUMED; what was measured is the runner launch and the
+        # pressure. The step before this one now leaves only this iPhone booted.
+        # Under the step's earlier name its shorter test took 2.80-9.58 minutes, median 5.77,
+        # across the 20 most recent successful runs that have it. 25 is ceil(2 x 12.05), the rule
+        # the job-level comment applies to its measured steps; the input is one observation of
+        # this workload, so re-measure once the step has its own history.
         timeout-minutes: 25
         run: |
           set -o pipefail

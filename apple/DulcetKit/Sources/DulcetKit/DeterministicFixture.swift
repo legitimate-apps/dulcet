@@ -294,6 +294,11 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             if id == DulcetDeterministicFixture.fixtureArtist.id {
                 currentSnapshot = fixture.snapshot(for: .artistDetail)
             }
+        case let .editAccountForm(form):
+            // Kept, and not republished: a snapshot per keystroke would write the field back
+            // under the cursor.
+            currentSnapshot = currentSnapshot.replacingAccountForm(form)
+            return
         case let .submitAccountConnection(request):
             currentSnapshot = fixture.snapshot(for: .accountConnecting)
                 .replacingAccountForm(request)

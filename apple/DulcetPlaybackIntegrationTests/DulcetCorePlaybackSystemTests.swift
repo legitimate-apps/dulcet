@@ -336,6 +336,35 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                        "the retried attempt resumes where the failure left off")
     }
 
+    /// A failure at the end left nothing to resume: Try Again replays the track as a new session,
+    /// from the start (spec §12.1), so the second listen is a play of its own.
+    func testRetryAfterAFailureAtTheEndReplaysInANewSessionFromTheStart() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 120, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        XCTAssertTrue(try XCTUnwrap(fixture.controller.currentPresentation.failure).canRetry)
+
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.send(.retry)
+        let replay = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        let replaySession = try XCTUnwrap(fixture.session(ofPrepare: replay))
+        XCTAssertNotEqual(replaySession, failedSession, "a replay after a failure at the end is a new session")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId, replaySession)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0, "the same entry, not the next")
+
+        fixture.emit(.ready(attemptID: replay, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: replay, wallClock: Date(), mediaPosition: 0))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        XCTAssertEqual(fixture.engine.count("seek"), 0, "the replay starts from the beginning")
+    }
+
     /// Every start stops the engine, and the engine's stop clears its Now Playing artwork, so a
     /// retry inside the same session must hand the artwork over again -- a session whose artwork
     /// was delivered once is not a session the engine still has artwork for.

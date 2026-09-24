@@ -468,6 +468,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let localNetworkAccess: (any DulcetLocalNetworkAccessProbing)?
     /// Watching for local-network access to be granted after a connection it blocked.
     private var localNetworkWatch: (any DulcetLocalNetworkAccessWatch)?
+    /// Identifies the live watch, so an answer from one that was cancelled is never acted on.
+    private var localNetworkWatchID: UUID?
+    /// The connection the privacy check refused, while that refusal stands and the watch waits
+    /// for a grant to retry it.
+    private var localNetworkRefusedRequest: DulcetAccountConnectRequest?
     /// Set when a grant has already retried the connection the person asked for, so a server
     /// that stays unreachable is reported rather than retried again and again.
     private var localNetworkRetryUsed = false
@@ -587,6 +592,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     public func send(_ action: DulcetPresentationAction) {
         if accountRemovalStatus == .removing {
+            // A keystroke is not answered with a snapshot: republishing would put the field's
+            // previous value back under the person's cursor.
+            if case .editAccountForm = action { return }
             snapshotHandler?(currentSnapshot)
             return
         }
@@ -690,6 +698,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case .reportRefusedQueueEdit:
             refusedQueueEdits += 1
             receivePlaybackPresentation(latestPlaybackPresentation)
+        case let .editAccountForm(form):
+            accountFormEdited(form)
         case let .submitAccountConnection(request):
             localNetworkRetryUsed = false
             submit(request)
@@ -893,41 +903,39 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     ) {
         guard let localNetworkAccess else { return }
         var answered = false
+        let watchID = UUID()
+        localNetworkWatchID = watchID
         localNetworkWatch = localNetworkAccess.watch(serverURL: request.serverURL) { [weak self] access in
-            guard let self, self.generation == submissionGeneration else { return }
+            guard let self,
+                  self.generation == submissionGeneration,
+                  self.localNetworkWatchID == watchID else { return }
             defer { answered = true }
             switch access {
             case .denied:
-                let denied = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
-                    kind: .localNetworkAccessDenied,
-                    serverName: failure.serverName
-                ))
-                self.publish(
-                    state: denied.kind.family.presentationState,
-                    destination: .settings,
-                    form: request,
-                    status: .failed(denied)
+                self.localNetworkRefusedRequest = request
+                self.publishLocalNetworkAnswer(
+                    DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
+                        kind: .localNetworkAccessDenied,
+                        serverName: failure.serverName
+                    )),
+                    request: request
                 )
             case .notDenied where !answered:
                 // Privacy was never the obstacle: the original failure stands.
-                self.localNetworkWatch = nil
-                self.publish(
-                    state: failure.kind.family.presentationState,
-                    destination: .settings,
-                    form: request,
-                    status: .failed(failure)
-                )
+                self.endLocalNetworkWatch()
+                self.publishLocalNetworkAnswer(failure, request: request)
             case .notDenied:
                 // Access was granted after it blocked the connection, so retry it once, as the
                 // person would have to. This watch is still live, so the refusal it reported
                 // still stands: anything that ends it -- another connection, Cancel, removing
-                // the account -- cancels the watch and moves the generation on. What the status
-                // shows is not asked, because opening a saved account's library replaces the
-                // refusal there with "saved", and that person is waiting for this connection.
+                // the account, editing what the refused connection would send -- cancels the
+                // watch. What the status shows is not asked, because opening a saved account's
+                // library replaces the refusal there with "saved", and that person is waiting
+                // for this connection.
                 // Visibly only while they are still on the explanation: someone who has gone to
                 // Library or Search in the meantime is connected where they are, not taken back
                 // to the Connection screen to watch a spinner.
-                self.localNetworkWatch = nil
+                self.endLocalNetworkWatch()
                 guard !self.localNetworkRetryUsed else { return }
                 self.localNetworkRetryUsed = true
                 self.submit(
@@ -938,9 +946,46 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
     }
 
+    /// An answer from the privacy check, recorded where the person is. The spinner was waiting
+    /// on it, and it can take as long as the person takes to answer the system's prompt, so
+    /// someone who has gone to Library or Search meanwhile is not taken back to Connection:
+    /// Connection shows it when they come to it.
+    private func publishLocalNetworkAnswer(
+        _ answer: DulcetAccountFailurePresentation,
+        request: DulcetAccountConnectRequest
+    ) {
+        guard currentSnapshot.selectedDestination == .settings else {
+            publishInPlace(status: .failed(answer), form: request)
+            return
+        }
+        publish(
+            state: answer.kind.family.presentationState,
+            destination: .settings,
+            form: request,
+            status: .failed(answer)
+        )
+    }
+
+    /// Editing what the refused connection would send -- the address above all, but any field
+    /// the retry would send and then write back into the form -- ends the refusal. The
+    /// automatic retry would otherwise connect with the old values and replace the edit with
+    /// them. The account status stops promising a connection that will no longer be made, and
+    /// the edit is kept.
+    private func accountFormEdited(_ form: DulcetAccountConnectRequest) {
+        guard let refused = localNetworkRefusedRequest, form != refused else { return }
+        cancelLocalNetworkWatch()
+        publishInPlace(status: savedServerName.map { .saved(serverName: $0) } ?? .idle, form: form)
+    }
+
+    private func endLocalNetworkWatch() {
+        localNetworkWatch = nil
+        localNetworkWatchID = nil
+        localNetworkRefusedRequest = nil
+    }
+
     private func cancelLocalNetworkWatch() {
         localNetworkWatch?.cancel()
-        localNetworkWatch = nil
+        endLocalNetworkWatch()
     }
 
     private func publish(

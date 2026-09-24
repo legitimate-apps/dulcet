@@ -21,6 +21,8 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     /// An edit the person tried that could not be made before it reached the queue -- a drop
     /// carrying nothing -- said out loud as a refused edit is.
     case reportRefusedQueueEdit
+    /// The connection form as the person has edited it, before they ask to connect.
+    case editAccountForm(DulcetAccountConnectRequest)
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
     case removeAccount
@@ -111,10 +113,34 @@ public final class DulcetPresentationStore {
             source.send(.updateSearchQuery(searchQuery))
         }
     }
-    public var accountServerURL: String
-    public var accountUsername: String
-    public var accountPassword: String
-    public var accountAllowLocalHTTP: Bool
+    public var accountServerURL: String {
+        didSet { formEdited(accountServerURL != oldValue) }
+    }
+    public var accountUsername: String {
+        didSet { formEdited(accountUsername != oldValue) }
+    }
+    public var accountPassword: String {
+        didSet { formEdited(accountPassword != oldValue) }
+    }
+    public var accountAllowLocalHTTP: Bool {
+        didSet { formEdited(accountAllowLocalHTTP != oldValue) }
+    }
+
+    /// Tells the source what the person has typed, so what it does next -- a retry it would
+    /// make on its own -- can answer to the form as it now is.
+    private func formEdited(_ changed: Bool) {
+        guard changed, !isApplyingSourceSnapshot else { return }
+        source.send(.editAccountForm(accountFormRequest))
+    }
+
+    private var accountFormRequest: DulcetAccountConnectRequest {
+        DulcetAccountConnectRequest(
+            serverURL: accountServerURL,
+            username: accountUsername,
+            password: accountPassword,
+            allowLocalHTTP: accountAllowLocalHTTP
+        )
+    }
 
     public init(source: any DulcetDataSource) {
         self.source = source
@@ -179,12 +205,7 @@ public final class DulcetPresentationStore {
     }
 
     public func submitAccountConnection() {
-        source.send(.submitAccountConnection(DulcetAccountConnectRequest(
-            serverURL: accountServerURL,
-            username: accountUsername,
-            password: accountPassword,
-            allowLocalHTTP: accountAllowLocalHTTP
-        )))
+        source.send(.submitAccountConnection(accountFormRequest))
     }
 
     public func cancelAccountConnection() {

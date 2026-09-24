@@ -88,6 +88,19 @@ internal data class PlaybackSessionSnapshot(
         it.attemptId == attemptId &&
             (it is PlaybackTerminalOutcome.FailedBeforeStart || it is PlaybackTerminalOutcome.FailedAfterPartial)
     }
+
+    /**
+     * The current attempt failed after playing to, or past, the end of a track whose length is
+     * known -- the same end the resume position is cleared at. Nothing of the listen is left to
+     * resume, so the play this session describes is over.
+     */
+    val failedAtTheEnd: Boolean
+        get() {
+            val duration = accumulator.durationKnown ?: return false
+            val position = currentAttempt.position ?: return false
+            return failureOf(currentAttempt.attemptId) is PlaybackTerminalOutcome.FailedAfterPartial &&
+                position >= duration
+        }
 }
 
 internal data class PlaybackCoreDiagnostics(

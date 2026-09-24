@@ -320,6 +320,7 @@ internal class PlaybackQueueController(
         // attempt registers its own once it progresses, so this one must not outlive it.
         val discarded = discardRegisteredPreload()
         endHeldForPreload = false
+        if (session.failedAtTheEnd) return replayAfterFailureAtTheEnd(entry, discarded)
         val attemptId = AttemptId(identities.next("attempt"))
         val retry = playback.retryAfterFailure(attemptId)
         check(retry is PlaybackTransitionResult.Applied)
@@ -335,6 +336,29 @@ internal class PlaybackQueueController(
                 shouldAutoPlay = true,
             ),
             effects = retry.effects,
+            discardedPreloadAttemptId = discarded,
+        )
+    }
+
+    /**
+     * Try Again after a failure at the end is a replay, not a resumption: nothing of that listen
+     * is left to play, so -- as repeat-one does -- the session is finalized and a new one plays the
+     * entry from the start (§12.1). Resuming inside the old session would have played the track
+     * again from zero into an accumulator that had already submitted, so the second listen never
+     * counted. A position saved at the end (a listen too short to be a play) is cleared rather
+     * than kept for the next time the item starts.
+     */
+    private fun replayAfterFailureAtTheEnd(
+        entry: QueueEntry,
+        discarded: AttemptId?,
+    ): PlaybackQueueTransition {
+        val start = newStart(entry)
+        val transition = playback.repeatOne(start.playbackSessionId, start.attemptId)
+        check(transition is PlaybackTransitionResult.Applied)
+        return PlaybackQueueTransition(
+            snapshot = snapshot(),
+            startDirective = start.directive(entry).copy(resumePosition = null),
+            effects = transition.effects + PlaybackCoreEffect.ClearResumePosition(entry.providerItemId),
             discardedPreloadAttemptId = discarded,
         )
     }
