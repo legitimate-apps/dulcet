@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet.core
 
-import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -159,7 +158,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
 
 internal class SessionEnv(
     val server: SessionTestServer,
-    val driver: SqlDriver,
+    val driver: CountingSqlDriver,
     val database: DulcetDatabaseStore,
     val store: SeenCacheStore,
     val clock: ManualWallClock,
@@ -188,7 +187,7 @@ internal class SessionEnv(
 }
 
 internal fun sessionTest(block: suspend TestScope.(SessionEnv) -> Unit) = runTest {
-    val driver = createTestDriver()
+    val driver = CountingSqlDriver(createTestDriver())
     val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
     try {
         val database = DulcetDatabaseStore.open(driver)

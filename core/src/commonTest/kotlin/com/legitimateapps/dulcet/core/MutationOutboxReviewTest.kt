@@ -108,7 +108,7 @@ class MutationOutboxReviewTest {
             assertEquals(MutationRecord.NotRecorded, session.favourites.setRating(album4, 3))
             assertEquals(false, session.favourites.toggleFavourite(album4), "a toggle that was not recorded reports the old state")
             assertEquals(null, session.favourites.isFavourite(album4))
-            assertEquals(0L, session.favourites.pendingCount())
+            assertEquals(null, session.favourites.pendingCount(), "an unreadable count is unknown, never zero")
             assertEquals(MutationRecord.Invalid, session.favourites.setRating(album4, 9))
             assertTrue(outcomes.isNotEmpty() && outcomes.all { it is MutationOutcome.NotRecorded })
             session.openSearch { }.updateQuery("Album") // must not throw either
@@ -175,6 +175,29 @@ class MutationOutboxReviewTest {
         assertEquals(listOf("star", "unstar"), sends(env).map { it.endpoint })
         assertEquals(false, env.server.base.albums[4].starred, "the person's last value wins")
         assertEquals(0L, session.favourites.pendingCount())
+    }
+
+    // ---- The sign-out offer's count (§14.7) ----------------------------------------------------------
+
+    /**
+     * A count that cannot be read is unknown, never zero: zero tells the person signing out that
+     * nothing will be lost. The failure is injected into the database read itself, and the test
+     * proves it fired before believing the answer.
+     */
+    @Test
+    fun aPendingCountThatCannotBeReadIsUnknownNeverZero() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        assertEquals(1L, session.favourites.pendingCount(), "fixture: one change is pending")
+
+        env.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) }
+        val unreadable = session.favourites.pendingCount()
+        env.driver.failRead = null
+
+        assertTrue(env.driver.failedReads > 0, "the injected read failure never fired; the test measured nothing")
+        assertEquals<Long?>(null, unreadable, "an unreadable count was reported as a number")
+        assertEquals(1L, session.favourites.pendingCount(), "the change is still pending once the read succeeds")
     }
 
     // ---- S1 -----------------------------------------------------------------------------------------
