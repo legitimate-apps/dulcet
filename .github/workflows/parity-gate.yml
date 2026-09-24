@@ -58,6 +58,8 @@ jobs:
         run: python3 tools/test-capture-soak-summary
       - name: Prove the local gate runner reports incomplete workflow coverage
         run: python3 tools/test-run-local-gates
+      - name: Prove concurrent Kotlin build phases are serialised
+        run: python3 tools/test-run-gradle-exclusive
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
       - name: Prove self-hosted runners require workflow_dispatch isolation
@@ -66,5 +68,9 @@ jobs:
         run: python3 tools/verify_ci_policy.py
       - name: Prove the project-spec path gate rejects a missing referenced file
         run: python3 tools/test-project-spec-paths
+      - name: Prove the Xcode script-phase gate rejects an unregenerated project
+        run: python3 tools/test-xcode-script-phases
+      - name: Require the committed Xcode project to carry project.yml's script phases
+        run: python3 tools/verify_xcode_script_phases.py
       - name: Require every path named in the project spec to exist
         run: python3 tools/verify_project_spec_paths.py

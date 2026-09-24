@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Run ./gradlew with the arguments given, holding exclusive locks for the whole invocation.
+
+Eight Apple targets each own a `Compile Kotlin Framework` build phase running
+`:core:embedAndSignAppleFrameworkForXcode`, and Xcode builds independent targets in parallel. Two of
+those phases therefore start together. Gradle does queue behind its own locks, but only for about
+60 seconds: if the owner has not yielded by then it FAILS the build rather than keep waiting. Two
+different locks have lost that race on `main`, with `DulcetiOS` and `DulcetKitIOSTests` building
+together both times (a tvOS pair on green run 34596556005 ran concurrently for over four minutes
+and both succeeded, so the hold is usually short enough; the failure is the long tail):
+
+  OBSERVED run 34635969077 (2026-09-11), "Launch iPadOS shell and prove layout" step:
+    Timeout waiting to lock Configuration Cache (<checkout>/.gradle/configuration-cache).
+    It is currently in use by another process. Owner PID: 32156 ... BUILD FAILED in 1m 16s
+  OBSERVED run 34127121022 (2026-09-07), step 37:
+    Timeout waiting to lock journal cache (<gradle user home>/caches/journal-1).
+    It is currently in use by another process.  Owner PID: 10954  Our PID: 32036
+
+The configuration cache is scoped to the checkout and the journal to the Gradle user home, so this
+holds one flock beside each: `$GRADLE_USER_HOME` (default `~/.gradle`) first, then `<cwd>/.gradle/`,
+always in that order so two runners cannot deadlock. A lock keyed on the user home alone would let
+two phases of one checkout with different user homes race for the configuration cache; a lock keyed
+on the checkout alone would let two checkouts sharing a user home race for the journal.
+
+Both locks are held by the Gradle invocation itself: Python execs gradlew with inheritable lock
+descriptors, so killing the holder kills that invocation rather than orphaning an unlocked child, and
+descendants that inherit the descriptors keep exclusion until they close them or exit. The holder
+writes its pid into the lock file after acquiring, so a waiter names it, and a waiter prints a
+heartbeat every `RUN_GRADLE_EXCLUSIVE_HEARTBEAT_SECONDS` (default 30). The wait itself is unbounded;
+the CI step cap is the backstop. A lock file left on disk, pid or not, is not a stale lock. This does not terminate an independently running Gradle daemon,
+and it cannot serialise a build that bypasses it with a bare `./gradlew`.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import os
+import pathlib
+import sys
+import time
+from typing import IO
+
+LOCK_BASENAME = "dulcet-embed-framework.lock"
+
+
+def gradle_user_home() -> pathlib.Path:
+    configured = os.environ.get("GRADLE_USER_HOME")
+    if configured:
+        return pathlib.Path(configured)
+    return pathlib.Path(os.path.expanduser("~")) / ".gradle"
+
+
+def lock_paths(checkout: pathlib.Path) -> list[pathlib.Path]:
+    """User home first, then checkout: the fixed order is what makes two runners deadlock-free."""
+    return [gradle_user_home() / LOCK_BASENAME, checkout / ".gradle" / LOCK_BASENAME]
+
+
+def heartbeat_seconds() -> float:
+    configured = os.environ.get("RUN_GRADLE_EXCLUSIVE_HEARTBEAT_SECONDS")
+    return float(configured) if configured else 30.0
+
+
+def holder_pid(handle: IO[str]) -> str:
+    handle.seek(0)
+    content = handle.read().strip()
+    return content or "unknown"
+
+
+def acquire(path: pathlib.Path) -> IO[str]:
+    """Take the flock at `path`, then record our pid in it so the next waiter can name us.
+
+    The wait is unbounded on purpose: a bound would have to exceed the longest legitimate hold
+    (a cold tvOS pair has held for over four minutes on a hosted runner) and the CI step cap
+    already backstops a hang. A heartbeat names the holder instead, so a long wait is visible.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")
+    waited_from = time.monotonic()
+    interval = heartbeat_seconds()
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(
+            f"run-gradle-exclusive: another Gradle build phase (pid {holder_pid(handle)}) "
+            f"holds {path}; waiting",
+            file=sys.stderr,
+        )
+        next_beat = waited_from + interval
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                pass
+            now = time.monotonic()
+            if now >= next_beat:
+                print(
+                    f"run-gradle-exclusive: still waiting {now - waited_from:.0f}s for {path} "
+                    f"(held by pid {holder_pid(handle)})",
+                    file=sys.stderr,
+                )
+                next_beat = now + interval
+            time.sleep(0.2)
+    waited = time.monotonic() - waited_from
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    print(f"run-gradle-exclusive: acquired {path} after {waited:.1f}s", file=sys.stderr)
+    os.set_inheritable(handle.fileno(), True)
+    return handle
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print("run-gradle-exclusive: refusing to run gradle with no arguments", file=sys.stderr)
+        return 2
+
+    # Absolute, because `str(Path("./gradlew"))` normalises to `gradlew` and a name with no
+    # slash is looked up on PATH rather than in the working directory.
+    checkout = pathlib.Path.cwd()
+    wrapper = checkout / "gradlew"
+    if not wrapper.exists():
+        print(
+            f"run-gradle-exclusive: no ./gradlew in {os.getcwd()}; "
+            "this must run from the repository root",
+            file=sys.stderr,
+        )
+        return 2
+
+    # The handles are deliberately never closed: they ride into the exec below.
+    held = [acquire(path) for path in lock_paths(checkout)]
+    print(
+        f"run-gradle-exclusive: holding {len(held)} lock(s); running {' '.join(argv)}",
+        file=sys.stderr,
+    )
+    # stdin is closed so a Gradle prompt can never block a headless build phase.
+    with open(os.devnull, "rb") as devnull:
+        os.dup2(devnull.fileno(), 0)
+    sys.stderr.flush()
+    os.execv(str(wrapper), [str(wrapper), *argv])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
