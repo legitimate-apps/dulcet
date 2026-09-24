@@ -251,8 +251,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     }
 
     /// A track that fails is not a dead end: the failure names it and says whether Skip and
-    /// Retry can act, Skip starts the next entry, and Retry starts the failed one again as a new
-    /// session rather than resuming the failed attempt.
+    /// Retry can act, Skip starts the next entry, and Retry after a failure before start is a new
+    /// attempt inside the same session (spec §12.1), never a resumption of the failed attempt.
     func testAFailedTrackIsNamedAndSkipAndRetryStartTheRightEntries() async throws {
         let fixture = makeFixture(tracks: ["a", "b"])
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
@@ -266,10 +266,19 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertTrue(failure.canRetry)
         XCTAssertEqual(try XCTUnwrap(fixture.store).snapshot.playbackFailure, failure)
 
+        let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
         let preparesBefore = fixture.engine.count("prepare")
         fixture.controller.send(.retry)
         let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
-        XCTAssertNotEqual(retried, first, "Retry is a new attempt")
+        XCTAssertNotEqual(retried, first, "Try Again is a new attempt")
+        // ...of the SAME session (spec §12.1: a retry after FailedBeforeStart keeps the session and
+        // its accumulator). Finalizing the failed session and starting another is the next-item
+        // boundary, which a new attempt id alone cannot tell apart from this.
+        XCTAssertEqual(fixture.session(ofPrepare: retried), failedSession,
+                       "Try Again after a failure before start must keep the session")
+        let retriedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        XCTAssertEqual(retriedSession.playbackSessionId, failedSession)
+        XCTAssertEqual(retriedSession.attemptId, retried.rawValue)
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
 
         fixture.emit(.failedBeforeStart(attemptID: retried, error: .sourceUnavailable))
@@ -283,6 +292,66 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         fixture.emit(.failedBeforeStart(attemptID: lastAttempt, error: .sourceUnavailable))
         await fixture.waitFor { fixture.controller.currentPresentation.failure?.track?.id.rawID == "b" }
         XCTAssertEqual(fixture.controller.currentPresentation.failure?.canSkip, false)
+    }
+
+    /// A track that played and then stopped is not retried as if it had never started. Its
+    /// failure says it stopped partway, and Try Again is a new play (spec §12.1, "retry after
+    /// FailedAfterPartial"): the failed session was already evaluated at the failure, so a new one
+    /// starts -- new session, new attempt -- and it resumes where the failure left off.
+    func testRetryAfterAPartialFailureIsANewSessionResumingWhereItStopped() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+        XCTAssertEqual(fixture.engine.count("seek"), 0, "a fresh start does not seek")
+
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
+        XCTAssertEqual(failure.track?.id.rawID, "a")
+        XCTAssertTrue(failure.stoppedPartway, "the message must not say it could not start")
+        XCTAssertTrue(failure.canRetry)
+        XCTAssertTrue(failure.canSkip)
+
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        XCTAssertNotEqual(retried, first, "Try Again is a new attempt")
+        let retriedSession = try XCTUnwrap(fixture.session(ofPrepare: retried))
+        XCTAssertNotEqual(retriedSession, failedSession,
+                          "a play that already counted as a session is not reopened")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId, retriedSession)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+
+        fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.engine.count("seek") > 0 }
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "seek" }?.position, 40,
+                       "the new play resumes where the failure left off")
+    }
+
+    /// The only track of a repeating queue has nowhere else to go: Next would start the same
+    /// failed track, so its failure offers Try Again and no Skip.
+    func testTheOnlyTrackOfARepeatingQueueFailingOffersNoSkip() async throws {
+        let fixture = makeFixture(tracks: ["only"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "only")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        fixture.controller.send(.cycleRepeat)
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.repeatMode == .all }
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.repeatMode, .all,
+                       "the case needs repeat-all on")
+
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
+        XCTAssertEqual(failure.track?.id.rawID, "only")
+        XCTAssertFalse(failure.canSkip, "Skip would start the failed track again")
+        XCTAssertTrue(failure.canRetry)
     }
 
     /// A queue edit the core refuses reports that it changed nothing, so the surface can say so.
@@ -478,6 +547,11 @@ private final class Fixture {
         return DulcetPlaybackAttemptID(try XCTUnwrap(command.attempt))
     }
 
+    /// The session the engine was told an attempt belongs to, as the prepare command carried it.
+    func session(ofPrepare attempt: DulcetPlaybackAttemptID) -> String? {
+        engine.commands.last { $0.kind == "prepare" && $0.attempt == attempt.rawValue }?.session
+    }
+
     func waitForPreload(rawID: String) async throws -> (attempt: DulcetPlaybackAttemptID, session: String) {
         await waitFor {
             self.engine.commands.contains { $0.kind == "preload" && $0.title == "Track \(rawID)" }
@@ -505,6 +579,7 @@ private struct RecordedCommand: Sendable {
     let attempt: String?
     let session: String?
     let title: String?
+    var position: TimeInterval? = nil
 }
 
 /// Accepts every command; emits nothing on its own.
@@ -561,6 +636,9 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
             outcome = .completed(commandID: commandID, result: .withoutData)
         case let .stop(commandID):
             entry = .init(kind: "stop", attempt: nil, session: nil, title: nil)
+            outcome = .completed(commandID: commandID, result: .withoutData)
+        case let .seek(commandID, position):
+            entry = .init(kind: "seek", attempt: nil, session: nil, title: nil, position: position)
             outcome = .completed(commandID: commandID, result: .withoutData)
         default:
             entry = .init(kind: "other", attempt: nil, session: nil, title: nil)

@@ -298,6 +298,50 @@ internal class PlaybackQueueController(
         return startAt(state, index)
     }
 
+    /**
+     * Try Again on the selected entry (§12.1). A failure before playback started is retried inside
+     * its session: a new attempt, the accumulator preserved. A failure after partial playback has
+     * already evaluated its session (§15.2), so its retry is a new play of the same entry -- the
+     * failed session is finalized and a new one begins, from the position the failure saved
+     * (§15.5). With no session, as a finished queue leaves it, the selected entry starts. A
+     * session that has not failed changes nothing: there is nothing to try again.
+     */
+    fun retryCurrent(): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val index = state.currentIndex ?: return emptyTransition()
+        val entry = state.entries[index]
+        val session = playback.currentSession ?: return startAt(state, index)
+        val failed = session.currentAttempt
+        if (session.queueEntryId != entry.queueEntryId || failed.phase != PlaybackAttemptPhase.Failed) {
+            return emptyTransition()
+        }
+        if (session.failureOf(failed.attemptId) !is PlaybackTerminalOutcome.FailedBeforeStart) {
+            return startAt(state, index)
+        }
+        // A session that never started has no preload behind it (one is registered only after
+        // progress), but a registration must not outlive the attempt it was made for.
+        val discarded = discardRegisteredPreload()
+        endHeldForPreload = false
+        val attemptId = AttemptId(identities.next("attempt"))
+        val retry = playback.retryAfterFailedBeforeStart(attemptId)
+        check(retry is PlaybackTransitionResult.Applied)
+        return PlaybackQueueTransition(
+            snapshot = snapshot(),
+            startDirective = PlaybackQueueStartDirective(
+                queueEntryId = entry.queueEntryId,
+                playbackSessionId = session.playbackSessionId,
+                attemptId = attemptId,
+                itemId = entry.providerItemId,
+                duration = knownDurations[entry.queueEntryId],
+                resumePosition = resumePositions.restore(entry.providerItemId),
+                shouldAutoPlay = true,
+            ),
+            effects = retry.effects,
+            discardedPreloadAttemptId = discarded,
+        )
+    }
+
     fun nextForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
         if (acceptsCommand(playbackSessionId)) moveBy(1) else emptyTransition()
 

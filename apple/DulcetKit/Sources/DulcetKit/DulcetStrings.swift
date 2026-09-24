@@ -167,15 +167,17 @@ enum DulcetStrings {
     static let openNowPlayingHint = text("player.open.hint", "Opens the full player")
     static let playbackLoading = text("player.loading", "Loading…")
     static let playbackFailedShort = text("player.failed.short", "Couldn\u{2019}t play this track")
-    static let playbackFailedActionsBody = text(
-        "player.failed.body.actions",
-        "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one."
-    )
+    static let playbackFailedToStart = text("player.failed.lead.start", "Dulcet couldn\u{2019}t start this track.")
+    static let playbackStoppedPartway = text("player.failed.lead.partway", "This track stopped partway through.")
+    static let playbackFailedOfferBoth = text("player.failed.offer.both", "Try it again, or skip to the next one.")
+    static let playbackFailedOfferRetry = text("player.failed.offer.retry", "Try it again.")
+    static let playbackFailedOfferSkip = text("player.failed.offer.skip", "Skip to the next one.")
     static let playbackRetry = text("player.failed.retry", "Try Again")
     static let playbackSkip = text("player.failed.skip", "Skip to Next Track")
     static let playbackSkipShort = text("player.failed.skip.short", "Skip")
     static let playbackFailureDismiss = text("player.failed.dismiss", "Dismiss")
     static let queueEditRefused = text("queue.edit.refused", "Couldn\u{2019}t change Up Next")
+    static let queueDragRefused = text("queue.drag.refused", "Can\u{2019}t be added to Up Next")
     static let openAlbumHint = text("library.album.hint", "Opens the album")
     static let remainingTime = text("player.remaining", "Remaining")
     static let elapsedTime = text("player.elapsed", "Elapsed")
@@ -407,10 +409,10 @@ enum DulcetLinks {
     ///
     /// What is and is not known (checked against macOS 26.7): Apple's own help for this setting
     /// links only to Privacy & Security, and TN3179 names no URL. The installed Privacy & Security
-    /// extension still declares `com.apple.preference.security` as its legacy identifier and
-    /// accepts this URL scheme, so the pane itself is reached. The `Privacy_LocalNetwork` anchor
-    /// does not appear verbatim among the anchors that extension carries for its other rows, so
-    /// landing on the Local Network row rather than on Privacy & Security is the unverified part.
+    /// extension declares `com.apple.preference.security` as its legacy identifier, which is what
+    /// the URL's host names. The `Privacy_LocalNetwork` anchor does not appear among the anchors
+    /// that extension carries for its other rows. Opening this URL was not observed at all, so
+    /// both where it lands and whether it reaches the pane are ASSUMED.
     static let localNetworkSettings: URL? = {
 #if os(iOS)
         URL(string: UIApplication.openSettingsURLString)

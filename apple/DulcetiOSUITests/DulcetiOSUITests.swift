@@ -546,9 +546,9 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     /// A grid tile opens its album on a phone against a live library, by element tap -- the path
-    /// a device run reported dead. Two cases: a tile in the first row, and, with the now-playing
-    /// bar on screen, a tile whose centre lies under the bar or the tab bar, which the tap must
-    /// scroll to rather than lose to the controls on top of it.
+    /// a device run reported dead. Two cases: a named tile, wherever it sits, and, with the
+    /// now-playing bar on screen, a tile whose centre lies under the bar or the tab bar, which the
+    /// tap must scroll to rather than lose to the controls on top of it.
     ///
     /// Every tile's frame is printed with the bar's and the tab bar's, so the geometry here can be
     /// compared with a device build's.
@@ -585,8 +585,10 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // 1. A first-row tile, with nothing playing, opens its album -- and starts the playback
-        //    the second case needs. Double Lines, not whichever tile sorts first: the corpus's
+        // 1. The Double Lines tile opens its album -- and Play there puts up the bar the second
+        //    case needs. Neither the tile's row nor an idle player is asserted: where it sorts is
+        //    the corpus's business, and a queue restored from an earlier run can have the bar up
+        //    before this taps anything. Double Lines, not whichever tile sorts first: the corpus's
         //    untagged album holds an Ogg file, which says nothing about tiles.
         let first = tiles.matching(NSPredicate(format: "label BEGINSWITH %@", "Double Lines")).firstMatch
         guard first.waitForExistence(timeout: 10) else {

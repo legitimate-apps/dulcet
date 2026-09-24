@@ -68,6 +68,8 @@ public struct DulcetRootView: View {
                     DulcetTVSectionNavigation(store: store)
                         .dulcetForeground(.primaryTextOnWindow)
                 }
+                // Up Next on tvOS edits the queue too; a refusal there is said, as on the others.
+                .dulcetQueueEditFeedback(store: store)
             }
         }
         .environment(store)

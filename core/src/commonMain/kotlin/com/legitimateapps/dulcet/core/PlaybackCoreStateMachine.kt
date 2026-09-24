@@ -82,7 +82,13 @@ internal data class PlaybackSessionSnapshot(
     val currentAttempt: PlaybackAttemptSnapshot,
     val accumulator: ScrobbleAccumulatorState,
     val terminalOutcomes: List<PlaybackTerminalOutcome>,
-)
+) {
+    /** How an attempt of this session failed, or null when it has not. */
+    fun failureOf(attemptId: AttemptId): PlaybackTerminalOutcome? = terminalOutcomes.lastOrNull {
+        it.attemptId == attemptId &&
+            (it is PlaybackTerminalOutcome.FailedBeforeStart || it is PlaybackTerminalOutcome.FailedAfterPartial)
+    }
+}
 
 internal data class PlaybackCoreDiagnostics(
     val unknownAttemptDropCount: Long = 0,

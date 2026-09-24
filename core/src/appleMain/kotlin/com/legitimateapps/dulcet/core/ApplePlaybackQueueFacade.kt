@@ -62,6 +62,11 @@ public class ApplePlaybackCoreSessionDto internal constructor(
     public val durationMilliseconds: Long,
     public val seekability: String,
     public val rate: Double,
+    /**
+     * How the current attempt failed: `beforeStart`, `afterPartial` -- it played, then stopped --
+     * or null while it has not failed.
+     */
+    public val failure: String? = null,
 )
 
 public class ApplePlaybackQueueSnapshotDto internal constructor(
@@ -348,6 +353,15 @@ public class ApplePlaybackQueueClient private constructor(
 
     public fun startCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().startCurrent()
+    }
+
+    /**
+     * Try Again on the selected entry. The core decides what that is (§12.1): the same session
+     * with a new attempt after a failure before start, a new play after a failure after partial
+     * playback, the selected entry's start when no session exists, and nothing otherwise.
+     */
+    public fun retryCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().retryCurrent()
     }
 
     public fun preloadNextForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
@@ -988,6 +1002,11 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
             durationMilliseconds = session.currentAttempt.duration?.inWholeMilliseconds ?: -1,
             seekability = session.currentAttempt.seekability.name,
             rate = session.currentAttempt.rate,
+            failure = when (session.failureOf(session.currentAttempt.attemptId)) {
+                is PlaybackTerminalOutcome.FailedBeforeStart -> "beforeStart"
+                is PlaybackTerminalOutcome.FailedAfterPartial -> "afterPartial"
+                else -> null
+            },
         )
     },
 )

@@ -268,7 +268,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 guard transition.errorKind == nil else { return publishFailure() }
                 start(transition.startDirective)
             case .retry:
-                restartCurrentEntry(snapshot)
+                retryCurrentEntry()
             case let .setShuffle(enabled):
                 applyEdit(queueClient.setShuffle(enabled: enabled))
             case .cycleRepeat:
@@ -312,7 +312,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .cycleRepeat:
             applyEdit(queueClient.cycleRepeatMode())
         case .retry:
-            restartCurrentEntry(snapshot)
+            retryCurrentEntry()
         }
     }
 
@@ -325,13 +325,25 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             || DulcetRepeatMode(rawValue: snapshot.repeatMode) == .all
     }
 
-    /// Retry: the current entry again, as a new session -- the same next-item boundary as
-    /// choosing it in Up Next, so the failed session is finalized rather than resumed.
-    private func restartCurrentEntry(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+    /// Whether Skip past a failed entry reaches a DIFFERENT one: an entry follows it, or
+    /// repeat-all wraps to the first -- unless the failed entry is the only one, where Next would
+    /// start the failed track again. Stricter than `hasEntryAfterCurrent`, which decides Next.
+    private static func hasOtherEntryAfterCurrent(_ snapshot: ApplePlaybackQueueSnapshotDto) -> Bool {
         let index = Int(snapshot.currentIndex)
-        guard account != nil, snapshot.entries.indices.contains(index) else { return }
-        let transition = queueClient.jumpTo(queueEntryId: snapshot.entries[index].queueEntryId)
+        guard snapshot.entries.indices.contains(index) else { return false }
+        return index + 1 < snapshot.entries.count
+            || (DulcetRepeatMode(rawValue: snapshot.repeatMode) == .all && snapshot.entries.count > 1)
+    }
+
+    /// Try Again. The core decides what that is (spec §12.1): after a failure before start, a new
+    /// attempt inside the same session; after a track that stopped partway, a new play of it from
+    /// where it stopped, because that failure already evaluated its session; with no session, the
+    /// selected entry's start. A session that has not failed has nothing to try again.
+    private func retryCurrentEntry() {
+        guard account != nil else { return }
+        let transition = queueClient.retryCurrent()
         guard transition.errorKind == nil else { return publishFailure() }
+        guard transition.startDirective != nil else { return }
         publishPreparing()
         start(transition.startDirective)
     }
@@ -1214,8 +1226,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 providerInstanceID: entry.providerInstanceId,
                 rawID: entry.rawId
             )],
-            canSkip: Self.hasEntryAfterCurrent(snapshot),
-            canRetry: true
+            canSkip: Self.hasOtherEntryAfterCurrent(snapshot),
+            canRetry: true,
+            stoppedPartway: snapshot.currentSession?.failure == "afterPartial"
         )
     }
 

@@ -88,17 +88,24 @@ struct DulcetNowPlayingBar: View {
         }
     }
 
+    /// One line each while playing, as a music player's bar is. A failure's lines may take two:
+    /// with three actions beside them, a narrow phone at the largest text size cut both the track
+    /// and "Couldn't play this track" to their first words, and that line is the one that must
+    /// be read.
     private var identity: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        let lines = store.snapshot.playbackFailed ? 2 : 1
+        return VStack(alignment: .leading, spacing: 1) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
+                .lineLimit(lines)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("\(Self.identifier).title")
             if let subtitle {
                 Text(subtitle)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnRegularMaterial)
-                    .lineLimit(1)
+                    .lineLimit(lines)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -134,6 +141,8 @@ struct DulcetNowPlayingBar: View {
     }
 
     /// Try Again, Skip and Dismiss, in place of play/pause and next while the track has failed.
+    /// Skip is shown only when it has somewhere to go, as in the player: a disabled Skip here and
+    /// none there said two different things about the same failure.
     private var failureActions: some View {
         let failure = store.snapshot.playbackFailure ?? .undescribed
         return HStack(spacing: style == .expanded ? DulcetSpacing.sm : DulcetSpacing.xxs) {
@@ -145,12 +154,14 @@ struct DulcetNowPlayingBar: View {
                     enabled: true
                 ) { store.sendPlaybackControl(.retry) }
             }
-            transportButton(
-                symbol: "forward.end.fill",
-                label: DulcetStrings.playbackSkip,
-                identifier: "skip",
-                enabled: failure.canSkip
-            ) { store.sendPlaybackControl(.next) }
+            if failure.canSkip {
+                transportButton(
+                    symbol: "forward.end.fill",
+                    label: DulcetStrings.playbackSkip,
+                    identifier: "skip",
+                    enabled: true
+                ) { store.sendPlaybackControl(.next) }
+            }
             transportButton(
                 symbol: "xmark",
                 label: DulcetStrings.playbackFailureDismiss,

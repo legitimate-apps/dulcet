@@ -597,7 +597,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 cancelLibraryBrowse()
                 cancelSearchRequest()
                 publish(
-                    state: currentSnapshot.state.accountStateOrIdle,
+                    state: currentSnapshot.accountConnection == .connecting
+                        ? .accountConnecting
+                        : currentSnapshot.state.accountStateOrIdle,
                     destination: .settings,
                     form: currentSnapshot.accountForm,
                     status: currentSnapshot.accountConnection
@@ -685,6 +687,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 refusedQueueEdits += 1
                 receivePlaybackPresentation(latestPlaybackPresentation)
             }
+        case .reportRefusedQueueEdit:
+            refusedQueueEdits += 1
+            receivePlaybackPresentation(latestPlaybackPresentation)
         case let .submitAccountConnection(request):
             localNetworkRetryUsed = false
             submit(request)
@@ -707,10 +712,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         publishSavedAccountOrIdle(form: currentSnapshot.accountForm)
     }
 
-    /// Connects with `request`. `inPlace` is a connection nobody is watching -- the automatic
+    /// Connects with `request`. `inPlace` is a connection nobody asked to watch -- the automatic
     /// retry after local-network access was granted while the person was somewhere else -- so it
-    /// never moves them: no connecting spinner on Settings, and the outcome is recorded on
-    /// whatever surface they are on.
+    /// never moves them, wherever they go before it lands: the account status says it is
+    /// connecting (Connection shows that, with Cancel, if they go there), and the outcome is
+    /// recorded on whatever surface they are on. That is decided here, when the retry is made,
+    /// and not re-decided from where the person happens to be when it completes.
     private func submit(_ request: DulcetAccountConnectRequest, inPlace: Bool = false) {
         cancelLibraryBrowse()
         cancelLibraryRefresh()
@@ -727,14 +734,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let supersededOperation = activeOperation
         activeOperation = nil
         supersededOperation?.cancel()
-        if !inPlace {
+        if inPlace {
+            // The refusal it answers no longer applies; the status says what is happening now.
+            publishInPlace(status: .connecting, form: request)
+        } else {
             publish(state: .accountConnecting, form: request, status: .connecting)
         }
 
         let operation = connector.connect(request) { [weak self] outcome in
             guard let self, self.generation == submissionGeneration else { return }
             self.activeOperation = nil
-            if inPlace, self.currentSnapshot.selectedDestination != .settings {
+            if inPlace {
                 self.completeInPlace(outcome, request: request)
                 return
             }
@@ -806,7 +816,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
 
     /// The outcome of a connection made in place, recorded where the person is. Success opens
     /// the library or search they are looking at with the new connection; a failure is kept on
-    /// the account status, which Settings shows the next time they go there.
+    /// the account status, which Settings shows the next time they go there -- or at once, when
+    /// that is where they are.
     private func completeInPlace(
         _ outcome: DulcetAccountConnectOutcome,
         request: DulcetAccountConnectRequest
@@ -852,13 +863,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
     }
 
-    /// Republishes the surface that is showing with a new account status, moving nothing.
+    /// Republishes the surface that is showing with a new account status, moving nothing. On
+    /// Settings the state is the status's own, so Connection shows what the status says.
     private func publishInPlace(
         status: DulcetAccountConnectionStatus,
         form: DulcetAccountConnectRequest
     ) {
         publish(
-            state: currentSnapshot.state,
+            state: currentSnapshot.selectedDestination == .settings
+                ? status.accountPresentationState
+                : currentSnapshot.state,
             destination: currentSnapshot.selectedDestination,
             form: form,
             status: status,
@@ -2114,6 +2128,19 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
             return "\(host):\(port)"
         }
         return host
+    }
+}
+
+private extension DulcetAccountConnectionStatus {
+    /// The Connection surface's state for this status, as a submission publishes it.
+    var accountPresentationState: DulcetPresentationState {
+        switch self {
+        case .idle: .accountConnectIdle
+        case .saved: .accountSavedDisconnected
+        case .connecting: .accountConnecting
+        case .connected: .accountConnected
+        case let .failed(failure): failure.kind.family.presentationState
+        }
     }
 }
 

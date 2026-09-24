@@ -404,9 +404,23 @@ horizontal size class**, never by the device:
   removed* as well as with it, so the one crossing a simulator can drive does not exhibit the
   failure; the iPad Split View and Stage Manager crossings are not driven.
 - **A failed track is not a dead end.** The bar and the player name the track that failed and offer
-  Try Again and Skip (Skip only when an entry follows it, or the queue repeats); the bar can be
-  dismissed until the person starts something else. A player reporting `ready` with no current item
-  is a failure on every surface, not an empty player.
+  Try Again and Skip. Skip appears, on the bar and in the player alike, only when another entry
+  follows the failed one, or the queue repeats onto another entry -- never onto the failed track
+  itself, which a one-track queue under repeat-all would be. The message offers only what is there:
+  it mentions skipping only when Skip is shown, and a track that stopped partway is not said to have
+  failed to start. Try Again follows §12.1. At the largest accessibility text sizes the bar lets
+  the track's name and the failure line wrap to two lines each, and the player wraps, stacks its
+  actions and scrolls, so neither is cut to its first words (OBSERVED on an iPhone SE, iOS 26.5,
+  with a short fixture title; a long title can still be cut after two lines in the bar). The bar
+  can be dismissed until the person starts something else or a different failure arrives. A player
+  reporting `ready` with no current item is a failure on every surface, not an empty player.
+- **A drag onto the queue never drops silently.** A track, album or search result dragged onto the
+  now-playing bar or Up Next is added to the end of the queue. One that cannot be added -- offline,
+  its tracks not read yet, unplayable, or while the queue cannot be edited -- still lifts, so the
+  tile keeps one identity whether or not its tracks have arrived; its drag card says it cannot be
+  added, no drop target outlines itself for it, and dropping it gives the same refusal as a queue
+  edit the core refuses. **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
+  tap in flight when a library read replaces every tile; it was not reproduced.
 
 ---
 
@@ -1065,12 +1079,16 @@ While access stays denied the answer is watched, and when the person grants it (
 switch in Settings) the connection is retried **once**, as they would have had to: visibly while
 they are still on the explanation, and otherwise **in place** -- someone who has gone to Library
 or Search meanwhile is connected where they are, not taken back to Connection to watch a spinner.
-An in-place retry that fails is recorded where Connection shows it. Open Settings goes to the
+Once in place, always in place: where the person goes while it runs does not change that, so an
+in-place retry never moves them, and coming to Connection while it runs shows it connecting, with
+Cancel, rather than the explanation of a refusal that no longer applies. An in-place retry that
+fails is recorded where Connection shows it. Open Settings goes to the
 app's own Settings page on iOS and iPadOS; on the Mac it goes to the Privacy & Security pane, and
 **ASSUMED**: that its `Privacy_LocalNetwork` anchor lands on the Local Network row. Apple documents
-no URL for that row; on macOS 26.7 the installed Privacy & Security extension still accepts the
-legacy `com.apple.preference.security` identifier, but the anchor does not appear among those it
-carries for its other rows.
+no URL for that row. On macOS 26.7 the installed Privacy & Security extension declares the legacy
+`com.apple.preference.security` identifier, and the anchor does not appear among those it carries
+for its other rows. **ASSUMED** as well: that the URL scheme reaches the pane at all -- opening
+this URL was not observed.
 
 ### 10.4 Gates are conjunctions, and one error does not revoke a capability
 
@@ -1195,10 +1213,18 @@ server-offset seek). **Every engine event carries its `AttemptId`; the core maps
 | start playing an entry | new | new | starts at zero |
 | plan refresh (expiry / mid-stream 401) | same | new | preserved |
 | retry after `FailedBeforeStart` | same | new | preserved (still zero) |
+| retry after `FailedAfterPartial` | outgoing finalized, then new | new | outgoing evaluated at the failure, then new at zero |
 | server-offset seek (§12.7) | same | new | preserved |
 | next queue item (manual or auto) | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
 | repeat-one | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
 | queue replaced wholesale | outgoing finalized | new | outgoing evaluated |
+
+A failure **after** partial playback is terminal for its session: §15.2 evaluates the threshold at
+`FailedAfterPartial`, so the play it describes is over. Try Again on it is therefore a new play of
+the same entry, not a further attempt of a play already evaluated, and it starts from the position
+the failure saved (§15.5). A failure **before** start evaluated nothing, and its retry stays inside
+the session. The core decides which, from the failed attempt's terminal outcome; the shell only
+asks to retry (revision 106).
 
 **Event acceptance rule (this is the fix for the drop-stale-events race):** an event for a superseded
 `AttemptId` is **not** discarded outright. It is routed to its **session**, which is still live during a
@@ -4985,7 +5011,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 106 (2026-09-24)** — written 2026-09-22. The Apple playback system. Four contracts that did not exist or were
+**Revision 106 (2026-09-24)** — written 2026-09-22. The Apple playback system. Contracts that did not exist or were
 wrong:
 
 1. **Gapless preload is wired, and the boundary belongs to the engine** (§12.8). The engine had
@@ -5003,17 +5029,25 @@ wrong:
    favourites exist, transport writes only on change or drift.
 5. **The local-network refusal has a presentation** (§10.3). It existed in code with no row in the
    failure table, and its automatic retry took a person who had moved on back to the Connection
-   screen; the retry now completes in place unless they are still on the explanation.
+   screen. The retry now runs visibly only for someone still on the explanation, and otherwise in
+   place; an in-place retry never moves them, even when they come to Connection before it lands,
+   where it shows as connecting.
 6. **The iOS and iPadOS shell is specified** (§3.1): tab bar or sidebar by the window's size class,
    Now Playing a presentation rather than a destination, a navigation stack per destination that
    survives leaving it and returns to its root when chosen again, a player that survives the window
-   crossing the size-class boundary, and a failed track that offers Try Again and Skip. None of these
-   was written down, and two were observed broken: the stack was derived from a one-destination
-   snapshot and reset on every return, and a failed track offered only disabled play and next
-   buttons and a generic message. A third -- the size-class flip leaving the player unopenable --
+   crossing the size-class boundary, and a failed track that offers Try Again, and Skip where another
+   entry follows. None of these was written down, and two were observed broken: the stack was
+   derived from a one-destination snapshot and reset on every return, and a failed track offered
+   only disabled play and next buttons and a generic message. A third -- the size-class flip leaving the player unopenable --
    was first recorded here as broken; it was reasoned from the code, and removing the handover
    that guards it did not reproduce it on the one crossing a simulator can drive (§3.1). The
    handover is kept as a precaution and the claim is ASSUMED.
+7. **Try Again follows §12.1.** It restarted the failed entry as a new session, contradicting the
+   table's row for a retry after `FailedBeforeStart`; it now keeps the session and replaces only the
+   attempt. The table had no row for a retry after `FailedAfterPartial`; it gains one -- a new play
+   from the saved position, because that failure already evaluated the session.
+8. **A drag onto the queue never drops silently** (§3.1). Attaching the drag interaction to every
+   tile made disabled ones lift and drop nothing without a word; the drop is now refused out loud.
 
 **Revision 105 (2026-09-24)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a

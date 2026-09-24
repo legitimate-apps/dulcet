@@ -112,8 +112,12 @@ public struct DulcetUpNextSection: View {
         .buttonStyle(.plain)
         .dulcetHoverEffect()
         .accessibilityIdentifier("dulcet.upNext.row.\(offset)")
-        // Reordering is a drag and removal a swipe, neither of which VoiceOver or Switch Control
-        // can perform on a row; named actions put both where those users look for them.
+        // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
+        // Move Up and Move Down are named actions. Removal needs one only where the platform does
+        // not already offer it: on iOS the row's swipe comes with a Delete action derived from
+        // `.onDelete` (OBSERVED on iOS 26.5, listed beside these), so a Remove there would be the
+        // same action twice. tvOS has no `.onDelete`; that the Mac derives no such action is
+        // ASSUMED, so it keeps Remove.
         .accessibilityActions {
             if offset > 0,
                let intent = model.moveIntent(
@@ -129,7 +133,9 @@ public struct DulcetUpNextSection: View {
                ) {
                 Button(DulcetQueueStrings.moveDown) { onEdit(intent) }
             }
+            #if !os(iOS)
             Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
+            #endif
         }
         .contextMenu {
             Button(DulcetQueueStrings.playNow) { onEdit(model.jumpIntent(to: entry)) }

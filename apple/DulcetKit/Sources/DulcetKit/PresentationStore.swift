@@ -18,6 +18,9 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case showArtist(DulcetProviderItemID)
     case playbackControl(DulcetPlaybackControlIntent)
     case editQueue(DulcetQueueEditIntent)
+    /// An edit the person tried that could not be made before it reached the queue -- a drop
+    /// carrying nothing -- said out loud as a refused edit is.
+    case reportRefusedQueueEdit
     case submitAccountConnection(DulcetAccountConnectRequest)
     case cancelAccountConnection
     case removeAccount
@@ -89,11 +92,17 @@ public final class DulcetPresentationStore {
     /// back expects to find the album, as every tab bar and sidebar keeps each place as it was
     /// left -- deriving the stack from the snapshot reset it to the grid on every return.
     public private(set) var libraryPath: [DulcetLibraryRoute] = []
-    /// The person dismissed the now-playing bar's failure. Cleared when playback is doing
-    /// anything else, and whenever the person starts something -- a retry, a skip, a new queue --
-    /// even when that fails too without a moment in between, so only the failure dismissed stays
-    /// away.
-    public private(set) var playbackFailureDismissed = false
+    /// The failure the person dismissed from the now-playing bar. Only that failure stays away:
+    /// it is forgotten when playback does anything else -- however that was started, the lock
+    /// screen and a headset included -- and whenever the person starts something through the
+    /// store, even when that fails too with no moment in between; and a different failure is not
+    /// it, so it shows.
+    private var dismissedPlaybackFailure: DulcetFailedPlayback?
+    /// Whether the failure showing is the one the person dismissed.
+    public var playbackFailureDismissed: Bool {
+        guard snapshot.playbackFailed, let dismissedPlaybackFailure else { return false }
+        return dismissedPlaybackFailure == snapshot.playbackFailure ?? .undescribed
+    }
     public var downloadsEnabled: Bool { source.downloadsEnabled }
     public var searchQuery: String {
         didSet {
@@ -199,17 +208,17 @@ public final class DulcetPresentationStore {
     }
 
     public func playLibrary(shuffle: Bool) {
-        playbackFailureDismissed = false
+        dismissedPlaybackFailure = nil
         source.send(.playLibrary(shuffle: shuffle))
     }
 
     public func playAlbum(_ id: DulcetProviderItemID, shuffle: Bool) {
-        playbackFailureDismissed = false
+        dismissedPlaybackFailure = nil
         source.send(.playAlbum(id, shuffle: shuffle))
     }
 
     public func activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID) {
-        playbackFailureDismissed = false
+        dismissedPlaybackFailure = nil
         source.send(.activateTrack(albumID: albumID, trackID: trackID))
     }
 
@@ -218,7 +227,7 @@ public final class DulcetPresentationStore {
     }
 
     public func sendPlaybackControl(_ intent: DulcetPlaybackControlIntent) {
-        playbackFailureDismissed = false
+        dismissedPlaybackFailure = nil
         source.send(.playbackControl(intent))
     }
 
@@ -232,7 +241,7 @@ public final class DulcetPresentationStore {
     /// Puts the failed track's bar away. Nothing plays until the person starts something.
     public func dismissPlaybackFailure() {
         guard snapshot.playbackFailed else { return }
-        playbackFailureDismissed = true
+        dismissedPlaybackFailure = snapshot.playbackFailure ?? .undescribed
     }
 
     /// The library artist a credit leads to, or nil when there is no page to show.
@@ -278,6 +287,12 @@ public final class DulcetPresentationStore {
         source.send(.editQueue(intent))
     }
 
+    /// A queue edit that failed before it could be asked for, such as a drop that carries
+    /// nothing. It gets the same feedback as an edit the queue refused.
+    public func reportRefusedQueueEdit() {
+        source.send(.reportRefusedQueueEdit)
+    }
+
     public func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {
         source.send(.loadMoreSearchResults(kind))
     }
@@ -287,7 +302,7 @@ public final class DulcetPresentationStore {
     }
 
     public func activateSearchResult(_ id: DulcetProviderItemID) {
-        playbackFailureDismissed = false
+        dismissedPlaybackFailure = nil
         source.send(.activateSearchResult(id))
     }
 
@@ -307,7 +322,7 @@ public final class DulcetPresentationStore {
     private func receive(_ snapshot: DulcetSnapshot) {
         isApplyingSourceSnapshot = true
         followLibraryPage(in: snapshot, arrivingFrom: self.snapshot.selectedDestination)
-        if !snapshot.playbackFailed { playbackFailureDismissed = false }
+        if !snapshot.playbackFailed { dismissedPlaybackFailure = nil }
         self.snapshot = snapshot
         selectedDestination = snapshot.selectedDestination
         searchQuery = snapshot.searchQuery

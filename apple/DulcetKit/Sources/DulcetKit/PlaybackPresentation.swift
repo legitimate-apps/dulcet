@@ -72,7 +72,9 @@ public enum DulcetPlaybackControlIntent: Sendable, Hashable {
     case seek(Duration)
     case setShuffle(Bool)
     case cycleRepeat
-    /// Starts the current entry again, as a new session: Retry, after it failed to play.
+    /// Try Again, after the current entry failed to play. What that starts is the controller's
+    /// decision (spec §12.1): a new attempt of the same session when it failed before starting,
+    /// a new play from where it stopped when it failed partway.
     case retry
 }
 
@@ -80,15 +82,20 @@ public enum DulcetPlaybackControlIntent: Sendable, Hashable {
 public struct DulcetFailedPlayback: Sendable, Hashable {
     /// The track that failed, when the controller can name it.
     public let track: DulcetTrack?
-    /// Whether an entry follows the failed one, so Skip has somewhere to go.
+    /// Whether Skip has a different entry to go to: one follows the failed entry, or the queue
+    /// repeats onto another. Never true for the only entry of a repeating queue, where Skip would
+    /// start the failed track again.
     public let canSkip: Bool
     /// Whether the failed entry can be started again.
     public let canRetry: Bool
+    /// The track played for a while and then stopped, rather than failing to start.
+    public let stoppedPartway: Bool
 
-    public init(track: DulcetTrack?, canSkip: Bool, canRetry: Bool) {
+    public init(track: DulcetTrack?, canSkip: Bool, canRetry: Bool, stoppedPartway: Bool = false) {
         self.track = track
         self.canSkip = canSkip
         self.canRetry = canRetry
+        self.stoppedPartway = stoppedPartway
     }
 
     /// A failure the controller cannot describe: nothing to name, nowhere to go.

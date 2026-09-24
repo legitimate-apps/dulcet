@@ -28,10 +28,40 @@ struct DulcetPlaybackPreparingView: View {
 struct DulcetPlaybackFailedView: View {
     let failure: DulcetFailedPlayback?
     let onControl: (DulcetPlaybackControlIntent) -> Void
+#if os(iOS)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+#endif
 
     var body: some View {
         let failure = failure ?? .undescribed
-        let offersActions = failure.canRetry || failure.canSkip
+#if os(iOS)
+        // At the accessibility text sizes the name, the message and the two actions outgrow a
+        // phone, and a fixed frame truncated all four to a few letters (OBSERVED on an iPhone SE at
+        // the largest size). The text wraps, the actions stack, and the page scrolls when it has
+        // to; centred in the height when it fits, as before.
+        GeometryReader { geometry in
+            ScrollView {
+                content(failure)
+                    .padding(dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.lg : DulcetSpacing.xxl)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: geometry.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+        .navigationTitle(DulcetStrings.nowPlaying)
+#else
+        content(failure)
+            .padding(DulcetSpacing.xxl)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.dulcetWindow)
+            .dulcetForeground(.primaryTextOnWindow)
+            .navigationTitle(DulcetStrings.nowPlaying)
+#endif
+    }
+
+    private func content(_ failure: DulcetFailedPlayback) -> some View {
         VStack(spacing: DulcetSpacing.lg) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 38, weight: .medium))
@@ -41,36 +71,57 @@ struct DulcetPlaybackFailedView: View {
                 ?? DulcetStrings.nowPlayingFailedTitle)
                 .font(.title2.weight(.semibold))
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("dulcet.now-playing.failure")
-            Text(offersActions ? DulcetStrings.playbackFailedActionsBody : DulcetStrings.nowPlayingFailedBody)
+            Text(Self.message(for: failure))
                 .dulcetForeground(.secondaryTextOnWindow)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 560)
-            if offersActions {
-                HStack(spacing: DulcetSpacing.sm) {
-                    if failure.canRetry {
-                        Button(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
-                            onControl(.retry)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("dulcet.now-playing.retry")
-                    }
-                    if failure.canSkip {
-                        Button(DulcetStrings.playbackSkipShort, systemImage: "forward.end.fill") {
-                            onControl(.next)
-                        }
-                        .dulcetSecondaryActionStyle()
-                        .accessibilityLabel(DulcetStrings.playbackSkip)
-                        .accessibilityIdentifier("dulcet.now-playing.skip")
-                    }
+            if failure.canRetry || failure.canSkip {
+                // Side by side while both labels fit; stacked otherwise, rather than squeezed.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: DulcetSpacing.sm) { actions(failure) }
+                    VStack(spacing: DulcetSpacing.sm) { actions(failure) }
                 }
             }
         }
-        .padding(DulcetSpacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.nowPlaying)
+    }
+
+    @ViewBuilder
+    private func actions(_ failure: DulcetFailedPlayback) -> some View {
+        if failure.canRetry {
+            Button(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
+                onControl(.retry)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("dulcet.now-playing.retry")
+        }
+        if failure.canSkip {
+            Button(DulcetStrings.playbackSkipShort, systemImage: "forward.end.fill") {
+                onControl(.next)
+            }
+            .dulcetSecondaryActionStyle()
+            .accessibilityLabel(DulcetStrings.playbackSkip)
+            .accessibilityIdentifier("dulcet.now-playing.skip")
+        }
+    }
+
+    /// What the player says under the failed track's name: what happened, and only what is on
+    /// offer. Skipping is mentioned only when Skip is shown, and a track that played and then
+    /// stopped is not said to have failed to start.
+    static func message(for failure: DulcetFailedPlayback) -> String {
+        let offer: String
+        switch (failure.canRetry, failure.canSkip) {
+        case (true, true): offer = DulcetStrings.playbackFailedOfferBoth
+        case (true, false): offer = DulcetStrings.playbackFailedOfferRetry
+        case (false, true): offer = DulcetStrings.playbackFailedOfferSkip
+        case (false, false): return DulcetStrings.nowPlayingFailedBody
+        }
+        let lead = failure.stoppedPartway
+            ? DulcetStrings.playbackStoppedPartway
+            : DulcetStrings.playbackFailedToStart
+        return lead + " " + offer
     }
 }
 
@@ -116,8 +167,8 @@ struct DulcetNowPlayingView: View {
                             showsQueueToggle: false
                         )
                         .padding(.vertical, DulcetSpacing.xl)
-                        // Centred in the window's height when it fits, as the system player
-                        // sits; it scrolls only when it does not.
+                        // Centred in the window's height when it fits; it scrolls only when it
+                        // does not.
                         .frame(minHeight: geometry.size.height, alignment: .center)
                     }
                     // A player that fits does not rubber-band, so a downward swipe on the
@@ -132,8 +183,8 @@ struct DulcetNowPlayingView: View {
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
             } else if showingQueue {
-                // The queue replaces the artwork, as the system player's does; the footer stays,
-                // so the control that opened it closes it.
+                // The queue replaces the artwork; the footer stays, so the control that opened it
+                // closes it. (That the system player lays it out this way is ASSUMED, not compared.)
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     queueColumn
                     footer(alignment: .leading, showsQueueToggle: true)
@@ -304,7 +355,8 @@ struct DulcetNowPlayingView: View {
         .frame(maxWidth: .infinity)
         // Five controls in one row: at the accessibility text sizes their symbols outgrew an
         // iPhone's width and the outer ones were pushed off screen. The row stops growing at the
-        // largest standard size, as the system player's does; the title above still grows.
+        // largest standard size; the title above still grows. ASSUMED, not compared: that the
+        // system player caps its transport row the same way.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 

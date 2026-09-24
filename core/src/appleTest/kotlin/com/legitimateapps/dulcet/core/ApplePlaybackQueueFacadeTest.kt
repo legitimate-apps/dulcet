@@ -439,6 +439,47 @@ class ApplePlaybackQueueFacadeTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun retryCurrentCrossesTheBoundaryKeepingTheSessionAfterAFailureBeforeStart() {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var identity = 0
+        // Store-backed, so the position a failure after partial playback saves is really saved.
+        val client = ApplePlaybackQueueClient(
+            database = database,
+            controller = PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = resumePositions,
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+            resumePositions = resumePositions,
+        )
+        val started = assertNotNull(client.replaceAndStart(queueRequest()).startDirective)
+
+        val failed = client.recordFailedBeforeStart(started.attemptId, "sourceUnavailable")
+        assertEquals("Failed", failed.snapshot?.currentSession?.phase)
+        assertEquals("beforeStart", failed.snapshot?.currentSession?.failure)
+
+        val retried = client.retryCurrent()
+        val directive = assertNotNull(retried.startDirective)
+        assertNull(retried.errorKind)
+        assertEquals(started.playbackSessionId, directive.playbackSessionId)
+        assertNotEquals(started.attemptId, directive.attemptId)
+        assertNull(retried.snapshot?.currentSession?.failure, "the new attempt has not failed")
+
+        // It plays, then drops: a failure after partial playback, and its retry is a new play.
+        client.recordReady(directive.attemptId, 180_000, "seekable")
+        client.recordPlaybackProgressBegan(directive.attemptId, 1_788_000_000_000, 1_000)
+        val dropped = client.recordFailedAfterPartial(directive.attemptId, 40_000, "transport")
+        assertEquals("afterPartial", dropped.snapshot?.currentSession?.failure)
+        val replay = assertNotNull(client.retryCurrent().startDirective)
+        assertNotEquals(started.playbackSessionId, replay.playbackSessionId)
+        assertEquals(40_000, replay.resumePositionMilliseconds)
+        client.close()
+        driver.close()
+    }
+
     private fun insertion(rawIds: List<String>, mode: String) = ApplePlaybackQueueInsertionDto(
         items = rawIds.map { ApplePlaybackQueueItemDto("server", it, 180_000) },
         sourceKind = "search",

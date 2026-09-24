@@ -247,6 +247,31 @@ func storeAcceptsSnapshotsPushedByADataSource() {
 }
 
 @Test @MainActor
+func aLibraryReadStillLoadingKeepsTheStackItIsAnswering() throws {
+    let fixture = DulcetDeterministicFixture()
+    let source = PushingTestDataSource(initialSnapshot: fixture.snapshot(for: .libraryBrowse))
+    let store = DulcetPresentationStore(source: source)
+    source.publish(fixture.snapshot(for: .artistDetail))
+    source.publish(fixture.snapshot(for: .albumDetailMultiDisc))
+    let stack = store.libraryPath
+    #expect(stack.count == 2, "an artist, then an album pushed on it")
+
+    // A read still loading shows no page, and it is not the grid either: it is the answer to a
+    // page that was asked for, so the stack under it is kept.
+    let loading = fixture.snapshot(for: .libraryLoading)
+    #expect(loading.selectedDestination == .library)
+    #expect(DulcetLibraryRoute.page(in: loading) == nil)
+    source.publish(loading)
+    #expect(store.libraryPath == stack)
+
+    // The page it was loading comes back where it was; the grid, once it is the answer, empties it.
+    source.publish(fixture.snapshot(for: .albumDetailMultiDisc))
+    #expect(store.libraryPath == stack)
+    source.publish(fixture.snapshot(for: .libraryBrowse))
+    #expect(store.libraryPath.isEmpty)
+}
+
+@Test @MainActor
 func replaceableSourceControlsRecentlyAddedOrdering() {
     let fixture = DulcetDeterministicFixture()
     let original = fixture.snapshot(for: .libraryBrowse)

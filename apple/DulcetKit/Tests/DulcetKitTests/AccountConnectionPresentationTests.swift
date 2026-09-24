@@ -3063,3 +3063,171 @@ func anInPlaceRetryThatFailsIsRecordedWhereSettingsShowsIt() {
     store.navigate(to: .settings)
     #expect(shownFailureKind(store) == .transportUnreachable)
 }
+
+// MARK: - The failure message offers only what is there
+
+@MainActor
+private func failure(canSkip: Bool, canRetry: Bool = true, stoppedPartway: Bool = false) -> DulcetFailedPlayback {
+    DulcetFailedPlayback(
+        track: fixtureLibraryAlbum().tracks[0],
+        canSkip: canSkip,
+        canRetry: canRetry,
+        stoppedPartway: stoppedPartway
+    )
+}
+
+@Test @MainActor
+func theLastEntrysFailureDoesNotOfferASkipThatIsNotThere() {
+    // The last entry with repeat off, and a one-track queue under repeat-all, both reach the
+    // player as a failure that cannot skip: nothing else follows the failed track.
+    let message = DulcetPlaybackFailedView.message(for: failure(canSkip: false))
+    #expect(message == "Dulcet couldn\u{2019}t start this track. Try it again.")
+    #expect(!message.localizedCaseInsensitiveContains("skip"))
+}
+
+@Test @MainActor
+func aFailureWithSomewhereToGoOffersBoth() {
+    #expect(DulcetPlaybackFailedView.message(for: failure(canSkip: true))
+        == "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one.")
+}
+
+@Test @MainActor
+func aTrackThatStoppedPartwayIsNotSaidToHaveFailedToStart() {
+    let withSkip = DulcetPlaybackFailedView.message(for: failure(canSkip: true, stoppedPartway: true))
+    let withoutSkip = DulcetPlaybackFailedView.message(for: failure(canSkip: false, stoppedPartway: true))
+    #expect(withSkip == "This track stopped partway through. Try it again, or skip to the next one.")
+    #expect(withoutSkip == "This track stopped partway through. Try it again.")
+    #expect(![withSkip, withoutSkip].contains { $0.contains("start") })
+}
+
+@Test @MainActor
+func aFailureWithNothingOnOfferSendsThePersonBackToTheLibrary() {
+    #expect(DulcetPlaybackFailedView.message(for: .undescribed)
+        == "Return to your library and choose another track.")
+    #expect(DulcetPlaybackFailedView.message(for: failure(canSkip: true, canRetry: false))
+        == "Dulcet couldn\u{2019}t start this track. Skip to the next one.")
+}
+
+// MARK: - Only the failure dismissed stays away
+
+@Test @MainActor
+func aDismissedFailureComesBackWhenPlaybackStartsWithoutTheStore() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    let failed = DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: failure(canSkip: true))
+    playback.publish(failed)
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // Started from the lock screen or a headset: nothing goes through the store, and the same
+    // track fails again. Playback did something else in between, so this is a new failure.
+    playback.publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
+    playback.publish(failed)
+    #expect(store.showsNowPlayingBar)
+}
+
+@Test @MainActor
+func aDifferentFailureAfterADismissalShowsTheBarWithNothingInBetween() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: failure(canSkip: true)))
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The same failure republished stays dismissed...
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: failure(canSkip: true)))
+    #expect(!store.showsNowPlayingBar)
+    // ...but another track failing is not the failure the person put away.
+    let otherTrack = DulcetTrack(
+        id: DulcetProviderItemID(providerInstanceID: "provider-instance-fixture", rawID: "track:other"),
+        title: "Other Track",
+        credits: [],
+        albumTitle: "Opaque Album",
+        duration: .seconds(90),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: "track:other", palette: .indigoCoral)
+    )
+    let other = DulcetFailedPlayback(track: otherTrack, canSkip: false, canRetry: true)
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: other))
+    #expect(store.snapshot.playbackFailure == other)
+    #expect(store.showsNowPlayingBar)
+}
+
+// MARK: - A drop that carries nothing is refused out loud
+
+@Test @MainActor
+func aDropThatCarriesNothingIsRefusedOutLoud() throws {
+    DulcetQueueDragRegistry.removeAll()
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    // A disabled tile -- offline, or its track list not read yet -- still lifts, so the drag
+    // interaction keeps one identity; what it carries is nothing, and the drag says so.
+    let nothing = DulcetQueueDragRegistry.register(nil)
+    #expect(!DulcetQueueDragRegistry.activeDragCarriesAddition)
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([nothing], store: store))
+    #expect(editing.edits.isEmpty)
+    #expect(store.snapshot.refusedQueueEdits == 1, "a drop that adds nothing must not be silent")
+
+    // A drag that carries something is not refused.
+    let addition = DulcetQueueAddition.album(fixtureLibraryAlbum())
+    let something = DulcetQueueDragRegistry.register(addition)
+    #expect(DulcetQueueDragRegistry.activeDragCarriesAddition)
+    #expect(DulcetQueueDragRegistry.dropOntoQueue([something], store: store))
+    #expect(store.snapshot.refusedQueueEdits == 1)
+}
+
+// MARK: - An in-place local-network retry never moves the person
+
+@Test @MainActor
+func anInPlaceRetryNeverMovesThePersonAndConnectionShowsItConnecting() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .library)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried in place")
+    #expect(store.snapshot.selectedDestination == .library)
+
+    // The person opens Connection while the retry runs: it is connecting, not refused.
+    store.navigate(to: .settings)
+    #expect(shownFailureKind(store) == nil, "the refusal no longer applies")
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(store.snapshot.state == .accountConnecting)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(store.snapshot.selectedDestination == .settings, "an in-place retry never moves them")
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.state == .accountConnected)
+}
+
+@Test @MainActor
+func anInPlaceRetryCanBeCancelledFromConnection() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .search)
+    probe.answer(.notDenied)
+    store.navigate(to: .settings)
+    store.cancelAccountConnection()
+    #expect(store.snapshot.selectedDestination == .settings)
+    #expect(store.snapshot.state != .accountConnecting)
+    // A completion arriving after the cancel changes nothing.
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.selectedDestination == .settings)
+}
