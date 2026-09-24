@@ -96,6 +96,8 @@ measured — several CONF tests exist precisely to do that promotion.
 python3 tools/parity_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
+python3 tools/verify_release_policy.py
+python3 tools/test-release-channel
 ```
 
 🚨 **`BUILD SUCCESSFUL` is not evidence that tests ran.** An up-to-date Gradle test task prints it in
@@ -112,8 +114,8 @@ run in `apple-ci` on the pinned hosted image.
 
 | | DEV | PROD |
 |---|---|---|
-| trigger | every merge to `main`, automatic | a hand-cut `vX.Y.Z` tag, never automatic |
-| bundle id | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
+| trigger | dispatched by hand on a significant merge to `main` (`release.yml`); the dispatcher tells the maintainer, the workflow sends nothing | a hand-cut `vX.Y.Z` tag, then a dispatch of that commit; never automatic |
+| bundle id (every platform — universal purchase, one ASC record per channel) | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
 | display name | **Dulcet DEV** (distinct icon) | **Dulcet** |
 | TestFlight | **internal** testers, no Beta App Review, minutes | **external** group, Beta App Review, slower **by design** |
 | expectation | expected to break — that is the point | someone else relies on it |
@@ -127,6 +129,11 @@ run in `apple-ci` on the pinned hosted image.
   make it **structurally impossible** for PROD to compile that value in — not a thing someone remembers.
 - **Cutting PROD is gated**: CI green, conformance suite passing, `FEATURES.yml` showing no undeclared
   regression. A tag failing any of those is deleted and re-cut, never shipped with a note.
+- **`release.yml` is `workflow_dispatch`-only, from `main`, in the approval-gated `release`
+  environment, with `dry_run` defaulting to `true`** (spec §22.6). An upload needs the App Store
+  Connect record for that bundle identifier, which is created in the web UI only. The environment
+  has administrator bypass off; `prevent_self_review` is off because there is one maintainer, so its
+  approval is a deliberate second click, **not** an independent review.
 - **Only these settings differ per channel**: bundle id, display name, icon, logging verbosity,
   diagnostics visibility, preconfigured server. Everything correctness-relevant is identical — a DEV
   build that behaves differently because of a build flag is not dogfooding, it is a different program.

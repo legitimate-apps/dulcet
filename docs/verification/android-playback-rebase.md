@@ -9,7 +9,7 @@ The 18-commit Android playback branch was rebased from base `247d655` onto
 The only conflict was in the design spec revision history. Main added revisions
 94 and 95 for stale-selection restoration and the correction preserving all queue
 entries. The playback branch independently used revision 94 for explicit-seek
-scrobble accounting. The latter is now revision 100, above main's unchanged records (main has since used 96 to 99).
+scrobble accounting. The latter is now revision 101, above main's unchanged records (main has since used 96 to 100).
 The current restoration contract retains all queue entries; the historical revision
 94 deletion policy was not restored as current behavior.
 

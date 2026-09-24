@@ -893,3 +893,53 @@ assert len(set(diagnostic_cases_run)) == len(diagnostic_cases_run), (
 )
 print(f'Diagnostic wiring controls passed: '
       f'{len(diagnostic_cases_run)}/{EXPECTED_DIAGNOSTIC_CASES} cases')
+
+
+# ---------------------------------------------------------------------------------------------
+# The release.yml cancellation exemption. Each condition of the exemption must be necessary: the
+# file name, dispatch-only triggers, and an explicit `cancel-in-progress: false`. The positive case
+# proves the exemption exists at all; without it the three rejections would pass vacuously.
+RELEASE_FIXTURE = """name: release
+on:
+%(triggers)s
+concurrency:
+  group: release
+%(cancel)s
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - run: true
+"""
+EXPECTED_RELEASE_CASES = 4
+release_cases_run: list[str] = []
+
+
+def release_case(name: str, filename: str, triggers: str, cancel: str, accepted: bool) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        workflows = Path(directory) / ".github/workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "core-ci.yml").write_text(workflow_for(next(case for case in CASES if case.accepted)))
+        (workflows / filename).write_text(RELEASE_FIXTURE % {"triggers": triggers, "cancel": cancel})
+        result = subprocess.run([sys.executable, str(VERIFIER)], cwd=directory,
+                                capture_output=True, text=True)
+    if accepted:
+        assert result.returncode == 0, f"{name}: expected acceptance\n{result.stderr}"
+    else:
+        assert result.returncode == 1, f"{name}: expected rejection, got {result.returncode}"
+        assert f"{filename}: missing cancel-in-progress" in result.stderr, f"{name}: {result.stderr}"
+    release_cases_run.append(name)
+    print(f"PASS: release exemption {name} -> {'accepted' if accepted else 'rejected'}")
+
+
+release_case("dispatch-only release.yml, explicit false", "release.yml",
+             "  workflow_dispatch:", "  cancel-in-progress: false", True)
+release_case("same shape under another name", "nightly.yml",
+             "  workflow_dispatch:", "  cancel-in-progress: false", False)
+release_case("release.yml that also runs on push", "release.yml",
+             "  push:\n    branches: [main]\n  workflow_dispatch:", "  cancel-in-progress: false", False)
+release_case("release.yml with no cancellation policy", "release.yml",
+             "  workflow_dispatch:", "", False)
+assert len(release_cases_run) == EXPECTED_RELEASE_CASES, release_cases_run
+print(f"Release cancellation exemption controls passed: {len(release_cases_run)}/{EXPECTED_RELEASE_CASES}")
