@@ -1,8 +1,30 @@
 # Does a freshly booted simulator slow the Navidrome restart next to it?
 
-**Status: OPEN EXPERIMENT.** Pre-registered 2026-09-10, before any run of the changed workflow.
-The reorder in `.github/workflows/apple-ci.yml` **is the test**, not the fix. Nothing below claims
-the reorder improves the pass rate.
+**Status: CLOSED 2026-09-22 — SUPPORTED** by the table in *How to read the result*, which was
+pre-registered 2026-09-10, before any run of the changed workflow. Nothing below claims the reorder
+improved the pass rate; the reading is about where the degradation sits.
+
+## Result (read 2026-09-22)
+
+Every green `apple-ci` job from 2026-09-10 12:00Z to 2026-09-22 whose log carries all three
+`RESTART SEQUENCING` markers: **n = 23**. `libwait` is `TRANSCODE CACHE CLEARED` -> `library ready:`,
+taken from the log timestamps exactly as the baseline was, restart #1 the denominator.
+
+| | pre-change (n=99) | **post-change (n=23)** | criterion | met |
+|---|---|---|---|---|
+| libwait #2 / #1, median | 3.613x, 99/99 above 1 | **1.021x, below 1 in 7/23 (30%)** | < 1.5x and below 1 in >= 20% | yes |
+| libwait #3 / #1, median | 2.280x, 99/99 above 1 | **2.128x, above 1 in 23/23** | >= 1.8x | yes |
+
+Absolute libwait: restart #1 median 2.60 s (max 2.97 s); the **moved** restart #2 median 2.65 s
+(max 3.53 s, against 89.01 s before); the **unmoved** restart #3 median 5.58 s (max 29.67 s). The
+stream probe agrees without being a criterion: first response #2/#1 median 0.28x (above 1 in 0/23),
+#3/#1 median 2.70x (above 1 in 22/23).
+
+Reading: the degradation follows adjacency to a freshly created and booted simulator, not position
+in the job. That is what `tools/ci/isolate-simulator` acts on — see
+`docs/investigations/2026-09-22-apple-ci-host-contention.md`. **From 2026-09-22 every restart runs
+with at most one, fully booted, simulator resident**, so ratios measured after that change are a
+different arrangement and must not be read against this table.
 
 ## The observation
 

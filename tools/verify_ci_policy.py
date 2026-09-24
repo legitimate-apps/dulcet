@@ -365,9 +365,23 @@ workflows = sorted(Path(".github/workflows").glob("*.yml"))
 if not workflows:
     errors.append("no workflows found")
 
+# The one exemption from cancel-in-progress: true. Cancelling release.yml mid-upload can leave a
+# build App Store Connect has already received under a number the next run would reuse, which
+# Apple rejects as a duplicate -- so a newer dispatch must queue behind a running release, never
+# replace it. Narrow on purpose: only a file named release.yml, only while it is
+# workflow_dispatch-only (nothing automatic can pile up behind it), and only with an explicit
+# `cancel-in-progress: false`. tools/test-verify-ci-policy proves each condition is required.
+def release_cancellation_exempt(workflow: Path, text: str) -> bool:
+    return (
+        workflow.name == "release.yml"
+        and workflow_triggers(text.splitlines()) == {"workflow_dispatch"}
+        and re.search(r"(?m)^  cancel-in-progress: false\s*$", text) is not None
+    )
+
+
 for workflow in workflows:
     text = workflow.read_text()
-    if "cancel-in-progress: true" not in text:
+    if "cancel-in-progress: true" not in text and not release_cancellation_exempt(workflow, text):
         errors.append(f"{workflow}: missing cancel-in-progress")
     if "timeout-minutes:" not in text:
         errors.append(f"{workflow}: missing per-job timeout")

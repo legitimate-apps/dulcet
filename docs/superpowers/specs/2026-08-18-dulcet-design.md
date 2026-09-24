@@ -491,6 +491,18 @@ androidTarget(); jvm()   // jvm exists only for the conformance suite (S20)
   with a confusing error message. **Consequence, stated out loud:** Xcode builds are not hermetic —
   they require a JDK and the Gradle wrapper on the build machine. GitHub's macOS runner images ship
   both, so this is free in CI; it is a stated contributor prerequisite in `CLAUDE.md`.
+- **Every Run Script phase invokes Gradle through `tools/run-gradle-exclusive`, never a bare
+  `./gradlew`.** OBSERVED: eight targets own the phase, Xcode builds independent targets in parallel,
+  and Gradle queues behind its own locks for only about 60 s before failing the build if the owner
+  has not yielded — most pairs fit inside that window (green run 34596556005 ran a tvOS pair
+  concurrently for over four minutes), and the failure is the long tail. Run
+  34635969077 (2026-09-11) lost the checkout-scoped configuration-cache lock and run 34127121022
+  (2026-09-07) the user-home-scoped journal lock, both with `DulcetiOS` and `DulcetKitIOSTests`
+  building together. The runner holds one flock beside each resource for the whole invocation, in a
+  fixed order, inherited by the exec'd Gradle process so a killed holder releases both.
+  `tools/verify_xcode_script_phases.py` (parity-gate) keeps the committed project's script bodies
+  equal to `apple/project.yml`'s, because nothing regenerates the project during a build and the
+  build-order guard reads only the committed project.
 - **`assembleXCFramework` is not part of the app build** and is not run in app CI. It exists only to
   produce a distributable artifact if we ever publish the core separately, and until we do, the task
   is not wired into any workflow. (Revision 1 listed it in `apple-ci.yml`; that was redundant build
@@ -735,6 +747,24 @@ intervals. Therefore the Android adapter **owns a periodic sampler** that emits 
 while the session is playing, uses the monotonic clock (§18.8), is suspended while paused or
 buffering, and continues at the same cadence during background playback.
 
+**The queue belongs to the core, so Media3 only ever holds the current item.** Three consequences,
+each easy to get wrong:
+
+- **Skip commands are advertised from the core queue.** The session player reports
+  `COMMAND_SEEK_TO_NEXT`/`PREVIOUS` and answers `hasNextMediaItem()` from the core's queue, because a
+  one-item timeline would otherwise offer no next or previous on the notification or lock screen.
+  **OBSERVED** 2026-09-22 on an Android 14 emulator: the media notification carries three actions
+  (previous, play/pause, next), and `cmd media_session dispatch next` advanced the core queue. That
+  the notification would lose the skip actions *without* this is **ASSUMED** from Media3's
+  documented command model and pinned by a host test, not observed on a device.
+- **In-app player UI reads the controller's published state, not the `Player`.** The
+  `media3-ui-compose` state holders were evaluated and not used for the queue and title surfaces,
+  because they observe the player, whose timeline is one item; they would show no Up Next.
+- **Cover art reaches the session as validated bytes (`artworkData`), never as `artworkUri`.** A URI
+  would be a signed `getCoverArt` request handed to the system UI process, credentials included
+  (CORPUS.md §4, line 5). The bytes come through the same validated artwork path as every other surface
+  (§18.2), after preparation has begun, so a slow cover never delays sound.
+
 ---
 
 ## 9. The provider seam
@@ -794,7 +824,7 @@ was a name away from a real defect; the rename removes it.
 
 `libraryChangeSource()` returns a **source with checkpoint/resume semantics, not a push stream**,
 because Subsonic has no change feed (§16.1). Naming it a source rather than `Flow<Change>` keeps the
-interface honest that nothing is being pushed. **Revision 99:** for the reader it is the source of the
+interface honest that nothing is being pushed. **Revision 104:** for the reader it is the source of the
 *catalog epoch* (§16.11) — a pollable reading of `getScanStatus.lastScan` and the music-folder id set
 that answers "could the catalog have changed since this read?" and nothing finer. It never claims to
 name what changed.
@@ -1048,7 +1078,7 @@ playing from library A) is deferred and is not a v1 feature.
 · `mutation_outbox` (§18.3) · `artwork_cache` · `resume_position` (§15.5) · `sync_checkpoint` ·
 `schema_meta` (SQLDelight schema version, cache-format version, `committed_generation`).
 
-**Revision 99 — the target set.** The generation-versioned library tables above (`artist`, `album`,
+**Revision 104 — the target set.** The generation-versioned library tables above (`artist`, `album`,
 `track`, `credit`, `playlist`, `playlist_entry`, the starred and genre tables, `sync_*`,
 `deletion_reconciliation`, and `committed_generation`) belong to the retired mirror and are dropped by
 the subtractive migration of §16.17. They are replaced by the seen-cache: `cache_binding`,
@@ -1061,7 +1091,7 @@ resume tables are unchanged.
 - SQLDelight `.sqm` migrations, with `verifySqlDelightMigration` in CI on every PR.
 - **Protected data — must survive every migration:** `scrobble_outbox`, `mutation_outbox`,
   `download` rows plus their files, and `resume_position`. These are the only things not re-derivable
-  from the server. **Revision 99 adds** the pinned cache rows of downloaded and queued items
+  from the server. **Revision 104 adds** the pinned cache rows of downloaded and queued items
   (§16.13): the metadata is re-derivable from the server only while the server is reachable and the
   item still exists, and a downloaded file with nothing to display is exactly the case offline use
   exists for.
@@ -1088,7 +1118,7 @@ The **cache rebuild** path is a first-class, tested operation: quarantine the da
 (kept for one release cycle for diagnosis), salvage protected data where readable, create a fresh
 database, replay salvaged protected rows, re-scan the download directory to rebuild `download` rows
 from files on disk, and run a full sync. The user is told what happened and what, if anything, was
-lost. **Revision 99:** there is no full sync to run. The rebuilt database starts with an empty
+lost. **Revision 104:** there is no full sync to run. The rebuilt database starts with an empty
 seen-cache that refills one screen at a time; downloads whose pinned metadata could not be salvaged
 get identity-only pinned rows marked *metadata missing*, refilled by their next live read (§16.17).
 
@@ -1820,7 +1850,7 @@ Even an entirely unresolvable queue is retained, with no selection, including on
 A resolvable selection continues the normal paused restoration path. Recovery never applies to an
 existing playback session or another account's queue. Failures of an explicitly started item retain
 the playback failure presentation. No session or attempt identity is created for a cleared selection
-(§12.1). **Revision 99:** every queue entry's metadata is pinned in the seen-cache (§16.13), so the
+(§12.1). **Revision 104:** every queue entry's metadata is pinned in the seen-cache (§16.13), so the
 catalog supplied to restoration can always speak about the current entry — its no-completeness
 contract is unchanged, but "the catalog is empty because nobody has opened that album yet" (§16.7)
 no longer arises for a queued item. Automatic entry removal is deferred until the input carries a trustworthy, provider-scoped
@@ -1876,7 +1906,7 @@ and reconciliation against a changed server item. The platform owns the **execut
   the platform, causes a restart from zero rather than a stuck row.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
 - **Server-side change** (duration or size changed since download) is detected at the next sync and
-  marks the file stale; stale files still play but are flagged for re-download. **Revision 99:**
+  marks the file stale; stale files still play but are flagged for re-download. **Revision 104:**
   there is no next sync. The change is detected when the track's album is next read live, and after
   every catalog-epoch change the albums containing downloads are re-read at concurrency 1 (§16.11
   rule 4). A track is `gone` when a successful `getAlbum` of its album no longer lists it, or when a
@@ -1906,7 +1936,7 @@ One disk budget per account, user-configurable, with a strict priority order:
 | seen-cache metadata, unpinned | yes, least-recently-*accessed*, by row-count ceilings (§16.13) |
 
 Artwork and stream cache share a separate, smaller budget, so an artwork sweep can never delete a
-download. **Revision 99:** the artwork of a downloaded album at the 256 px bucket is pinned with its
+download. **Revision 104:** the artwork of a downloaded album at the 256 px bucket is pinned with its
 metadata (§16.13), so an artwork sweep cannot leave a downloaded album without a cover either.
 
 ### 14.7 Signing out and account removal
@@ -1963,8 +1993,12 @@ function `(state, event) -> (state, effects)`:
   **4 seconds** at rate 1, given `cadenceMax = 2 s` (§12.3). It is derived from `cadenceMax`, not from
   `cadenceTarget`, because an adapter is permitted to emit as slowly as `cadenceMax` and a legitimate
   2-second delta must not be discarded. A larger delta is a **discontinuity, not listening**: it is
-  discarded and counted, whether or not a `SeekCompleted` arrived. One rule covers app suspension, a
-  missed callback, a decoder timestamp jump, and a seek whose event was late or absent.
+  discarded and counted when no explicit seek observation has reset the anchor. This fallback covers
+  app suspension, a missed callback, a decoder timestamp jump, and a seek whose event was absent.
+- **Explicit seek:** `SeekCompleted` resets `lastPosition` to the destination and clears
+  `lastMonotonic`. Every forward seek is discarded and counted, including jumps below four seconds;
+  the next sample accrues only media progression after the destination. `SeekFailed` preserves the
+  anchor. A seek event carries no monotonic timestamp, so it cannot credit a now-playing interval.
 - **Backward delta** accrues nothing and resets `lastPosition`. Replaying a segment accrues normally —
   the accumulator measures time listened, not coverage of the track.
 - **Not progressing:** during `Buffering`, `Paused` or after `InterruptionBegan` nothing accrues, and
@@ -2046,7 +2080,7 @@ v1**, so cross-device resume is not a v1 feature and is not claimed. This is sta
 Target scale — the design is sized against a large real-world library of **~31,500 tracks across
 ~2,950 albums**, and every figure below is derived from that.
 
-🚨 **Revision 99 changed the target architecture. Read §16.8 first.** Dulcet is a **reader**: it
+🚨 **Revision 104 changed the target architecture. Read §16.8 first.** Dulcet is a **reader**: it
 reads the server live and caches what the person has seen (§16.8–§16.20). The whole-library mirror
 described in §16.2–§16.7 is being retired by the phases of §16.18 and stays documented here, marked
 superseded, only until the code it describes is deleted. **§16.1 is about the server and remains
@@ -2058,7 +2092,7 @@ and 6, which §16.16 lists as kept.
 Subsonic has no delta-sync contract. Do not assume any list endpoint gives a reliable total count, a
 stable cursor, or a change token. `getIndexes` accepts `ifModifiedSince`; whether the reference
 server honors it and at what granularity is **CONF-34** (revision 86 renumbered it; this sentence said
-CONF-31 until revision 99).
+CONF-31 until revision 104).
 
 **OBSERVED 2026-09-11**, against a disposable Navidrome 0.63.2: the reference server honors
 `ifModifiedSince` in milliseconds with a strictly-greater predicate, and its `lastModified` is a
@@ -2108,7 +2142,7 @@ So the design does not claim snapshot consistency from the paging. It gets consi
 
 ### 16.2 Shape of a full import
 
-> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> **Superseded by revision 104** — this subsection describes the whole-library mirror that §16.8
 > retires; it remains until phase R5 (§16.18) deletes the code. Rule 1 below is kept and binds the reader's windows (§16.12).
 
 Artists, albums and tracks are **three independent whole-library walks** — one entity per request,
@@ -2195,7 +2229,7 @@ a claim about them that this project has not measured.
 
 ### 16.3 Commit model: row versioning, reads pinned to a committed generation
 
-> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> **Superseded by revision 104** — this subsection describes the whole-library mirror that §16.8
 > retires; it remains until phase R5 (§16.18) deletes the code. What replaces generation pinning for a reader is §16.12.
 
 Revision 1 proposed in-place updates plus two-pass tombstoning, then claimed users never see a mixed
@@ -2220,7 +2254,7 @@ snapshot. Those contradict: in-place updates make a partially completed pass vis
 
 ### 16.4 Stability witness and repeat-until-stable
 
-> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> **Superseded by revision 104** — this subsection describes the whole-library mirror that §16.8
 > retires; it remains until phase R5 (§16.18) deletes the code. The reader detects a torn window with a post-page epoch check instead (§16.12).
 
 Because paging is not a snapshot, each list stage records a **witness**: the complete set of ids
@@ -2238,7 +2272,7 @@ a set of track ids was stable, never that content was fresh.
 
 ### 16.5 Other required properties
 
-> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> **Superseded by revision 104** — this subsection describes the whole-library mirror that §16.8
 > retires; it remains until phase R5 (§16.18) deletes the code. Rules 2, 4 and 6 are kept (§16.16); rule 2's browse-path gap is closed by §16.12.
 
 1. Deterministic ordering where offered. For the *view* that is `alphabeticalByName` over `random`;
@@ -2298,7 +2332,7 @@ a set of track ids was stable, never that content was fresh.
 
 ### 16.6 Freshness pass — a heuristic, not incremental sync
 
-> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> **Superseded by revision 104** — this subsection describes the whole-library mirror that §16.8
 > retires; it remains until phase R5 (§16.18) deletes the code. The reader's freshness policy is §16.11; the `coverArt` version token below keys the artwork cache (§18.2).
 
 After the first full import the cheap periodic pass runs `getAlbumList2?type=newest` (bounded),
@@ -2336,7 +2370,7 @@ last fully scanned. Sync is never triggered by scrolling.
 
 ### 16.7 Browse is not sync, and first paint is not a full import
 
-> **Superseded by revision 99** — this subsection describes the whole-library mirror that §16.8
+> **Superseded by revision 104** — this subsection describes the whole-library mirror that §16.8
 > retires; it remains until phase R5 (§16.18) deletes the code. Its preview/`loaded` double publication is replaced by freshness-labelled publications from one read path (§16.14, §16.17); property 1 (`songCount`) is kept; the client-owned collation rule no longer arises (§16.9).
 
 **OBSERVED 2026-09-10.** The interactive library read and the durable sync were the same call. The
@@ -2365,7 +2399,7 @@ Three properties are normative:
 
 1. **`getAlbumList2` carries `songCount`**, so an album's track count is drawn without its track
    list. An album that has not been read is distinguishable from an album with no tracks — collapsing
-   those two into one empty list is what makes a lazy track list unsafe. **Corrected by revision 99:**
+   those two into one empty list is what makes a lazy track list unsafe. **Corrected by revision 104:**
    the distinction must come from whether the album's detail has been read (`detail_complete`), never
    from `songCount`. OBSERVED 2026-09-22 with `PurgeMissing` unset (the server's default): an album
    whose files had all been removed still reported `songCount: 2` in a successful `getAlbum` with zero
@@ -2417,7 +2451,7 @@ album's tracks, so restoration must not act on it at all. The platform controlle
 persisted queue's own current entry against the catalog and stays silent until the catalog can speak
 about it; the library calls restoration again as each album's tracks arrive.
 
-### 16.8 The reader — the target architecture (revision 99)
+### 16.8 The reader — the target architecture (revision 104)
 
 **Decision (the maintainer, 2026-09-10): read live, cache what was seen.** Dulcet pages from the
 server on demand, like a reader. Whatever the person has browsed stays available offline; what they
@@ -2849,7 +2883,7 @@ offline); `unverified(changing)` (the stamp kept moving through every bounded re
   **42,051 samples, 976 of them read during a scan, 59 toggles, 60 distinct stamps, zero
   violations.** An independent review run of the same probe took 27,957 samples.
 
-**The replacement invariant** — CORPUS §4 line 11 (revision 99):
+**The replacement invariant** — CORPUS §4 line 11 (revision 104):
 
 > *The server is the library; the device holds only what was seen. A list shown as one list was read
 > under one unchanged scan stamp with no scan running; a list read while the server was scanning says
@@ -3325,7 +3359,7 @@ and rumours are how this app category accumulates "mysteriously does not work wi
 
 `search3` with per-type counts and offsets, merged with an instant local-cache query.
 
-**Revision 99:** the local half queries the seen-cache (§16.10), not a committed generation, and
+**Revision 104:** the local half queries the seen-cache (§16.10), not a committed generation, and
 every result carries a scope — `serverAndDevice`, `deviceWhileServerPending`, `deviceOffline` or
 `deviceServerFailed(kind)` — with the seen-cache's own counts in the offline label, so "no match" and
 "no match among what this device has seen" are distinguishable (§16.15).
@@ -3388,10 +3422,10 @@ retry loop.
 - **Compaction:** successive mutations of the same `(target_id, field)` collapse to the last before
   send — star then unstar sends only unstar; rating 5 then 2 sends only 2.
 - **Conflict:** on reconnect the server's value wins **unless** a local mutation is newer than the last
-  successful sync for that item (revision 99: the last successful *live read* of that item — there is
+  successful sync for that item (revision 104: the last successful *live read* of that item — there is
   no sync), in which case the local mutation is sent and the server's echoed value
   is then adopted. Last-writer-wins with an explicit ordering key, not "whatever arrives".
-  **Corrected in R1d (§28, revision 99 item 18):** read literally, a live read issued after the
+  **Corrected in R1d (§28, revision 104 item 18):** read literally, a live read issued after the
   change always wins, so a change whose send failed transiently loses to a read that merely shows
   the value the change was made over — the server never changed, and the person's change is
   silently discarded. The rule as implemented (`decideDelivery`, ordered by the seen-cache issue
@@ -4033,7 +4067,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
-| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22): `push` to `main` ships DEV, a `v*` tag ships PROD. The only workflow able to read signing secrets |
+| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. The only workflow able to read signing secrets |
 
 **Note on the Linux-only claim:** GitHub Actions **service containers** require a Linux runner, so the
 `services:`-based Navidrome cannot run in the Apple job. That is a statement about the Actions feature,
@@ -4047,7 +4081,8 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci`, 5 `parity-gate`, 60
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 since
+2026-09-06, with per-step caps on the heavy steps — see §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
@@ -4068,11 +4103,17 @@ a dedicated Mac, not less.
 ### 21.2 Secrets and release credentials
 
 The only privileged material in CI is the Apple distribution signing identity and the App Store Connect
-API key used by `release.yml`. Both live in **GitHub Actions secrets scoped to an environment**. The
-PROD path additionally requires manual environment approval; the DEV path runs unattended on merge to
-`main`, which is safe because it can only reach internal testers on the maintainer's own devices
-(§22.1). No other workflow can read the secrets, so a fork PR — which cannot access secrets at all —
-has no path to them even in principle.
+API key used by `release.yml`. Both live in **GitHub Actions secrets scoped to the `release`
+environment**, which requires a maintainer's approval for every run, DEV and PROD alike, accepts
+deployments from protected branches only, and has administrator bypass turned off
+(`can_admins_bypass: false`, read back from the API on 2026-09-22). `release.yml` is
+`workflow_dispatch`-only (revision 103). No other workflow can read the secrets, so a fork PR — which
+cannot access secrets at all, and cannot dispatch a workflow — has no path to them even in principle.
+`tools/verify_release_policy.py` fails CI if any of those properties drifts.
+
+**What the approval is not:** `prevent_self_review` is off, because the project has a single
+maintainer, so the person who dispatches a release also approves it. The approval is a deliberate
+second click that no automation can supply, not an independent review.
 
 ### 21.3 OQ-1 is CLOSED for the CI matrix — one narrow exception, in §21.3.1
 
@@ -4152,6 +4193,58 @@ that is doing anything else; serialise them rather than fanning out locally.
 **Maintainers building on a shared or managed machine follow that machine's own operational rules,
 which are deliberately not reproduced in this repository.**
 
+### 21.5 apple-ci reliability: sequencing, fail-fast, and what gates a pull request — 2026-09-22
+
+`main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the
+head pull request, and a red run costs a full re-run. **MEASURED 2026-09-08..09-22** (every attempt,
+classified at test identity; `docs/investigations/2026-09-22-apple-ci-host-contention.md`): **47 of
+111 attempts passed (42.3%)**; passes took median 91.6 and max 118.8 minutes against the 120-minute
+job cap. The largest single class, **28 of 63 failures**, is one host-contention stall reported by
+whichever client's budget it crossed first; the restart-sequencing experiment located it next to a
+freshly booted simulator (SUPPORTED, n=23).
+
+**Normative, and each rule names the failure it answers:**
+
+1. **Deterministic environment checks run before any build.** The Homebrew closure install and its
+   drift check run immediately after Xcode selection. A pin drift fails every run by construction
+   (§20, CLAUDE.md trap 36) and used to be discovered after ~55 minutes of builds.
+2. **At most one simulator is booted while a phase talks to the loopback fixtures, and it is fully
+   booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
+   does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
+   composite starts with that call. This is sequencing, not a budget: no timeout was raised for it.
+3. **A test binary is linked by a Gradle invocation that exits before the suite runs**, so the
+   compiler's JVM is not resident while the tests execute on a 7 GB runner.
+4. **Every run records host pressure** (`tools/ci/host-pressure`, per phase, green or red). A stall
+   claim about memory or CPU cites those numbers or says ASSUMED.
+5. **Timeouts are not the remedy for this class.** The proxy observation's 10 s bound fired on a
+   genuine host-wide stall in which the fixture answered 200 six seconds in and the client could not
+   read it; a larger bound converts a named stall into an unnamed one.
+
+**Considered and NOT adopted — with the condition under which each becomes right.**
+
+- **Splitting `apple-ci` into parallel hosted jobs** (platform legs | conformance composite, behind a
+  required `apple-ci` aggregator as `core-ci` already does). Estimated from the median step times of
+  26 green runs: wall time ~92 -> ~65 minutes (the composite and its own builds become the critical
+  path), at ~+25% runner-minutes because each job repeats the framework build and the conformance
+  job must build the app schemes its `test-without-building` legs reuse today. Runner-minutes are free
+  on this public repository (§21.1), but **hosted macOS concurrency is not**: each pull-request run
+  would hold two slots. Under strict up-to-date protection only the head pull request's run can lead
+  to a merge, so shorter head-of-queue latency is worth more than concurrency — which argues *for* the
+  split. It is deferred rather than rejected because rules 2–3 attack the same contention at no slot
+  cost, and their effect must be measured first (§21.5 soak, then 30 post-merge runs). **Adopt it if,
+  after rules 1–4, pass rate is at or above 80% and median wall time is still above 75 minutes**;
+  if the pass rate is still low, the split's isolation benefit is the stronger argument and it should
+  be adopted regardless. Either way it is a change to §21.1's "one serial job" and lands here first.
+- **Moving legs off the pull-request gate to a scheduled or dispatch-only soak.** Every leg except
+  two carries `FEATURES.yml` evidence or a product assertion, and the corpus rule is that CI fails on
+  an undeclared regression; moving those would let a regression merge. The two measurement-only
+  candidates — the §12.4 resource-loader recording (~1.5 min, 1 failure in 63) and the
+  non-deterministic macOS shipping reference (~0.9 min, 0 failures) — would save ~2.5 minutes and one
+  failure in 63. **Not worth weakening the gate for; not adopted.** A scheduled workflow is also
+  standing automation, which this project adds only by explicit maintainer decision. Soaks remain
+  `workflow_dispatch` instruments (`capture-soak`, `apple-contention-soak`) for measuring flake
+  rates, never a place to move an assertion.
+
 ---
 
 ## 22. Release channels: DEV and PROD
@@ -4164,13 +4257,13 @@ TestFlight actually works rather than onto a naming convention.
 
 | | **DEV** | **PROD** |
 |---|---|---|
-| trigger | **every merge to `main`**, fully automatic | **a `vX.Y.Z` tag**, cut by hand every few days or few iterations, once DEV has accumulated genuinely finished features. **Never automatic** |
+| trigger | **dispatched by hand on a significant merge to `main`** (maintainer decision 2026-09-11, revision 103). Not every merge. The workflow sends no notification: whoever dispatches it tells the maintainer, and TestFlight notifies internal testers | **a `vX.Y.Z` tag**, cut by hand every few days or few iterations, once DEV has accumulated genuinely finished features, then a dispatch of that commit. **Never automatic** |
 | TestFlight group | **internal** testers (up to 100; maintainer devices only) | **external** group (the wider trusted testers) |
 | Beta App Review | **not required** — internal builds are available within minutes | **required** — so PROD is slower by design |
 | purpose | dogfooding against a real library (§22.4) | a build other people are asked to rely on |
 | breakage | expected, and the point | a defect here costs someone else's afternoon |
-| marketing version | the in-progress `vX.Y.Z-dev` | `vX.Y.Z` |
-| build number | auto-incremented per build | auto-incremented per build |
+| marketing version | the in-progress `X.Y.Z` (`CFBundleShortVersionString` cannot carry a `-dev` suffix; the bundle identifier, name and icon mark DEV) | `X.Y.Z` |
+| build number | one above the highest build App Store Connect holds for the record, never below the repository floor (§22.6) | same rule |
 
 **The external-review latency is a feature, not friction to engineer around.** It is the thing that
 stops a bad afternoon on `main` reaching anyone who is not the person who caused it. Do not add a
@@ -4186,6 +4279,17 @@ them is deleted and re-cut, never shipped with a note.
 |---|---|---|
 | PROD | `${BUNDLE_PREFIX}` = `com.legitimateapps.dulcet` | **Dulcet** |
 | DEV | `${BUNDLE_PREFIX}.dev` = `com.legitimateapps.dulcet.dev` | **Dulcet DEV** |
+
+**Exactly two identifiers, one per channel, shared by every platform (universal purchase; maintainer
+decision 2026-09-22).** The macOS, iOS, iPadOS and tvOS DEV apps are all `${BUNDLE_PREFIX}.dev`; their
+PROD counterparts are all `${BUNDLE_PREFIX}`. One App Store Connect record per channel therefore
+carries every platform. Only test bundles keep platform suffixes. This replaces the
+`${BUNDLE_PREFIX}.ios.dev` and `${BUNDLE_PREFIX}.tvos.dev` app identifiers revision 76 introduced;
+those App IDs still exist in the developer account and are unused by the apps. OBSERVED that the
+arrangement is supported on this team: two of its existing App Store Connect records each carry both
+`IOS` and `MAC_OS` versions, and all Dulcet App IDs are `UNIVERSAL`. Sharing the identifier shares
+no data between devices: the Keychain items Dulcet writes are device-only and non-synchronizable
+(asserted by `DulcetKeychainAttributeTests`), and no target uses an App Group.
 
 This matters more than it sounds for a media app: **comparing playback behaviour between a known-good
 build and a candidate requires both installed at once**, and a single identifier makes that impossible
@@ -4266,8 +4370,84 @@ Machine-specific paths and addresses for either instance live in maintainer-loca
   rather than by vigilance.
 - `CHANGELOG.md` in the repository is the source for PROD notes and is updated as part of cutting the
   tag, not afterwards.
-- The `release.yml` workflow (§21.1) handles both channels, selected by trigger: `push` to `main`
-  produces DEV, a `v*` tag produces PROD. It remains the only workflow able to read signing secrets.
+- The `release.yml` workflow (§21.1, §22.6) handles both channels, selected by its `channel` input.
+  It remains the only workflow able to read signing secrets.
+- **Not yet built:** generated DEV release notes. `release.yml` sets no TestFlight "What to Test"
+  text; the bullet above describes the intent, not a mechanism.
+
+### 22.6 `release.yml` as built (revision 103)
+
+**Dispatch** (from `main` only; anything else is refused before a secret is decoded):
+
+```
+gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_run=false
+```
+
+| channel / platform | scheme | bundle identifier | profile | package |
+|---|---|---|---|---|
+| dev / macos | `DulcetMac` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Mac Dev App Store | signed `.pkg`, internal-only |
+| dev / ios | `DulcetiOS` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Dev iOS App Store | `.ipa`, internal-only |
+| prod / macos | `DulcetMacRelease` | `${BUNDLE_PREFIX}` | Dulcet CI Mac App Store | signed `.pkg` |
+
+Refused, with the reason printed: `prod/ios` (no PROD iOS target exists yet; it will ship as
+`${BUNDLE_PREFIX}` on the PROD record) and `dev/tvos` (App Store Connect requires a layered tvOS icon
+and a top-shelf image, which `DulcetTV` does not have; its profile, Dulcet CI Dev tvOS App Store,
+already exists). Internal-only is read back from the packaged `Info.plist` (`TFInternalTestingOnly`),
+not assumed from the export options. The pairs
+live in `tools/release_plan.py`, which also refuses a plan whose profile differs from the target's
+`PROVISIONING_PROFILE_SPECIFIER` in `apple/project.yml`.
+
+**The three brakes before an upload:** the workflow must be dispatched (nothing triggers it); the
+`release` environment must be approved; and `dry_run` must be exactly `false` — it defaults to `true`,
+and any other spelling is refused rather than read as "upload".
+
+**What a run does, in order:** resolve the plan (no secrets); for PROD, require the tag
+`v<MARKETING_VERSION>` on the dispatched commit and every required check green on it; number the build
+from App Store Connect; archive and export under a temporary keychain holding only the CI identities;
+verify the artifact actually produced — bundle identifier, `CFBundleVersion`, marketing version, the
+export-compliance declaration, the app icon, the signed application identifier, that the signing leaf
+is the CI certificate, the embedded profile, and for macOS the App Sandbox and the installer
+signature — then check the packaged payload again, including that every file is world-readable. A dry
+run with an existing record asks App Store Connect to validate the package without uploading; an
+upload is followed by polling until App Store Connect reports the build `VALID`, because an uploader
+exiting 0 is not arrival.
+
+**Build numbers** are one above the highest build App Store Connect holds across **both** records of
+the family, `${BUNDLE_PREFIX}` and `${BUNDLE_PREFIX}.dev`, every platform included. App Store Connect
+is the only source: the committed `CURRENT_PROJECT_VERSION` is not consulted, because a hand-cut build
+can move ahead of it. Numbering is therefore monotonic across channels and platforms whether a build
+was cut by hand or by the workflow; the first DEV build is 5 because PROD already holds 2–4. A
+non-integer build number stops the run rather than being guessed at. Runs of one channel queue rather
+than cancel (`cancel-in-progress: false`, the one exemption `verify_ci_policy.py` grants), because a
+cancelled upload may already have reached App Store Connect and the next run would reuse its number.
+
+**App Store Connect records.** Records cannot be created through the API (it answers that `apps` does
+not allow `CREATE`), so each is a one-time web-UI step: one DEV record, `${BUNDLE_PREFIX}.dev`, with
+macOS and iOS platforms, and the existing PROD record with iOS added when PROD iOS exists. An upload run
+whose record is absent fails in seconds, before the archive, naming the missing record.
+
+**The preconfigured-server guard (§22.3).** No build carries a preconfigured server today. What
+exists is the guard, and its reach is stated exactly:
+
+- **Structural for configuration.** The two Mac targets no longer share a plist: PROD reads
+  `apple/DulcetMacRelease/Info.plist`, DEV reads `apple/DulcetMacDev/Info.plist`, and neither directory
+  is a source folder of the other channel. A DEV convenience value belongs in the DEV plist, which no
+  PROD build reads.
+- **Allowlists, not name matching.** `verify_release_policy.py` holds the PROD plist to an exact key
+  set, the PROD target's build settings and the project-level settings it inherits to allowlisted
+  names, forbids project-level `configs`, and rejects any URL on that path; `release.yml` may pass no
+  server, URL, `-xcconfig` or `INFOPLIST_KEY_` setting, and the archive may override only the build
+  number. The archive step then holds the built PROD `Info.plist` to the same allowlist plus the keys
+  Xcode stamps into every build, with no URL-valued entry.
+- **Not covered:** a URL literal compiled into Swift or Kotlin shared by both channels. No build
+  configuration can exclude that, so it remains a review obligation.
+
+**Signing material** is the CI-only Apple Distribution certificate, a CI-only Mac Installer
+Distribution certificate (a macOS App Store package must be installer-signed), the `Dulcet CI …`
+profiles (Mac App Store, Mac Dev App Store, Dev iOS App Store, Dev tvOS App Store) and the App Store
+Connect API key, all as `release`-environment secrets. Revoking the CI certificates breaks only CI.
+The signing wrapper deletes decoded key files as soon as they are imported and unsets every secret
+variable before the archive runs.
 
 ---
 
@@ -4583,7 +4763,7 @@ compiles.
 | phase | deliverable | exit criteria |
 |---|---|---|
 | **0** | spec approved; toolchain matrix (§4.4) **incl. the pinned ffmpeg**; dependency licence audit; **public** repo scaffold; CI skeleton; branch protection + `CODEOWNERS` + required checks per §19.3; `docs/APP-REVIEW-NOTES.md` (§23.4); `FEATURES.yml` seeded at `planned`; `apple-ci` timeout calibrated from one real run (§21.1) | `core-ci` and `parity-gate` green on an empty core; both OS-floor settings (§4.1) asserted by a CI check |
-| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync (revision 99: superseded by the reader, whose phases R0–R5 are §16.18), the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..08, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
+| **1** | **the §12.4 resource-loader spike first**, then core: transport, auth, capability negotiation, cache, sync (revision 104: superseded by the reader, whose phases R0–R5 are §16.18), the inline-validation loaders, playback policy | the **Phase-1 conformance subset** green: CONF-01..08, 11..15, 22, 23, 31, 32, 33, 41, 51, 52. **Out of Phase 1: CONF-21** (a v1 non-goal, §15.4) and **CONF-42** (lyrics — no Phase-1 code consumes it). Reducer test vectors (§15.2) present and passing |
 | **2** | **macOS app**, TestFlight | **Signing dry run first, and its job is narrow: prove CREATE permission** (register `com.legitimateapps.dulcet`, create the App ID, generate a profile) **and prove the sandbox entitlements**, by archiving a *sandboxed* hello-world that declares `com.apple.security.network.client` and writes into its container (§23.1, §23.3). macOS submission itself is already proven on this team and is not re-established here. Then: browse, search, play, queue, scrobble, offline **metadata** cache; installed from TestFlight on a real Mac and driven end to end. **No media downloads in Phase 2** — offline means the library browses, not that it plays offline |
 | **3** | iOS + iPadOS; **media downloads on all three Apple surfaces** | background download and background playback observed on a real device; iPad evidence from an iPad job, not an iPhone one |
 | **4** | Android phone/tablet | Media3 engine parity; parser-parity and wire-pathology green on every target |
@@ -4667,7 +4847,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 99 (2026-09-22)** — Dulcet becomes a **reader**. The maintainer's direction of
+**Revision 104 (2026-09-24)** — written 2026-09-22. Dulcet becomes a **reader**. The maintainer's direction of
 2026-09-10 — *read live, cache what I've seen* — replaces the whole-library mirror as the target
 architecture. §16.8–§16.20 are new; §16.2–§16.7 are marked superseded in place and stay until the
 code they describe is deleted. The revision went through an independent adversarial review against a
@@ -4855,6 +5035,64 @@ fresh disposable server before landing; items 11–14 are what that review chang
     and are corrected here: "a rebinding discards changes authored as another account" held only
     if no crash intervened, and the queue did not hold "the opaque id, the field and a JSON object"
     sufficient to identify a change — without the kind it could not.
+**Revision 103 (2026-09-23)** — written 2026-09-22. The
+delivery channel is built, and its trigger changed. §22.1 said DEV
+ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
+2026-09-11 that DEV is instead dispatched on significant merges, with a notification. `release.yml` is
+therefore `workflow_dispatch`-only for both channels, every run needs approval of the `release`
+environment (§21.2 previously exempted DEV), and `tools/verify_release_policy.py` keeps those properties
+in CI. §22.6 records the workflow as built, including two facts earlier text got wrong or left out:
+DEV spans two App Store Connect records (one per platform bundle identifier, as §22.5's rule already
+implied), and a DEV marketing version cannot carry a `-dev` suffix. It also states plainly that no
+build carries a preconfigured server yet: what exists is the guard, not the DEV feature, and that
+DEV release notes are not generated. After independent review the same revision adopts universal
+purchase (§22.2: every platform of a channel shares its identifier, so DEV is ONE record, correcting
+the two-record statement above), numbers builds from App Store Connect across both records instead of
+a committed floor, separates the DEV and PROD Mac plists so the server guard is structural for
+configuration and says what it does not cover, and records that the release environment's approval
+is not independent review with a single maintainer.
+
+**Revision 102 (2026-09-23)** — written 2026-09-22. §8 records how the Android session relates to the core queue. Media3
+holds one item at a time, so skip commands are advertised from the core queue, in-app player UI
+reads the controller's state rather than `media3-ui-compose` state holders, and cover art is handed
+to the session as validated bytes, never a signed URL. The queue controller gains `jumpTo`, which
+addresses an Up Next entry by `QueueEntryId`: a row index goes stale when the queue changes, and a
+song queued twice would make a song-addressed jump ambiguous. No existing contract changes.
+
+**Revision 101 (2026-09-23)** — written 2026-09-08. Explicit seek observations exclude small forward jumps from scrobbling.
+
+The §15.2 heuristic previously preserved the pre-seek anchor even after `SeekCompleted`, crediting
+3.5 seconds for a 10 → 13 → 13.5 second sequence. **OBSERVED** in
+`ScrobbleAccumulatorTest.explicitSmallForwardSeekCreditsOnlyProgressAfterTheDestination`: the
+pre-fix reducer credits 3.5 seconds instead of 0.5. Explicit destinations now reset the media anchor;
+the existing four-second fallback remains for unobserved discontinuities. Submission thresholds,
+identities, at-least-once delivery and clock persistence are unchanged.
+
+**Revision 100 (2026-09-23)** — written 2026-09-11. §4.3 records that every Xcode Run Script phase invokes Gradle through
+`tools/run-gradle-exclusive`. No design change: the same task runs with the same inputs, serialised.
+OBSERVED on `main`: run 34635969077 failed a required check with `Timeout waiting to lock
+Configuration Cache` when `DulcetiOS` and `DulcetKitIOSTests` built concurrently, each running the
+`Compile Kotlin Framework` phase; run 34127121022 had lost the journal lock the same way on
+2026-09-07. Measured over the 40 most recent `apple-ci` runs: 1 of 40 carries the string in its
+failed-step logs (6 cancelled runs expose no failed-step log to that instrument). The lock timeout
+was NOT reproduced locally: five attempts starting two bare
+`:core:embedAndSignAppleFrameworkForXcode` invocations together, cold and warm, all stored the
+configuration cache concurrently. What was OBSERVED locally is serialisation under the runner — the
+second invocation waits, names the holder, and both complete —
+`docs/verification/serialised-kotlin-script-phases.md`. The committed
+project is regenerated with the pinned XcodeGen, and `tools/verify_xcode_script_phases.py` now
+fails the parity gate when `apple/project.yml`'s script bodies and the committed project disagree.
+
+**Revision 99 (2026-09-22)** — §21.5 added; §21.1's apple-ci timeout corrected in place.
+
+1. §21.1 said `apple-ci` is capped at 30 minutes. It has been 120 since 2026-09-06, with per-step caps
+   on the heavy steps. Corrected in place.
+2. §21.5 records the measured failure classification (47/111 attempts passed 2026-09-08..09-22; 28 of
+   63 failures are one host-contention stall) and four normative rules: deterministic environment
+   checks first, at most one fully booted simulator per loopback phase, links in their own JVM, and a
+   host-pressure record in every run. It also records two considered-and-deferred changes (splitting
+   the job, moving legs off the pull-request gate), each with its adoption condition.
+3. The restart-sequencing experiment is closed SUPPORTED against its pre-registered table (n=23).
 
 **Revision 98 (2026-09-11)** — §16.2 replaces the fill transport. Revision 2's shape was `getAlbum`
 once per album plus a track witness that re-read every album one to three further times: 5,917 to

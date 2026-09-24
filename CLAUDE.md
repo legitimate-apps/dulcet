@@ -96,6 +96,8 @@ measured — several CONF tests exist precisely to do that promotion.
 python3 tools/parity_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
+python3 tools/verify_release_policy.py
+python3 tools/test-release-channel
 ```
 
 🚨 **`BUILD SUCCESSFUL` is not evidence that tests ran.** An up-to-date Gradle test task prints it in
@@ -112,8 +114,8 @@ run in `apple-ci` on the pinned hosted image.
 
 | | DEV | PROD |
 |---|---|---|
-| trigger | every merge to `main`, automatic | a hand-cut `vX.Y.Z` tag, never automatic |
-| bundle id | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
+| trigger | dispatched by hand on a significant merge to `main` (`release.yml`); the dispatcher tells the maintainer, the workflow sends nothing | a hand-cut `vX.Y.Z` tag, then a dispatch of that commit; never automatic |
+| bundle id (every platform — universal purchase, one ASC record per channel) | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
 | display name | **Dulcet DEV** (distinct icon) | **Dulcet** |
 | TestFlight | **internal** testers, no Beta App Review, minutes | **external** group, Beta App Review, slower **by design** |
 | expectation | expected to break — that is the point | someone else relies on it |
@@ -127,6 +129,11 @@ run in `apple-ci` on the pinned hosted image.
   make it **structurally impossible** for PROD to compile that value in — not a thing someone remembers.
 - **Cutting PROD is gated**: CI green, conformance suite passing, `FEATURES.yml` showing no undeclared
   regression. A tag failing any of those is deleted and re-cut, never shipped with a note.
+- **`release.yml` is `workflow_dispatch`-only, from `main`, in the approval-gated `release`
+  environment, with `dry_run` defaulting to `true`** (spec §22.6). An upload needs the App Store
+  Connect record for that bundle identifier, which is created in the web UI only. The environment
+  has administrator bypass off; `prevent_self_review` is off because there is one maintainer, so its
+  approval is a deliberate second click, **not** an independent review.
 - **Only these settings differ per channel**: bundle id, display name, icon, logging verbosity,
   diagnostics visibility, preconfigured server. Everything correctness-relevant is identical — a DEV
   build that behaves differently because of a build flag is not dogfooding, it is a different program.
@@ -381,6 +388,46 @@ They are deliberately not reproduced in this repository.**
     satisfiable by an earlier identical event. Where a control checks an outcome, add one that checks
     the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
     handler itself emits.
+42. 🚨 **`apple/project.yml` is the SOURCE; `apple/Dulcet.xcodeproj` is generated from it by the
+    pinned XcodeGen and committed. Nothing regenerates it during a build.** Editing project.yml alone
+    changes what the repository documents and NOT what Xcode runs — and
+    `tools/verify_dulcet_core_build_order.py` reads the **pbxproj**, so it keeps reporting PASS about
+    the old script. Regenerate with `cd apple && xcodegen generate` (version pinned in
+    `docs/TOOLCHAIN.md`; 2.46.0 reproduces the committed project byte-for-byte), and note that a
+    rebase may textually merge the pbxproj into something XcodeGen would not produce.
+    `tools/verify_xcode_script_phases.py` (parity-gate, stdlib-only, no Xcode) compares multisets of
+    literal script bodies including duplicate counts; it does not verify target attachment, ordering,
+    shellPath, dependency flags or input/output files — the build-order guard covers attachment and
+    ordering, and the rest needs regeneration plus review of the generated diff.
+43. **Eight Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
+    targets in parallel**, so two Gradle invocations start together. Gradle does queue behind its own
+    locks, but only for about 60 s: if the owner has not yielded by then it FAILS the build. Most
+    pairs finish inside that window (a tvOS pair on green run 34596556005 ran concurrently for over
+    four minutes and both succeeded); the failure is the long tail. Two different locks have lost
+    that race on `main`: the checkout-scoped **configuration cache** (`.gradle/configuration-cache`, run
+    34635969077, `Timeout waiting to lock Configuration Cache`) and the user-home-scoped **journal**
+    (`caches/journal-1`, run 34127121022), both with `DulcetiOS` and `DulcetKitIOSTests` building
+    together. It reads as a red required check on a product-unrelated commit. Every phase goes
+    through `tools/run-gradle-exclusive`, which holds one flock beside each resource for the whole
+    invocation; do not reintroduce a bare `./gradlew` there, and do not key a replacement lock on
+    only one of the two resources.
+
+42. **Robolectric's TLS provider differs by host architecture.** It disables Conscrypt on macOS
+    Apple Silicon and enables it on Linux. **OBSERVED 2026-09-08:** the Android playback downgrade
+    fixture passed on ARM JDK 17/21 but failed on x64 Temurin 21 before recording a request:
+    Conscrypt reflected into `java.net.InetAddress.holder()` and hit `InaccessibleObjectException`.
+    The host-socket fixture uses method-scoped `@ConscryptMode(OFF)` to retain ordinary certificate
+    and hostname checks without opening JDK modules. Keep the exact source-request-count assertion:
+    a TLS failure also throws the expected playback exception and would otherwise counterfeit a pass.
+
+43. **A freshly installed Android app can have its foreground notification cancelled mid-test.**
+    The notification service answers `PACKAGE_ADDED` by cancelling *every* notification the
+    package holds, foreground-service ones included, and the service stays in the foreground with
+    no notification record. On a freshly booted emulator the app's own install broadcast can land
+    15 s into the first test. It presents as a flaky "no foreground notification" with the session
+    still playing. Device proofs wait on `am wait-for-broadcast-barrier` before playing
+    (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
+    (docs/verification/android-playback-surfaces.md).
 
 ## Review and delegation
 

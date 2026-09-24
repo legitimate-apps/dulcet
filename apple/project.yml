@@ -15,6 +15,10 @@ settings:
     DEVELOPMENT_TEAM: 3LTL47SJ8C
     FRAMEWORK_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
     OTHER_LDFLAGS: "$(inherited) -framework DulcetCore"
+    # One marketing version for every channel and platform (spec §22.1: DEV carries the
+    # in-progress version). CFBundleShortVersionString cannot carry a "-dev" suffix, so DEV is
+    # told apart by its bundle identifier, name and icon, never by this value.
+    MARKETING_VERSION: "0.1.0"
 packages:
   DulcetKit:
     path: DulcetKit
@@ -35,6 +39,35 @@ targets:
         PRODUCT_MODULE_NAME: DulcetMac
         PRODUCT_NAME: Dulcet DEV
         CODE_SIGN_ENTITLEMENTS: DulcetMac/DulcetMac.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+      configs:
+        # Release is what release.yml archives for the DEV channel; Debug keeps automatic
+        # signing for local and CI builds. Beyond identity, name and icon, these match
+        # DulcetMacRelease, because spec §22.3 lets nothing else differ between the channels.
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac Dev App Store"
+          ENABLE_HARDENED_RUNTIME: YES
+    info:
+      # DEV's own plist, in a directory no PROD target reads. It is the one place a DEV-only
+      # convenience value (spec §22.3) may ever be added; PROD's plist lives beside
+      # DulcetMacRelease and tools/verify_release_policy.py holds it to a fixed key set.
+      path: DulcetMacDev/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Dulcet DEV
+        CFBundleIconFile: AppIconDev
+        CFBundleIconName: AppIconDev
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
+        # A server on the local network is the common case for a self-hosted library. Without
+        # this the system refuses local-network access outright where it enforces the privacy.
+        NSLocalNetworkUsageDescription: "Dulcet connects to the music server you choose, which may be on your local network."
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -43,7 +76,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetMacRelease:
     type: application
     platform: macOS
@@ -68,13 +103,14 @@ targets:
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
         PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"
-        MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "4"
     info:
       # An explicit plist, NOT INFOPLIST_KEY_* settings: that mechanism only honours a fixed
       # allowlist, and CFBundleIconFile/CFBundleIconName are not on it — they were silently
       # dropped from the generated plist while the build still succeeded.
-      path: DulcetMac/Info.plist
+      # PROD-only directory: the shared DulcetMac source folder holds no plist, so no DEV target
+      # can contribute a key to this one.
+      path: DulcetMacRelease/Info.plist
       properties:
         CFBundleDevelopmentRegion: en
         CFBundleDisplayName: Dulcet
@@ -92,6 +128,9 @@ targets:
         LSApplicationCategoryType: public.app-category.music
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHumanReadableCopyright: "Copyright © 2026 Legitimate LLC. All rights reserved."
+        # A server on the local network is the common case for a self-hosted library. Without
+        # this the system refuses local-network access outright where it enforces the privacy.
+        NSLocalNetworkUsageDescription: "Dulcet connects to the music server you choose, which may be on your local network."
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -100,7 +139,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetMacTests:
     type: bundle.unit-test
     platform: macOS
@@ -141,7 +182,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetiOS:
     type: application
     platform: iOS
@@ -154,10 +197,27 @@ targets:
     settings:
       base:
         OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
-        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev
+        # Universal purchase (spec §22.2): one DEV identifier for macOS, iOS, iPadOS and tvOS, so
+        # one App Store Connect record carries every platform. Test bundles keep suffixes.
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
         PRODUCT_NAME: Dulcet DEV
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # Every configuration, not Release only: this target now has an asset catalog, and actool
+        # fails an iOS build whose catalog lacks the named icon set (XcodeGen's default is AppIcon).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+      configs:
+        # Release is what release.yml archives for the iOS DEV channel; Debug is untouched.
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Dev iOS App Store"
+          INFOPLIST_KEY_CFBundleDisplayName: Dulcet DEV
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+          # An iPad build that supports multitasking must declare all four orientations or
+          # App Store Connect rejects the upload. These are the platform defaults, stated.
+          INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+          INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -166,7 +226,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKitIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -199,7 +261,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetiOSDownloadIntegrationTests:
     type: bundle.unit-test
     platform: iOS
@@ -221,7 +285,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -269,7 +335,7 @@ targets:
     settings:
       base:
         OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
-        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tvos.dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev
         PRODUCT_NAME: Dulcet DEV
     preBuildScripts:
       - name: Compile Kotlin Framework
@@ -279,7 +345,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKitTVOSTests:
     type: bundle.unit-test
     platform: tvOS
@@ -303,7 +371,9 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          ./gradlew :core:embedAndSignAppleFrameworkForXcode < /dev/null
+          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainTVOSTests:
     type: bundle.unit-test
     platform: tvOS

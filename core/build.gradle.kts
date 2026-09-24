@@ -69,6 +69,7 @@ kotlin {
             implementation(libs.sqldelight.sqlite.driver)
         }
         androidMain.dependencies {
+            api(libs.media3.exoplayer)
             implementation(libs.ktor.client.cio)
             implementation(libs.sqldelight.android.driver)
         }

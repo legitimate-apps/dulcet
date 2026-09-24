@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Prove the project.yml -> pbxproj script-phase gate rejects real drift.
+
+The positive control is the committed pair itself: if the escaping rule were wrong, the repository's
+own project would fail. That covers the current bodies only; synthetic cases exercise additional
+escaping and the corrupted-duplicate control verifies multiplicity.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+TOOLS = pathlib.Path(__file__).resolve().parent
+GATE = TOOLS / "verify_xcode_script_phases.py"
+REPOSITORY = TOOLS.parent
+
+failures: list[str] = []
+
+
+def check(condition: bool, message: str) -> None:
+    print(("  PASS " if condition else "  FAIL ") + message)
+    if not condition:
+        failures.append(message)
+
+
+def run(specification: pathlib.Path, project: pathlib.Path) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(GATE), str(specification), str(project)],
+                          capture_output=True, text=True)
+
+
+SPECIFICATION = """targets:
+  Alpha:
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        script: |
+          cd "$SRCROOT/.."
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+    settings:
+      base:
+        PRODUCT_NAME: Alpha
+"""
+
+PROJECT = (
+    'shellScript = "cd \\"$SRCROOT/..\\"\\ntools/run-gradle-exclusive '
+    ':core:embedAndSignAppleFrameworkForXcode\\n";\n'
+)
+
+
+def case_committed_pair() -> None:
+    print("=== POSITIVE CONTROL: the committed project.yml and pbxproj agree ===")
+    result = run(REPOSITORY / "apple/project.yml",
+                 REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj")
+    check(result.returncode == 0,
+          "the real pair passes for the current script bodies "
+          f"(exit {result.returncode}: {result.stdout.strip()[:120]})")
+
+
+def case_synthetic_agreement() -> None:
+    print("=== a synthetic agreeing pair passes ===")
+    with tempfile.TemporaryDirectory() as raw:
+        directory = pathlib.Path(raw)
+        (directory / "project.yml").write_text(SPECIFICATION)
+        (directory / "project.pbxproj").write_text(PROJECT)
+        result = run(directory / "project.yml", directory / "project.pbxproj")
+        check(result.returncode == 0, f"exit 0 (observed {result.returncode})")
+        check("declared=1 generated=1" in result.stdout,
+              f"it counts both sides (observed {result.stdout.strip()[:100]})")
+
+
+def case_edited_specification() -> None:
+    print("=== NEGATIVE: project.yml edited, project not regenerated ===")
+    with tempfile.TemporaryDirectory() as raw:
+        directory = pathlib.Path(raw)
+        (directory / "project.yml").write_text(
+            SPECIFICATION.replace("tools/run-gradle-exclusive", "./gradlew"))
+        (directory / "project.pbxproj").write_text(PROJECT)
+        result = run(directory / "project.yml", directory / "project.pbxproj")
+        check(result.returncode == 1, f"exit 1 (observed {result.returncode})")
+        check("Compile Kotlin Framework" in result.stdout,
+              "the failure names the phase")
+        check("regenerate" in result.stdout, "the failure says what to do")
+
+
+def case_stale_extra_phase() -> None:
+    print("=== NEGATIVE: a phase removed from project.yml but left in the project ===")
+    with tempfile.TemporaryDirectory() as raw:
+        directory = pathlib.Path(raw)
+        (directory / "project.yml").write_text(SPECIFICATION)
+        (directory / "project.pbxproj").write_text(PROJECT + 'shellScript = "echo stale\\n";\n')
+        result = run(directory / "project.yml", directory / "project.pbxproj")
+        check(result.returncode == 1, f"exit 1 (observed {result.returncode})")
+        check("declares 1 script phase(s)" in result.stdout and "carries 2" in result.stdout,
+              f"the count mismatch is named (observed {result.stdout.strip()[:140]})")
+
+
+def case_quotes_and_backslashes() -> None:
+    print("=== a body with quotes and backslashes still matches ===")
+    with tempfile.TemporaryDirectory() as raw:
+        directory = pathlib.Path(raw)
+        (directory / "project.yml").write_text(
+            'targets:\n'
+            '  Alpha:\n'
+            '    preBuildScripts:\n'
+            '      - name: Awkward\n'
+            '        script: |\n'
+            '          printf "a\\\\tb\\n"\n'
+        )
+        (directory / "project.pbxproj").write_text(
+            'shellScript = "printf \\"a\\\\\\\\tb\\\\n\\"\\n";\n')
+        result = run(directory / "project.yml", directory / "project.pbxproj")
+        check(result.returncode == 0,
+              f"exit 0 (observed {result.returncode}: {result.stdout.strip()[:140]})")
+
+
+def case_corrupt_one_duplicate() -> None:
+    print("=== NEGATIVE: one of eight committed bodies is corrupted ===")
+    original = (REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj").read_text()
+    mutated = original.replace("tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode", "echo WRONG", 1)
+    before = hashlib.sha256(original.encode()).hexdigest()
+    after = hashlib.sha256(mutated.encode()).hexdigest()
+    check(before != after, f"mutation changed bytes sha256={before} -> {after}")
+    with tempfile.TemporaryDirectory() as raw:
+        project = pathlib.Path(raw) / "project.pbxproj"
+        project.write_text(mutated)
+        result = run(REPOSITORY / "apple/project.yml", project)
+        check(result.returncode == 1, f"corrupt duplicate rejected: {result.stdout.strip()}")
+
+
+def main() -> int:
+    case_corrupt_one_duplicate()
+    case_committed_pair()
+    case_synthetic_agreement()
+    case_edited_specification()
+    case_stale_extra_phase()
+    case_quotes_and_backslashes()
+    print()
+    if failures:
+        print(f"XCODE SCRIPT PHASES GATE FAIL {len(failures)} check(s)")
+        return 1
+    print("XCODE SCRIPT PHASES GATE PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

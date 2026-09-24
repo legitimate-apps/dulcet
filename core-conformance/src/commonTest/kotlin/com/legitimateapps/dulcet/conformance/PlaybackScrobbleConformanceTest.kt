@@ -63,7 +63,9 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
-class PlaybackScrobbleConformanceTest {
+// Open so the Android device runs can inherit the suite under their own identities
+// (androidDeviceTest), which the host run of the same methods cannot produce.
+open class PlaybackScrobbleConformanceTest {
     @Test
     fun conf11SuccessfulLegacyStreamHasPlausibleContentTypeAndSignatureBytes() = runTest {
         withFixture {

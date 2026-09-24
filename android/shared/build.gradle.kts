@@ -24,6 +24,7 @@ extensions.configure<LibraryExtension> {
 }
 
 dependencies {
+    implementation(libs.media3.session)
     api(project(":core"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

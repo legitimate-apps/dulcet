@@ -20,11 +20,17 @@ Required environment variables:
   DULCET_CI_SIGNING_P12_PASSWORD
   DULCET_MAC_APP_STORE_PROFILE_BASE64
   DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64
 
-The command receives DULCET_SIGNING_KEYCHAIN and
-DULCET_SIGNING_IDENTITY_SHA1. Signing material is removed on exit.
+Optional, and required together (a macOS App Store package must be installer-signed):
+  DULCET_CI_INSTALLER_P12_BASE64
+  DULCET_CI_INSTALLER_P12_PASSWORD
+
+The command receives DULCET_SIGNING_KEYCHAIN and DULCET_SIGNING_IDENTITY_SHA1, plus
+DULCET_INSTALLER_IDENTITY_SHA1 when the installer identity was supplied, and none of the secret
+variables above: they are unset before it starts. Decoded key material is deleted as soon as it is
+imported; the keychain and installed profiles are removed on exit.
 EOF
   exit 64
 }
@@ -37,8 +43,8 @@ readonly REQUIRED_SECRETS=(
   DULCET_CI_SIGNING_P12_PASSWORD
   DULCET_MAC_APP_STORE_PROFILE_BASE64
   DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64
-  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64
+  DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64
 )
 
 for secret_name in "${REQUIRED_SECRETS[@]}"; do
@@ -103,57 +109,94 @@ decode_base64_secret() {
   /bin/chmod 600 "$output_path"
 }
 
-readonly p12_path="$work_dir/identity.p12"
-readonly certificate_path="$work_dir/identity-certificate.pem"
-readonly private_key_path="$work_dir/identity-private-key.pem"
+# Extract, validate and fingerprint one PKCS#12 identity. Sets identity_sha256 / identity_sha1 and
+# leaves <prefix>-certificate.pem and <prefix>-private-key.pem in the work directory.
+extract_identity() {
+  local p12_variable="$1"
+  local password_variable="$2"
+  local prefix="$3"
+  shift 3
+  local p12_path="$work_dir/$prefix.p12"
+  local certificate_path="$work_dir/$prefix-certificate.pem"
+  local private_key_path="$work_dir/$prefix-private-key.pem"
+  local certificate_subject
+  local expected_common_name
+  local matched=0
+  local certificate_public_key_sha256
+  local private_public_key_sha256
 
-decode_base64_secret DULCET_CI_SIGNING_P12_BASE64 "$p12_path"
-export DULCET_P12_PASSWORD_FOR_OPENSSL="$DULCET_CI_SIGNING_P12_PASSWORD"
-/usr/bin/openssl pkcs12 \
-  -in "$p12_path" \
-  -clcerts \
-  -nokeys \
-  -passin env:DULCET_P12_PASSWORD_FOR_OPENSSL \
-  -out "$certificate_path" >/dev/null 2>&1 \
-  || die "PKCS#12 certificate extraction failed"
-/usr/bin/openssl pkcs12 \
-  -in "$p12_path" \
-  -nocerts \
-  -nodes \
-  -passin env:DULCET_P12_PASSWORD_FOR_OPENSSL \
-  -out "$private_key_path" >/dev/null 2>&1 \
-  || die "PKCS#12 private-key extraction failed"
-unset DULCET_P12_PASSWORD_FOR_OPENSSL
-/bin/chmod 600 "$certificate_path" "$private_key_path"
+  decode_base64_secret "$p12_variable" "$p12_path"
+  # A secret pasted or piped from a file can gain a trailing newline that was never part of the
+  # password; a generated password never legitimately ends in one.
+  local password="${!password_variable}"
+  password="${password%$'\n'}"
+  password="${password%$'\r'}"
+  export DULCET_P12_PASSWORD_FOR_OPENSSL="$password"
+  unset password
+  /usr/bin/openssl pkcs12 \
+    -in "$p12_path" \
+    -clcerts \
+    -nokeys \
+    -passin env:DULCET_P12_PASSWORD_FOR_OPENSSL \
+    -out "$certificate_path" >/dev/null 2>&1 \
+    || die "PKCS#12 certificate extraction failed for $p12_variable"
+  /usr/bin/openssl pkcs12 \
+    -in "$p12_path" \
+    -nocerts \
+    -nodes \
+    -passin env:DULCET_P12_PASSWORD_FOR_OPENSSL \
+    -out "$private_key_path" >/dev/null 2>&1 \
+    || die "PKCS#12 private-key extraction failed for $p12_variable"
+  unset DULCET_P12_PASSWORD_FOR_OPENSSL
+  /bin/rm -P -f -- "$p12_path"
+  /bin/chmod 600 "$certificate_path" "$private_key_path"
 
-/usr/bin/openssl x509 -in "$certificate_path" -noout -checkend 0 >/dev/null \
-  || die "signing certificate is expired"
-certificate_subject="$(/usr/bin/openssl x509 -in "$certificate_path" -noout -subject -nameopt RFC2253)"
-[[ "$certificate_subject" == *"UID=$TEAM_ID"* ]] \
-  || die "signing certificate does not belong to team $TEAM_ID"
-[[ "$certificate_subject" == *"CN=Apple Distribution:"* ]] \
-  || die "PKCS#12 does not contain an Apple Distribution certificate"
+  /usr/bin/openssl x509 -in "$certificate_path" -noout -checkend 0 >/dev/null \
+    || die "certificate in $p12_variable is expired"
+  certificate_subject="$(/usr/bin/openssl x509 -in "$certificate_path" -noout -subject -nameopt RFC2253)"
+  [[ "$certificate_subject" == *"UID=$TEAM_ID"* ]] \
+    || die "certificate in $p12_variable does not belong to team $TEAM_ID"
+  for expected_common_name in "$@"; do
+    [[ "$certificate_subject" == *"CN=$expected_common_name"* ]] && matched=1
+  done
+  [[ "$matched" -eq 1 ]] || die "$p12_variable does not contain the expected certificate type"
 
-certificate_public_key_sha256="$({
-  /usr/bin/openssl x509 -in "$certificate_path" -noout -pubkey \
-    | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null
-} | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
-private_public_key_sha256="$({
-  /usr/bin/openssl pkey -in "$private_key_path" -pubout -outform DER 2>/dev/null
-} | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
-[[ "$certificate_public_key_sha256" == "$private_public_key_sha256" ]] \
-  || die "PKCS#12 certificate and private key do not match"
+  certificate_public_key_sha256="$({
+    /usr/bin/openssl x509 -in "$certificate_path" -noout -pubkey \
+      | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null
+  } | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+  private_public_key_sha256="$({
+    /usr/bin/openssl pkey -in "$private_key_path" -pubout -outform DER 2>/dev/null
+  } | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+  [[ "$certificate_public_key_sha256" == "$private_public_key_sha256" ]] \
+    || die "PKCS#12 certificate and private key do not match in $p12_variable"
 
-identity_sha256="$(
-  /usr/bin/openssl x509 -in "$certificate_path" -outform DER \
-    | /usr/bin/shasum -a 256 \
-    | /usr/bin/awk '{print $1}'
-)"
-identity_sha1="$(
-  /usr/bin/openssl x509 -in "$certificate_path" -outform DER \
-    | /usr/bin/shasum -a 1 \
-    | /usr/bin/awk '{print toupper($1)}'
-)"
+  identity_sha256="$(
+    /usr/bin/openssl x509 -in "$certificate_path" -outform DER \
+      | /usr/bin/shasum -a 256 \
+      | /usr/bin/awk '{print $1}'
+  )"
+  identity_sha1="$(
+    /usr/bin/openssl x509 -in "$certificate_path" -outform DER \
+      | /usr/bin/shasum -a 1 \
+      | /usr/bin/awk '{print toupper($1)}'
+  )"
+}
+
+installer_supplied=0
+if [[ -n "${DULCET_CI_INSTALLER_P12_BASE64:-}" || -n "${DULCET_CI_INSTALLER_P12_PASSWORD:-}" ]]; then
+  [[ -n "${DULCET_CI_INSTALLER_P12_BASE64:-}" && -n "${DULCET_CI_INSTALLER_P12_PASSWORD:-}" ]] \
+    || die "the installer PKCS#12 and its password must be supplied together"
+  installer_supplied=1
+  # Apple still issues MAC_INSTALLER_DISTRIBUTION certificates under the legacy common name.
+  extract_identity DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD installer \
+    "3rd Party Mac Developer Installer:" "Mac Installer Distribution:"
+  installer_sha1="$identity_sha1"
+fi
+
+# Extracted last, so identity_sha256 is the distribution certificate the profiles must bind to.
+extract_identity DULCET_CI_SIGNING_P12_BASE64 DULCET_CI_SIGNING_P12_PASSWORD identity \
+  "Apple Distribution:"
 
 validate_and_install_profile() {
   local variable_name="$1"
@@ -224,12 +267,13 @@ validate_and_install_profile \
 validate_and_install_profile \
   DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 \
   com.legitimateapps.dulcet.dev
+# Universal purchase: iOS, iPadOS and tvOS DEV share the macOS DEV identifier (spec §22.2).
 validate_and_install_profile \
-  DULCET_IOS_DEV_APP_STORE_PROFILE_BASE64 \
-  com.legitimateapps.dulcet.ios.dev
+  DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.dev
 validate_and_install_profile \
-  DULCET_TVOS_DEV_APP_STORE_PROFILE_BASE64 \
-  com.legitimateapps.dulcet.tvos.dev
+  DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64 \
+  com.legitimateapps.dulcet.dev
 
 /usr/bin/security list-keychains -d user > "$original_keychains_path"
 while IFS= read -r existing_keychain; do
@@ -240,14 +284,25 @@ done < <(/usr/bin/sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//' "$original_key
 keychain_created=1
 /usr/bin/security set-keychain-settings -lut 21600 "$keychain_path"
 /usr/bin/security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
-/usr/bin/security import "$certificate_path" \
-  -k "$keychain_path" \
-  -T /usr/bin/codesign \
-  -T /usr/bin/security >/dev/null
-/usr/bin/security import "$private_key_path" \
-  -k "$keychain_path" \
-  -T /usr/bin/codesign \
-  -T /usr/bin/security >/dev/null
+import_identity() {
+  local prefix="$1"
+  /usr/bin/security import "$work_dir/$prefix-certificate.pem" \
+    -k "$keychain_path" \
+    -T /usr/bin/codesign \
+    -T /usr/bin/productbuild \
+    -T /usr/bin/security >/dev/null
+  /usr/bin/security import "$work_dir/$prefix-private-key.pem" \
+    -k "$keychain_path" \
+    -T /usr/bin/codesign \
+    -T /usr/bin/productbuild \
+    -T /usr/bin/security >/dev/null
+  # The keychain now holds the key; the plaintext PEMs have no further use.
+  /bin/rm -P -f -- "$work_dir/$prefix-certificate.pem" "$work_dir/$prefix-private-key.pem"
+}
+import_identity identity
+if [[ "$installer_supplied" -eq 1 ]]; then
+  import_identity installer
+fi
 /usr/bin/security set-key-partition-list \
   -S apple-tool:,apple:,codesign: \
   -s \
@@ -260,10 +315,20 @@ search_list_modified=1
 /usr/bin/security find-identity -v -p codesigning "$keychain_path" \
   | /usr/bin/grep -Fq "$identity_sha1" \
   || die "temporary keychain does not expose the expected signing identity"
+if [[ "$installer_supplied" -eq 1 ]]; then
+  # An installer identity is not a code-signing identity, so it is listed under the basic policy.
+  /usr/bin/security find-identity -v -p basic "$keychain_path" \
+    | /usr/bin/grep -Fq "$installer_sha1" \
+    || die "temporary keychain does not expose the expected installer identity"
+  export DULCET_INSTALLER_IDENTITY_SHA1="$installer_sha1"
+fi
 
 export DULCET_SIGNING_KEYCHAIN="$keychain_path"
 export DULCET_SIGNING_IDENTITY_SHA1="$identity_sha1"
-printf 'dulcet-signing: installed identity %s in temporary keychain; profiles=%s\n' \
-  "$identity_sha1" "${#created_profiles[@]}"
+printf 'dulcet-signing: installed identity %s in temporary keychain; installer=%s; profiles=%s\n' \
+  "$identity_sha1" "${DULCET_INSTALLER_IDENTITY_SHA1:-none}" "${#created_profiles[@]}"
+
+# The command needs the keychain, never the payloads that built it.
+unset "${REQUIRED_SECRETS[@]}" DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD
 
 "$@"

@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Controls for tools/ci/isolate-simulator's plan, offline against a fixed device list.
+
+The tool's value is WHICH devices it shuts down and which it keeps. Keeping the wrong iPhone (an
+older runtime than `OS=latest` picks, or an unavailable one) would isolate a device xcodebuild then
+ignores, booting a second one and silently restoring the contention the tool exists to remove.
+"""
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+TOOL = str(Path(__file__).resolve().parent / "ci" / "isolate-simulator")
+RT = "com.apple.CoreSimulator.SimRuntime."
+fixture = {"devices": {
+    RT + "iOS-26-4": [
+        {"name": "iPhone 17 Pro", "udid": "PHONE-264", "state": "Booted", "isAvailable": True},
+        {"name": "iPad Pro 13-inch (M5)", "udid": "IPAD-264", "state": "Booted", "isAvailable": True},
+    ],
+    RT + "iOS-26-5": [
+        {"name": "iPhone 17 Pro", "udid": "PHONE-265", "state": "Shutdown", "isAvailable": True},
+    ],
+    RT + "iOS-26-10": [
+        {"name": "iPhone 17 Pro", "udid": "PHONE-2610", "state": "Shutdown", "isAvailable": True},
+    ],
+    RT + "iOS-26-11": [
+        {"name": "iPhone 17 Pro", "udid": "PHONE-2611-UNAVAILABLE", "state": "Shutdown",
+         "isAvailable": False},
+    ],
+    RT + "tvOS-26-5": [
+        {"name": "Apple TV 4K (3rd generation)", "udid": "TV-265", "state": "Booted", "isAvailable": True},
+    ],
+}}
+
+
+def plan(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, TOOL, "--devices-json", path, "--plan", "--phase", "t", *args],
+                          capture_output=True, text=True, timeout=30)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = str(Path(tmp) / "devices.json")
+    Path(path).write_text(json.dumps(fixture))
+
+    result = plan("--keep-name", "iPhone 17 Pro")
+    assert result.returncode == 0, result
+    # Newest AVAILABLE runtime: 26.10 -- not the booted 26.4, not 26.5 (a string sort ranks "26-5"
+    # above "26-10"), and not the unavailable 26.11.
+    assert "keep=PHONE-2610 " in result.stdout, result.stdout
+    assert "shut_down=IPAD-264,PHONE-264,TV-265" in result.stdout, result.stdout
+    print("POSITIVE CONTROL PASS " + result.stdout.strip())
+
+    result = plan("--none")
+    assert "keep=none shut_down=IPAD-264,PHONE-264,TV-265" in result.stdout, result.stdout
+    print("POSITIVE CONTROL PASS " + result.stdout.strip())
+
+    result = plan("--keep", "TV-265")
+    assert "keep=TV-265 shut_down=IPAD-264,PHONE-264" in result.stdout, result.stdout
+    print("POSITIVE CONTROL PASS " + result.stdout.strip())
+
+    result = plan("--keep-name", "iPhone 99")
+    assert result.returncode != 0 and "no available simulator named" in (result.stdout + result.stderr), result
+    print("NEGATIVE CONTROL PASS unknown device name refused")
