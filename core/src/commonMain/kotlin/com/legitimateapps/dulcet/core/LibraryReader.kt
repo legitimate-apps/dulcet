@@ -4,11 +4,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
@@ -90,20 +95,36 @@ internal class LibraryReader(
 
     internal fun listLock(listKey: String): Mutex = listLocks.getOrPut(listKey) { Mutex() }
 
-    /** Whether the server is reachable, as the platform reports it. Offline issues no request. */
-    val online: Boolean get() = serverReachable
+    /**
+     * Whether the reader is CONNECTED (§16.14): every window, search and look-ahead reads the server
+     * only while this is true, and offline issues no request. It becomes true in exactly one place
+     * — [reconnect], after the outbox flush and a successful epoch read — and false at once when the
+     * platform reports the server unreachable. A new reader starts connected.
+     */
+    val online: Boolean get() = connected
 
-    private var serverReachable = true
+    private var connected = true
 
     /**
-     * The only way [online] changes, for [setOnline] and [reconnect] alike. Coming back online
-     * resets [breaker]: failures observed before the network went away say nothing about an
-     * endpoint after it came back.
+     * The only way [online] changes. Coming back online resets [breaker]: failures observed before
+     * the network went away say nothing about an endpoint after it came back (§10.4). The one
+     * offline-to-online transition is a reconnect's, whichever entry point requested it.
      */
     private fun changeOnline(value: Boolean) {
-        if (value && !serverReachable) breaker.reset()
-        serverReachable = value
+        if (value && !connected) breaker.reset()
+        connected = value
     }
+
+    /**
+     * The platform's latest reachability report, which a [reconnect] implies. The outbox flush sends
+     * while this is true, so user-authored data leaves first (§16.14 step 1) — before the epoch read,
+     * and before the reader is [online] again and anything else is read.
+     */
+    var reachable: Boolean = true
+        private set
+
+    /** The reconnect running now; every reconnect requested meanwhile joins it. */
+    private var inFlightReconnect: Deferred<ReaderConnectionOutcome>? = null
 
     /** Low Data Mode or a metered connection: no speculative reads (§16.13). */
     var networkConstrained: Boolean = false
@@ -151,26 +172,86 @@ internal class LibraryReader(
         return readEpoch()
     }
 
-    /**
-     * Reconnect or return to the foreground online (§16.14), in this order and nothing else:
-     * flush the outboxes (user-authored data first); read the catalog epoch; revalidate the visible
-     * screen — every open handle, then every other visible surface ([addVisibleSurface]: open
-     * searches re-run); and, only if the epoch changed, re-read the albums that contain downloads,
-     * one at a time. No catch-up walk, no bulk refetch, nothing re-read because it is old. When the
-     * epoch cannot be read, nothing is revalidated: windows and searches keep what they show.
-     */
-    suspend fun reconnect() {
+    /** [connect], saying how it ended: the epoch THIS call read, or why it read none. */
+    internal suspend fun connectReporting(): ReaderConnectionOutcome {
         checkConfined()
-        // Marked online WITHOUT telling the surfaces: they are revalidated below, after the flush
-        // and the epoch read. Telling them here would send a search before the outbox flush.
-        changeOnline(true)
+        return try {
+            readEpochReporting()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            uncaughtFailures += failure
+            ReaderConnectionOutcome.InternalFailure
+        }
+    }
+
+    /**
+     * Reconnect or return to the foreground online (§16.14), and the ONLY way back [online]. In this
+     * order and nothing else: flush the outboxes (user-authored data first); read the catalog epoch;
+     * then — only if that reading succeeded — mark the reader online and revalidate the visible
+     * screen: every open handle, then every other visible surface ([addVisibleSurface]: open
+     * searches); and, only if the epoch changed, re-read the albums that contain downloads, one at
+     * a time. No catch-up walk, no bulk refetch, nothing re-read because it is old.
+     *
+     * Until the epoch reading has succeeded, nothing reads the server: a reader that was offline
+     * stays offline — every window and search keeps saying so, and a keystroke searches only the
+     * device — so no search, page or look-ahead can go out ahead of the flush. A reading that fails
+     * is returned as [ReaderConnectionOutcome.Failed], and nothing after it runs: no screen is
+     * revalidated or relabelled. The next reachability report or reconnect tries again.
+     *
+     * Implies the server is [reachable]. One reconnect runs at a time: a call made while one is
+     * running joins it and returns its outcome. Cancelling a caller stops only its wait; the
+     * platform reporting the server unreachable cancels the reconnect itself, and its callers
+     * return [ReaderConnectionOutcome.Failed] with `unreachable`.
+     */
+    suspend fun reconnect(): ReaderConnectionOutcome {
+        checkConfined()
+        reachable = true
+        val run = startReconnect()
+        return try {
+            run.await()
+        } catch (cancelled: CancellationException) {
+            // Either this caller was cancelled — rethrown here — or the platform reported the server
+            // unreachable, which cancelled the reconnect itself.
+            currentCoroutineContext().ensureActive()
+            ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)
+        }
+    }
+
+    private fun startReconnect(): Deferred<ReaderConnectionOutcome> {
+        inFlightReconnect?.let { return it }
+        val run = scope.async(start = CoroutineStart.LAZY) { performReconnect() }
+        inFlightReconnect = run
+        run.invokeOnCompletion { if (inFlightReconnect === run) inFlightReconnect = null }
+        run.start()
+        return run
+    }
+
+    private suspend fun performReconnect(): ReaderConnectionOutcome = try {
         // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
         flushOutboxes()
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
-        val epoch = readEpoch() ?: return
-        visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
-        revalidateSurfaces()
-        if (before == null || before != epoch.key) recheckDownloadedAlbums()
+        when (val reading = readEpochReporting()) {
+            is ReaderConnectionOutcome.Read -> {
+                if (!online) {
+                    changeOnline(true)
+                    // Every screen says at once that it is coming back, rather than "offline" until
+                    // its turn below: `revalidating` or `loading` where a read is coming.
+                    visibleHandles().forEach(ReaderHandle::prepareForReconnect)
+                }
+                visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
+                revalidateSurfaces()
+                if (before == null || before != reading.epoch.key) recheckDownloadedAlbums()
+                reading
+            }
+            else -> reading
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        // The reader's own failure (its database). Nothing was marked online by it.
+        uncaughtFailures += failure
+        ReaderConnectionOutcome.InternalFailure
     }
 
     /**
@@ -213,23 +294,38 @@ internal class LibraryReader(
     }
 
     /**
-     * Reachability, as the platform reports it. A change republishes every window — no request —
-     * and revalidates every other visible surface, so an open search re-runs with the scope the
-     * new reachability allows. No change, no effect.
+     * Reachability, as the platform reports it; call it on every change.
+     *
+     * - **Unreachable:** the reader is offline at once. Every window republishes — no request —
+     *   every other visible surface revalidates (an open search says `deviceOffline`), look-ahead
+     *   stops, and a reconnect in flight is cancelled.
+     * - **Reachable, while offline:** REQUESTS a [reconnect]; it does not mark the reader online
+     *   itself. The reconnect's flush, epoch read and revalidation run in §16.14's order, and a
+     *   reconnect already running is joined — so a shell may report reachability and call
+     *   [reconnect] in either order, or do only one of them, and nothing is read before the flush.
+     * - **Reachable, while online:** no effect.
      */
     fun setOnline(reachable: Boolean) {
         checkConfined()
-        if (online == reachable) return
-        changeOnline(reachable)
-        if (!reachable) lookAhead.cancelAll()
+        this.reachable = reachable
+        if (reachable) {
+            if (!online) startReconnect()
+            return
+        }
+        inFlightReconnect?.cancel()
+        inFlightReconnect = null
+        if (!online) return
+        changeOnline(false)
+        lookAhead.cancelAll()
         visibleHandles().forEach { it.republish() }
         revalidateSurfaces()
     }
 
     /**
      * Registers a visible surface that is not a window — the session's open searches (§16.15).
-     * It is revalidated whenever reachability changes, and at reconnect's revalidation step, so no
-     * order in which a shell reports reachability and reconnects can leave it on a stale scope.
+     * It is revalidated when the reader goes offline, and at a successful reconnect's revalidation
+     * step, after the windows — the only way back online — so it is never left saying offline once
+     * the reader is connected, and never re-run before the reconnect's flush and epoch read.
      */
     internal fun addVisibleSurface(surface: ReaderVisibleSurface) {
         checkConfined()
@@ -500,16 +596,22 @@ internal class LibraryReader(
     internal val epochReader = CatalogEpochReader(bounded)
 
     /** Reads the full epoch, stores it, and returns it; null when it could not be read. */
-    internal suspend fun readEpoch(): CatalogEpoch? {
+    internal suspend fun readEpoch(): CatalogEpoch? = (readEpochReporting() as? ReaderConnectionOutcome.Read)?.epoch
+
+    /**
+     * Reads the full epoch and stores it, saying why when it could not be read. Only the READ is
+     * reported as [ReaderConnectionOutcome.Failed]; a failure to store it throws, as it always has.
+     */
+    internal suspend fun readEpochReporting(): ReaderConnectionOutcome {
         val epoch = try {
             epochReader.readFull()
         } catch (failure: CancellationException) {
             throw failure
-        } catch (_: Throwable) {
-            return null
+        } catch (failure: Throwable) {
+            return ReaderConnectionOutcome.Failed(failure.asReaderError())
         }
         adoptEpoch(epoch)
-        return epoch
+        return ReaderConnectionOutcome.Read(epoch)
     }
 
     /** The session reading, read now if this session has none (a window cannot open without one). */
@@ -916,6 +1018,22 @@ internal class LibraryHomeHandle(private val rows: List<LibraryWindowHandle>) {
 
 internal enum class RevalidateCause { Open, Reconnect, Refresh, EpochChanged }
 
+/**
+ * How a connect-time epoch reading or a [LibraryReader.reconnect] ended. After [Failed] or
+ * [InternalFailure] a reconnect's flush may already have sent changes, but nothing after it ran and
+ * the reader was not marked online: a reader that was offline is still offline.
+ */
+internal sealed interface ReaderConnectionOutcome {
+    /** THIS call read the epoch. After a reconnect, the reader is online and the screen revalidated. */
+    data class Read(val epoch: CatalogEpoch) : ReaderConnectionOutcome
+
+    /** The server could not be read, with [error]. */
+    data class Failed(val error: DomainError) : ReaderConnectionOutcome
+
+    /** The reader itself failed (its database); recorded in `uncaughtFailures`. */
+    data object InternalFailure : ReaderConnectionOutcome
+}
+
 // ---- Hooks --------------------------------------------------------------------------------------------
 
 /** A pending local change to one entity's user state (§16.20). Null fields are not pending. */
@@ -979,7 +1097,8 @@ internal fun interface DownloadedTrackSource {
 
 /**
  * A visible surface that is not a window: the session's open searches. [revalidate] runs on the
- * reader's thread, after a reachability change and at reconnect's revalidation step (§16.14 step 3).
+ * reader's thread, when the reader goes offline and at a successful reconnect's revalidation step
+ * (§16.14 step 3), after the windows.
  */
 internal fun interface ReaderVisibleSurface {
     fun revalidate()

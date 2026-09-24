@@ -220,6 +220,11 @@ class MutationOutboxReviewTest {
 
     // ---- S2 -----------------------------------------------------------------------------------------
 
+    /**
+     * Both changes are made while connected and neither send reaches the server, so a read issued
+     * after them can land before the next flush. (An offline change cannot: a reconnect flushes it
+     * before anything is read, §16.14 step 1.)
+     */
     @Test
     fun aSendThatNeverReachedTheServerDoesNotShieldTheChangeFromANewerServerValue() = sessionTest { env ->
         env.server.ratings[albumId(4)] = 3
@@ -230,16 +235,16 @@ class MutationOutboxReviewTest {
         session.favourites.setRating(album4, 4)
         advanceUntilIdle()
         assertEquals(1, env.server.count("setRating"), "fixture: the send was tried and never arrived")
-        session.setOnline(false)
         session.favourites.setRating(album4, 5)
+        advanceUntilIdle()
+        assertEquals(2, env.server.count("setRating"), "fixture: the second send never arrived either")
         env.server.failWithError.clear()
         env.server.ratings[albumId(4)] = 4 // another client, after this device's change
-        session.setOnline(true)
         session.reader.open(grid) {}.also { it.refresh() } // a read issued after the change
         advanceUntilIdle()
         session.reader.reconnect()
         advanceUntilIdle()
-        assertEquals(1, env.server.count("setRating"), "4 was never delivered by this device, so 4 is another client's")
+        assertEquals(2, env.server.count("setRating"), "4 was never delivered by this device, so 4 is another client's")
         assertEquals(listOf<MutationOutcome>(MutationOutcome.Superseded(album4, MutationField.Rating, 4)), outcomes)
         assertEquals(4, env.server.ratings[albumId(4)])
         assertEquals(4, pubs.last.album(albumId(4)).userRating)

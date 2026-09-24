@@ -8,7 +8,8 @@ package com.legitimateapps.dulcet.core
  * vocabulary, mapped from a core value by an exhaustive `when` with no `else` branch: a value the
  * core adds later fails this file's compilation instead of crossing as a guess. No core entity,
  * no sealed hierarchy, no `Flow` and no SQLDelight type crosses, and no field can hold a URL or
- * server text — errors cross as a closed kind only (CORPUS §4 line 5, trap 12).
+ * server error text — errors cross as a closed kind only (CORPUS §4 line 5, trap 12). Titles and
+ * names are the server's catalog text, which is what they are for.
  *
  * `DulcetKit` copies each of these into a hand-written Swift struct (§7.1); the Swift half is a
  * separate phase.
@@ -44,7 +45,9 @@ public class AppleLibraryReaderCredit internal constructor(
  * [kind] is `album`, `artist`, `track`, `playlist` or `genre`; the fields that do not apply to a
  * kind are null. [favourite] and [rating] already carry any pending local change (§16.20).
  * [playability] is `downloaded`, `streamable` or `unavailableOffline` for a track and null for
- * every other kind, because the core computes playability per track only.
+ * every other kind, because the core computes playability per track only. [sourceContainer] is
+ * the track's file container as the server reported it: `Mp3`, `Mp4`, `Wav`, `Flac`, `Ogg` or
+ * `AdtsAac` (the same words the other facades use), or null when unknown.
  */
 public class AppleLibraryReaderItem internal constructor(
     public val kind: String,
@@ -110,7 +113,10 @@ public class AppleLibraryWindowPublication internal constructor(
 /**
  * One search result row (§16.15). [kind] is `artist`, `album` or `track`; [source] is `server`
  * (the server's search returned it for this query) or `device` (found only in what this device has
- * seen). [favourite] and [rating] carry any pending local change.
+ * seen). [favourite] and [rating] carry any pending local change. [sourceContainer] uses the
+ * window rows' vocabulary. [playability] is set for a track only — `downloaded`, `streamable` or
+ * `unavailableOffline`, by the windows' rule — so an offline search can dim and badge what cannot
+ * play (§16.14); null for an album or an artist.
  */
 public class AppleLibrarySearchRow internal constructor(
     public val kind: String,
@@ -129,6 +135,7 @@ public class AppleLibrarySearchRow internal constructor(
     public val source: String,
     public val favourite: Boolean?,
     public val rating: Int?,
+    public val playability: String?,
 )
 
 /**
@@ -137,8 +144,10 @@ public class AppleLibrarySearchRow internal constructor(
  * - [scope]: `serverAndDevice`, `deviceWhileServerPending`, `deviceOffline` or
  *   `deviceServerFailed`.
  * - [errorKind]: set for `deviceServerFailed` only.
- * - The seen counts are this device's own, set for `deviceOffline` and `deviceServerFailed` (so
- *   "no match" can be told from "no match among what this device has seen") and null otherwise.
+ * - The seen counts are this device's own, set for `deviceOffline` and for a `deviceServerFailed`
+ *   the core reports (so "no match" can be told from "no match among what this device has seen"),
+ *   and null otherwise — including a `deviceServerFailed` whose [errorKind] is `internalFailure` or
+ *   `closed`, which the facade reports when it could not ask the core at all.
  */
 public class AppleLibrarySearchPublication internal constructor(
     public val query: String,
@@ -175,12 +184,17 @@ public class AppleLibraryFavouriteOutcome internal constructor(
 /**
  * The account-level result of `connect` or `reconnect`.
  *
- * - [epochKnown]: the session now holds a catalog-epoch reading — false when none could be read.
- * - [serverReportsNoEpoch]: the server answers with no scan stamp at all; the shell states this
- *   once for the account, not per list (§16.14).
+ * - [epochKnown]: THIS call read the catalog epoch. After `reconnect`, the reader is online and has
+ *   revalidated the visible screen. False when the reading failed — nothing after the reading
+ *   ran, so a reader that was offline is still offline and no screen was revalidated, though the
+ *   outbox flush before it may already have sent changes.
+ * - [serverReportsNoEpoch]: the reading had no scan stamp at all; the shell states this once for
+ *   the account, not per list (§16.14). False when [epochKnown] is false.
  * - [discardedPendingChanges]: changes queued as a different username that this session's
  *   binding discarded (§16.10, §14.7); the shell tells the person once.
- * - [errorKind]: null when the operation ran; otherwise `cancelled`, `closed` or `internalFailure`.
+ * - [errorKind]: null when the epoch was read. Otherwise why not: a server error kind (see
+ *   [readerErrorKind] — `unreachable` also when the platform reported the server unreachable while
+ *   the reconnect ran), or `cancelled`, `closed` or `internalFailure`.
  */
 public class AppleLibraryReaderConnection internal constructor(
     public val epochKnown: Boolean,
@@ -246,6 +260,16 @@ internal fun LibraryItemsState.appleKind(): String = when (this) {
 internal fun LibraryItemsOrder.appleKind(): String = when (this) {
     LibraryItemsOrder.Server -> "server"
     LibraryItemsOrder.LocalView -> "localView"
+}
+
+/** The same words as the enum's names, which the other facades send; spelled out so none can drift. */
+internal fun AudioContainer.appleKind(): String = when (this) {
+    AudioContainer.Mp3 -> "Mp3"
+    AudioContainer.Mp4 -> "Mp4"
+    AudioContainer.Wav -> "Wav"
+    AudioContainer.Flac -> "Flac"
+    AudioContainer.Ogg -> "Ogg"
+    AudioContainer.AdtsAac -> "AdtsAac"
 }
 
 internal fun LibraryPlayability.appleKind(): String = when (this) {
@@ -328,7 +352,7 @@ internal fun LibraryItem.toApple(providerInstanceId: String): AppleLibraryReader
         artistName = artistName, artistRawId = artistRawId, albumTitle = albumTitle, albumRawId = albumRawId,
         year = null, genre = null, durationMilliseconds = durationMilliseconds, songCount = null,
         albumCount = null, discNumber = discNumber, trackNumber = trackNumber,
-        sourceContainer = sourceContainer?.name, artworkKey = artworkKey, owner = null,
+        sourceContainer = sourceContainer?.appleKind(), artworkKey = artworkKey, owner = null,
         favourite = starred, rating = userRating, playCount = playCount,
         playability = playability.appleKind(), detailComplete = false, metadataMissing = metadataMissing,
     )
@@ -394,12 +418,13 @@ internal fun LibrarySearchRow.toApple(): AppleLibrarySearchRow = AppleLibrarySea
     durationMilliseconds = item.duration?.inWholeMilliseconds,
     discNumber = item.discNumber,
     trackNumber = item.trackNumber,
-    sourceContainer = item.sourceContainer?.name,
+    sourceContainer = item.sourceContainer?.appleKind(),
     mediaSourceId = item.mediaSourceId,
     artworkKey = item.artworkKey,
     source = source.appleKind(),
     favourite = favourite,
     rating = rating,
+    playability = playability?.appleKind(),
 )
 
 internal fun MutationOutcome.toApple(): AppleLibraryFavouriteOutcome {
@@ -414,13 +439,18 @@ internal fun MutationOutcome.toApple(): AppleLibraryFavouriteOutcome {
 
 private data class OutcomeFields(val kind: String, val value: Int?, val serverValue: Int?, val errorKind: String?)
 
-/** The publication a window gets when the facade itself could not serve it (see the facade). */
+/**
+ * The publication a window gets when the facade itself could not serve it (see the facade). What
+ * was shown stays, labelled as cached with its age: [previousLiveAt] is when [previous] was
+ * published, used when [previous] was live and so carries no age of its own.
+ */
 internal fun readerFailurePublication(
     sequence: Int,
     previous: AppleLibraryWindowPublication?,
     errorKind: String?,
+    previousLiveAt: Long? = null,
 ): AppleLibraryWindowPublication {
-    // An error never replaces cached content (CORPUS §4 line 11): what was shown stays, labelled.
+    // An error never replaces cached content, and cached content carries its age (CORPUS §4 item 11).
     if (previous != null && (previous.items.isNotEmpty() || previous.header != null)) {
         return AppleLibraryWindowPublication(
             sequence = sequence,
@@ -428,7 +458,7 @@ internal fun readerFailurePublication(
                 "cached",
                 if (errorKind == null) "internalFailure" else "failed",
                 errorKind,
-                previous.freshness.asOfEpochMillis,
+                previous.freshness.asOfEpochMillis ?: previousLiveAt.takeIf { previous.freshness.kind == "live" },
             ),
             coverage = previous.coverage,
             total = previous.total,

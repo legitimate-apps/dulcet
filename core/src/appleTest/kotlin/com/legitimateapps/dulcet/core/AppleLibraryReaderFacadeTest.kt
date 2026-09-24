@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet.core
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import platform.Foundation.NSDate
@@ -181,6 +182,25 @@ class AppleLibraryReaderFacadeTest {
         }
         val appleTrack = track.toApple("server:x")
         assertEquals(listOf<Any?>(true, 3, "Flac", "Album", "a1"), listOf(appleTrack.favourite, appleTrack.rating, appleTrack.sourceContainer, appleTrack.albumTitle, appleTrack.albumRawId))
+
+        assertKinds(
+            "sourceContainer",
+            AudioContainer.entries.associateWith { it.appleKind() },
+            mapOf(
+                AudioContainer.Mp3 to "Mp3", AudioContainer.Mp4 to "Mp4", AudioContainer.Wav to "Wav",
+                AudioContainer.Flac to "Flac", AudioContainer.Ogg to "Ogg", AudioContainer.AdtsAac to "AdtsAac",
+            ),
+        )
+        fun searchRow(type: SearchResultType, playability: LibraryPlayability?) = LibrarySearchRow(
+            SearchResultItem(ProviderItemId("server:x", "r1"), type, "Title", emptyList(), null, null, null, null, null, AudioContainer.Ogg, null, null),
+            SearchResultSource.Device, favourite = null, rating = null, playability = playability,
+        ).toApple()
+        assertEquals(
+            listOf("downloaded", "streamable", "unavailableOffline"),
+            LibraryPlayability.entries.map { searchRow(SearchResultType.Track, it).playability },
+        )
+        assertEquals(null, searchRow(SearchResultType.Album, null).playability)
+        assertEquals("Ogg", searchRow(SearchResultType.Track, LibraryPlayability.Streamable).sourceContainer)
     }
 
     // ---- Threading ------------------------------------------------------------------------------------------
@@ -224,7 +244,9 @@ class AppleLibraryReaderFacadeTest {
     /**
      * A relaunch paints what the device saw before any loading state, then each freshness kind
      * crosses as the core computed it: `cached(revalidating)` → `live`; offline `cached(offline)`,
-     * `unavailable(notCachedOffline)` and a `localView`; back online `cached(stale)`; reconnect `live`.
+     * `unavailable(notCachedOffline)` and a `localView`. Reachability alone then reconnects, and
+     * every screen goes `live` — the album never read included, which is READ rather than left on a
+     * spinner — without ever saying `stale` on the way; a foreground reconnect reports its reading.
      */
     @Test
     fun aRelaunchPaintsTheCacheFirstAndEachFreshnessCrossesAsItsKind() = facadeTest { h ->
@@ -261,15 +283,20 @@ class AppleLibraryReaderFacadeTest {
         assertEquals(listOf<Any?>("cached", "offline", null, "localView"), listOf(local.last.freshness.kind, local.last.freshness.reason, local.last.freshness.asOfEpochMillis, local.last.order))
         assertTrue(local.last.items.isNotEmpty())
 
+        val marks = listOf(album.all.size, never.all.size)
         second.client.setOnline(true)
-        pumpUntil("the album opened offline to say stale") { album.last.freshness.reason == "stale" }
-        val reconnected = AtomicReference<AppleLibraryReaderConnection?>(null)
-        second.client.reconnect { reconnected.store(it) }
-        pumpUntil("reconnect to revalidate the visible screens") {
-            reconnected.load() != null && album.last.freshness.kind == "live" && local.last.freshness.kind == "live"
+        pumpUntil("reachability to reconnect and revalidate the visible screens") {
+            album.last.freshness.kind == "live" && local.last.freshness.kind == "live" && never.last.freshness.kind == "live"
         }
+        assertTrue(album.all.drop(marks[0]).none { it.freshness.reason == "stale" }, "a screen said stale on the way back")
+        assertTrue(never.all.drop(marks[1]).all { it.freshness.kind in setOf("loading", "live") }, "the album never read: ${never.all.drop(marks[1]).map { it.freshness.kind }}")
         assertEquals(listOf("streamable", "streamable"), album.last.items.map { it.playability })
         assertEquals("server", local.last.order)
+
+        val reconnected = AtomicReference<AppleLibraryReaderConnection?>(null)
+        second.client.reconnect { reconnected.store(it) }
+        pumpUntil("a foreground reconnect") { reconnected.load() != null }
+        assertEquals(listOf<Any?>(true, null), listOf(reconnected.load()?.epochKnown, reconnected.load()?.errorKind))
     }
 
     /** Failures, gone-ness and loading cross as their closed kinds; an error never replaces content. */
@@ -758,6 +785,390 @@ class AppleLibraryReaderFacadeTest {
         assertFalse(CANARY in account.toString(), "the account rendered a credential: $account")
     }
 
+    // ---- Reachability, close and the review's pinned rules ------------------------------------------------------
+
+    /**
+     * A reconnect whose epoch read fails says so — the error kind, and no epoch known — and changes
+     * nothing: the reader stays offline and the search keeps saying so. The next reachability report
+     * is not swallowed: it reconnects, and the search comes back. `connect` names its failure too.
+     */
+    @Test
+    fun aReconnectWhoseEpochReadFailsSaysSoAndTheNextReportRetries() = facadeTest { h ->
+        val c = h.client()
+        val connected = AtomicReference<AppleLibraryReaderConnection?>(null)
+        c.client.connect { connected.store(it) }
+        pumpUntil("connect") { connected.load() != null }
+        assertEquals(listOf<Any?>(true, null), listOf(connected.load()?.epochKnown, connected.load()?.errorKind))
+        val search = SearchRecorder()
+        val sub = c.client.subscribeSearch(search)
+        c.client.setOnline(false)
+        sub.updateQuery("Album 0003")
+        pumpUntil("the offline search") { search.any { it.query == "Album 0003" && it.scope == "deviceOffline" } }
+
+        c.onReader { h.server.failWithError["getScanStatus"] = DomainError.Transport.Timeout }
+        val scanReads = c.onReader { h.server.count("getScanStatus") }
+        val reconnected = AtomicReference<AppleLibraryReaderConnection?>(null)
+        c.client.reconnect { reconnected.store(it) }
+        pumpUntil("the failed reconnect") { reconnected.load() != null }
+        assertTrue(c.onReader { h.server.count("getScanStatus") } > scanReads, "fixture: the epoch read was attempted")
+        assertEquals(
+            listOf<Any?>(false, false, "timeout"),
+            reconnected.load()!!.let { listOf(it.epochKnown, it.serverReportsNoEpoch, it.errorKind) },
+            "a failed reconnect was reported as a success",
+        )
+        assertFalse(c.onReader { h.sessions.last().reader.online }, "a failed reconnect left the reader online")
+        pumpFor(200.milliseconds)
+        assertEquals("deviceOffline", search.last.scope)
+
+        c.onReader { h.server.failWithError.clear() }
+        c.client.setOnline(true)
+        pumpUntil("the next report to reconnect and the search to come back") { search.last.scope == "serverAndDevice" }
+
+        c.onReader { h.server.failWithError["getMusicFolders"] = DomainError.Transport.Unreachable }
+        val failedConnect = AtomicReference<AppleLibraryReaderConnection?>(null)
+        c.client.connect { failedConnect.store(it) }
+        pumpUntil("the failed connect") { failedConnect.load() != null }
+        assertEquals(listOf<Any?>(false, "unreachable"), listOf(failedConnect.load()?.epochKnown, failedConnect.load()?.errorKind))
+    }
+
+    /**
+     * Cancelling a reconnect operation stops only the caller's wait (§7.2: one completion, as
+     * `cancelled`); the reconnect itself, which a reachability report may share, runs on.
+     */
+    @Test
+    fun cancellingAReconnectStopsTheWaitNotTheReconnect() = facadeTest { h ->
+        val c = h.client()
+        val search = SearchRecorder()
+        val sub = c.client.subscribeSearch(search)
+        c.client.setOnline(false)
+        sub.updateQuery("Album 0003")
+        pumpUntil("the offline search") { search.any { it.scope == "deviceOffline" } }
+        c.onReader { h.server.base.holdMatching = { it.endpoint == "getScanStatus" } }
+        val calls = AtomicInt(0)
+        val result = AtomicReference<AppleLibraryReaderConnection?>(null)
+        val op = c.client.reconnect { calls.addAndFetch(1); result.store(it) }
+        waitOnReader(c, "the epoch read to be held") { c.onReader { h.server.base.heldCount } == 1 }
+        op.cancel()
+        op.cancel()
+        pumpUntil("the cancelled completion") { result.load() != null }
+        assertEquals("cancelled", result.load()?.errorKind)
+        c.onReader {
+            h.server.base.holdMatching = null
+            h.server.base.release()
+        }
+        pumpUntil("the reconnect to finish anyway") { search.last.scope == "serverAndDevice" }
+        assertEquals(1, calls.load(), "a completion ran twice")
+    }
+
+    /**
+     * A closed search subscription is released: 40 closed searches — 20 that reached the server and
+     * 20 of one character — leave nothing in the session's registries, and are collected. The
+     * control proves the collector ran: a closed window subscription is collected too.
+     *
+     * The defect this pins kept all forty, through the favourites' change listeners, for the life
+     * of the session. One exception is allowed, and bounded. In 13 of 200 rounds run on a fresh
+     * database, exactly one closed subscription stayed reachable until the reader's thread stopped.
+     * Its listener was dropped, its core search was closed and, in the one round that checked,
+     * collected. Nothing the facade or the core keeps was holding it: it outlived dropping the
+     * composition, cancelling the reader scope's work and cancelling the main scope. The cause is
+     * not known. So at most one may outlive the collections here, it must be gone once the client
+     * has closed, and any such one is printed into the test's output rather than hidden.
+     */
+    @OptIn(kotlin.native.runtime.NativeRuntimeApi::class, kotlin.experimental.ExperimentalNativeApi::class)
+    @Test
+    fun closedSearchSubscriptionsAreReleased() = facadeTest { h ->
+        val c = h.client()
+        val closedWindow = closeWindowAfterLive(c)
+        val server = (1..20).map { closeSearchAfter(c, "Album 00" + (it % 10), serverAnswer = true) }
+        val local = (1..20).map { closeSearchAfter(c, "A", serverAnswer = false) }
+        c.client.setOnline(false)
+        c.client.setOnline(true)
+        c.onReader { }
+        fun reachable() = server.withIndex().filter { it.value.value != null }.map { "server#${it.index}" } +
+            local.withIndex().filter { it.value.value != null }.map { "local#${it.index}" }
+        repeat(4) {
+            pumpFor(100.milliseconds)
+            c.onReader { }
+            kotlin.native.runtime.GC.collect()
+        }
+        assertEquals(null, closedWindow.value, "control: a closed window subscription was not collected, so collection proves nothing")
+        assertEquals(
+            listOf(0, 0),
+            c.onReader { h.sessions.last().let { listOf(it.favourites.changeListenerCount, it.openSearchCount) } },
+            "the session still registers a closed search",
+        )
+        val kept = reachable()
+        if (kept.isNotEmpty()) println("closedSearchSubscriptionsAreReleased: $kept still reachable after 4 collections")
+        assertTrue(kept.size <= 1, "closed search subscriptions still reachable: $kept")
+
+        c.close()
+        repeat(4) {
+            pumpFor(50.milliseconds)
+            kotlin.native.runtime.GC.collect()
+        }
+        assertEquals(emptyList<String>(), reachable(), "a closed search subscription outlived its client")
+    }
+
+    // Opened and closed in their own frames, so no local on the test's stack keeps them reachable.
+    @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+    private fun closeWindowAfterLive(c: FacadeClient): kotlin.native.ref.WeakReference<Any> {
+        val grid = WindowRecorder()
+        val window = c.client.subscribeLibraryWindow(GRID, grid)
+        pumpUntil("a live grid") { grid.any { it.freshness.kind == "live" } }
+        window.close()
+        c.onReader { }
+        return kotlin.native.ref.WeakReference(window)
+    }
+
+    @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+    private fun closeSearchAfter(c: FacadeClient, query: String, serverAnswer: Boolean): kotlin.native.ref.WeakReference<Any> {
+        val results = SearchRecorder()
+        val sub = c.client.subscribeSearch(results)
+        sub.updateQuery(query)
+        pumpUntil("search $query") { results.any { it.query == query && (!serverAnswer || it.scope == "serverAndDevice") } }
+        sub.close()
+        c.onReader { }
+        return kotlin.native.ref.WeakReference(sub)
+    }
+
+    /**
+     * The realistic viewport trigger: the person sits near the end, a revalidation shortens the list,
+     * and the shell's next viewport — indexes into the longer list it still shows — reaches the
+     * reader after the shorter list was built. Accepted and clamped: the screen stays `live`, and a
+     * viewport never publishes a failure, however far out of range.
+     */
+    @Test
+    fun aViewportPastTheEndOfAListThatShrankNeverPublishesAFailure() = facadeTest { h ->
+        val c = h.client()
+        val grid = WindowRecorder()
+        val sub = c.client.subscribeLibraryWindow(GRID, grid)
+        pumpUntil("a live grid") { grid.any { it.freshness.kind == "live" && it.items.size == 100 } }
+        sub.setViewport(90, 99)
+        val listKey = ListRequestSpec.of(LibraryQuery.AlbumList(AlbumListType.AlphabeticalByName)).listKey
+        c.onReader {
+            h.server.base.albums.subList(50, h.server.base.albums.size).clear()
+            h.server.base.lastScan = "2026-09-22T14:00:00+02:00"
+        }
+        sub.refresh()
+        // Wait on the reader, NOT the main thread: the shell keeps showing the 100-item list.
+        waitOnReader(c, "the shortened list to be written") {
+            c.onReader { h.sessions.last().reader.cache.listState(listKey)?.total } == 50
+        }
+        c.onReader { }
+        assertTrue(grid.last.items.size == 100, "the shortened list was delivered early; the test lost its precondition")
+
+        sub.setViewport(95, 99)
+        sub.setViewport(150, 160)
+        pumpUntil("the shortened list") { grid.last.items.size == 50 }
+        pumpFor(200.milliseconds)
+        assertTrue(grid.none { it.freshness.reason == "internalFailure" }, "a viewport published a failure: ${grid.all.map { it.freshness.kind + "/" + it.freshness.reason }}")
+        assertEquals(listOf<Any?>("live", 50), listOf(grid.last.freshness.kind, grid.last.items.size))
+        assertEquals(emptyList(), c.onReader { c.client.uncaughtFailures.toList() + h.sessions.last().reader.uncaughtFailures })
+    }
+
+    /** The carry-over clamps to the newer publication: a shrunk list, a reversed range, a gone anchor. */
+    @Test
+    fun translateViewportClampsToTheReadersLatestPublication() {
+        fun publication(sequence: Int, size: Int) = AppleLibraryWindowPublication(
+            sequence, AppleLibraryReaderFreshness("live", null, null, null), "complete", size, 0, null,
+            (0 until size).map { LibraryItem.Genre("g$it").toApple("server:x") }, "present", "server", null, null,
+        )
+        val shown = publication(1, 100)
+        val shrunk = publication(2, 50)
+        fun seen(first: Int, last: Int) = SeenViewport(shown.sequence, "genre\u0000g$first", "genre\u0000g$last")
+        assertEquals(49 to 49, translateViewport(95, 99, seen(95, 99), shrunk), "anchors gone, range past the end")
+        assertEquals(40 to 45, translateViewport(40, 45, seen(40, 45), shrunk), "anchors present")
+        assertEquals(99 to 99, translateViewport(150, 160, null, shown), "nothing seen yet, far past the end")
+        assertEquals(10 to 10, translateViewport(10, 5, null, shown), "reversed")
+        assertEquals(0 to 3, translateViewport(-4, 3, null, shown), "before the start")
+        assertEquals(7 to 9, translateViewport(7, 9, null, null), "nothing emitted: unchanged, the core clamps")
+    }
+
+    /**
+     * The facade's own failure publication keeps what was shown, with its age: a `live` screen's
+     * content is labelled with when it was published, never "age unknown" (CORPUS §4 item 11).
+     */
+    @Test
+    fun theFacadesFailurePublicationKeepsTheContentAndItsAge() {
+        val items = listOf(LibraryItem.Genre("Rock").toApple("server:x"))
+        val live = AppleLibraryWindowPublication(
+            4, AppleLibraryReaderFreshness("live", null, null, null), "complete", 1, 0, null, items, "present", "server", null, null,
+        )
+        val overLive = readerFailurePublication(5, live, errorKind = null, previousLiveAt = 1_234)
+        assertEquals(listOf<Any?>(5, "cached", "internalFailure", null, 1_234L), listOf(overLive.sequence, overLive.freshness.kind, overLive.freshness.reason, overLive.freshness.errorKind, overLive.freshness.asOfEpochMillis))
+        assertEquals(items, overLive.items)
+        assertEquals(listOf<Any?>("complete", 1, "present"), listOf(overLive.coverage, overLive.total, overLive.itemsState))
+
+        val cached = AppleLibraryWindowPublication(
+            4, AppleLibraryReaderFreshness("cached", "stale", null, 77), "open", null, 0, null, items, "present", "server", null, null,
+        )
+        assertEquals(77L, readerFailurePublication(5, cached, errorKind = "input", previousLiveAt = 1_234).freshness.asOfEpochMillis, "a cached screen keeps its own age")
+        val none = readerFailurePublication(1, null, errorKind = "closed")
+        assertEquals(listOf<Any?>("unavailable", "failed", "closed", 0), listOf(none.freshness.kind, none.freshness.reason, none.freshness.errorKind, none.items.size))
+    }
+
+    /**
+     * §7.2's cancel reaches an operation still queued behind other work: exactly one completion, as
+     * `cancelled`. The control — the same queue with no cancel — completes with the count.
+     */
+    @Test
+    fun cancellingAQueuedOperationCompletesItOnceAsCancelled() = facadeTest { h ->
+        val c = h.client()
+        c.client.setOnline(false)
+        assertTrue(c.client.setFavourite("album", albumId(4), true))
+        fun queued(cancel: Boolean): List<AppleLibraryPendingChanges> {
+            val gate = kotlin.concurrent.atomics.AtomicBoolean(false)
+            val entered = kotlin.concurrent.atomics.AtomicBoolean(false)
+            assertTrue(c.client.onReader { entered.store(true); while (!gate.load()) platform.posix.usleep(1_000u) })
+            val results = AtomicReference<List<AppleLibraryPendingChanges>>(emptyList())
+            val op = c.client.pendingChangeCount { result -> results.store(results.load() + result) }
+            val start = TimeSource.Monotonic.markNow()
+            while (!entered.load()) {
+                if (start.elapsedNow() > 10.seconds) fail("the reader never reached the gate")
+                platform.posix.usleep(1_000u)
+            }
+            if (cancel) op.cancel()
+            gate.store(true)
+            pumpUntil("the completion") { results.load().isNotEmpty() }
+            pumpFor(200.milliseconds)
+            return results.load()
+        }
+        assertEquals(listOf<Any?>(1L, null), queued(cancel = false).single().let { listOf(it.count, it.errorKind) }, "control")
+        assertEquals(listOf<Any?>(null, "cancelled"), queued(cancel = true).single().let { listOf(it.count, it.errorKind) })
+    }
+
+    /**
+     * A completion whose work finished before [AppleLibraryReaderClient.close] is delivered after
+     * close returns, with its result — a success that already completed wins (§7.2).
+     */
+    @Test
+    fun aCompletionQueuedBeforeCloseArrivesWithItsResult() = facadeTest { h ->
+        val c = h.client()
+        c.client.setOnline(false)
+        assertTrue(c.client.setFavourite("album", albumId(4), true))
+        val result = AtomicReference<AppleLibraryPendingChanges?>(null)
+        c.client.pendingChangeCount { result.store(it) }
+        c.client.close()
+        assertNull(result.load(), "fixture: nothing was delivered before close returned")
+        pumpUntil("the completion") { result.load() != null }
+        assertEquals(listOf<Any?>(1L, null), listOf(result.load()?.count, result.load()?.errorKind))
+    }
+
+    /** A held connect cancelled completes once, as `cancelled`, and its request is cancelled. */
+    @Test
+    fun cancellingAHeldConnectCompletesOnceAsCancelled() = facadeTest { h ->
+        val c = h.client()
+        c.onReader { h.server.base.holdMatching = { it.endpoint == "getScanStatus" } }
+        val calls = AtomicInt(0)
+        val result = AtomicReference<AppleLibraryReaderConnection?>(null)
+        val op = c.client.connect { calls.addAndFetch(1); result.store(it) }
+        waitOnReader(c, "the epoch read to be held") { c.onReader { h.server.base.heldCount } == 1 }
+        op.cancel()
+        op.cancel()
+        pumpUntil("the cancelled completion") { result.load() != null }
+        waitOnReader(c, "the held request to be cancelled") { c.onReader { h.server.base.cancelled } == 1 }
+        pumpFor(200.milliseconds)
+        assertEquals(listOf<Any?>(1, "cancelled"), listOf(calls.load(), result.load()?.errorKind))
+    }
+
+    /** Close cancels every read BEFORE it releases the database and transport. */
+    @Test
+    fun closeCancelsBeforeItReleases() = facadeTest { h ->
+        val cancelledAtRelease = AtomicReference<Boolean?>(null)
+        val c = h.client(compose = { scope ->
+            val store = DulcetDatabaseStore.open(h.driver)
+            val session = LibraryReaderSession(store.database, SeenCacheStore(store, h.clock).bind(BINDING), h.transport, scope)
+            AppleLibraryReaderComposition(session, release = {
+                cancelledAtRelease.store(scope.coroutineContext[kotlinx.coroutines.Job]?.isCancelled)
+            })
+        })
+        c.onReader { h.server.base.holdMatching = { it.endpoint == "getAlbumList2" } }
+        c.client.subscribeLibraryWindow(GRID, WindowRecorder())
+        waitOnReader(c, "a read in flight at close") { c.onReader { h.server.base.heldCount } == 1 }
+        c.close()
+        assertEquals(true, cancelledAtRelease.load(), "the database was released while the reader's scope still ran")
+    }
+
+    /**
+     * An outcome the reader queued for the main thread before a client close is dropped, not
+     * delivered after it. The reader's thread is held across the close and the pump, so the
+     * teardown — which also clears the subscription's listener — cannot run first: what drops the
+     * outcome is the main-thread check of the client's closed flag alone. Without the hold, the
+     * teardown usually wins that race, and the test passed with the check removed.
+     */
+    @Test
+    fun anOutcomeQueuedBeforeAClientCloseIsDropped() = facadeTest { h ->
+        fun queuedThenMaybeClosed(close: Boolean): Int {
+            val c = h.client()
+            val outcomes = OutcomeRecorder()
+            c.client.subscribeFavouriteOutcomes(outcomes)
+            val stars = c.onReader { h.server.count("star") }
+            assertTrue(c.client.setFavourite("album", albumId(4 + stars), true))
+            waitOnReader(c, "the send to be answered") { c.onReader { h.server.count("star") } == stars + 1 }
+            c.onReader { } // the outcome has been queued for the main thread
+            val release = c.holdReader()
+            if (close) c.client.close()
+            pumpFor(300.milliseconds)
+            release()
+            c.close()
+            return outcomes.all.size
+        }
+        assertEquals(1, queuedThenMaybeClosed(close = false), "control: the outcome is delivered when the client stays open")
+        assertEquals(0, queuedThenMaybeClosed(close = true), "an outcome was delivered after the client closed")
+    }
+
+    /**
+     * `close(completion)` calls back on the main thread only once the reader's thread has stopped —
+     * after every call queued before the close — and nothing touches the database after it. This is
+     * what account deletion waits for (§14.7).
+     */
+    @Test
+    fun closeWithACompletionCallsBackOnceTheReaderHasStopped() = facadeTest { h ->
+        val c = h.client()
+        val grid = WindowRecorder()
+        c.client.subscribeLibraryWindow(GRID, grid)
+        pumpUntil("a live grid") { grid.any { it.freshness.kind == "live" } }
+        repeat(20) { c.client.subscribeSearch(SearchRecorder()).updateQuery("Album 00$it") } // a backlog on the reader
+        val stoppedAtCallback = AtomicReference<Boolean?>(null)
+        val onMain = AtomicReference<Boolean?>(null)
+        val calls = AtomicInt(0)
+        c.client.close {
+            calls.addAndFetch(1)
+            onMain.store(NSThread.isMainThread)
+            stoppedAtCallback.store(c.client.isTerminated)
+        }
+        val second = AtomicInt(0)
+        c.client.close { second.addAndFetch(1) }
+        pumpUntil("the close completion") { stoppedAtCallback.load() != null && second.load() == 1 }
+        assertEquals(listOf<Any?>(true, true), listOf(stoppedAtCallback.load(), onMain.load()), "called back before the reader stopped, or off main")
+        val statements = h.driver.statements.size
+        pumpFor(300.milliseconds)
+        assertEquals(statements, h.driver.statements.size, "the database was touched after the close completion")
+        assertEquals(1, calls.load())
+    }
+
+    /** Offline, a search's track rows say they cannot play; online, streamable. Albums carry none. */
+    @Test
+    fun searchTrackRowsCrossWithTheirPlayability() = facadeTest { h ->
+        val c = h.client()
+        val grid = WindowRecorder()
+        c.client.subscribeLibraryWindow(GRID, grid)
+        pumpUntil("a live grid, so the device has seen the albums") { grid.any { it.freshness.kind == "live" } }
+        val search = SearchRecorder()
+        val sub = c.client.subscribeSearch(search)
+        sub.updateQuery("Song album-0001")
+        pumpUntil("the server's tracks") { search.any { it.scope == "serverAndDevice" && it.rows.isNotEmpty() } }
+        assertEquals(setOf("streamable"), search.last.rows.filter { it.kind == "track" }.mapNotNull { it.playability }.toSet())
+        c.client.setOnline(false)
+        pumpUntil("the offline scope") { search.last.scope == "deviceOffline" }
+        val tracks = search.last.rows.filter { it.kind == "track" }
+        assertTrue(tracks.isNotEmpty(), "fixture: the device found the tracks")
+        assertTrue(tracks.all { it.playability == "unavailableOffline" }, "offline tracks: ${tracks.map { it.playability }}")
+        sub.updateQuery("Album 0001")
+        pumpUntil("album rows") { search.last.query == "Album 0001" && search.last.rows.any { it.kind == "album" } }
+        assertTrue(search.last.rows.filter { it.kind != "track" }.all { it.playability == null })
+    }
+
     // ---- Harness -----------------------------------------------------------------------------------------------
 
     private class ThrowingTransport(private val delegate: LibraryEndpointTransport) : LibraryEndpointTransport {
@@ -776,6 +1187,9 @@ class AppleLibraryReaderFacadeTest {
         val transport = ThrowingTransport(server)
         val clients = mutableListOf<FacadeClient>()
 
+        /** Every session the default composition built; touched only on its reader's thread. */
+        val sessions = mutableListOf<LibraryReaderSession>()
+
         fun client(
             config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
             search: LibrarySearchConfig = LibrarySearchConfig(debounceMillis = 0),
@@ -787,7 +1201,8 @@ class AppleLibraryReaderFacadeTest {
                 compose ?: { scope ->
                     val store = DulcetDatabaseStore.open(driver)
                     AppleLibraryReaderComposition(
-                        LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(BINDING), transport, scope, config, downloads),
+                        LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(BINDING), transport, scope, config, downloads)
+                            .also { sessions += it },
                         search,
                     )
                 },
@@ -803,6 +1218,26 @@ class AppleLibraryReaderFacadeTest {
 
         /** Runs [block] on the reader's thread after everything queued before it. Never pumps main. */
         fun <T> onReader(block: () -> T): T = runBlocking(dispatcher) { block() }
+
+        /**
+         * Occupies the reader's thread until the returned function is called, so everything queued
+         * there afterwards — a close's teardown — waits behind it. Never pumps main, and bounded, so
+         * a failing test cannot hang.
+         */
+        fun holdReader(): () -> Unit {
+            val state = AtomicInt(0) // 0 queued, 1 holding, 2 released
+            CoroutineScope(dispatcher).launch {
+                state.compareAndSet(0, 1)
+                val held = TimeSource.Monotonic.markNow()
+                while (state.load() == 1 && held.elapsedNow() < 20.seconds) platform.posix.usleep(1_000u)
+            }
+            val start = TimeSource.Monotonic.markNow()
+            while (state.load() == 0) {
+                check(start.elapsedNow() < 20.seconds) { "the reader's thread never took the hold" }
+                platform.posix.usleep(1_000u)
+            }
+            return { state.store(2) }
+        }
 
         /** Closes the client and waits for its thread to stop, so the test may close the database. */
         fun close() {
