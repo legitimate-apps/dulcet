@@ -15,10 +15,13 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The second independent review of `feat/playlists-core` (spec §18.6, §28 revision 99 item 20): the
  * reviewer's probes p3–p10 as permanent tests, and one test per surviving mutant (`s5a…`–`s5f…`).
- * Each probe was seen failing on the reviewed commit before its fix.
+ * Each probe was seen failing on the reviewed commit before its fix. The lost-create and access
+ * sections are restated as round 3 decided them (the third review, [PlaylistEditingThirdReviewTest]).
  */
 class PlaylistEditingSecondReviewTest {
-    // ---- S1: a lost create is recognised despite clock skew, second stamps and owner spelling ----
+    // ---- S1, as round 3 made it: a lost create is found by what was listed before its send -------
+    // (§18.6). No clock is compared, so skew, whole-second stamps, an answer seen late, an unreadable
+    // `created` and an owner the server does not state all adopt alike.
 
     /** A create whose answer is lost while the server's clock reads [skewMillis] off the device's. */
     private suspend fun TestScope.lostCreateUnderSkew(env: PlaylistEnv, skewMillis: Long): String {
@@ -56,12 +59,15 @@ class PlaylistEditingSecondReviewTest {
     }
 
     @Test
-    fun aServerClockBeyondTheToleranceCostsASilentDuplicate() = playlistTest { env ->
-        // The residual §18.6 states as ASSUMED, pinned: outside the window the lost create is not
-        // a candidate, so nothing names it.
-        val localId = lostCreateUnderSkew(env, -(PlaylistEditor.CREATE_SKEW_TOLERANCE_MILLIS + 60_000))
-        assertEquals(2, env.server.playlists.size)
-        assertEquals(PlaylistEditOutcome.Created(localId, env.server.playlists.last().id), env.outcomes.last())
+    fun aServerClockADayBehindStillAdopts() = playlistTest { env ->
+        // Round 2 pinned this as a silent duplicate beyond a five-minute tolerance; no clock is
+        // compared now, so a day of skew changes nothing.
+        assertAdopted(env, lostCreateUnderSkew(env, -24 * 3_600_000L))
+    }
+
+    @Test
+    fun aServerClockADayAheadStillAdopts() = playlistTest { env ->
+        assertAdopted(env, lostCreateUnderSkew(env, 24 * 3_600_000L))
     }
 
     @Test
@@ -81,9 +87,8 @@ class PlaylistEditingSecondReviewTest {
     }
 
     @Test
-    fun anAnswerSeenLateWidensTheWindowToWhenTheFailureWasSeen() = playlistTest { env ->
-        // A send the server applied six minutes after it went out (a slow proxy): the window's upper
-        // bound is when the failure was SEEN, not when the send began.
+    fun anAnswerSeenLateStillAdopts() = playlistTest { env ->
+        // A send the server applied six minutes after it went out (a slow proxy).
         val session = env.session()
         env.server.beforeWrite = { if (it.endpoint == "createPlaylist") env.clock.now += 6 * 60_000 }
         env.server.applyThenLose += "createPlaylist"
@@ -102,42 +107,21 @@ class PlaylistEditingSecondReviewTest {
     }
 
     @Test
-    fun p4_anOwnerUnstatedLostCreateIsSentAgainAndTheDuplicateNamed() = playlistTest { env ->
-        // Reviewer probe p4: with no owner stated, adoption cannot be certain. The duplicate is named.
+    fun p4_anOwnerUnstatedLostCreateIsAdopted() = playlistTest { env ->
+        // Reviewer probe p4, as round 3 decided: an owner the server does not state rules nothing
+        // out, and the one playlist of the name not listed before the send is the create's own.
         env.server.omitOwner = true
-        val session = env.session()
-        env.server.applyThenLose += "createPlaylist"
-        val localId = assertNotNull(session.playlists.create("Once", listOf("song-1")).localId)
-        advanceUntilIdle()
-        env.server.applyThenLose.clear()
-        val lost = env.server.playlists.single()
-        session.playlists.flush()
-        advanceUntilIdle()
-        assertEquals(2, env.server.playlists.size)
-        val fresh = env.server.playlists.last()
-        assertEquals(
-            listOf(PlaylistEditOutcome.Created(localId, fresh.id), PlaylistEditOutcome.PossibleDuplicate(localId, fresh.id, listOf(lost.id))),
-            env.outcomes.takeLast(2),
-        )
+        assertAdopted(env, lostCreateUnderSkew(env, 0))
     }
 
     @Test
-    fun aCreatedTimeTheDeviceCannotReadIsNeverCertain() = playlistTest { env ->
+    fun aCreatedTimeTheDeviceCannotReadIsNeverConsulted() = playlistTest { env ->
         env.server.createdText = { "sometime today" }
-        val session = env.session()
-        env.server.applyThenLose += "createPlaylist"
-        val localId = assertNotNull(session.playlists.create("Once", listOf("song-1")).localId)
-        advanceUntilIdle()
-        env.server.applyThenLose.clear()
-        val lost = env.server.playlists.single()
-        session.playlists.flush()
-        advanceUntilIdle()
-        assertEquals(2, env.server.playlists.size)
-        assertEquals(PlaylistEditOutcome.PossibleDuplicate(localId, env.server.playlists.last().id, listOf(lost.id)), env.outcomes.last())
+        assertAdopted(env, lostCreateUnderSkew(env, 0))
     }
 
     @Test
-    fun twoCandidatesForAStillWantedCreateAreNamedNotAdopted() = playlistTest { env ->
+    fun twoCandidatesForAStillWantedCreateAreNamedAndNothingIsSentAgain() = playlistTest { env ->
         val session = env.session()
         env.server.applyThenLose += "createPlaylist"
         val localId = assertNotNull(session.playlists.create("Once", listOf("song-1")).localId)
@@ -145,10 +129,14 @@ class PlaylistEditingSecondReviewTest {
         env.server.applyThenLose.clear()
         val lost = env.server.playlists.single()
         val elsewhere = env.server.add("Once", listOf("song-1"))
-        session.playlists.flush()
-        advanceUntilIdle()
-        assertEquals(3, env.server.playlists.size)
-        assertEquals(PlaylistEditOutcome.PossibleDuplicate(localId, env.server.playlists.last().id, listOf(lost.id, elsewhere.id)), env.outcomes.last())
+        repeat(3) {
+            session.playlists.flush()
+            advanceUntilIdle()
+        }
+        assertEquals(2, env.server.playlists.size)
+        assertEquals(1, env.server.count("createPlaylist"), "never sent again on a guess")
+        assertEquals(listOf<PlaylistEditOutcome>(PlaylistEditOutcome.PossibleDuplicate(localId, "Once", listOf(lost.id, elsewhere.id))), env.outcomes)
+        assertEquals(1L, session.playlists.pendingCount())
     }
 
     // ---- N1: the removal's residual, stated precisely -------------------------------------------
@@ -271,7 +259,8 @@ class PlaylistEditingSecondReviewTest {
         assertEquals(PlaylistEditOutcome.Saved(p.id, PlaylistRowKind.Entries), env.outcomes.last())
     }
 
-    // ---- S4: statuses that refuse ACCESS hold every change; a 429 is honoured, never counted -------
+    // ---- S4, as round 3 made it: a refusal of access holds every change only when a ping is refused
+    // too (the account's); a 429 is honoured and never counted (§18.6 "Failures") ------------------
 
     private suspend fun TestScope.renameHeldBy(env: PlaylistEnv, status: Int, retryAfter: String? = null): Pair<FakePlaylistServer.Playlist, LibraryReaderSession> {
         val p = env.server.add("Mix", listOf("song-1"))
@@ -289,14 +278,17 @@ class PlaylistEditingSecondReviewTest {
         return p to session
     }
 
+    /** The account refused: the change's request and the ping that checks both meet [status]. */
     private suspend fun TestScope.heldAcrossFlushes(env: PlaylistEnv, status: Int, error: DomainError) {
         val (p, session) = renameHeldBy(env, status)
+        env.server.httpStatus["ping"] = status
         repeat(PlaylistEditor.MAX_FAILURES + 1) {
             val report = session.playlists.flush()
             assertEquals(error, report.stoppedBy)
             runCurrent()
         }
         assertEquals(PlaylistEditor.MAX_FAILURES + 1, env.server.count("updatePlaylist"), "one send per flush: the second change waits behind the first")
+        assertEquals(PlaylistEditor.MAX_FAILURES + 1, env.server.count("ping"), "one ping per flush")
         assertEquals(2L, session.playlists.pendingCount(), "every change kept, none counted toward a drop")
         assertEquals(PlaylistEditOutcome.Held(p.id, PlaylistRowKind.Details, error), env.outcomes.last())
         assertTrue(env.outcomes.none { it is PlaylistEditOutcome.NotSaved }, "${env.outcomes}")
@@ -324,7 +316,20 @@ class PlaylistEditingSecondReviewTest {
 
     @Test
     fun a429WithoutRetryAfterHoldsEveryChangeAndCountsTowardNothing() = playlistTest { env ->
-        heldAcrossFlushes(env, 429, DomainError.Server.Busy(null))
+        val (p, session) = renameHeldBy(env, 429)
+        val first = session.playlists.flush()
+        assertEquals(DomainError.Server.Busy(null), first.stoppedBy)
+        assertEquals(PlaylistEditOutcome.Held(p.id, PlaylistRowKind.Details, DomainError.Server.Busy(null)), env.outcomes.last())
+        // Without a Retry-After the floor still holds: the scheduled flushes retry, never counting.
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(2L, session.playlists.pendingCount(), "every change kept, none counted toward a drop")
+        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.NotSaved }, "${env.outcomes}")
+        env.server.httpStatus.clear()
+        advanceTimeBy(5 * 60_000L)
+        runCurrent()
+        assertEquals("Evening", p.name, "sent once the server takes changes again")
+        assertEquals(0L, session.playlists.pendingCount())
     }
 
     @Test

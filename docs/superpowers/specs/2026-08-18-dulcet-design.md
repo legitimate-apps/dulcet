@@ -4009,9 +4009,15 @@ retry loop.
   answers for without applying (the generic error code 0, a malformed answer) stays pending and the
   flush moves on, and after three such answers in a row (ASSUMED) it is dropped and the person told.
   A server that cannot be reached stops the flush, keeping every change in order; so does one that
-  refuses ACCESS or asks to wait — credentials refused, a proxy's 403 or 407, an HTTP 429 — which
-  also counts toward nothing and is told (`Held`), with a 429's `Retry-After` honoured (§18.6,
-  "Failures", which applies to favourites unchanged).
+  asks to wait (an HTTP 429, backed off as §18.6 "Failures" says), and one that refuses ACCESS —
+  credentials refused, a 403, a 407 — **when an authenticated `ping` is refused too**; either counts
+  toward nothing and is told (`Held`). A refusal whose ping is answered is that change's own failure
+  — three, and it is dropped and the person told — and the queue moves on (§18.6, "Failures", which
+  applies to favourites unchanged).
+- **A pending change can always be taken back.** `pendingChanges` lists what waits to be sent, and
+  `withdraw(target, field)` removes one — a held one included — so a change the server will not take
+  never stays stuck in the queue. Withdrawing cannot unsend: a change whose send is under way or
+  whose answer was lost may be on the server already, and the item's next read shows it.
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
   at-least-once is safe here — unlike scrobbles (§15.3).
 - On logout the outbox is offered for submission (§14.7).
@@ -4034,7 +4040,8 @@ not needed before browse, play and offline are correct.
 `Add(items)` (append), `Insert(items, atIndex)`, `Remove(indices)`, `Move(from, to)`, `Rename`,
 `SetComment`, `SetPublic`, `Delete`. **As implemented** (`PlaylistEditing.kt`, reached through
 `LibraryReaderSession.playlists`): `create`, `append`, `appendAlbum`, `insert`, `remove`, `move`,
-`rename`, `setComment`, `setPublic`, `delete`, `flush`, `pendingCount`, and an outcome listener.
+`rename`, `setComment`, `setPublic`, `delete`, `flush`, `pendingCount`, `pendingChanges`, `withdraw`,
+`chooseCreated`, and an outcome listener.
 
 - **Ordering is by explicit index**, never implied — and the index is resolved **on the device**,
   against the view the person acted on, never sent to the server as a position (below).
@@ -4163,40 +4170,70 @@ again is harmless. The songs an append in doubt carried travel with its row thro
 an edit that still only adds at the end, with those songs still at the head of the songs to add,
 never appends them twice. One that reshapes them — removes or moves one of them — is positional:
 written against the list they were sent onto when the server holds it, and otherwise not written
-and told as changed elsewhere; never appended again. An append whose list ALSO changed elsewhere is
+and told as changed elsewhere; never appended again. **Except when the append provably never
+arrived** (third review round): a server still holding exactly the list the append was sent onto
+has none of its songs, so there is nothing to double, and an edit that still only adds at the end
+is sent as an append — a delta — however it was reshaped here, never as a whole-list write. A
+whole list would carry the undetectable-overwrite exposure below for no reason, and without
+`formPost` a long playlist's whole list does not fit at all (a reshaped append on a 700-song list
+was refused as `CapabilityUnsupported(PlaylistWholeListWrite)` before this rule). An append whose list ALSO changed elsewhere is
 taken as landed when the server's list ends with the songs it appended (ASSUMED: those are this
 device's own songs). A removal sent in batches records each verified batch as progress, so a later
 batch that fails resumes from the list read back, never reads as changed elsewhere. A delete answered
 code 70 is already done.
 
-**A lost create is never deleted by inference — whatever the evidence** (maintainer's decision,
-second review round). After a create whose answer was lost, the server's playlists are searched for
-**candidates**: those with the name that send carried; owned by this account — the owner compared
-ignoring case, since the reference server signs a login in whatever its case and states the account
-as it was created (`u=admin` is owner "Admin"; `u=DULCET-ADMIN` is owner "dulcet-admin"; both
-OBSERVED 2026-09-24, the first by the review; CONF-88..91 pass signed in with the second spelling) — or with no owner stated; and
-whose server
-`created` time, when it can be read, lies in **[first send − 5 min, failure seen + 5 min]**. The five
-minutes absorb a server clock ahead of or behind the device's and a `created` stamped in whole
-seconds. Whether the device has seen a playlist does not enter into it.
+**A create in doubt is identified without any clock, never deleted by inference, and never sent
+again on a guess** (maintainer's decisions, second and third review rounds). Before each send of a
+create the device lists the server's playlists (`getPlaylists`, one request) and records with the
+outbox row the ids of every playlist already bearing the name it sends (`seenBeforeSend`): none of
+those can be what the send makes. After a create whose answer was lost — or that the server answered
+with an empty `ok`, naming nothing — the playlists are listed again, and the **candidates** are those
+with the name that send carried, **not** in the recorded set, and owned by this account (the owner
+compared ignoring case, since the reference server signs a login in whatever its case and states the
+account as it was created: `u=admin` is owner "Admin", `u=DULCET-ADMIN` is owner "dulcet-admin", both
+OBSERVED 2026-09-24, the first by the review; CONF-88..91 pass signed in with the second spelling) or
+with no owner stated. **No clock enters it** — not the server's `created` stamp, its timezone, or
+the device's clock — so a server clock a day off, a `created` in whole seconds or in a form the device
+cannot read, and an answer seen late leave the identification unchanged. The round before used a
+window of `created` times; it admitted a namesake of any age whose `created` could not be read, and
+excluded this device's own playlist under a clock skewed beyond its tolerance. Whether the device has seen a playlist does
+not enter into it either.
 
+- **No candidate** — nothing of that name appeared since the send, so it did not land: it is sent
+  again. After an empty `ok` that made nothing visible, that is also this change's failure, counted
+  toward the three of "Failures".
+- **Exactly one candidate that holds the songs sent** — exactly, or less song ids the server did not
+  know, never none of them — is adopted. A wrong adoption can only merge the create into a playlist
+  of that name holding those songs, made after the send (residual 1 and 3 below). A single candidate holding other songs is not
+  adopted: this is stricter than the decision's "one candidate: adopt it", because adopting a
+  namesake another client made with other songs would lose this create.
+- **Otherwise** — several candidates, or one holding other songs — **nothing is sent again
+  automatically.** The person is told the candidates (`PossibleDuplicate`, naming them) and the
+  create waits for them: `chooseCreated(localId, id)` adopts the one they pick,
+  `chooseCreated(localId, null)` says none is theirs and sends it again, and `withdraw` takes the
+  create back. Later flushes pass a waiting create over, and `pendingChanges` lists it with its
+  candidates.
 - A create **deleted here** while its send was in doubt deletes **nothing**. The person is told the
   candidates' ids (`PossiblyCreated`): the shell offers "A playlist named *X* may have been created.
-  Delete it on the server?", and a delete the person confirms is an ordinary delete by id. A
-  candidate can be a playlist another client made in the window — the person retrying elsewhere is
-  the natural reaction to a stuck create — which is why no rule, however strict, decides alone.
-- A create **still wanted** adopts a candidate only when that is certain enough: it is the **only**
-  candidate, its owner and `created` are stated and pass, and it holds the songs sent — exactly, or
-  less song ids the server did not know, never none of them. A wrong adoption can only merge the
-  create into an identical playlist of this account. Otherwise the create is sent again, and when
-  any candidate exists the person is told (`PossibleDuplicate`, with the new id and the
-  candidates'), never left with a silent duplicate.
+  Delete it on the server?", and a delete the person confirms is an ordinary delete by id. The
+  recorded set excludes every namesake that existed before the send, so an old "New Playlist" is
+  never offered, whatever its `created` says and whether or not it can be read.
 
 The name and songs a send carried are recorded with it, so a rename or a song change made here while
 it is in doubt neither hides the create nor is lost: once adopted, it follows as the new playlist's
-own change. ASSUMED: the server's clock and the device's agree within five minutes. Beyond that a
-lost create is not a candidate — sent again, it costs a duplicate nobody names. A `created` the
-device cannot read never makes a candidate certain.
+own change. A row persisted without a recorded set adopts nothing on its own; it names its candidates.
+
+**The residual, stated.** A candidate is a namesake that appeared after the send, which is not proof
+that the send made it: another client may have — the person retrying elsewhere is the natural
+reaction to a stuck create. So: (1) a playlist of that name holding exactly the songs sent, made
+elsewhere between a lost send and the next flush while the send itself never arrived, is adopted as
+this create, which is then never sent — the person has that playlist once rather than twice; (2) a
+playlist the send did make, then renamed or deleted elsewhere before the next flush, is no longer a
+candidate: a create still wanted is sent again, and one deleted here names nothing, so a renamed
+playlist stays on the server unnamed to the person; (3) on a server that states no owner, another
+user's namesake made after the send is a candidate, and is offered to the person, never adopted
+unless it holds the songs sent. ASSUMED: one `getPlaylists` lists every playlist of this account in
+one response (the endpoint takes no paging parameter).
 
 **Permissions (§10.4).** Editing needs the server's `readonly: false`, or — from a server that does not
 send `readonly` — ownership by this account. Dulcet follows `readonly` even for an admin, whom the
@@ -4213,15 +4250,43 @@ status with no envelope is `Auth.InvalidCredentials` for a 401, as playback name
 `Server.HttpStatus` otherwise. Then, for playlists and favourites alike:
 
 - **held** — the flush stops, every change is kept, nothing counts toward a drop, and the person is
-  told (`Held`): credentials refused (a 401, envelope code 40), a proxy refusing access (403) or
-  asking for its own credentials (407), a rate limit (429). A 429's `Retry-After` is honoured: until
-  it has passed neither the favourites nor the playlist flush sends anything, and then one flush of
-  every outbox runs. A bare 403 stays a status rather than playback's `Auth.Forbidden`, because
-  `Auth.Forbidden` is envelope code 50 — this user may not make this change — which is a refusal,
-  not a hold;
+  told (`Held`):
+  - **a refusal of ACCESS, only when the account is refused.** Credentials refused (envelope code 40,
+    or a bare 401, which is `Auth.InvalidCredentials` as playback names it), a bare 403 or a 407 is
+    followed at once by one authenticated `ping` (third review round, maintainer's decision). A
+    refused ping speaks for the account: the flush holds with the ping's own failure, or stops as
+    below when the ping reached nothing. An answered ping makes the refusal **that change's own
+    failure** (below), so a rule in front of one endpoint or one request — a proxy or firewall —
+    fails that change alone and the queue moves on; one answered ping serves every later refusal in
+    the same flush. ASSUMED: such per-request refusals occur in the field — the review's case came
+    from a fake, and no real proxy was observed. The cost, stated: a proxy that lets `ping` through
+    but refuses every write makes each change fail on its own, so each is dropped after three
+    flushes and told, where a hold would have kept them. A bare 403 stays a status rather than playback's
+    `Auth.Forbidden`, because `Auth.Forbidden` is envelope code 50 — this user may not make this
+    change — which is a refusal, not a hold. A proxy's own 401 therefore reads as the server
+    refusing the credentials, and holds only if the ping is refused as well;
+  - **a rate limit (429).** The flushes wait `max(Retry-After, floor)`. The floor is 2 s and doubles
+    with each 429 in a row (2, 4, 8 s …), and the wait never exceeds five minutes, whatever
+    `Retry-After` says (both values ASSUMED: asking again after five minutes costs one request). The
+    row of 429s ends when a change is delivered. During the wait neither the
+    favourites nor the playlist flush sends anything — a later edit, a reconnect or a second flush
+    included — and when it ends one flush of every outbox runs. The person is told once per row of
+    429s, not once per retry. The `Retry-After` parser reads anything beyond one day as one day: a
+    larger value overflowed to an infinite duration, which made `Server.Busy` itself throw, and the
+    rate limit was reported as a failure of the device's database (review round 2, N2). ASSUMED: a
+    `Retry-After` of zero or none occurs in the field (the review's premise came from a fake). The
+    tests count requests; none measures elapsed time;
 - **stopped** — no answer, or a gateway that cannot reach the server (502–504): every change kept;
 - **refused** and told — the §18.3 refusals, and 413 or 414 (a request too large never fits);
-- **this change's failure**, retried up to three times — any other status, and the generic code 0.
+- **this change's failure**, retried up to three times, then dropped as `NotSaved` with the person
+  told, and the queue moves on — any other status, the generic code 0, and a refusal of access whose
+  ping was answered.
+
+A pending change can always be withdrawn — held, waiting for a choice, or failing — so none is ever
+stuck in the queue (`pendingChanges`, `withdraw`; §18.3 for favourites). Withdrawing cannot unsend:
+a change whose send is under way or in doubt may be on the server already, and the next read shows
+it. Withdrawing a create is deleting it here, above: one never sent is simply gone, one in doubt
+names what it may have made.
 
 Only a 4xx proves the request was not applied. A failure of the device's own database during a
 delivery is reported as local (`interruptedLocally` for playlists; thrown, never classified, for
@@ -4252,9 +4317,11 @@ written.
 
 **Pinned by** CONF-88 (the table above), CONF-89 (every operation through the production editor, read
 back raw — with and without `formPost`, every write's size measured by the HTTP client's own query
-encoding — and a create whose answer is lost: adopted when certain against the server's real
-`created` times; deleted here, deleting nothing and naming the playlist it made, which the person's
-confirmed delete by id then removes; beside an older namesake that is named, never deleted),
+encoding — and a create whose answer is lost, identified by what the server listed before its send:
+adopted beside an older namesake holding the same songs, which is left untouched; deleted here,
+deleting nothing and naming the playlist it made, which the person's confirmed delete by id then
+removes; beside an older namesake that is never a candidate at all; and alongside a namesake made
+elsewhere after the send, nothing sent again, both named, and the one the person chooses adopted),
 CONF-90 (the hazard reproduced raw, then refused by the editor with nothing written, and a positive
 control), CONF-91 (another user's playlist is published not editable, refused locally and by the
 server, the admin override recorded, and the same user's own playlist edited as a control).
@@ -6257,7 +6324,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     after the send passed it and was deleted, and its claim "identified by proof, never by
     resemblance" was false. Nothing is now deleted by inference at all.** (b) The same search missed the ordinary cases: a list read
     in between marked the new playlist "seen", and a song id the server dropped changed its count.
-    Adoption now uses the same proof, allowing only dropped ids this device sent. (c) **Maintainer's
+    This round made adoption use that proof too, allowing only dropped ids this device sent; **the
+    proof was withdrawn with (a), adoption moved to the "certain" rule of (j) in the second round,
+    and then to the clock-free pre-send set of the third.** (c) **Maintainer's
     decision:** a remove-only edit sends verified positions, highest first, and is read back; a move
     or insert keeps the whole-list write, now also comparing the header across its round trip. §18.6's
     exposure paragraph is rewritten: the first cut's "step 4 cannot always see it" understated a
@@ -6305,16 +6374,20 @@ fresh disposable server before landing; items 11–14 are what that review chang
     ("Admin" for `u=admin`, OBSERVED). Candidates now lie in [first send − 5 min, failure seen + 5
     min], owners compare ignoring case, and a create adopts only a certain candidate; otherwise it is
     sent again and the duplicate is named (`PossibleDuplicate`) — on an owner-unstated server it was
-    silent. (k) A batched removal interrupted after a verified batch was reported changed elsewhere
-    and its remainder dropped; each verified batch is now recorded as progress. (l) An append in
+    silent. **Replaced by the third round below:** the window still read a clock, admitted a namesake
+    of any age whose `created` could not be read, and sent the create again beside a candidate.
+    (k) A batched removal interrupted after a verified batch was reported changed elsewhere and its
+    remainder dropped; each verified batch is now recorded as progress. (l) An append in
     doubt, a change elsewhere, then a local edit reshaping the appended songs appended a song twice
-    and reported `Saved`: a reshaped append is now positional against the list it was sent onto.
+    and reported `Saved`: a reshaped append is now positional against the list it was sent onto
+    (**narrowed by the third round below**: one that provably never arrived stays an append).
     The second survivor of the round above ("reachable only through the ASSUMED ends-with
     fallback") was **not** equivalent: that probe distinguishes it. (m) A proxy's 401, 403, 407 or 429
     without an envelope counted toward a drop, so a favourite or a rename was discarded after three
     flushes. Access refusals and 429 now hold every change, count toward nothing and are told
-    (`Held`); a 401 is `Auth.InvalidCredentials` and a 429 `Server.Busy` from the status, as
-    playback names them; a 429's `Retry-After` gates the favourites and playlist flushes (§18.6
+    (`Held`) — **narrowed by the third round below: a bare refusal holds only when a ping is refused
+    too, and a 429 backs off**; a 401 is `Auth.InvalidCredentials` and a 429 `Server.Busy` from the
+    status, as playback names them; a 429's `Retry-After` gates the favourites and playlist flushes (§18.6
     "Failures"). (n) Six of the reviewer's seven mutants survived the suite; each now has a test
     that kills it, and CONF-89's size check measures the HTTP client's encoding rather than the
     editor's own estimate.
@@ -6322,7 +6395,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     **116 mutants** (74 carried from the earlier rounds and adapted, 42 new) — **115 killed, 1
     survived, 0 failed to compile**, the control reported as not compiling and not counted. The
     survivor is the guard around the playlist flush inside the reconnect composition, which the
-    review accepted as equivalent. Two of the new mutants first matched nothing, because the code
+    first review round had judged equivalent — **corrected by the third round below: the second
+    review did not re-run it, so it had accepted nothing; the third round re-ran it and shows why it
+    is equivalent.** Two of the new mutants first matched nothing, because the code
     they named had changed after they were written; they were corrected and run, and both were
     killed. The owner-case mutant was also run live: CONF-89, signed in as `DULCET-ADMIN`, sent the
     create twice under it.
@@ -6334,6 +6409,74 @@ fresh disposable server before landing; items 11–14 are what that review chang
     positions — "always sees it" and "never silent" were false); `Diverged` now also carries the list
     meant; `HttpStatus`'s documentation now says what each path actually maps; and `formPost` must
     come from the advertised extensions when the facades construct the session.
+
+    **Item 20, third review round — a re-review of the round above found one blocker and six
+    should-fix items; the maintainer decided each.** (q) **Blocker (X1): a bare 403 answering one
+    request held every change behind it indefinitely.** A proxy or firewall refusing one endpoint
+    (the review's fake refused `deletePlaylist` alone) stopped both flushes at that change on every
+    flush, counting nothing, so no change behind it was ever sent and none could be taken back.
+    **Maintainer's decision:** a refusal of access holds only when an authenticated `ping` is refused
+    too; an answered ping makes it that change's own failure — three, then `NotSaved`, the person
+    told, and the queue moves on — in both outboxes; and a pending change can always be withdrawn
+    (`pendingChanges`, `withdraw`; §18.3, §18.6). ASSUMED premise: such refusals occur in the field.
+    (r) **X2: a 429 with `Retry-After: 0`, or none, was retried at once** — 199 requests and 197
+    `Held` in one run — and every later edit re-triggered the flush inside the wait. **Decision:**
+    wait `max(Retry-After, floor)`, the floor 2 s doubling per 429 in a row and the wait capped at
+    five minutes, a delivered change ending the row, the person told once per row. The parser reads a
+    `Retry-After` beyond one day as one day, so an absurd value no longer overflows into a `Busy` that
+    throws and is reported as a local failure (N2). The tests count requests and never measure time.
+    (s) **Decisions 1 and 2 (X3–X5, X7, N1, N4): the lost-create window is gone.** Before each create
+    send the device records which playlists of that name the server already lists; after a lost or
+    empty answer a candidate is a namesake not in that set, owner-compatible ignoring case, and no
+    clock admits or excludes one. The window it replaces missed this device's own playlist when the
+    `created` stamp could not be read or the clocks disagreed beyond its tolerance, and it grew with
+    every retry (N1). It also offered a namesake of any age for deletion when `created` could not be
+    read (X7). A create in doubt is never sent again automatically: with no candidate it is sent
+    again; one candidate holding the songs sent is adopted; otherwise `PossibleDuplicate` names the
+    candidates and the create waits for the person (`chooseCreated`, `withdraw`). **Deviation,
+    stated:** the decision read "exactly one owner-compatible candidate: adopt it", but a lone
+    candidate holding other songs is named instead, because adopting another client's playlist with
+    other songs would lose this create. An empty `ok` takes the same path at once (X5). §18.6
+    restates the residual: a same-name, same-songs playlist made elsewhere between a lost send and
+    the next flush is adopted, and a playlist the send made but that was renamed or deleted elsewhere
+    before the next flush is not recognised. That covers N4's orphan, now stated for a create
+    deleted here as well. (t) **X6:** an append in doubt, then a local edit reshaping its songs, went
+    as a whole-list write even when the append provably never arrived. On a 700-song list without
+    `formPost` it was refused; on a short one it carried the whole-list overwrite exposure for
+    nothing. When the server still holds exactly the list the append was sent onto, the edit is now
+    an append. (u) Text corrected: the `Held` documentation listed an unreachable `HttpStatus` 401
+    (N3); 20(b)'s "same proof" (N5); and the round above's claim that the review accepted its
+    survivor as equivalent (N6). This round re-ran that mutant: it survives and is equivalent,
+    because the playlist flush catches every failure except cancellation, which the guard rethrows
+    too, and the reconnect composition runs on the reader's own thread, so the flush's confinement
+    check cannot fail there. (v) **Failing first.** Run against the round above's head before any
+    fix, 13 of the reviewer's probes failed. Twelve now pass and stay as regression tests: q1, the
+    favourites' 403, q2, q2b, q4, q4b, q5, q6, q8, q9, q10 and q10b. q3 and q3c passed there only
+    because the crash was reported as local; the test now asserts it is not. Four probes changed
+    meaning by design. q7 (a namesake with the same songs, made days after a send in doubt) is still
+    adopted, and is pinned as the stated residual; its variant with provably failed sends is never
+    adopted. p4 (owner not stated) is now adopted when it holds the songs sent. A 403 or 407 now
+    holds only when the ping is refused. The earlier CONF-89 expectation that an older namesake is
+    named is inverted: it is never a candidate. (w) **Mutation run**, compile-gated and restored
+    by `git checkout` after each mutant, first on this round's first complete commit: 154 mutants
+    (the round above's 116, less the 11 aimed at code this round removed, some re-aimed where code
+    moved, and 49 new — one of which, the exact-case owner, duplicates a carried mutant, so 153 are
+    distinct), with the control reported as not compiling and not counted. 146 were killed. One was detected only by a timeout: with the backoff floor removed, `Retry-After: 0`
+    retries at one instant forever and the suite never finishes. One was malformed and did not
+    compile; it was re-aimed. Six survived, and each was followed up. Two named branches that could
+    not be reached: a refusal of access reaches the failure classes only as the ping's own failure,
+    which the flush maps to a hold whatever its class, so both branches were removed. Two had no
+    test: an empty `ok` looked for at once rather than a flush later, and a delivered favourite
+    ending a run of 429s. Each now has one, shown failing under its mutant and passing on the code.
+    Two are equivalent. One is the reconnect guard above. The other is cancelling an earlier retry
+    when a new 429 arrives. A 429 can only come from a flush that ran after the previous wait
+    ended, so the earlier retry has fired by then or fires at that same instant, and its flush meets
+    the new wait and sends nothing. Re-run on the final code: 49 mutants — the survivors, the
+    re-aimed one, and every mutant of the failure classes, the ping and the backoff — 47 killed and
+    the two equivalents surviving. So of the 151 distinct mutants that apply to the final code,
+    148 are killed, 1 is detected by a timeout, and 2 survive as equivalent. Live on the reference server,
+    CONF-89 kills three of them: the pre-send set ignored, an automatic resend reinstated, and an
+    exact-case owner compared while signed in as `DULCET-ADMIN`.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

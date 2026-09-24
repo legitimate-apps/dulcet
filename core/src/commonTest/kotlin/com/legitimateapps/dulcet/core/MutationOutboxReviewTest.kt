@@ -466,13 +466,16 @@ class MutationOutboxReviewTest {
         return session to outcomes
     }
 
+    /** The account refused (third review, X1): the star's request and the ping that checks both meet [status]. */
     private suspend fun TestScope.favouritesHeldAcrossFlushes(env: SessionEnv, status: Int, error: DomainError) {
         val (session, outcomes) = favouritesHeldBy(env, status)
+        env.server.failWithStatus["ping"] = status
         repeat(LibraryFavourites.MAX_FAILURES + 1) {
             assertEquals(error, session.favourites.flush().stoppedBy)
             runCurrent()
         }
         assertEquals(List(LibraryFavourites.MAX_FAILURES + 1) { "star" }, sends(env).map { it.endpoint }, "the rating waits behind the held star")
+        assertEquals(LibraryFavourites.MAX_FAILURES + 1, env.server.count("ping"), "one ping per flush")
         assertEquals(2L, session.favourites.pendingCount(), "every change kept, none counted toward a drop")
         assertEquals(MutationOutcome.Held(album4, MutationField.Starred, error), outcomes.last())
         assertTrue(outcomes.none { it is MutationOutcome.NotSaved }, "$outcomes")
@@ -498,7 +501,17 @@ class MutationOutboxReviewTest {
 
     @Test
     fun a429WithoutRetryAfterHoldsEveryFavouriteAndCountsTowardNothing() = sessionTest { env ->
-        favouritesHeldAcrossFlushes(env, 429, DomainError.Server.Busy(null))
+        val (session, outcomes) = favouritesHeldBy(env, 429)
+        assertEquals(DomainError.Server.Busy(null), session.favourites.flush().stoppedBy)
+        // Without a Retry-After the floor still holds: the scheduled flushes retry, never counting.
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(2L, session.favourites.pendingCount(), "every change kept, none counted toward a drop")
+        assertEquals(listOf<MutationOutcome>(MutationOutcome.Held(album4, MutationField.Starred, DomainError.Server.Busy(null))), outcomes, "told once per run of 429s")
+        env.server.failWithStatus.clear()
+        advanceTimeBy(5 * 60_000L)
+        runCurrent()
+        assertEquals(0L, session.favourites.pendingCount(), "sent once the server takes changes again")
     }
 
     @Test
@@ -532,5 +545,133 @@ class MutationOutboxReviewTest {
         assertTrue(thrown.exceptionOrNull() !is LibraryRequestFailure, "${thrown.exceptionOrNull()}")
         assertTrue(outcomes.isEmpty(), "$outcomes")
         assertTrue(sends(env).isEmpty())
+    }
+
+    // ---- Third review, X1 and X2: a refusal of one request is that change's own; 429s back off ----
+
+    @Test
+    fun fav403_aPerRequest403FailsThatChangeAloneAndLaterFavouritesAreSent() = sessionTest { env ->
+        // Reviewer probe fav403: a rule in front of one endpoint (setRating) refuses it; the account
+        // is fine — the ping is answered — so the rating fails on its own and the star is sent.
+        val (session, _) = online(env)
+        val outcomes = mutableListOf<MutationOutcome>()
+        session.favourites.addOutcomeListener { outcomes += it }
+        session.setOnline(false)
+        session.favourites.setRating(album4, 3)
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Track, "album-0004-track-0"), true)
+        session.setOnline(true)
+        env.server.failWithStatus["setRating"] = 403
+        repeat(LibraryFavourites.MAX_FAILURES) { session.favourites.flush() }
+        assertEquals(1, env.server.count("star"), "the star was sent at the first flush")
+        assertEquals(LibraryFavourites.MAX_FAILURES, env.server.count("setRating"))
+        assertEquals(LibraryFavourites.MAX_FAILURES, env.server.count("ping"), "one ping per flush")
+        assertEquals(0L, session.favourites.pendingCount())
+        assertEquals(MutationOutcome.NotSaved(album4, MutationField.Rating, DomainError.Server.HttpStatus(403)), outcomes.last())
+        assertTrue(outcomes.none { it is MutationOutcome.Held }, "$outcomes")
+    }
+
+    @Test
+    fun aPingAnsweredOnceServesEveryRefusalOfThatFlush() = sessionTest { env ->
+        val (session, _) = online(env)
+        session.setOnline(false)
+        session.favourites.setRating(album4, 3)
+        session.favourites.setRating(LibraryEntityRef(LibraryEntityKind.Track, "album-0004-track-0"), 4)
+        session.setOnline(true)
+        env.server.failWithStatus["setRating"] = 403
+        val report = session.favourites.flush()
+        assertEquals(2, env.server.count("setRating"))
+        assertEquals(1, env.server.count("ping"), "one ping for the flush, not one per refusal")
+        assertEquals(2, report.deferred)
+    }
+
+    @Test
+    fun aPingWithNoAnswerStopsTheFlushSilently() = sessionTest { env ->
+        val (session, _) = online(env)
+        val outcomes = mutableListOf<MutationOutcome>()
+        session.favourites.addOutcomeListener { outcomes += it }
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        session.setOnline(true)
+        env.server.failWithStatus["star"] = 403
+        env.server.failWithError["ping"] = DomainError.Transport.Timeout
+        val report = session.favourites.flush()
+        assertEquals(DomainError.Transport.Timeout, report.stoppedBy)
+        assertTrue(outcomes.isEmpty(), "nothing to tell while the server cannot be asked: $outcomes")
+        assertEquals(1L, session.favourites.pendingCount())
+    }
+
+    @Test
+    fun aHeldFavouriteCanBeWithdrawn() = sessionTest { env ->
+        val (session, outcomes) = favouritesHeldBy(env, 403)
+        env.server.failWithStatus["ping"] = 403
+        session.favourites.flush()
+        assertIs<MutationOutcome.Held>(outcomes.last())
+        assertEquals(listOf(MutationField.Starred, MutationField.Rating), session.favourites.pendingChanges().map { it.field })
+        assertEquals(MutationRecord.CompactedAway, session.favourites.withdraw(album4, MutationField.Starred))
+        assertEquals(MutationRecord.Unchanged, session.favourites.withdraw(album4, MutationField.Starred), "nothing left to withdraw")
+        assertEquals(listOf(MutationField.Rating), session.favourites.pendingChanges().map { it.field })
+        assertTrue(session.favourites.isFavourite(album4) != true, "the server's value shows again")
+        env.server.failWithStatus.clear()
+        session.favourites.flush()
+        assertEquals(listOf("star", "setRating"), sends(env).map { it.endpoint }, "the withdrawn star is never sent again")
+        assertEquals(0L, session.favourites.pendingCount())
+    }
+
+    @Test
+    fun a429WithRetryAfterZeroBacksOffAndIsToldOnce() = sessionTest { env ->
+        // Reviewer probe q2, for favourites: Retry-After: 0 on every answer. The floor doubles from
+        // two seconds; request counts, never elapsed time, are asserted.
+        val (session, outcomes) = favouritesHeldBy(env, 429, retryAfter = "0")
+        session.favourites.flush()
+        runCurrent()
+        assertEquals(1, env.server.count("star"), "nothing sent again at once")
+        advanceTimeBy(1_999); runCurrent()
+        assertEquals(1, env.server.count("star"))
+        advanceTimeBy(1); runCurrent()
+        assertEquals(2, env.server.count("star"), "after the two-second floor")
+        advanceTimeBy(3_999); runCurrent()
+        assertEquals(2, env.server.count("star"))
+        advanceTimeBy(1); runCurrent()
+        assertEquals(3, env.server.count("star"), "after the doubled floor")
+        assertEquals(1, outcomes.count { it is MutationOutcome.Held }, "told once per run of 429s: $outcomes")
+    }
+
+    @Test
+    fun aDeliveredFavouriteEndsTheRunOf429s() = sessionTest { env ->
+        // A favourite delivered after a 429 ends that run: the next 429 is a new one — told again,
+        // and waited out from the two-second floor, not from the floor the earlier run had doubled to.
+        val (session, outcomes) = favouritesHeldBy(env, 429)
+        session.favourites.flush()
+        runCurrent()
+        env.server.failWithStatus.clear()
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(0L, session.favourites.pendingCount(), "both delivered once the first wait passed")
+        assertEquals(1, outcomes.count { it is MutationOutcome.Held })
+        env.server.failWithStatus["star"] = 429
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Track, "album-0004-track-0"), true)
+        runCurrent()
+        assertEquals(2, outcomes.count { it is MutationOutcome.Held }, "a new run of 429s is told: $outcomes")
+        env.server.failWithStatus.clear()
+        val stars = env.server.count("star")
+        advanceTimeBy(1_999); runCurrent()
+        assertEquals(stars, env.server.count("star"), "inside the two-second floor")
+        advanceTimeBy(1); runCurrent()
+        assertEquals(stars + 1, env.server.count("star"), "the floor starts again from two seconds")
+        assertEquals(0L, session.favourites.pendingCount())
+    }
+
+    @Test
+    fun aFavouriteMadeDuringTheWaitIsNotSentEarly() = sessionTest { env ->
+        val (session, _) = favouritesHeldBy(env, 429, retryAfter = "30")
+        session.favourites.flush()
+        env.server.failWithStatus.clear()
+        val before = env.server.log.size
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Track, "album-0004-track-0"), true)
+        runCurrent()
+        advanceTimeBy(29_000); runCurrent()
+        assertEquals(before, env.server.log.size, "no request of any kind inside the wait")
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(listOf("star", "star", "setRating", "star"), sends(env).map { it.endpoint }, "one flush once the wait passed")
+        assertEquals(0L, session.favourites.pendingCount())
     }
 }

@@ -16,6 +16,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /**
@@ -333,23 +335,53 @@ internal class LibraryReader(
         return SentResponse(seq, before, response)
     }
 
-    /** When the server's `Retry-After` ends, on [LibraryReaderConfig.monotonic]; null when none holds. */
+    /** When the current wait ends, on [LibraryReaderConfig.monotonic]; null when none holds. */
     private var busyUntil: ComparableTimeMark? = null
     private var busyRetry: Job? = null
 
+    /** 429s met since a change was last delivered: the length of the current episode. */
+    private var busyStreak = 0
+
     /**
-     * The server asked for [retryAfter] of quiet (an HTTP 429). Until it has passed, the favourites
-     * and playlist flushes send nothing ([busyFor]); then one flush of every outbox runs, as a
-     * reconnect's first step would. Without a `Retry-After`, the next flush started anyway retries.
+     * The server asked for quiet (an HTTP 429) with [retryAfter], if it said. The favourites and
+     * playlist flushes then wait `max(Retry-After, floor)`, never more than [LIBRARY_BUSY_CAP]: the
+     * floor starts at [LIBRARY_BUSY_FLOOR] and doubles with each 429 of one episode, so a server
+     * answering `Retry-After: 0` — or nothing — is not asked again at once. Until the wait has passed
+     * neither flush sends anything, whatever triggers it; then one flush of every outbox runs, as a
+     * reconnect's first step would. Returns whether this 429 began the episode: the person is told
+     * once per episode, not once per retry. The episode ends when a change is delivered
+     * ([noteDelivered]).
      */
-    internal fun noteBusy(retryAfter: Duration?) {
-        if (retryAfter == null) return
-        busyUntil = config.monotonic.markNow() + retryAfter
+    internal fun noteBusy(retryAfter: Duration?): Boolean {
+        busyStreak += 1
+        val doublings = (busyStreak - 1).coerceAtMost(BUSY_MAX_DOUBLINGS)
+        val floor = (LIBRARY_BUSY_FLOOR * (1 shl doublings)).coerceAtMost(LIBRARY_BUSY_CAP)
+        val wait = maxOf(retryAfter ?: Duration.ZERO, floor).coerceAtMost(LIBRARY_BUSY_CAP)
+        busyUntil = config.monotonic.markNow() + wait
         busyRetry?.cancel()
         busyRetry = scope.launch {
-            delay(retryAfter)
+            delay(wait)
             if (online) flushOutboxes()
         }
+        return busyStreak == 1
+    }
+
+    /** A flush delivered a change: the server is taking them again, and a later 429 starts afresh. */
+    internal fun noteDelivered() {
+        busyStreak = 0
+    }
+
+    /**
+     * One authenticated `ping` after a request was refused ACCESS (§18.6 "Failures"): null when it is
+     * answered — the refusal was that request's alone, a rule in front of one endpoint or one
+     * request, and the change fails on its own — else the ping's own failure, which speaks for the
+     * account and is what a flush stops with.
+     */
+    internal suspend fun pingAfterRefusal(): DomainError? = try {
+        sendChecked("ping")
+        null
+    } catch (thrown: LibraryRequestFailure) {
+        thrown.error
     }
 
     /**
@@ -878,10 +910,31 @@ internal fun Throwable.asReaderError(): DomainError = when (this) {
 }
 
 /**
- * 401, 403 or 407 with no envelope: the server or a proxy in front of it refused ACCESS, not this
- * change — credentials, a proxy's own authentication, or a block. Every other change would meet it.
+ * 401, 403 or 407 with no envelope: the server or a proxy in front of it refused ACCESS —
+ * credentials, a proxy's own authentication, or a block. Whether every other change would meet it
+ * too is not known from one request; [LibraryReader.pingAfterRefusal] asks.
  */
 internal val DomainError.Server.HttpStatus.refusesAccess: Boolean get() = status == 401 || status == 403 || status == 407
+
+/**
+ * A refusal of ACCESS rather than of the change: credentials refused (envelope code 40 or 41, or a
+ * bare 401, which reads as `Auth.InvalidCredentials` whoever sent it), or a bare 403 or 407. Code 50
+ * (`Auth.Forbidden`) is not: it refuses this change for this user, and is a refusal.
+ */
+internal val DomainError.refusesAccess: Boolean
+    get() = (this is DomainError.Auth && this != DomainError.Auth.Forbidden) || (this is DomainError.Server.HttpStatus && refusesAccess)
+
+/** The first wait after a 429, doubled for each further 429 of the episode (§18.6 "Failures"). ASSUMED. */
+internal val LIBRARY_BUSY_FLOOR: Duration = 2.seconds
+
+/**
+ * The longest a flush waits after a 429, whatever `Retry-After` says (§18.6 "Failures"): a longer or
+ * absurd value is read as this. ASSUMED: asking again after five minutes costs one request.
+ */
+internal val LIBRARY_BUSY_CAP: Duration = 5.minutes
+
+/** The doublings after which the floor is past [LIBRARY_BUSY_CAP] anyway; bounds the shift. */
+private const val BUSY_MAX_DOUBLINGS = 16
 
 /** 413 or 414: the request was too large for the server or a proxy. The same request never fits. */
 internal val DomainError.Server.HttpStatus.tooLarge: Boolean get() = status == 413 || status == 414

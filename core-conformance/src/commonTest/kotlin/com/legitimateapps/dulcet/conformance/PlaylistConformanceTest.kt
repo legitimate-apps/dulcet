@@ -81,14 +81,24 @@ class PlaylistConformanceTest {
     }
 
     @Test
-    fun conf89ALostCreateIsAdoptedWhenCertainAndNeverDeletedByInference() = runTest(timeout = 5.minutes) {
+    fun conf89ALostCreateIsIdentifiedByWhatWasListedBeforeItsSendNeverByAClock() = runTest(timeout = 5.minutes) {
         val result = PlaylistConformanceContract.lostCreate(request())
         println("CONF-89 lost create: $result")
-        // Adopted when certain, against the server's real `created` times: one create, one playlist.
+        // Adopted beside an OLDER namesake with the same songs: it was listed before the send, so the
+        // one candidate is the create's own. One create; the older playlist untouched.
         assertEquals("Created", result.adoptedOutcome, "CONF-89 lost create: $result")
-        assertEquals(1, result.adoptedCreateWrites, "CONF-89: a certain lost create is never sent again: $result")
-        assertEquals(1, result.adoptedPlaylistsNamed, "CONF-89: $result")
-        assertTrue(result.adoptedIdIsTheServers, "CONF-89: $result")
+        assertEquals(1, result.adoptedCreateWrites, "CONF-89: a lost create found is never sent again: $result")
+        assertEquals(2, result.adoptedPlaylistsNamed, "CONF-89: the older namesake and the create's own: $result")
+        assertTrue(result.adoptedIdIsTheNewOne, "CONF-89: adopted the playlist the send made, not the older one: $result")
+        assertTrue(result.adoptedOlderUntouched, "CONF-89: $result")
+        // Retried elsewhere before the next flush: two candidates, nothing sent again on a guess; the
+        // person is told both and chooses.
+        assertEquals(listOf("PossibleDuplicate"), result.ambiguousOutcomes, "CONF-89 ambiguous lost create: $result")
+        assertEquals(1, result.ambiguousCreateWrites, "CONF-89: an ambiguous lost create is never sent again: $result")
+        assertTrue(result.ambiguousCandidatesAreBoth, "CONF-89: $result")
+        assertEquals("Created", result.chosenOutcome, "CONF-89: $result")
+        assertTrue(result.chosenIsTheLanded, "CONF-89: $result")
+        assertEquals(2, result.ambiguousPlaylistsNamed, "CONF-89: the person's choice deletes nothing: $result")
         // Deleted here after its answer was lost: nothing deleted by inference; the candidate is named,
         // and the delete the person confirms by its id removes it.
         assertEquals(0, result.cancelledDeleteWrites, "CONF-89 cancelled lost create: $result")
@@ -96,11 +106,12 @@ class PlaylistConformanceTest {
         assertTrue(result.cancelledCandidatesAreTheServers, "CONF-89: the candidate named is the playlist the send made: $result")
         assertEquals("Saved", result.confirmedDeleteOutcome, "CONF-89: $result")
         assertEquals(0, result.cancelledPlaylistsNamedAfterConfirm, "CONF-89: $result")
-        // An older namesake with the same songs, beside a create that never arrived: named, never deleted.
+        // An older namesake with the same songs, beside a create that never arrived: listed before the
+        // send, so never a candidate, never deleted.
         assertTrue(result.olderSurvived, "CONF-89: an older playlist of that name must survive: $result")
         assertEquals(0, result.olderDeleteWrites, "CONF-89: $result")
-        assertTrue(result.olderNamedAsCandidate, "CONF-89: $result")
-        assertEquals("PossiblyCreated", result.olderOutcomes.lastOrNull(), "CONF-89: $result")
+        assertFalse(result.olderNamedAsCandidate, "CONF-89: a playlist listed before the send is never a candidate: $result")
+        assertTrue(result.olderOutcomes.none { it == "PossiblyCreated" }, "CONF-89: $result")
     }
 
     @Test

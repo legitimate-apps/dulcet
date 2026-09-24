@@ -87,6 +87,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
         failWithStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>refused</html>", "http://fixture.invalid/rest", retryAfter = retryAfter) }
         if (endpoint in holdBeforeApply) hold()
         val response = when (endpoint) {
+            "ping" -> envelope(null)
             "search3" -> search(parameters)
             "star", "unstar" -> {
                 val starred = endpoint == "star"

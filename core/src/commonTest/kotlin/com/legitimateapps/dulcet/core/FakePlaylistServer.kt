@@ -59,6 +59,9 @@ internal class FakePlaylistServer(
     /** Whether `createPlaylist` answers with the playlist (OpenSubsonic) or an empty `ok`. */
     var createAnswersWithPlaylist = true
 
+    /** A server whose `createPlaylist` answers `ok` and makes nothing. */
+    var createIgnored = false
+
     /** A server that does not send `readonly` at all. */
     var omitReadonly = false
 
@@ -120,6 +123,9 @@ internal class FakePlaylistServer(
     private fun visible(p: Playlist) = p.owner == user || p.isPublic
 
     private fun respond(request: Request): LibraryEndpointResponse = when (request.endpoint) {
+        "ping" -> ok(null)
+        // Favourites, answered and not modelled: the playlist tests only count them.
+        "star", "unstar", "setRating" -> ok(null)
         "getScanStatus" -> ok(""""scanStatus":{"scanning":false,"count":12,"lastScan":"2026-09-23T10:00:00Z"}""")
         "getMusicFolders" -> ok(""""musicFolders":{"musicFolder":[{"id":"1","name":"Music"}]}""")
         "getAlbum" -> ok(
@@ -137,6 +143,8 @@ internal class FakePlaylistServer(
                 val name = request.one("name")
                 if (name.isNullOrEmpty()) {
                     error(0)
+                } else if (createIgnored) {
+                    ok(null)
                 } else {
                     val created = add(name, songIds)
                     if (createAnswersWithPlaylist) ok(""""playlist":${header(created)}""") else ok(null)

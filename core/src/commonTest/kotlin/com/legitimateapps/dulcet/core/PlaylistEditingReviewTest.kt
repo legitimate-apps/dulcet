@@ -76,40 +76,42 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun aNamesakeCreatedShortlyBeforeTheAttemptIsNamedNeverDeleted() = playlistTest { env ->
-        // Within the tolerance a server clock needs, an older namesake cannot be told apart.
-        val older = env.server.add("New Playlist", emptyList(), created = env.clock.now - 60_000)
-        val (session, localId) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
+    fun aNamesakeListedBeforeTheSendIsNeverACandidateHoweverCloseInTime() = playlistTest { env ->
+        // Third review, decision 1: made a millisecond before the send, it was listed before it, so it
+        // cannot be what the send made. Round 2's clock window named it.
+        val older = env.server.add("New Playlist", emptyList(), created = env.clock.now - 1)
+        val (session, _) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(listOf(older.id), env.server.playlists.map { it.id })
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist", listOf(older.id)), env.outcomes.last())
+        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "listed before the send: nothing to tell: ${env.outcomes}")
     }
 
     @Test
-    fun aNamesakeCreatedLongBeforeTheAttemptIsNotACandidate() = playlistTest { env ->
-        env.server.add("New Playlist", emptyList(), created = env.clock.now - PlaylistEditor.CREATE_SKEW_TOLERANCE_MILLIS - 60_000)
+    fun aNamesakeListedBeforeTheSendIsNotACandidateWhateverItsCreatedStampSays() = playlistTest { env ->
+        // A server clock a day ahead stamps the older playlist AFTER the send; no stamp is compared.
+        env.server.add("New Playlist", emptyList(), created = env.clock.now + 24 * 3_600_000L)
         val (session, _) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(1, env.server.playlists.size)
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "outside the window: nothing to tell: ${env.outcomes}")
+        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "listed before the send: nothing to tell: ${env.outcomes}")
     }
 
     @Test
-    fun aNamesakeCreatedLongAfterTheFailureWasSeenIsNotACandidate() = playlistTest { env ->
-        // The window's upper bound (second review, B1): a send cannot make a playlist after its
-        // failure was seen, plus the clock tolerance.
-        val (session, _) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
-        env.clock.now += PlaylistEditor.CREATE_SKEW_TOLERANCE_MILLIS + 60_000
-        env.server.add("New Playlist", emptyList())
+    fun aNamesakeMadeAfterTheSendIsNamedHoweverLateNeverDeleted() = playlistTest { env ->
+        // The other side of the line: a playlist of the name made after the send — however long
+        // after — cannot be told from the send's own, so it is named, and never deleted.
+        val (session, localId) = cancelledLostCreate(env, "New Playlist", emptyList(), landed = false)
+        env.clock.now += 3 * 24 * 3_600_000L
+        val later = env.server.add("New Playlist", emptyList())
         session.playlists.flush()
         advanceUntilIdle()
-        assertEquals(1, env.server.playlists.size)
+        assertEquals(listOf(later.id), env.server.playlists.map { it.id })
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "outside the window: nothing to tell: ${env.outcomes}")
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "New Playlist", listOf(later.id)), env.outcomes.last())
     }
 
     @Test
@@ -214,9 +216,11 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun anEmptyNamesakeIsNotAdoptedForACreateThatCarriedSongs() = playlistTest { env ->
+    fun anEmptyNamesakeIsNotAdoptedForACreateThatCarriedSongsAndThePersonChooses() = playlistTest { env ->
         // A create that never arrived, and an empty playlist of its name made after it: that
-        // playlist holds none of the songs sent, so it proves nothing and the create is sent again.
+        // playlist holds none of the songs sent, so it is not adopted — and, a candidate all the
+        // same, the create is not sent again on a guess (third review, decision 2). The person says
+        // it is not theirs, and then it is sent.
         val session = env.session()
         env.server.failWithError["createPlaylist"] = DomainError.Transport.Timeout
         val localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
@@ -225,6 +229,10 @@ class PlaylistEditingReviewTest {
         env.clock.now += 1_000
         val namesake = env.server.add("Road", emptyList())
         session.playlists.flush()
+        advanceUntilIdle()
+        assertEquals(1, env.server.count("createPlaylist"), "not sent again on a guess")
+        assertEquals(PlaylistEditOutcome.PossibleDuplicate(localId, "Road", listOf(namesake.id)), env.outcomes.last())
+        assertEquals(PlaylistEditRecord.Pending, session.playlists.chooseCreated(localId, null))
         advanceUntilIdle()
         assertEquals(2, env.server.count("createPlaylist"))
         assertEquals(emptyList(), namesake.entries, "the namesake is untouched")

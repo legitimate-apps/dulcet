@@ -11,6 +11,7 @@ import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -57,6 +58,11 @@ class LibraryStatusTransportTest {
         """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}""",
     ) { transport ->
         assertEquals(DomainError.Server.Busy(5.seconds), classified(transport.request("star", mapOf("id" to "album-1"))))
+    }
+
+    @Test
+    fun anAbsurdRetryAfterIsReadAsTheCeilingNotAFailureOfTheDevice() = answering("429 Too Many Requests", listOf("Retry-After: 9223372036854775807"), "") { transport ->
+        assertEquals(DomainError.Server.Busy(1.days), classified(transport.request("star", mapOf("id" to "album-1"))))
     }
 
     @Test

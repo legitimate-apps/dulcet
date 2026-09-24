@@ -46,7 +46,9 @@ import kotlinx.serialization.json.jsonObject
  *    network call is idempotent in any other sense.
  * 8. **No credential is ever queued.** A row holds the target's opaque id, the kind-qualified field
  *    and a JSON object of integers; the request is built at send time by the reader's transport.
- * 9. **No exception leaves an entry point.** The shells reach these through the Objective-C
+ * 9. **A change can always be taken back.** [LibraryFavourites.pendingChanges] lists what is
+ *    unsent and [LibraryFavourites.withdraw] removes one, however it is held or failing (§18.6).
+ * 10. **No exception leaves an entry point.** The shells reach these through the Objective-C
  *    boundary, where a Kotlin exception terminates the process (CORPUS §4 line 8): a change the
  *    device could not record is [MutationRecord.NotRecorded], told as [MutationOutcome.NotRecorded].
  */
@@ -149,11 +151,14 @@ internal sealed interface MutationOutcome {
     data class Superseded(override val target: LibraryEntityRef, override val field: MutationField, val serverValue: Int) : MutationOutcome
 
     /**
-     * The flush stopped at this change and kept it, and every change after it, unsent: the server or
-     * a proxy in front of it refused ACCESS — [error] is an `Auth` error (credentials refused) or an
-     * `HttpStatus` 401, 403 or 407 — or asked to wait (`Server.Busy`). Nothing counts toward
-     * [LibraryFavourites.MAX_FAILURES]; a later flush sends it — after the person signs in again, or
-     * once the server's `Retry-After` has passed. The shell tells the person why.
+     * The flush stopped at this change and kept it, and every change after it, unsent: the ACCOUNT
+     * was refused access — this change's request was, and an authenticated `ping` sent to check was
+     * refused too, so [error] is the ping's: an `Auth` error (credentials refused: envelope code 40,
+     * or a bare 401, which reads as `Auth.InvalidCredentials` whether the server or a proxy sent it)
+     * or an `HttpStatus` 403 or 407 — or the server asked to wait (`Server.Busy`, told once per
+     * run of 429s). Nothing counts toward [LibraryFavourites.MAX_FAILURES]; a later flush sends it —
+     * after the person signs in again, or once the wait has passed. The shell tells the person why,
+     * and the person can withdraw the change ([LibraryFavourites.withdraw]).
      */
     data class Held(override val target: LibraryEntityRef, override val field: MutationField, val error: DomainError) : MutationOutcome
 
@@ -424,8 +429,9 @@ private enum class FailureClass {
     ThisChange,
 
     /**
-     * The server or a proxy refused ACCESS, or asked to wait: nothing else can be sent now, every
-     * change is kept, and the person is told ([MutationOutcome.Held]).
+     * The account was refused ACCESS — a ping sent after the refusal was refused too — or the server
+     * asked to wait: nothing else can be sent now, every change is kept, and the person is told
+     * ([MutationOutcome.Held]).
      */
     Held,
 
@@ -440,17 +446,18 @@ private fun DomainError.failureClass(): FailureClass = when (this) {
     // A rate limit holds every change until its Retry-After, and counts toward nothing.
     is DomainError.Server.Busy -> FailureClass.Held
     // An HTTP status with no envelope: a gateway that cannot reach the server stops the flush like
-    // no answer at all; a proxy refusing access holds every change; a request too large never
-    // fits; anything else is this change's failure.
+    // no answer at all; a request too large never fits; anything else is this change's failure. A
+    // refusal of access (401, 403, 407) never reaches here from a change: the flush sends a ping
+    // first and decides there.
     is DomainError.Server.HttpStatus -> when {
         gatewayCannotReachServer -> FailureClass.Transport
-        refusesAccess -> FailureClass.Held
         tooLarge -> FailureClass.Refused
         else -> FailureClass.ThisChange
     }
     // Code 50 in an envelope: this user may not make this change.
     DomainError.Auth.Forbidden -> FailureClass.Refused
-    // Credentials refused: every change is held for the person to sign in again.
+    // Credentials refused — reached only as the ping's own failure, since the flush pings first:
+    // every change is held for the person to sign in again.
     is DomainError.Auth -> FailureClass.Held
     is DomainError.Protocol -> FailureClass.ThisChange
     else -> FailureClass.Transport
@@ -527,6 +534,35 @@ internal class LibraryFavourites(
     /** For the sign-out offer of §14.7: changes that have not reached the server. */
     fun pendingCount(): Long = confined { guarded(0L) { outbox.pendingCount() } }
 
+    /**
+     * Every change not yet on the server, oldest first — the order they are sent in — so a shell can
+     * list them and offer to withdraw one. A change with its value in
+     * [PendingMutation.attemptedValues] was sent and its answer lost: it may be on the server already.
+     */
+    fun pendingChanges(): List<PendingMutation> = confined { guarded(emptyList()) { outbox.all() } }
+
+    /**
+     * Takes back the pending change of [field] on [target]: it is never sent, and the item shows the
+     * server's last value again. However a change is held or failing, the person can always withdraw
+     * it (§18.6 "Failures"). A change whose send may have reached the server can already be there;
+     * the item's next read shows it. [MutationRecord.CompactedAway] when a change was withdrawn,
+     * [MutationRecord.Unchanged] when none was pending, [MutationRecord.NotRecorded] when the device's
+     * database failed and nothing changed.
+     */
+    fun withdraw(target: LibraryEntityRef, field: MutationField): MutationRecord {
+        reader.checkConfined()
+        val withdrawn = try {
+            outbox.pendingFor(target, field)?.also(outbox::removeIfUnchanged)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (_: Throwable) {
+            return MutationRecord.NotRecorded
+        }
+        if (withdrawn == null) return MutationRecord.Unchanged
+        changed(setOf(target.rawId))
+        return MutationRecord.CompactedAway
+    }
+
     private fun change(target: LibraryEntityRef, field: MutationField, value: Int): MutationRecord {
         reader.checkConfined()
         if (!field.isValid(value)) return MutationRecord.Invalid
@@ -568,11 +604,16 @@ internal class LibraryFavourites(
      * - A change the server answers for without applying (the generic error code 0, a malformed
      *   answer) stays pending, and the flush **moves on** to the next change; after [MAX_FAILURES]
      *   such answers in a row it is dropped and told, so one change cannot hold the queue for ever.
-     * - When the server refuses ACCESS — credentials refused (HTTP 401 or envelope code 40), a proxy
-     *   answering 403 or 407 — or asks to wait (HTTP 429), the flush stops, keeps every change, counts
-     *   toward nothing, and tells the person ([MutationOutcome.Held]). A 429's `Retry-After` is
-     *   honoured: neither this flush nor the playlist one sends before it has passed, and one flush
-     *   of every outbox runs when it has.
+     * - When a request is refused ACCESS — credentials refused (HTTP 401 or envelope code 40), a
+     *   proxy answering 403 or 407 — one authenticated `ping` asks whether the ACCOUNT is. If the
+     *   ping is refused too, the flush stops, keeps every change, counts toward nothing, and tells
+     *   the person ([MutationOutcome.Held]). If the ping is answered, the refusal was that request's
+     *   own — a rule in front of one endpoint — and the change fails on its own, as above, so it
+     *   cannot hold every later change for ever. One ping per flush at most.
+     * - When the server asks to wait (HTTP 429), the flush stops the same way, told once per run of
+     *   429s. Neither this flush nor the playlist one sends until `max(Retry-After, a floor that
+     *   doubles from two seconds)` has passed, capped at five minutes (§18.6 "Failures"); a change
+     *   made meanwhile does not send early. Then one flush of every outbox runs.
      * - When the server cannot be reached at all, the flush stops and keeps every change, in order,
      *   for the next flush — the next change made online, or the reconnect of §16.14.
      * - A failure of the device's own database is thrown, never reported as the server's; every
@@ -586,7 +627,9 @@ internal class LibraryFavourites(
         var refused = 0
         var superseded = 0
         val deferred = mutableSetOf<String>()
-        // The server asked for quiet (a 429's Retry-After): nothing is sent until it has passed.
+        // An authenticated ping was answered this flush: a later refusal of access is its request's own.
+        var accountAnswers = false
+        // The server asked for quiet (a 429): nothing is sent until the wait has passed.
         var stoppedBy: DomainError? = reader.busyError()
         while (reader.online && stoppedBy == null) {
             val change = outbox.all().firstOrNull { "${it.target.rawId}|${it.key}" !in deferred } ?: break
@@ -616,18 +659,33 @@ internal class LibraryFavourites(
                     }
                     if (failure == null) {
                         outbox.acknowledge(attempted, reader.cache.issue())
+                        reader.noteDelivered()
                         saved += 1
                         changed(setOf(change.target.rawId))
                         emit(MutationOutcome.Saved(change.target, change.field, change.value))
                         continue
                     }
                     if (failure.provesNotApplied()) outbox.unmarkAttempted(change.target, change.field, change.value)
-                    when (failure.failureClass()) {
+                    // A refusal of access holds every change only when the account is refused: one
+                    // ping asks, once per flush. Answered, it was this request's own refusal.
+                    var error: DomainError = failure
+                    val failureClass = when {
+                        !failure.refusesAccess -> failure.failureClass()
+                        accountAnswers -> FailureClass.ThisChange
+                        else -> when (val pinged = reader.pingAfterRefusal()) {
+                            null -> FailureClass.ThisChange.also { accountAnswers = true }
+                            else -> {
+                                error = pinged
+                                if (pinged.failureClass() == FailureClass.Transport) FailureClass.Transport else FailureClass.Held
+                            }
+                        }
+                    }
+                    when (failureClass) {
                         FailureClass.Refused -> {
                             outbox.removeIfUnchanged(attempted)
                             refused += 1
                             changed(setOf(change.target.rawId))
-                            emit(MutationOutcome.NotSaved(change.target, change.field, failure))
+                            emit(MutationOutcome.NotSaved(change.target, change.field, error))
                         }
                         FailureClass.ThisChange -> {
                             val failures = outbox.countFailure(attempted)
@@ -635,19 +693,20 @@ internal class LibraryFavourites(
                                 outbox.removeIfUnchanged(attempted)
                                 refused += 1
                                 changed(setOf(change.target.rawId))
-                                emit(MutationOutcome.NotSaved(change.target, change.field, failure))
+                                emit(MutationOutcome.NotSaved(change.target, change.field, error))
                             } else {
                                 deferred += "${change.target.rawId}|${change.key}"
                             }
                         }
                         FailureClass.Held -> {
-                            stoppedBy = failure
-                            emit(MutationOutcome.Held(change.target, change.field, failure))
-                            if (failure is DomainError.Server.Busy) reader.noteBusy(failure.retryAfter)
+                            stoppedBy = error
+                            // A 429 is told once per run of them, not once per retry.
+                            val tell = error !is DomainError.Server.Busy || reader.noteBusy(error.retryAfter)
+                            if (tell) emit(MutationOutcome.Held(change.target, change.field, error))
                             break
                         }
                         FailureClass.Transport -> {
-                            stoppedBy = failure
+                            stoppedBy = error
                             break
                         }
                     }

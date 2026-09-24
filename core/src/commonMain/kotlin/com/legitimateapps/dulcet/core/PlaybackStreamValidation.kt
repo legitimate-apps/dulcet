@@ -182,11 +182,21 @@ internal object PlaybackStreamValidator {
     private const val TOO_MANY_REQUESTS = 429
 }
 
+/**
+ * A `Retry-After` in delta-seconds, the only form Dulcet reads; null when absent or unreadable. A
+ * value beyond [RETRY_AFTER_CEILING_SECONDS] reads as that ceiling: `Server.Busy` holds only a
+ * finite interval, and a value too large for one — `Long.MAX_VALUE` seconds saturates to an infinite
+ * `Duration`, whose `Busy` throws — must not turn a server's answer into a failure of the device.
+ */
 internal fun parseRetryAfterSeconds(value: String?) = value
     ?.trim()
     ?.toLongOrNull()
     ?.takeIf { it >= 0 }
+    ?.coerceAtMost(RETRY_AFTER_CEILING_SECONDS)
     ?.seconds
+
+/** One day: longer than any wait a client honours; the library flushes cap theirs far lower. */
+internal const val RETRY_AFTER_CEILING_SECONDS = 86_400L
 
 private data class AudioSignatureRule(
     val acceptedContentTypes: Set<ObservedPlaybackContentType>,

@@ -106,15 +106,33 @@ public data class PlaylistQueryStringResult(
 
 /**
  * CONF-89, a create whose answer is lost (§18.6): the production editor over a transport that
- * delivers the request and then loses the answer, against the server's real `created` times.
+ * delivers the request and then loses the answer. A lost create is identified by the playlists the
+ * server listed before its send, never by any clock.
  */
 public data class PlaylistLostCreateResult(
-    /** Lost, then flushed again: the outcome, the creates sent, and the playlists of that name. */
+    /**
+     * Lost, then flushed again, beside an OLDER playlist of the same name and songs made just before
+     * the send: the outcome, the creates sent, the playlists of that name (the older one and the
+     * create's), whether the adopted id is the one that was not listed before the send, and whether
+     * the older one is untouched.
+     */
     val adoptedOutcome: String,
     val adoptedCreateWrites: Int,
     val adoptedPlaylistsNamed: Int,
-    /** Whether the adopted id is the one server playlist of that name. */
-    val adoptedIdIsTheServers: Boolean,
+    val adoptedIdIsTheNewOne: Boolean,
+    val adoptedOlderUntouched: Boolean,
+    /**
+     * Lost, then another client makes a playlist of the same name before the next flush: two
+     * candidates, so nothing is sent again on a guess — the outcomes told, the creates sent, and
+     * whether the candidates named are exactly the two; then the person chooses the one the send made,
+     * and the outcome of that and the playlists of that name.
+     */
+    val ambiguousOutcomes: List<String>,
+    val ambiguousCreateWrites: Int,
+    val ambiguousCandidatesAreBoth: Boolean,
+    val chosenOutcome: String,
+    val chosenIsTheLanded: Boolean,
+    val ambiguousPlaylistsNamed: Int,
     /**
      * Lost, then deleted here: the outcomes told, the deletes the flush sent (none: nothing is
      * deleted on inference), and whether the candidates named are exactly the server's playlists of
@@ -127,8 +145,9 @@ public data class PlaylistLostCreateResult(
     val confirmedDeleteOutcome: String,
     val cancelledPlaylistsNamedAfterConfirm: Int,
     /**
-     * A create that never arrived, deleted here, beside an OLDER playlist of that name and songs:
-     * the outcomes told, whether the older one is named as a candidate, and that it survived.
+     * A create that never arrived, deleted here, beside an OLDER playlist of that name and songs made
+     * just before the send: the outcomes told, whether the older one is named as a candidate (it must
+     * not be: it was listed before the send), and that it survived.
      */
     val olderOutcomes: List<String>,
     val olderNamedAsCandidate: Boolean,
@@ -343,20 +362,49 @@ public object PlaylistConformanceContract {
             return localId
         }
 
-        // Adopted: the create lands, its answer is lost, and the next flush finds it — certain: the
-        // one candidate, owned by this account, created in the window, holding the songs sent.
+        // Adopted: an older playlist of the same name and songs is made first; then the create lands,
+        // its answer is lost, and the next flush finds it — the one playlist of that name the server
+        // did not list before the send, holding the songs sent. No clock is compared.
         val adoptedName = "CONF-89 lost create"
+        val adoptedSongs = listOf(songs[0], songs[1], songs[0])
+        val (_, adoptedOlder) = env.raw.create(adoptedName, adoptedSongs)
+        env.cleanup += adoptedOlder
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val writesBefore = env.writes.size
-        val adoptedLocal = createOffline(adoptedName, listOf(songs[0], songs[1], songs[0]))
+        val adoptedLocal = createOffline(adoptedName, adoptedSongs)
         env.session.playlists.flush() // delivered; the answer lost
-        env.session.playlists.flush() // found, and certain
+        env.session.playlists.flush() // found: the only playlist of that name not listed before the send
         val adopted = named(adoptedName)
         adopted.forEach { env.cleanup += it.rawId }
         val adoptedOutcome = env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none"
         val adoptedCreates = env.writes.drop(writesBefore).count { it == "createPlaylist" }
         val adoptedId = env.session.reader.playlistOverlay.resolve(adoptedLocal)
+        val adoptedOlderEntries = env.raw.entries(adoptedOlder)
+
+        // Ambiguous: the create lands, its answer is lost, and another client makes a playlist of the
+        // same name before the next flush. Two candidates: never sent again on a guess, the person
+        // is told both and chooses.
+        val ambiguousName = "CONF-89 lost create, retried elsewhere"
+        env.loseAnswer["createPlaylist"] = 1
+        env.outcomes.clear()
+        val ambiguousWritesBefore = env.writes.size
+        val ambiguousLocal = createOffline(ambiguousName, listOf(songs[4]))
+        env.session.playlists.flush() // delivered; the answer lost
+        val landed = named(ambiguousName).map { it.rawId }
+        landed.forEach { env.cleanup += it }
+        val (_, elsewhere) = env.raw.create(ambiguousName, listOf(songs[4]))
+        env.cleanup += elsewhere
+        env.session.playlists.flush() // two candidates: told, nothing sent
+        val ambiguousOutcomes = env.outcomes.map(::outcomeName)
+        val ambiguousCreates = env.writes.drop(ambiguousWritesBefore).count { it == "createPlaylist" }
+        val named = env.outcomes.filterIsInstance<PlaylistEditOutcome.PossibleDuplicate>().singleOrNull()?.candidates.orEmpty()
+        env.outcomes.clear()
+        landed.singleOrNull()?.let { env.session.setOnline(false); env.session.playlists.chooseCreated(ambiguousLocal, it); env.session.setOnline(true) }
+        env.session.playlists.flush() // adopts the one chosen
+        val chosenOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
+        val chosenId = env.session.reader.playlistOverlay.resolve(ambiguousLocal)
+        val ambiguousAfter = named(ambiguousName)
 
         // Cancelled: the create lands, its answer is lost, then the person deletes it here. Nothing
         // is deleted on inference: the candidate is named, and the person confirms its delete by id.
@@ -379,11 +427,11 @@ public object PlaylistConformanceContract {
         val confirmedDeleteOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
         val cancelledAfterConfirm = named(cancelledName)
 
-        // Older: a playlist of the same name and songs made BEFORE the attempt, which never arrived.
+        // Older: a playlist of the same name and songs made BEFORE the attempt, which never arrived: it
+        // was listed before the send, so it is no candidate, however close in time.
         val olderName = "CONF-89 older namesake"
         val (_, older) = env.raw.create(olderName, listOf(songs[3]))
         env.cleanup += older
-        delay(OLDER_GAP_MILLIS)
         env.dropRequest["createPlaylist"] = 1
         env.outcomes.clear()
         val olderLocal = createOffline(olderName, listOf(songs[3]))
@@ -400,7 +448,14 @@ public object PlaylistConformanceContract {
             adoptedOutcome = adoptedOutcome,
             adoptedCreateWrites = adoptedCreates,
             adoptedPlaylistsNamed = adopted.size,
-            adoptedIdIsTheServers = adopted.singleOrNull()?.rawId == adoptedId,
+            adoptedIdIsTheNewOne = adopted.map { it.rawId }.filter { it != adoptedOlder }.singleOrNull() == adoptedId,
+            adoptedOlderUntouched = adoptedOlderEntries == adoptedSongs,
+            ambiguousOutcomes = ambiguousOutcomes,
+            ambiguousCreateWrites = ambiguousCreates,
+            ambiguousCandidatesAreBoth = named.sorted() == (landed + elsewhere).sorted() && named.size == 2,
+            chosenOutcome = chosenOutcome,
+            chosenIsTheLanded = landed.singleOrNull() == chosenId,
+            ambiguousPlaylistsNamed = ambiguousAfter.size,
             cancelledOutcomes = cancelledOutcomes,
             cancelledDeleteWrites = cancelledDeleteWrites,
             cancelledCandidatesAreTheServers = candidates.isNotEmpty() && candidates.sorted() == cancelledBefore.map { it.rawId }.sorted(),
@@ -689,9 +744,6 @@ public object PlaylistConformanceContract {
     private const val LARGE_REPLACE_SIZE = 2_400
     private const val QUERY_STRING_LIST_SIZE = 600
     private const val QUERY_STRING_APPEND_SIZE = 450
-
-    /** Between the older namesake and the attempt: enough that the server's clock orders them. */
-    private const val OLDER_GAP_MILLIS = 50L
     private const val AWAIT_POLLS = 200
     private const val AWAIT_POLL_MILLIS = 50L
 }
