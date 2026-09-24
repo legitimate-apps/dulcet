@@ -4382,7 +4382,7 @@ concurrency:
 ```
 
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
-2026-09-06, then per leg since the split — 90 `apple-platform`, 110 `apple-conformance`, 5 for the
+2026-09-06, then per leg since the split — 95 `apple-platform`, 110 `apple-conformance`, 5 for the
 aggregator — with per-step caps on the heavy steps; see §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
@@ -4533,10 +4533,11 @@ merged (#136, 2026-09-23T05:50Z) up to and including run 36018294846: 12 green, 
 cancelled by a newer push. The green runs' job durations were median **98.3** minutes, range
 54.2–108.0 (35824119417 95.5, 35826951912 98.4, 35850771153 98.2, 35946038237 102.8, 35953810801
 91.8, 35955374570 103.4, 35963317837 54.2, 35964758051 104.6, 35974194548 93.5, 35999801240 92.9,
-36010624442 100.5, 36018294846 108.0). Counting every red, the pass rate is 12 of 17 (70.6%). Four
-of the five reds were one branch's own defects; the fifth was main's run 35824056719, a CONF-14a
-transcode-offset ratio assertion. Both branches of the condition lead to adoption, because the
-median wall time is above 75 minutes either way.
+36010624442 100.5, 36018294846 108.0). Counting every red, the pass rate is 12 of 17 (70.6%), below
+80%, so the condition's second branch applies: adopt regardless. Four of the five reds were one
+branch's own defects, and the fifth was main's run 35824056719, a CONF-14a transcode-offset ratio
+assertion. Excluding the four branch defects gives 12 of 13 (92%); then the first branch applies,
+because the median is above 75 minutes. Either reading adopts the split.
 
 **Normative:**
 
@@ -4553,10 +4554,16 @@ median wall time is above 75 minutes either way.
    downloads each leg's parity evidence and the `core-conformance` JUnit, then runs
    `tools/verify-parity-evidence`, which resolves citations to the job it runs in. This is
    `core-ci`'s aggregator pattern, so no `FEATURES.yml` citation changes.
-2. **Rules 1–4 hold per leg.** In each leg, the deterministic checks run before its first build: the
-   source and guard controls in both legs, and the Darwin closure in the conformance leg.
-   `tools/ci/isolate-simulator` precedes every simulator phase in either leg. Linking still exits
-   before any suite runs. Each leg starts, summarises and uploads its own host-pressure record.
+2. **Rules 1–4 hold per leg.** Rule 1: in the conformance leg, the Darwin closure install and its
+   drift check still run immediately after Xcode selection, before any build. The platform leg
+   installs no environment, and its source-policy controls keep their original positions. Rule 2:
+   in the conformance leg, `tools/ci/isolate-simulator` precedes every simulator phase that talks
+   to the fixtures. That now includes the three app-host library-sync proofs, which ran without it
+   before the split. Their devices are first booted there now, where the platform legs used to
+   boot them earlier in the same job. The platform leg talks to no fixture and keeps its
+   compact-shell call. Rule 3: linking still exits before any suite runs. Rule 4: each leg starts
+   and summarises its own host-pressure record, green or red, and uploads it with its failure
+   diagnostics.
 3. **Every step that existed before the split runs exactly once across the legs.** The only
    exceptions are setup steps that each macOS leg needs: checkout, toolchain pins, host-pressure
    start and summary, Xcode selection, Java, Gradle, and the failure-diagnostics inventory and
@@ -4570,15 +4577,17 @@ median wall time is above 75 minutes either way.
    the aggregator, but not a green leg, so a name built from the aggregator's own attempt would ask
    for evidence that was never uploaded. That GitHub preserves a non-re-run leg's outputs across a
    partial re-run is ASSUMED until a partial re-run is observed.
-5. **Each leg's timeout is 1.5 times its projected maximum, rounded up to a multiple of 5:** 90
-   minutes for `apple-platform` (projected maximum 60) and 110 for `apple-conformance` (projected
-   maximum 71.3). The aggregator gets 5. Per-step caps are unchanged, and the conformance leg's cap
+5. **Each leg's timeout is 1.5 times its projected maximum, rounded up to a multiple of 5:** 95
+   minutes for `apple-platform` (projected maximum 60.2) and 110 for `apple-conformance`
+   (projected maximum 71.3). The aggregator gets 5. Per-step caps are unchanged, and the conformance leg's cap
    stays above the composite's 67-minute cap plus the rest of the leg. Re-size both from measured
    leg history, which replaces the projection.
 6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
    aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
-   test each leg's result for `success` in an unconditional step. No leg may verify evidence. There
-   may be at most two macOS jobs. Runners must use standard labels only. Every job needs a timeout,
+   test each leg's result for `success` in an unconditional step. It must make exactly one direct
+   evidence-verification call, in an unconditional, blocking step that runs after every download,
+   and those downloads may not be optional either. No leg may verify evidence, and no Apple job may
+   set `continue-on-error`. There may be at most two macOS jobs. Runners must use standard labels only. Every job needs a timeout,
    and every workflow needs `cancel-in-progress` concurrency.
 
 **Projection, ASSUMED until measured.** It sums the per-step timings of the 12 green runs above by
@@ -4586,15 +4595,15 @@ leg. The platform leg projects to median 49.5 and max 58.7 minutes, with its fra
 at the whole framework step. The conformance leg projects to median 61.5 and max 71.3, including 9
 minutes ASSUMED for the three app builds. Run wall time is the conformance leg plus about a minute
 for the aggregator: median ~62.5 and max ~72.3 minutes, against the single job's 98.3 median. The
-costs: each run holds 2 of the 5 hosted-macOS slots instead of 1, and uses about 13% more
-runner-minutes, which are free on this public repository (§21.1). Fail-fast across legs is lost, so
+costs: each run holds 2 of the 5 hosted-macOS slots instead of 1. Runner-minutes rise by about
+16% (per-run median; range 13–22%), and they are free on this public repository (§21.1). Fail-fast across legs is lost, so
 a red leg no longer stops the other one. The red leg's own check run still turns red when it fails.
 
 **Considered and NOT adopted — with the condition under which each becomes right.**
 
 - **A third macOS leg.** A third leg shortens the run only by what it removes from the conformance
   leg, and nearly all of that leg is the composite step and work that must precede it in the same
-  job. MEASURED over the 12 green runs listed below: the composite step alone took median 42.4 and
+  job. MEASURED over the 12 green runs listed above: the composite step alone took median 42.4 and
   max 48.5 minutes; its same-job prerequisites (isolated root, Darwin closure, framework build,
   corpus, configuration) median 7.3; the app builds its `test-without-building` legs reuse are
   ASSUMED at about 9. What a third leg could take is the conformance proves and the §12.4 recording,
@@ -5222,9 +5231,10 @@ was written. Another branch may take the same number first, so it may be renumbe
    normative text of §21.5.** OBSERVED from the Actions API: every completed `apple-ci` run created
    after rules 1–4 merged (#136), up to and including run 36018294846, gives 12 green, 5 red and 2
    cancelled. The green job durations were median 98.3 minutes, range 54.2 (35963317837) to 108.0
-   (36018294846); §21.5 lists every run id. The pass rate was 12 of 17 counting every red. Four reds
-   were one branch's own defects, and one was main's run 35824056719, a CONF-14a ratio assertion.
-   A median above 75 minutes adopts the split under either branch of the condition.
+   (36018294846); §21.5 lists every run id. The pass rate was 12 of 17 (70.6%) counting every red,
+   so the "adopt regardless" branch applies. Four reds were one branch's own defects, and one was
+   main's run 35824056719, a CONF-14a ratio assertion. Excluding those four gives 12 of 13, and
+   then the 98.3 median meets the first branch. Either reading adopts it.
 2. **The layout.** `apple-platform` and `apple-conformance` run on `macos-26`, and `apple-ci` runs on
    `ubuntu-latest`. It is `if: always()`, needs both legs, fails on any result other than
    `success`, and holds the evidence verification the composite used to end with. The cut is the one
@@ -5232,14 +5242,18 @@ was written. Another branch may take the same number first, so it may be renumbe
    about 2 minutes for a third slot (§21.5).
 3. **The projected wall time is ASSUMED until measured:** median ~62.5 and max ~72.3 minutes, against
    the single job's median of 98.3. The previous estimate, "~92 -> ~65" from 26 older runs, is
-   consistent with it. The leg timeouts, 90 and 110, are sized from the projection and must be
+   consistent with it. The leg timeouts, 95 and 110, are sized from the projection and must be
    re-sized from measured leg history.
 4. **§21.1's "one serial `apple-ci` job" is replaced**, in the caveat, the table and the timeout list.
    The hosted-macOS concurrency cap is now cited: 5 on every non-Enterprise plan, from GitHub's
    *Actions limits* page, fetched 2026-09-24. §12.4's "runs serially inside the required `apple-ci`
    job" now names the conformance leg.
-5. **Still ASSUMED:** that a partial "Re-run failed jobs" preserves a green leg's `attempt` output,
-   which the aggregator uses to name that leg's artifacts (§21.5 rule 4).
+5. **Rule 2 now covers the app-host library-sync proofs.** The split moved their three devices'
+   first boot into the composite, and those proofs had no isolation call before. Each now starts
+   with one (§21.5).
+6. **Still ASSUMED:** that a partial "Re-run failed jobs" preserves a green leg's `attempt` output,
+   which the aggregator uses to name that leg's artifacts (§21.5 rule 4). Downloading a previous
+   attempt's artifact is documented by GitHub.
 
 **Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
 count is raw, before anything is dropped or de-duplicated. The songs walk already counted that way; the

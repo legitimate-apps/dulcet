@@ -824,6 +824,13 @@ def extra_macos_legs(text: str) -> str:
     return text
 
 
+
+def verify_before_download(text: str) -> str:
+    """Move the aggregator's download step to the end, after the verify step."""
+    download = text[text.index("      - name: Download parity evidence\n"):
+                    text.index("      - name: Verify evidence\n")]
+    return text.replace(download, "").rstrip("\n") + "\n" + download
+
 SHAPE_CASES = (
     ("the split shape is accepted", lambda t: t, ""),
     ("two fully wired legs are accepted", lambda t: with_second_leg(t, "dulcet-other-junit"), ""),
@@ -901,8 +908,31 @@ SHAPE_CASES = (
     ("one directory written by two legs is rejected",
      lambda t: with_second_leg(t, "dulcet-example-junit"),
      "is written by ['apple-leg', 'apple-leg-b']"),
+    # The evidence check is as easy to defang as the result test, and each of these left apple-ci
+    # green with the evidence unchecked while every rule above still passed.
+    ("an evidence check that may fail without failing the job is rejected",
+     edit("      - name: Verify evidence\n",
+          "      - name: Verify evidence\n        continue-on-error: true\n"),
+     "step 'Verify evidence' must be unconditional and blocking"),
+    ("an evidence check that runs only on some events is rejected",
+     edit("      - name: Verify evidence\n",
+          "      - name: Verify evidence\n        if: github.event_name == 'push'\n"),
+     "step 'Verify evidence' must be unconditional and blocking"),
+    ("an evidence check whose failure is swallowed is rejected",
+     edit('            "$RUNNER_TEMP/dulcet-example-junit"\n',
+          '            "$RUNNER_TEMP/dulcet-example-junit" || true\n'),
+     "must make exactly one direct python3 tools/verify-parity-evidence call, and makes 0"),
+    ("an optional evidence download is rejected",
+     edit("      - name: Download parity evidence\n",
+          "      - name: Download parity evidence\n        continue-on-error: true\n"),
+     "step 'Download parity evidence' must be unconditional and blocking"),
+    ("an evidence check before the download is rejected", verify_before_download,
+     "verifies evidence before every download has run"),
+    ("a leg that may fail without failing the run is rejected",
+     edit("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    continue-on-error: true\n"),
+     "job apple-leg sets continue-on-error"),
 )
-EXPECTED_SHAPE_CASES = 25
+EXPECTED_SHAPE_CASES = 31
 shape_cases_run: list[str] = []
 
 
@@ -997,6 +1027,7 @@ DIAGNOSTIC_AGGREGATOR = '''  apple-ci:
       APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}
     steps:
       - run: test "$APPLE_CONFORMANCE_RESULT" = success
+      - run: python3 tools/verify-parity-evidence
 '''
 
 def diagnostic_case(control=None, mutation=None):

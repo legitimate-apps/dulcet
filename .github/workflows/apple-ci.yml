@@ -23,15 +23,15 @@ jobs:
   # implicates whichever step is active rather than a failed assertion, which is why the heavy
   # steps carry their own caps; those are unchanged by the split.
   #
-  # 90 = ceil(1.5 x 60 / 5) x 5. 60 minutes is this leg's PROJECTED maximum, not a measurement: the
-  # sum, per green single-job run since #136, of the steps now in this job and the job's own
-  # overhead, plus a framework link costed at the whole `Build all Apple frameworks` step. The
-  # largest is 58.7 (run 35955374570), plus 1.5 for the compact-shell isolation step that run
-  # predates. Re-measure once the leg has history.
+  # 95 = ceil(1.5 x 60.2 / 5) x 5. 60.2 minutes is this leg's PROJECTED maximum, not a
+  # measurement: the sum, per green single-job run since #136, of the steps now in this job and
+  # the job's own overhead, plus a framework link costed at the whole `Build all Apple frameworks`
+  # step. The largest is 58.7 (run 35955374570), plus 1.5 for the compact-shell isolation step
+  # that run predates (its measured maximum is 1.53). Re-measure once the leg has history.
   apple-platform:
     name: apple-platform
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 95
     # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -736,9 +736,13 @@ jobs:
       # roots the composite names. Nothing is tested by these steps and a build boots no simulator.
       # Not measured as steps of their own: the build half of the platform legs' first
       # `xcodebuild test` took about 2 to 4 minutes in run 36010624442. 10 bounds a hang.
+      # The resolver gives destination discovery its own 120-second deadline and reports the
+      # attempts it made when that expires. Here it is the leg's first, cold xcodebuild call, so the
+      # step cap is the 6 minutes of the platform step that hosts the same call; a cap equal to the
+      # resolver's deadline would kill it before its own diagnostic printed.
       - name: Resolve the iPadOS simulator the conformance legs use
         id: ipados_conformance_destination
-        timeout-minutes: 2
+        timeout-minutes: 6
         run: |
           set -o pipefail
           IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
@@ -1603,8 +1607,12 @@ jobs:
           echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance=$APPLE_CONFORMANCE_RESULT"
       # Each download names the attempt that PRODUCED the artifact, read from that leg's `attempt`
       # output -- never this job's own `github.run_attempt`. Re-running failed jobs re-runs the
-      # failed leg and this job; the leg that passed is not re-run and keeps its earlier artifact
-      # and output, so an artifact named after this job's attempt would never have been written.
+      # failed leg and this job, not the leg that passed, so an artifact named after this job's
+      # attempt would never have been written. Reading an earlier attempt's artifact is documented:
+      # without a token, download-artifact reads "the current workflow run and any previous run
+      # attempts" (GitHub blog, "Get started with v4 of GitHub Actions Artifacts", 2024-02-12).
+      # That a leg that is not re-run keeps its `attempt` output is ASSUMED until a partial re-run
+      # is observed.
       # The JUnit directories land in RUNNER_TEMP and the conformance results in the workspace,
       # exactly where the evidence check below read them when this was one job.
       - name: Download platform parity evidence

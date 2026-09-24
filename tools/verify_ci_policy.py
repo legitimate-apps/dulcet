@@ -720,6 +720,45 @@ if apple_ci:
                     "skipped leg pass",
                 )
 
+        # The evidence check is the other half of what the aggregator is for, and it is as easy to
+        # defang as the result test: `continue-on-error`, a step `if:`, `|| true`, or a position
+        # before the downloads each leave apple-ci green with the evidence unchecked. So exactly one
+        # step makes the verify call as a direct command, unconditionally, after every download --
+        # and no download may be made optional either, or the call would read an empty directory.
+        verify_steps = [index for index, step in enumerate(aggregator_steps)
+                        if any(words[:2] == ["python3", "tools/verify-parity-evidence"]
+                               for words in direct_commands(str(step.get("run", ""))))]
+        download_steps = [index for index, step in enumerate(aggregator_steps)
+                          if str(step.get("uses", "")).startswith("actions/download-artifact@")]
+        if len(verify_steps) != 1:
+            errors.append(
+                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must make exactly one direct "
+                f"python3 tools/verify-parity-evidence call, and makes {len(verify_steps)}; a call "
+                "inside a condition, a list or a pipeline cannot fail the job",
+            )
+        for index in verify_steps + download_steps:
+            step = aggregator_steps[index]
+            if "if" in step or step.get("continue-on-error", "false") != "false":
+                errors.append(
+                    f"{apple_ci_path}: job {APPLE_AGGREGATOR} step "
+                    f"{step.get('name') or step.get('uses')!r} must be unconditional and blocking "
+                    "(no if:, no continue-on-error); otherwise apple-ci passes with the evidence "
+                    "unchecked",
+                )
+        if verify_steps and download_steps and max(download_steps) > min(verify_steps):
+            errors.append(
+                f"{apple_ci_path}: job {APPLE_AGGREGATOR} verifies evidence before every download "
+                "has run; the verify call would read directories that are not there yet",
+            )
+        for job_name in [APPLE_AGGREGATOR, *legs]:
+            job_start, job_end = apple_jobs[job_name]
+            if job_properties(apple_lines, job_start, job_end).get(
+                    "continue-on-error", "false") != "false":
+                errors.append(
+                    f"{apple_ci_path}: job {job_name} sets continue-on-error; a required Apple "
+                    "job that cannot fail the run is not a gate",
+                )
+
     # Evidence is verified in the required job, and only there: FEATURES.yml cites job apple-ci,
     # and verify-parity-evidence resolves citations against GITHUB_JOB.
     for leg in legs:
