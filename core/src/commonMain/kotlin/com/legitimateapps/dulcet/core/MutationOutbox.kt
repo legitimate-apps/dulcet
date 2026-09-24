@@ -543,8 +543,11 @@ internal class LibraryFavourites(
     /** Sets a 1–5 rating, or removes it with 0. Any other value is [MutationRecord.Invalid]. */
     fun setRating(target: LibraryEntityRef, rating: Int): MutationRecord = change(target, MutationField.Rating, rating)
 
-    /** For the sign-out offer of §14.7: changes that have not reached the server. */
-    fun pendingCount(): Long = confined { guarded(0L) { outbox.pendingCount() } }
+    /**
+     * For the sign-out offer of §14.7: changes that have not reached the server, or null when the
+     * outbox cannot be read. Never a guessed zero — zero tells the person nothing will be lost.
+     */
+    fun pendingCount(): Long? = confined { guarded(null) { outbox.pendingCount() } }
 
     /**
      * Every change not yet on the server, oldest first — the order they are sent in — so a shell can

@@ -160,12 +160,13 @@ public class AppleLibraryReaderClient internal constructor(
     }
 
     /**
-     * The changes that have not reached the server, for the sign-out offer (§14.7). The count is
-     * read from the outbox itself: a failed read completes with a null count, never a zero.
+     * The changes that have not reached the server, for the sign-out offer (§14.7). A count the
+     * core cannot read completes with a null count and `internalFailure`, never a zero.
      */
     public fun pendingChangeCount(completion: (AppleLibraryPendingChanges) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = { kind -> AppleLibraryPendingChanges(null, kind) }) { session ->
-            AppleLibraryPendingChanges(session.outbox.pendingCount(), null)
+            val count = session.favourites.pendingCount()
+            AppleLibraryPendingChanges(count, if (count == null) "internalFailure" else null)
         }
 
     // ---- Connection lifecycle --------------------------------------------------------------------------------

@@ -510,6 +510,29 @@ class AppleLibraryReaderFacadeTest {
         assertEquals(requests, c.onReader { h.server.log.size }, "an offline change issued a request")
     }
 
+    /** A count the core cannot read reaches the shell as unknown, never as zero (§14.7). */
+    @Test
+    fun aPendingCountThatCannotBeReadIsUnknownNotZero() = facadeTest { h ->
+        val c = h.client()
+        c.client.setOnline(false)
+        assertTrue(c.client.setFavourite("album", albumId(4), true))
+        c.onReader { h.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) } }
+        val unreadable = AtomicReference<AppleLibraryPendingChanges?>(null)
+        c.client.pendingChangeCount { unreadable.store(it) }
+        pumpUntil("the unreadable count") { unreadable.load() != null }
+        val failedReads = c.onReader {
+            h.driver.failRead = null
+            h.driver.failedReads
+        }
+        assertTrue(failedReads > 0, "the injected read failure never fired; the test measured nothing")
+        assertEquals(listOf<Any?>(null, "internalFailure"), listOf(unreadable.load()?.count, unreadable.load()?.errorKind))
+
+        val readable = AtomicReference<AppleLibraryPendingChanges?>(null)
+        c.client.pendingChangeCount { readable.store(it) }
+        pumpUntil("the readable count") { readable.load() != null }
+        assertEquals(listOf<Any?>(1L, null), listOf(readable.load()?.count, readable.load()?.errorKind))
+    }
+
     // ---- Search (CONF-79, facade leg) --------------------------------------------------------------------------------
 
     @Test
