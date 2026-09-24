@@ -6341,9 +6341,11 @@ fresh disposable server before landing; items 11–14 are what that review chang
     §16.20): the base travels with the edit, so a replay is as safe as a live send, and a replay
     that meets a changed list is refused with words. Playlist rows share `mutation_outbox` under
     `playlist.<kind>` (schema unchanged). **Schema 6 gains `cache_playlist.comment`, `is_public` and
-    `readonly`**, appended last, in place: schema 6 is not on `main` and has shipped in no build, so
-    amending it costs no migration step; the v6 fixture was altered to match and the migration gate
-    passes. The reader gained named hooks — `LibraryPlaylistOverlay`, `republishPlaylists`,
+    `readonly`**, appended last, in place. Schema 6 reached `main` with the reader core (#139) but has
+    shipped in no build (every distributed build was cut before it), so amending it costs no
+    migration step — on the condition that no build is cut from `main` until this lands, because an
+    install already at the unamended schema 6 would never run the amendment. The v6 fixture was
+    altered to match and the migration gate passes. The reader gained named hooks — `LibraryPlaylistOverlay`, `republishPlaylists`,
     `rereadList`, `readPlaylistDetail`, `sendRepeatedChecked` — and the transport a
     repeated-parameter request, sent as a form body when the server advertises `formPost`. Dulcet
     follows `readonly` even for an admin, whom the reference server lets edit other users'
