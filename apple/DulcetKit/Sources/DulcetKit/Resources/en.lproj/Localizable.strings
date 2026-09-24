@@ -255,5 +255,7 @@
 "player.failed.track" = "Couldn’t play “%@”";
 "player.failed.track.partway" = "“%@” stopped partway through";
 "queue.edit.refused" = "Couldn’t change Up Next";
+"player.skipped" = "Couldn’t play a track. Skipped.";
+"player.skipped.track" = "Couldn’t play “%@”. Skipped.";
 "queue.drag.refused" = "Can’t be added to Up Next";
 "library.album.hint" = "Opens the album";

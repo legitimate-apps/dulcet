@@ -733,6 +733,12 @@ private extension DulcetPlaybackFailure {
         case .sourceUnavailable: 7
         case .unsupportedPlan: 8
         case .engine: 9
+        case .undecodable: 10
+        case .unexpectedContentType: 11
+        case .unexpectedBinary: 12
+        case .server: 13
+        case .unrecognizedServerError: 14
+        case .capabilityUnsupported: 15
         }
         return NSError(domain: "com.legitimateapps.dulcet.playback", code: code)
     }
@@ -742,9 +748,28 @@ private extension DulcetPlaybackFailure {
 enum DulcetApplePlaybackErrorSanitizer {
     static func avFoundationFailure(_ error: Error?) -> DulcetPlaybackFailure {
         guard let nsError = error as NSError? else { return .engine }
+        if nsError.domain == AVFoundationErrorDomain,
+           let code = AVError.Code(rawValue: nsError.code),
+           itemMediaFailures.contains(code) {
+            return .undecodable
+        }
         guard nsError.domain == NSURLErrorDomain else { return .engine }
         return urlFailureCode(nsError.code)
     }
+
+    /// AVFoundation's failures of an item's OWN media: it could not be parsed, recognised or
+    /// decoded (spec §12.12). A decoder merely unavailable for now, a media-services reset or an
+    /// interrupted operation is the system's, not the item's, and stays `.engine`.
+    /// OBSERVED: an MP3 whose frames are corrupt after a valid ID3 tag becomes ready to play, then
+    /// posts `AVPlayerItemFailedToPlayToEndTime` with `decodeFailed` (-11821).
+    static let itemMediaFailures: Set<AVError.Code> = [
+        .decodeFailed,
+        .decoderNotFound,
+        .fileFormatNotRecognized,
+        .fileFailedToParse,
+        .failedToParse,
+        .undecodableMediaData,
+    ]
 
     static func urlSessionFailure(_ error: Error?) -> DulcetPlaybackFailure {
         guard let nsError = error as NSError?, nsError.domain == NSURLErrorDomain else {

@@ -77,6 +77,11 @@ public class ApplePlaybackQueueSnapshotDto internal constructor(
     public val repeatMode: String,
     public val shuffleEnabled: Boolean,
     public val currentSession: ApplePlaybackCoreSessionDto?,
+    /**
+     * Whether Skip past the current entry reaches a different entry (spec §12.12). The one Skip
+     * predicate: the core's automatic skip asks the same question, so the shell never computes it.
+     */
+    public val canSkipPastCurrent: Boolean = false,
 )
 
 public class ApplePlaybackStartDirectiveDto internal constructor(
@@ -104,6 +109,12 @@ public class ApplePlaybackQueueTransitionDto internal constructor(
     public val preloadDirective: ApplePlaybackStartDirectiveDto? = null,
     /** A preload the core discarded; the shell must remove it from the engine. */
     public val discardedPreloadAttemptId: String? = null,
+    /**
+     * The queue entry this transition skipped past because its failure was the track's own
+     * (spec §12.12). The shell tells the person, naming the track; the start directive is the
+     * entry after it.
+     */
+    public val skippedAfterFailureQueueEntryId: String? = null,
 )
 
 public class ApplePlaybackDeliveryConfigurationOutcomeDto internal constructor(
@@ -949,14 +960,45 @@ private fun String.toPlaybackObservationStatus(): PlaybackObservationStatus = wh
     else -> throw IllegalArgumentException("Unknown observation status")
 }
 
-private fun String.toClosedPlaybackDomainError(): DomainError = when (this) {
-    "authentication" -> DomainError.Auth.InvalidCredentials
-    "forbidden" -> DomainError.Auth.Forbidden
-    "serverBusy" -> DomainError.Server.Busy(null)
-    "protocolViolation" -> DomainError.Protocol.MalformedEnvelope
-    "sourceUnavailable", "unsupportedPlan" -> DomainError.Playback.NoPlayableSource
-    "transport", "tlsUntrusted", "engine" -> DomainError.Transport.Unreachable
-    else -> throw IllegalArgumentException("Unknown playback failure")
+/**
+ * The shell's failure name back to a DomainError. Everything §12.12 classifies on survives:
+ * `undecodable` is the engine failing to decode THIS item's media (AVFoundation's decode and
+ * format errors), so it is the item's own -- [DomainError.Playback.NoPlayableSource]. `engine` is
+ * the engine itself failing (the audio session would not activate), which is not the item's.
+ */
+internal fun String.toClosedPlaybackDomainError(): DomainError {
+    when (this) {
+        "authentication" -> return DomainError.Auth.InvalidCredentials
+        "forbidden" -> return DomainError.Auth.Forbidden
+        "serverBusy" -> return DomainError.Server.Busy(null)
+        "protocolViolation" -> return DomainError.Protocol.MalformedEnvelope
+        "sourceUnavailable", "unsupportedPlan", "undecodable" ->
+            return DomainError.Playback.NoPlayableSource
+        UNEXPECTED_BINARY_KIND -> return DomainError.Protocol.UnexpectedBinary
+        "transport", "tlsUntrusted", "engine" -> return DomainError.Transport.Unreachable
+    }
+    val parts = split(':')
+    return when (parts.first()) {
+        SERVER_KNOWN_KIND -> DomainError.Server.Known(parts.singleCode())
+        SERVER_UNKNOWN_KIND -> DomainError.Server.Unknown(parts.singleCode())
+        UNEXPECTED_CONTENT_TYPE_KIND -> {
+            require(parts.size == 3) { "Unknown playback failure" }
+            DomainError.Protocol.UnexpectedContentType(
+                ObservedPlaybackContentType.entries.single { it.name == parts[1] },
+                AudioContainer.entries.single { it.name == parts[2] },
+            )
+        }
+        CAPABILITY_UNSUPPORTED_KIND -> {
+            require(parts.size == 2) { "Unknown playback failure" }
+            DomainError.CapabilityUnsupported(CapabilityFeature.entries.single { it.name == parts[1] })
+        }
+        else -> throw IllegalArgumentException("Unknown playback failure")
+    }
+}
+
+private fun List<String>.singleCode(): Int {
+    require(size == 2) { "Unknown playback failure" }
+    return requireNotNull(this[1].toIntOrNull()) { "Unknown playback failure" }
 }
 
 private fun PlaybackQueueTransition.toAppleDto() = ApplePlaybackQueueTransitionDto(
@@ -965,6 +1007,7 @@ private fun PlaybackQueueTransition.toAppleDto() = ApplePlaybackQueueTransitionD
     errorKind = null,
     preloadDirective = preloadDirective?.toAppleDto(),
     discardedPreloadAttemptId = discardedPreloadAttemptId?.value,
+    skippedAfterFailureQueueEntryId = skippedAfterFailure?.value,
 )
 
 private fun PlaybackQueueStartDirective.toAppleDto() = ApplePlaybackStartDirectiveDto(
@@ -1009,4 +1052,5 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
             },
         )
     },
+    canSkipPastCurrent = canSkipPastCurrent,
 )

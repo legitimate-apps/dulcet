@@ -1124,6 +1124,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             playbackStatus: playback.status,
             playbackFailure: playback.failure,
             refusedQueueEdits: refusedQueueEdits,
+            playbackSkipNotice: playback.skipNotice,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,

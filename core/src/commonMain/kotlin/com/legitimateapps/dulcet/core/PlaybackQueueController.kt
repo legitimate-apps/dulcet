@@ -52,6 +52,12 @@ internal data class PlaybackQueueSnapshot(
     val repeatMode: QueueRepeatMode,
     val shuffleState: QueueShuffleState,
     val currentSession: PlaybackSessionSnapshot?,
+    /**
+     * Whether Skip past the current entry reaches a DIFFERENT entry (§12.12): one follows it, or
+     * repeat-all wraps onto another. The one predicate for Skip -- the shells present it, and an
+     * automatic skip travelling forward asks the same question.
+     */
+    val canSkipPastCurrent: Boolean = false,
 )
 
 internal data class PlaybackQueueTransition(
@@ -69,7 +75,15 @@ internal data class PlaybackQueueTransition(
      * advance into an entry the queue no longer names.
      */
     val discardedPreloadAttemptId: AttemptId? = null,
+    /**
+     * The entry this transition skipped past because its failure was the track's own (§12.12).
+     * The owner tells the person, naming the track; the start directive is the entry after it.
+     */
+    val skippedAfterFailure: QueueEntryId? = null,
 )
+
+/** Which way the queue travelled to reach the current entry (§12.12). */
+internal enum class QueueTravel { Forward, Backward }
 
 /** Items added to an existing queue by "Play Next" or "Play Later" (§14.1, §14.2). */
 internal data class PlaybackQueueInsertion(
@@ -113,6 +127,21 @@ internal class PlaybackQueueController(
      * must start the next entry.
      */
     private var endHeldForPreload = false
+
+    /** How the current entry was reached; an automatic skip keeps going the same way (§12.12). */
+    private var travel = QueueTravel.Forward
+
+    /**
+     * The entries that have failed since playback last progressed, in order (§12.12). A skip that
+     * would reach one of them, or a fifth entry in it, stops and presents instead.
+     */
+    private val failureChain = mutableSetOf<QueueEntryId>()
+
+    /**
+     * The attempt a restoration started paused. A skip past its failure starts the next entry
+     * paused too: restoring a queue never starts sound on its own, even when it moves (§12.12).
+     */
+    private var pausedStartAttempt: AttemptId? = null
 
     /** The server whose queue is active, or null when none is. Owners use it to refuse a foreign queue. */
     fun activeServerId(): ServerId? = queues.activeServerId()
@@ -403,6 +432,8 @@ internal class PlaybackQueueController(
         val start = newStart(entry)
         val transition = playback.startPlaying(start)
         check(transition is PlaybackTransitionResult.Applied)
+        travel = QueueTravel.Forward
+        pausedStartAttempt = start.attemptId
         return PlaybackQueueTransition(
             snapshot(),
             start.directive(entry, shouldAutoPlay = false),
@@ -444,6 +475,22 @@ internal class PlaybackQueueController(
     fun recordPlaybackEvent(event: PlaybackEngineEvent): PlaybackQueueTransition {
         val reduction = playback.recordPlaybackEvent(event)
         val accepted = reduction.disposition == PlaybackEventDisposition.AcceptedCurrentAttempt
+        // Only the current session's current attempt speaks for the entry the person reached. A
+        // registered preload's attempt is accepted too, for its own session, and must never move
+        // the queue: that entry has not been reached (§12.8).
+        val forCurrentAttempt = accepted &&
+            event.attemptId == playback.currentSession?.currentAttempt?.attemptId
+        if (event is PlaybackEngineEvent.PlaybackProgressBegan && forCurrentAttempt) {
+            failureChain.clear()
+        }
+        if (forCurrentAttempt) {
+            val error = when (event) {
+                is PlaybackEngineEvent.FailedBeforeStart -> event.error
+                is PlaybackEngineEvent.FailedAfterPartial -> event.error
+                else -> null
+            }
+            if (error != null) return afterFailure(event.attemptId, error, reduction.effects)
+        }
         if (event is PlaybackEngineEvent.AdvancedToPreloaded && accepted) {
             return completePreloadedAdvance(event, reduction.effects)
         }
@@ -463,6 +510,38 @@ internal class PlaybackQueueController(
         return PlaybackQueueTransition(snapshot(), null, reduction.effects)
     }
 
+    /**
+     * A failure of the entry the person reached (§12.12). The track's own failure moves the queue
+     * one entry further in the direction that reached it -- a next-item advance, so the failed
+     * entry's session ends and records no play -- unless the chain guard stops it. Anything else
+     * leaves the failed session current for the owner to present, as before.
+     */
+    private fun afterFailure(
+        attemptId: AttemptId,
+        error: DomainError,
+        effects: List<PlaybackCoreEffect>,
+    ): PlaybackQueueTransition {
+        val stop = PlaybackQueueTransition(snapshot(), null, effects)
+        val owner = playbackFailureOwner(error)
+        if (owner == PlaybackFailureOwner.NotAFailure) return stop
+        val serverId = queues.activeServerId() ?: return stop
+        val state = queues.load(serverId)
+        val failed = state.currentIndex?.let(state.entries::get) ?: return stop
+        if (playback.currentSession?.queueEntryId != failed.queueEntryId) return stop
+        failureChain += failed.queueEntryId
+        if (owner != PlaybackFailureOwner.Track) return stop
+        if (failureChain.size >= MAX_CONSECUTIVE_FAILED_ENTRIES) return stop
+        val target = state.otherEntryIndex(travel) ?: return stop
+        if (state.entries[target].queueEntryId in failureChain) return stop
+        val paused = attemptId == pausedStartAttempt
+        val skipped = startAt(state, target, effects, travel = travel)
+        if (paused) pausedStartAttempt = skipped.startDirective?.attemptId
+        return skipped.copy(
+            startDirective = skipped.startDirective?.copy(shouldAutoPlay = !paused),
+            skippedAfterFailure = failed.queueEntryId,
+        )
+    }
+
     fun snapshot(): PlaybackQueueSnapshot {
         val serverId = queues.activeServerId()
             ?: return PlaybackQueueSnapshot(
@@ -471,6 +550,7 @@ internal class PlaybackQueueController(
                 repeatMode = QueueRepeatMode.Off,
                 shuffleState = QueueShuffleState.Disabled,
                 currentSession = playback.currentSession,
+                canSkipPastCurrent = false,
             )
         return queues.load(serverId).snapshot()
     }
@@ -478,17 +558,34 @@ internal class PlaybackQueueController(
     private fun moveBy(delta: Int): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
-        val current = state.currentIndex ?: return emptyTransition()
-        val target = current + delta
-        if (target !in state.entries.indices) {
-            return if (state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty()) {
-                startAt(state, if (delta > 0) 0 else state.entries.lastIndex)
-            } else {
-                finishQueue(emptyList())
-            }
-        }
-        return startAt(state, target)
+        state.currentIndex ?: return emptyTransition()
+        val direction = if (delta > 0) QueueTravel.Forward else QueueTravel.Backward
+        val target = state.steppedIndex(direction) ?: return finishQueue(emptyList())
+        return startAt(state, target, travel = direction)
     }
+
+    /**
+     * The entry one step from the current one in [direction], following the repeat mode exactly
+     * as Next and Previous do: repeat-all wraps, and nothing else does. Null when there is none.
+     * Under repeat-all a one-entry queue steps onto itself, which is what Next does there.
+     */
+    private fun QueueState.steppedIndex(direction: QueueTravel): Int? {
+        val current = currentIndex ?: return null
+        val target = current + if (direction == QueueTravel.Forward) 1 else -1
+        return when {
+            target in entries.indices -> target
+            repeatMode == QueueRepeatMode.All && entries.isNotEmpty() ->
+                if (direction == QueueTravel.Forward) 0 else entries.lastIndex
+            else -> null
+        }
+    }
+
+    /**
+     * The single Skip predicate (§12.12): the entry a skip in [direction] reaches, when it is a
+     * DIFFERENT entry. Skip availability in every shell and every automatic skip ask this.
+     */
+    private fun QueueState.otherEntryIndex(direction: QueueTravel): Int? =
+        steppedIndex(direction)?.takeIf { it != currentIndex }
 
     /**
      * The queue ran out. The session is finalized and the selection STAYS on the entry that just
@@ -527,6 +624,8 @@ internal class PlaybackQueueController(
         val preload = registeredPreload
         registeredPreload = null
         endHeldForPreload = false
+        travel = QueueTravel.Forward
+        pausedStartAttempt = null
         val serverId = queues.activeServerId()
         if (preload != null && serverId != null && preload.start.attemptId == event.newAttemptId) {
             val index = queues.load(serverId).entries.indexOfFirst {
@@ -575,6 +674,8 @@ internal class PlaybackQueueController(
             val start = newStart(entry)
             val transition = playback.repeatOne(start.playbackSessionId, start.attemptId)
             check(transition is PlaybackTransitionResult.Applied)
+            travel = QueueTravel.Forward
+            pausedStartAttempt = null
             return PlaybackQueueTransition(
                 state.snapshot(),
                 start.directive(entry),
@@ -595,17 +696,23 @@ internal class PlaybackQueueController(
         state: QueueState,
         index: Int,
         priorEffects: List<PlaybackCoreEffect> = emptyList(),
+        travel: QueueTravel = QueueTravel.Forward,
     ): PlaybackQueueTransition {
         val entry = state.entries[index]
         queues.setCurrentIndex(state.serverId, index)
-        val transition = beginSession(entry, replacingQueue = false)
+        val transition = beginSession(entry, replacingQueue = false, travel = travel)
         return transition.copy(effects = priorEffects + transition.effects)
     }
 
     private fun beginSession(
         entry: QueueEntry,
         replacingQueue: Boolean,
+        travel: QueueTravel = QueueTravel.Forward,
     ): PlaybackQueueTransition {
+        // Anything but Previous reaches the entry going forward, and so does an automatic skip
+        // that did not start from a Previous (§12.12).
+        this.travel = travel
+        pausedStartAttempt = null
         // A manual start is a fresh start, and the owner's stop removes the engine's preloaded
         // item with it. advanceToNext and replaceQueue discard every registered preload in the
         // state machine; startPlaying runs only with no current session, when none is registered
@@ -663,9 +770,18 @@ internal class PlaybackQueueController(
         repeatMode = repeatMode,
         shuffleState = shuffleState,
         currentSession = playback.currentSession,
+        canSkipPastCurrent = otherEntryIndex(QueueTravel.Forward) != null,
     )
 
     private fun emptyTransition(
         effects: List<PlaybackCoreEffect> = emptyList(),
     ) = PlaybackQueueTransition(snapshot(), null, effects)
+
+    private companion object {
+        /**
+         * Five entries failing in a row with nothing progressing between them says more about
+         * the server than about the tracks, and each automatic skip costs a request (§12.12).
+         */
+        const val MAX_CONSECUTIVE_FAILED_ENTRIES = 5
+    }
 }

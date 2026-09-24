@@ -100,7 +100,8 @@ public struct DulcetUpNextModel: Sendable, Hashable {
         }
     }
 
-    /// What has played from this queue, the most recent first: the order a history is read in.
+    /// The entries before the current one, nearest first: the order a history is read in. It is
+    /// positional -- an entry jumped over or skipped past is here too (spec §3.1).
     public var recentHistory: [DulcetQueueEntry] { history.reversed() }
 
     private var upcomingBase: Int { history.count + (current == nil ? 0 : 1) }

@@ -129,6 +129,15 @@ func sideBySideNowPlayingArtworkFitsTheWindowItIsGiven() {
 }
 
 @Test
+func theSideBySideQueueColumnTakesThePlayersMeasuredHeight() {
+    #expect(DulcetNowPlayingView.sideBySideQueueHeight(windowHeight: 1_000, playerHeight: 812) == 812)
+    // A window shorter than the player gives the queue all of it.
+    #expect(DulcetNowPlayingView.sideBySideQueueHeight(windowHeight: 700, playerHeight: 812) == 700)
+    // Before the player has been measured, the whole window.
+    #expect(DulcetNowPlayingView.sideBySideQueueHeight(windowHeight: 1_000, playerHeight: nil) == 1_000)
+}
+
+@Test
 func aPausedOrFinishedPlayerShowsWhereItIsNotABareWord() {
     // A finished queue presents its last track paused with no progress in this session.
     #expect(DulcetNowPlayingView.showsProgressIndicator(progressBegan: false, phase: .paused))

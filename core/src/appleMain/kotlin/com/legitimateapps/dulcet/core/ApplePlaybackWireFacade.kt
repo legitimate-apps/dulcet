@@ -404,7 +404,14 @@ private fun NSData.toByteArray(): ByteArray {
     return result
 }
 
-private fun DomainError.applePlaybackErrorKind(): String = when (this) {
+/**
+ * The Apple shell's spelling of a playback failure. It is relayed back through
+ * `ApplePlaybackQueueClient.recordFailed*`, so every distinction §12.12 classifies on survives
+ * the round trip: a Server code, the two item-content failures, and an unsupported capability each
+ * keep their own spelling. Collapsing them turned a server's refusal into "no playable source",
+ * which would be skipped past as the track's own.
+ */
+internal fun DomainError.applePlaybackErrorKind(): String = when (this) {
     DomainError.Transport.Cancelled -> "cancelled"
     DomainError.Transport.Timeout,
     DomainError.Transport.Unreachable,
@@ -415,11 +422,21 @@ private fun DomainError.applePlaybackErrorKind(): String = when (this) {
     DomainError.Auth.Forbidden -> "forbidden"
     is DomainError.Auth -> "authentication"
     is DomainError.Server.Busy -> "serverBusy"
-    is DomainError.Server -> "sourceUnavailable"
+    is DomainError.Server.Known -> "$SERVER_KNOWN_KIND:$code"
+    is DomainError.Server.Unknown -> "$SERVER_UNKNOWN_KIND:$code"
+    is DomainError.Protocol.UnexpectedContentType ->
+        "$UNEXPECTED_CONTENT_TYPE_KIND:${actual.name}:${expected.name}"
+    DomainError.Protocol.UnexpectedBinary -> UNEXPECTED_BINARY_KIND
     is DomainError.Protocol -> "protocol"
     DomainError.Playback.NoPlayableSource -> "unsupportedPlan"
     is DomainError.Input.InvalidServerUrl -> "protocol"
-    is DomainError.CapabilityUnsupported -> "unsupportedPlan"
+    is DomainError.CapabilityUnsupported -> "$CAPABILITY_UNSUPPORTED_KIND:${featureId.name}"
 }
+
+internal const val SERVER_KNOWN_KIND = "serverKnown"
+internal const val SERVER_UNKNOWN_KIND = "serverUnknown"
+internal const val UNEXPECTED_CONTENT_TYPE_KIND = "unexpectedContentType"
+internal const val UNEXPECTED_BINARY_KIND = "unexpectedBinary"
+internal const val CAPABILITY_UNSUPPORTED_KIND = "capabilityUnsupported"
 
 private val CONTENT_RANGE_PATTERN = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)

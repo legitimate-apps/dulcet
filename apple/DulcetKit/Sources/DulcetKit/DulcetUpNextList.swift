@@ -183,9 +183,12 @@ public struct DulcetUpNextList: View {
 }
 
 #if !os(tvOS)
-/// What has already played from this queue, most recent first, under Up Next. Collapsed until
+/// Previously Played, under Up Next: the queue's entries BEFORE the current one, nearest first.
+/// It is positional, not a listening log -- an entry the queue passed without playing it (a jump
+/// over it, or an automatic skip past a track that could not play, spec §12.12) is listed like
+/// any other, unmarked, and repeat-all wrapping to the first entry empties it. Collapsed until
 /// asked for, so a long album played to its middle does not push Up Next off the screen; a row
-/// plays that track again, from there. Nothing when nothing has played yet.
+/// plays that entry again. Nothing when the current entry is the first.
 struct DulcetQueueHistorySection: View {
     private let model: DulcetUpNextModel
     private let onEdit: (DulcetQueueEditIntent) -> Void
@@ -203,6 +206,7 @@ struct DulcetQueueHistorySection: View {
                 DisclosureGroup(isExpanded: $expanded) {
                     ForEach(Array(model.recentHistory.enumerated()), id: \.element.id) { offset, entry in
                         Button {
+                            DulcetUIProofMarkers.record("history-jump:\(offset)")
                             onEdit(model.jumpIntent(to: entry))
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
@@ -233,49 +237,78 @@ struct DulcetQueueHistorySection: View {
 #endif
 
 extension View {
-    /// Says so, briefly and to VoiceOver, when the playback controller refuses a queue edit: a
-    /// row that would not move or a track that would not queue otherwise looks like a gesture
-    /// that silently did nothing.
+    /// Says so, briefly and to VoiceOver, when the playback controller refuses a queue edit, and
+    /// when the queue skips past a track it could not play (spec §12.12): a row that would not
+    /// move, a track that would not queue, or music that jumped a track otherwise looks like
+    /// something that silently happened -- or silently did not.
     ///
     /// `isActive` false leaves it to another surface on top -- the shell under a presented player
-    /// -- so one refusal is shown and announced once, where the person is looking.
-    func dulcetQueueEditFeedback(store: DulcetPresentationStore, isActive: Bool = true) -> some View {
-        modifier(DulcetQueueEditFeedback(store: store, isActive: isActive))
+    /// -- so one notice is shown and announced once, where the person is looking.
+    func dulcetPlaybackFeedback(store: DulcetPresentationStore, isActive: Bool = true) -> some View {
+        modifier(DulcetPlaybackFeedback(store: store, isActive: isActive))
     }
 }
 
-private struct DulcetQueueEditFeedback: ViewModifier {
+private struct DulcetPlaybackFeedback: ViewModifier {
     let store: DulcetPresentationStore
     let isActive: Bool
-    @State private var showing = false
-    @State private var hideTask: Task<Void, Never>?
+    @State private var showingRefusal = false
+    @State private var refusalHideTask: Task<Void, Never>?
+    @State private var skipMessage: String?
+    @State private var skipHideTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .top) {
-                if showing {
-                    Label(DulcetStrings.queueEditRefused, systemImage: "exclamationmark.circle")
-                        .font(.callout.weight(.semibold))
-                        .padding(.horizontal, DulcetSpacing.md)
-                        .padding(.vertical, DulcetSpacing.xs)
-                        .background(.regularMaterial, in: Capsule())
-                        .dulcetForeground(.primaryTextOnRegularMaterial)
-                        .padding(.top, DulcetSpacing.sm)
-                        .transition(.opacity)
-                        .allowsHitTesting(false)
-                        .accessibilityIdentifier("dulcet.queue.edit-refused")
+                VStack(spacing: DulcetSpacing.xs) {
+                    if showingRefusal {
+                        notice(DulcetStrings.queueEditRefused, systemImage: "exclamationmark.circle")
+                            .accessibilityIdentifier("dulcet.queue.edit-refused")
+                    }
+                    if let skipMessage {
+                        notice(skipMessage, systemImage: "forward.end")
+                            .accessibilityIdentifier("dulcet.playback.skipped-notice")
+                    }
                 }
+                .padding(.top, DulcetSpacing.sm)
+                .allowsHitTesting(false)
             }
             .onChange(of: store.snapshot.refusedQueueEdits) { previous, current in
                 guard isActive, current > previous else { return }
                 AccessibilityNotification.Announcement(DulcetStrings.queueEditRefused).post()
-                withAnimation(.easeInOut(duration: 0.2)) { showing = true }
-                hideTask?.cancel()
-                hideTask = Task { @MainActor in
+                withAnimation(.easeInOut(duration: 0.2)) { showingRefusal = true }
+                refusalHideTask?.cancel()
+                refusalHideTask = Task { @MainActor in
                     try? await Task.sleep(for: .seconds(3))
                     guard !Task.isCancelled else { return }
-                    withAnimation(.easeInOut(duration: 0.2)) { showing = false }
+                    withAnimation(.easeInOut(duration: 0.2)) { showingRefusal = false }
                 }
             }
+            .onChange(of: store.snapshot.playbackSkipNotice) { previous, current in
+                guard isActive, let current, current.sequence != previous?.sequence else { return }
+                DulcetUIProofMarkers.record("skip-notice:\(current.sequence)")
+                AccessibilityNotification.Announcement(current.message).post()
+                withAnimation(.easeInOut(duration: 0.2)) { skipMessage = current.message }
+                skipHideTask?.cancel()
+                skipHideTask = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(4))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) { skipMessage = nil }
+                }
+            }
+    }
+
+    private func notice(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.callout.weight(.semibold))
+            .padding(.horizontal, DulcetSpacing.md)
+            .padding(.vertical, DulcetSpacing.xs)
+            .background(.regularMaterial, in: Capsule())
+            .dulcetForeground(.primaryTextOnRegularMaterial)
+            // One element that reads as the sentence. The symbol is decoration, and its own
+            // label ("Go To End" for the skip) would otherwise be read first.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
+            .transition(.opacity)
     }
 }

@@ -146,18 +146,46 @@ public struct DulcetPlaybackPresentation: Sendable, Hashable {
     public let nowPlaying: DulcetNowPlaying?
     /// Set with a `.failed` status: which track failed, and whether Skip and Retry can act.
     public let failure: DulcetFailedPlayback?
+    /// The latest track skipped past because it could not be played (spec §12.12), whatever the
+    /// status: the notice outlives the failure it reports, because the queue has moved on.
+    public let skipNotice: DulcetSkippedTrackNotice?
 
     public init(
         status: DulcetPlaybackSurfaceStatus,
         nowPlaying: DulcetNowPlaying?,
-        failure: DulcetFailedPlayback? = nil
+        failure: DulcetFailedPlayback? = nil,
+        skipNotice: DulcetSkippedTrackNotice? = nil
     ) {
         self.status = status
         self.nowPlaying = nowPlaying
         self.failure = status == .failed ? failure : nil
+        self.skipNotice = skipNotice
+    }
+
+    /// This presentation with [notice] attached.
+    public func carrying(skipNotice notice: DulcetSkippedTrackNotice?) -> Self {
+        Self(status: status, nowPlaying: nowPlaying, failure: failure, skipNotice: notice)
     }
 
     public static let unavailable = Self(status: .unavailable, nowPlaying: nil)
+}
+
+/// A track the queue moved past because its failure was its own (spec §12.12). `sequence` grows
+/// with every skip, so two skips of one track are two notices.
+public struct DulcetSkippedTrackNotice: Sendable, Hashable {
+    public let sequence: Int
+    /// The skipped track's title, when the controller can name it.
+    public let title: String?
+
+    public init(sequence: Int, title: String?) {
+        self.sequence = sequence
+        self.title = title
+    }
+
+    /// The whole sentence the notice shows and VoiceOver announces.
+    public var message: String {
+        title.map(DulcetStrings.playbackSkippedAfterFailure(title:)) ?? DulcetStrings.playbackSkippedAfterFailureUntitled
+    }
 }
 
 /// How much of the library the catalog handed to restoration can speak for.

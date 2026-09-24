@@ -639,9 +639,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 forName: .AVPlayerItemFailedToPlayToEndTime,
                 object: context.item,
                 queue: nil
-            ) { [weak self, weak context] _ in
+            ) { [weak self, weak context] notification in
                 guard let context else { return }
-                self?.enqueue { $0.itemFailed(context) }
+                // A decode failure arrives HERE, with the item still `readyToPlay` and its
+                // `error` nil: without this the engine reported it as its own `.engine` failure.
+                let failure = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)
+                    .map(DulcetApplePlaybackErrorSanitizer.avFoundationFailure)
+                self?.enqueue { $0.itemFailed(context, reported: failure) }
             }
         )
         notificationObservers.append(
@@ -714,10 +718,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
-    private func itemFailed(_ context: PlayerItemContext) {
+    private func itemFailed(_ context: PlayerItemContext, reported: DulcetPlaybackFailure? = nil) {
         guard isActive(context), !context.failureEmitted, !context.waitingForRefresh else { return }
         context.failureEmitted = true
-        let failure = closedFailure(for: context.item.error)
+        let failure = context.item.error.map { closedFailure(for: $0) } ?? reported ?? closedFailure(for: nil)
         if context.progressBegan {
             emit(
                 .failedAfterPartial(

@@ -781,6 +781,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
     /// sees it change says the edit did not happen, rather than leaving a gesture that did
     /// nothing unexplained.
     public let refusedQueueEdits: Int
+    /// The latest track the queue skipped past because it could not be played (spec §12.12).
+    /// Surfaces show and announce it once per new `sequence`.
+    public let playbackSkipNotice: DulcetSkippedTrackNotice?
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
     public let searchHasMoreKinds: Set<DulcetSearchResultKind>
@@ -811,6 +814,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         playbackStatus: DulcetPlaybackSurfaceStatus? = nil,
         playbackFailure: DulcetFailedPlayback? = nil,
         refusedQueueEdits: Int = 0,
+        playbackSkipNotice: DulcetSkippedTrackNotice? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -839,6 +843,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.playbackStatus = playbackStatus ?? (nowPlaying == nil ? .unavailable : .ready)
         self.playbackFailure = playbackFailure
         self.refusedQueueEdits = refusedQueueEdits
+        self.playbackSkipNotice = playbackSkipNotice
         self.searchQuery = searchQuery
         self.searchResults = searchResults
         self.searchHasMoreKinds = searchHasMoreKinds

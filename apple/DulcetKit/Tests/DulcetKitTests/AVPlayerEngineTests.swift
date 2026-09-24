@@ -44,6 +44,72 @@ struct AVPlayerResourceLoaderIntegrationTests {
     }
 }
 
+/// Spec §12.12: a failure that belongs to the item moves the queue past it. AVFoundation failing
+/// to decode an item's own media is that failure, so the engine must name it `.undecodable`
+/// (which the core reads as `Playback.NoPlayableSource`), never `.engine`, which the queue stops on.
+@Suite(.serialized)
+struct AVPlayerDecodeFailureTests {
+    @Test
+    func mediaAVFoundationCannotDecodeFailsAsUndecodable() async throws {
+        let resource = InMemoryPlaybackResource(data: mp3FramesWithUndecodablePayloads())
+        let engine = DulcetAVPlayerEngine()
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
+
+        _ = await execute(engine, .prepare(commandID: .init("undecodable-prepare"), plan: playbackPlan))
+        _ = await execute(engine, .play(commandID: .init("undecodable-play")))
+        let failures: @Sendable () -> [DulcetPlaybackFailure] = {
+            events.snapshot.compactMap { event in
+                switch event {
+                case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error): error
+                default: nil
+                }
+            }
+        }
+        try await waitUntil(
+            "AVFoundation never reported the undecodable item as failed",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            !failures().isEmpty
+        }
+        // The experiment is the one intended: the item was read through the loader, so the
+        // failure is AVFoundation's verdict on these bytes, not a refusal before it saw them.
+        #expect(!resource.requests.isEmpty)
+        #expect(failures() == [.undecodable], "reported \(failures())")
+        #expect(!events.containsProgressBegan)
+        print("DULCET UNDECODABLE ENGINE OBSERVED failures=\(failures()) requests=\(resource.requests.count)")
+        _ = await execute(engine, .release(commandID: .init("undecodable-release")))
+    }
+}
+
+/// An ID3 tag, then MP3 frame headers (MPEG-1 Layer III, 128 kbit/s, 44.1 kHz) each followed by a
+/// payload that is not audio. OBSERVED on macOS: AVFoundation finds the frames, reports the item
+/// ready, then posts `AVPlayerItemFailedToPlayToEndTime` with `decodeFailed` (-11821). Bytes that
+/// hold no frame header at all are not this case -- AVFoundation plays them as a fraction of a
+/// second of nothing and stops without an error.
+private func mp3FramesWithUndecodablePayloads() -> Data {
+    let title = Array("Undecodable".utf8)
+    let body: [UInt8] = [0] + title
+    var frame: [UInt8] = Array("TIT2".utf8)
+    frame += withUnsafeBytes(of: UInt32(body.count).bigEndian, Array.init)
+    frame += [0, 0] + body
+    let size = frame.count
+    var bytes: [UInt8] = Array("ID3".utf8) + [3, 0, 0]
+    bytes += [UInt8((size >> 21) & 0x7F), UInt8((size >> 14) & 0x7F), UInt8((size >> 7) & 0x7F), UInt8(size & 0x7F)]
+    bytes += frame
+    var state: UInt32 = 12_345
+    for _ in 0..<380 {
+        bytes += [0xFF, 0xFB, 0x90, 0x64]
+        for _ in 0..<413 {
+            state = state &* 1_103_515_245 &+ 12_345
+            bytes.append(UInt8(truncatingIfNeeded: (state & 0x7FFF_FFFF) >> 16))
+        }
+    }
+    return Data(bytes)
+}
+
 @Suite(.serialized)
 struct AVPlayerEngineTests {
     #if !os(macOS)

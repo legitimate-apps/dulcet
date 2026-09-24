@@ -159,20 +159,7 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
         for kind: String?,
         retryAfterMilliseconds: Int64 = -1
     ) -> DulcetPlaybackFailure {
-        switch kind {
-        case "authentication": .authentication
-        case "forbidden": .forbidden
-        case "serverBusy": .serverBusy(
-            retryAfter: retryAfterMilliseconds >= 0
-                ? TimeInterval(retryAfterMilliseconds) / 1_000
-                : nil
-        )
-        case "protocol", "security": .protocolViolation
-        case "tlsUntrusted": .tlsUntrusted
-        case "sourceUnavailable": .sourceUnavailable
-        case "unsupportedPlan": .unsupportedPlan
-        default: .transport
-        }
+        DulcetPlaybackFailure(coreKind: kind, retryAfterMilliseconds: retryAfterMilliseconds)
     }
 
     private static func refreshReason(for value: String?) -> DulcetPlaybackSourceRefreshReason? {
@@ -195,5 +182,58 @@ private final class DulcetCorePlaybackOperation: DulcetPlaybackResourceLoadOpera
 
     func cancel() {
         operation.cancel()
+    }
+}
+
+/// The one translation between the core's failure spellings and ``DulcetPlaybackFailure``, both
+/// ways. Spec §12.12 classifies a failure from the error alone, so every distinction it uses must
+/// come back to the core exactly as the core sent it: `coreName` of a value built from a core kind
+/// is that kind again for a Server code, the two item-content failures and an unsupported
+/// capability. The connection-class kinds still share names, which is safe: they all stop.
+extension DulcetPlaybackFailure {
+    init(coreKind kind: String?, retryAfterMilliseconds: Int64 = -1) {
+        let parts = kind?.split(separator: ":", omittingEmptySubsequences: false).map(String.init) ?? []
+        switch (parts.first, parts.count) {
+        case ("authentication", 1): self = .authentication
+        case ("forbidden", 1): self = .forbidden
+        case ("serverBusy", 1):
+            self = .serverBusy(
+                retryAfter: retryAfterMilliseconds >= 0
+                    ? TimeInterval(retryAfterMilliseconds) / 1_000
+                    : nil
+            )
+        case ("protocol", 1), ("security", 1), ("protocolViolation", 1): self = .protocolViolation
+        case ("tlsUntrusted", 1): self = .tlsUntrusted
+        case ("sourceUnavailable", 1): self = .sourceUnavailable
+        case ("unsupportedPlan", 1): self = .unsupportedPlan
+        case ("undecodable", 1): self = .undecodable
+        case ("engine", 1): self = .engine
+        case ("unexpectedBinary", 1): self = .unexpectedBinary
+        case ("unexpectedContentType", 3): self = .unexpectedContentType(observed: parts[1], expected: parts[2])
+        case ("serverKnown", 2) where Int(parts[1]) != nil: self = .server(code: Int(parts[1])!)
+        case ("serverUnknown", 2) where Int(parts[1]) != nil: self = .unrecognizedServerError(code: Int(parts[1])!)
+        case ("capabilityUnsupported", 2): self = .capabilityUnsupported(feature: parts[1])
+        default: self = .transport
+        }
+    }
+
+    /// The name `ApplePlaybackQueueClient.recordFailed*` accepts for this failure.
+    var coreName: String {
+        switch self {
+        case .authentication: "authentication"
+        case .forbidden: "forbidden"
+        case .serverBusy: "serverBusy"
+        case .protocolViolation: "protocolViolation"
+        case .sourceUnavailable: "sourceUnavailable"
+        case .unsupportedPlan: "unsupportedPlan"
+        case .transport, .tlsUntrusted: "transport"
+        case .engine: "engine"
+        case .undecodable: "undecodable"
+        case let .unexpectedContentType(observed, expected): "unexpectedContentType:\(observed):\(expected)"
+        case .unexpectedBinary: "unexpectedBinary"
+        case let .server(code): "serverKnown:\(code)"
+        case let .unrecognizedServerError(code): "serverUnknown:\(code)"
+        case let .capabilityUnsupported(feature): "capabilityUnsupported:\(feature)"
+        }
     }
 }

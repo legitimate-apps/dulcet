@@ -41,13 +41,14 @@ public struct DulcetRootView: View {
                         isSuppressed: store.selectedDestination == .nowPlaying,
                         onOpen: { store.selectDestination(.nowPlaying) }
                     ))
-                    .dulcetQueueEditFeedback(store: store)
+                    .dulcetPlaybackFeedback(store: store)
                 }
             }
         }
         .environment(store)
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
+        .dulcetUIProofMarkers()
 #elseif os(iOS)
         Group {
             if variant == .deliberatelyBadControl {
@@ -58,6 +59,7 @@ public struct DulcetRootView: View {
         }
         .environment(store)
         .tint(.dulcetAccent)
+        .dulcetUIProofMarkers()
 #elseif os(tvOS)
         Group {
             if variant == .deliberatelyBadControl {
@@ -69,7 +71,7 @@ public struct DulcetRootView: View {
                         .dulcetForeground(.primaryTextOnWindow)
                 }
                 // Up Next on tvOS edits the queue too; a refusal there is said, as on the others.
-                .dulcetQueueEditFeedback(store: store)
+                .dulcetPlaybackFeedback(store: store)
             }
         }
         .environment(store)
@@ -284,7 +286,7 @@ private struct DulcetIOSShell: View {
                 .onAppear { playerOnScreen = true }
         }
         // The player carries its own while it is up; this one speaks for the shell under it.
-        .dulcetQueueEditFeedback(store: store, isActive: !playerPresented)
+        .dulcetPlaybackFeedback(store: store, isActive: !playerPresented)
         .onChange(of: horizontalSizeClass) { _, _ in sizeClassChanged() }
         .onAppear(perform: absorbNowPlayingDestination)
         .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }

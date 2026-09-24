@@ -199,6 +199,10 @@ enum DulcetStrings {
     static let playbackSkipShort = text("player.failed.skip.short", "Skip")
     static let playbackFailureDismiss = text("player.failed.dismiss", "Dismiss")
     static let queueEditRefused = text("queue.edit.refused", "Couldn\u{2019}t change Up Next")
+    static let playbackSkippedAfterFailureUntitled = text(
+        "player.skipped",
+        "Couldn\u{2019}t play a track. Skipped."
+    )
     static let queueDragRefused = text("queue.drag.refused", "Can\u{2019}t be added to Up Next")
     static let openAlbumHint = text("library.album.hint", "Opens the album")
     static let remainingTime = text("player.remaining", "Remaining")
@@ -237,6 +241,10 @@ enum DulcetStrings {
 
     static func playbackFailed(title: String) -> String {
         formatted("player.failed.track", "Couldn\u{2019}t play \u{201C}%@\u{201D}", title)
+    }
+
+    static func playbackSkippedAfterFailure(title: String) -> String {
+        formatted("player.skipped.track", "Couldn\u{2019}t play \u{201C}%@\u{201D}. Skipped.", title)
     }
 
     static func playbackStoppedPartway(title: String) -> String {

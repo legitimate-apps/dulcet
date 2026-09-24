@@ -403,10 +403,17 @@ horizontal size class**, never by the device:
   sideways on iOS 26.5 keeps the player on screen and the bar able to reopen it *with the handover
   removed* as well as with it, so the one crossing a simulator can drive does not exhibit the
   failure; the iPad Split View and Stage Manager crossings are not driven.
-- **A failed track is not a dead end.** The bar and the player name the track that failed and offer
+- **A failed track is not a dead end.** A failure that belongs to the track itself -- it cannot be
+  decoded, the server has no playable file for it -- does not stop the queue at all: the queue moves
+  past it and says so in a brief notice, "Couldn't play *title*. Skipped.", which VoiceOver
+  announces and which blocks nothing (§12.12). The failure line is for everything else: a failure
+  that belongs to the connection, the server or the account, a track with nowhere to skip to, and
+  the entry a run of failures stopped on (§12.12's guard). It never stays on screen for a track that
+  is not playing. The bar and the player name the track that failed and offer
   Try Again and Skip. Skip appears, on the bar and in the player alike, only when another entry
   follows the failed one, or the queue repeats onto another entry -- never onto the failed track
-  itself, which a one-track queue under repeat-all would be. The message offers only what is there:
+  itself, which a one-track queue under repeat-all would be. That is the core's one Skip predicate,
+  the same one the automatic skip moves by, published with the queue; no shell computes its own. The message offers only what is there:
   it mentions skipping only when Skip is shown, and a track that stopped partway is not said to have
   failed to start. Try Again follows §12.1. At the largest accessibility text sizes the bar lets
   the track's name and the failure line wrap to two lines each, and the player wraps, stacks its
@@ -428,12 +435,22 @@ horizontal size class**, never by the device:
   there is no drop target: the bar and Up Next do not accept a drop, so the card is the refusal. **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
   tap in flight when a library read replaces every tile; it was not reproduced.
 - **The player.** A swipe across the cover plays the next track (left) or the previous one
-  (right), and a downward swipe closes a full-screen player; a diagonal drag does nothing. Up Next
-  is followed by what has already played from the queue, most recent first, collapsed until asked
-  for. The cover's own colours glow out from behind it, and only there: every text colour on the
-  player is a registered contrast pair measured against the window colour, so a blurred cover under
-  the text would void the measurement. Reduce Transparency removes the glow. Beside a regular-width
-  player, the queue column spans the player's height rather than the window's.
+  (right), and a downward swipe closes a full-screen player; a diagonal drag, a drag short of the
+  threshold, and a swipe toward a control that is unavailable do nothing. Touch only: a pointer
+  drag on a Mac cover means nothing. Up Next is followed by Previously Played: the queue's entries
+  before the current one, nearest first. It is positional, not a listening log -- an entry jumped
+  over, or skipped past because it could not play (§12.12), is listed like any other and is not
+  marked -- and repeat-all wrapping to the first entry empties it. It is collapsed until asked for,
+  and a row plays that entry again. Not on tvOS, whose player lists the queue differently. The
+  cover's own colours glow out from behind it, reaching 12 points past its edge and no further,
+  which is less than every gap between the cover and text: every text colour on the player is a
+  registered contrast pair measured against the window colour and nothing else, so cover colour
+  under that text would void the measurement. Reduce Transparency removes the glow, and tvOS draws
+  none, so its player is unchanged. **OBSERVED** (macOS render, `PlayerTintTests`): no pixel of
+  cover colour lies past the reach at three cover sizes; nothing on the one-column or side-by-side
+  player is drawn within the reach; under Reduce Transparency no glow is drawn. Beside a
+  regular-width player, the queue column is as tall as the player it sits beside -- cover to
+  footer, as measured, not estimated -- and centred with it, rather than the window's height.
 
 ---
 
@@ -1239,6 +1256,7 @@ server-offset seek). **Every engine event carries its `AttemptId`; the core maps
 | retry after a failure at or past the end (a replay) | outgoing finalized, then new | new | outgoing evaluated, then new at zero; plays from the start |
 | server-offset seek (§12.7) | same | new | preserved |
 | next queue item (manual or auto) | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
+| automatic skip past the track's own failure (§12.12) | outgoing finalized, then new | new | outgoing evaluated -- the skip adds nothing -- then new at zero |
 | repeat-one | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
 | queue replaced wholesale | outgoing finalized | new | outgoing evaluated |
 
@@ -1254,6 +1272,14 @@ play -- a new session from the start, as repeat-one is. Kept in the old session,
 again from zero into an accumulator that had already submitted, and the second listen never counted.
 The core decides which from the failed attempt's position; the shell only asks to retry
 (revision 106).
+
+An **automatic skip** past a failure that belongs to the track (§12.12) is a next-item advance, not a
+retry: the failed entry's session is finalized and the next entry starts a new session and attempt.
+It adds no play. A failure before start evaluated nothing; a failure after partial playback was
+evaluated at `FailedAfterPartial` (§15.2) exactly as it is when the queue stops there, and the skip
+neither submits a second time nor withholds that one -- a listen is counted by what was heard, not
+by what the queue did next. Try Again at an entry the skip chain stopped on follows the rows above
+unchanged.
 
 **Event acceptance rule (this is the fix for the drop-stale-events race):** an event for a superseded
 `AttemptId` is **not** discarded outright. It is routed to its **session**, which is still live during a
@@ -1280,7 +1306,13 @@ into an entry the queue no longer plays next (revision 106).
 
 Each takes a `commandId` and produces exactly one of `CommandAccepted(commandId)`,
 `CommandRejected(commandId, reason)`, or `CommandCompleted(commandId, result)`. A stale acknowledgement
-is therefore distinguishable from a current one. Retries are owned by the **core**, never the adapter.
+is therefore distinguishable from a current one. Retries are owned by the **core**, never the adapter,
+and so is the decision to move past a failed entry: the core reads whose failure it is from the
+`DomainError` alone (§12.12), so an adapter must report the error it saw, never one chosen for the
+queue behaviour it wants. On Apple the engine's own failures cross as closed names that keep that
+distinction: AVFoundation failing to parse, recognise or decode an item's media is `undecodable`
+(`Playback.NoPlayableSource`), and `engine` is kept for the engine itself -- an audio session that
+would not activate -- which is not the item's.
 
 **`Server.Busy` overrides the core's own backoff schedule.** When a response carries `Retry-After`, the
 core waits **at least** that long — the server has stated its own recovery time and a client that
@@ -1304,8 +1336,8 @@ an event is a spec change, and no implementation may fake one to fit the list.
 | `SeekCompleted` / `SeekFailed` | attemptId, from, to | prevents seek-based completion cheating |
 | `EndedNaturally` | attemptId, finalPosition | the clean completion signal |
 | `Skipped` | attemptId, position, reason | user skip vs auto-advance |
-| `FailedBeforeStart` | attemptId, DomainError | **never scrobble**; drives retry / next-source policy |
-| `FailedAfterPartial` | attemptId, position, DomainError | may scrobble if the threshold was met |
+| `FailedBeforeStart` | attemptId, DomainError | **never scrobble**; drives retry / next-source policy, and whose failure it is (§12.12) |
+| `FailedAfterPartial` | attemptId, position, DomainError | may scrobble if the threshold was met; whose failure it is (§12.12) |
 | `RouteChanged` | old, new, `didPause` | Bluetooth / HDMI / speaker changes |
 | `InterruptionBegan` / `InterruptionEnded` | shouldResume | call, alarm, another app taking focus |
 | `AttemptReplaced` | oldAttemptId, newAttemptId | **same session** — refresh, retry, server-offset seek |
@@ -1645,7 +1677,10 @@ reports it, so the shell removes it from the engine (`discardPreloaded`). A prel
 **after** the core held a natural end for it — it failed at the boundary, or an edit landed between
 the end and the advance — makes the discard itself start the next entry, since no later event
 will. A preload's failure must never touch the current item: the engine does not pause the shared
-player for a refresh the preloaded item needs. A manual Next, a jump, or a
+player for a refresh the preloaded item needs. Nor does it move the queue: only the current
+session's current attempt speaks for an entry the person has reached, so a preload that fails skips
+nothing. When the queue reaches that entry it is started afresh, and a failure then is decided by
+§12.12 like any other. A manual Next, a jump, or a
 queue replacement is a fresh start and discards every preload.
 
 **On the Apple legacy path every plan is direct play**, so the budget never blocks a preload there.
@@ -1708,6 +1743,111 @@ entry stays "playing" with rate 0, so the lock-screen scrubber does not run ahea
 CarPlay and Android Auto are out of scope. The constraint they impose — the queue and metadata must be
 fully expressible without the app's own UI — is already satisfied by the core owning queue state and by
 `NowPlayingSink`. No v1 decision may violate that.
+
+### 12.12 A failure that belongs to the track moves the queue on
+
+Revision 106, item 10. Before it, every failure stopped the queue and was presented (§3.1). A failure
+that belongs to the item itself now moves the queue past it, as the system player does; a failure
+that belongs to the connection, the server or the account still stops and is presented, because
+skipping would only repeat it against the next entry.
+
+**1. Whose failure it is -- the error alone decides.** `playbackFailureOwner(DomainError)` in the core
+is a pure, closed, exhaustive `when` with no `else`: a new `DomainError` case does not compile until
+someone decides. The phase never matters -- a failure before start and one after partial playback
+of the same error are classified alike.
+
+| owner | `DomainError` | the queue |
+|---|---|---|
+| the track | `Playback.NoPlayableSource`; `Protocol.UnexpectedContentType`; `Protocol.UnexpectedBinary`; `Server.Known` codes 70 and 0 | skips past it (rules 2-4) |
+| the connection, the server or the account | every `Transport.*` but `Cancelled`; every `Security.*`, `Auth.*` and `Input.*`; `Server.Busy` (already retried, §12.2); `Server.Unknown`; every other `Server.Known` code; `Protocol.MalformedEnvelope`, `Protocol.NotASubsonicServer`, `Protocol.Incompatible`; `CapabilityUnsupported` | stops and is presented (§3.1) |
+| nobody | `Transport.Cancelled` | a withdrawn request: neither presented nor skipped past |
+
+Three were decided rather than given:
+
+- **`Protocol.UnexpectedBinary` is the track's.** The server answered this item's request with bytes
+  whose signature is not the audio its container promises -- most often a damaged or mislabelled
+  file. A reverse proxy's login page served under an audio content type lands here too, and so does
+  one served as HTML (`UnexpectedContentType`, the track's by decision). Such a page answers every
+  entry alike, so on its own the rule would sweep the queue. **The guard (rule 3) is what stops that
+  sweep**: at most four automatic skips, and so four further requests, before the entry it stopped
+  on is presented with the failure line.
+- **`Server.Known` code 0 is the track's.** The reference server answers `stream` for an item whose
+  file has gone with the generic code 0 (§28, revision 104 item 6), which makes it the commonest
+  item-level failure a library produces. A server failing everything also answers 0; the guard
+  bounds that sweep in the same way.
+- **`Server.Unknown` is not.** Its code is one this client does not know, or a bare HTTP status from
+  whatever answered (a proxy's 502, a 404 from something that is not the server). Nothing ties it
+  to this item, so it is presented rather than guessed at.
+
+On Apple, AVFoundation failing to parse, recognise or decode an item (`decodeFailed`,
+`decoderNotFound`, `fileFormatNotRecognized`, `fileFailedToParse`, `failedToParse`,
+`undecodableMediaData`) crosses from the engine as `undecodable`, which is
+`Playback.NoPlayableSource` (§12.2). **OBSERVED** (`AVPlayerDecodeFailureTests`, real AVFoundation): an
+MP3 whose frames do not decode becomes ready, then fails with `decodeFailed` (-11821) and is
+reported as `undecodable`. Until this revision every engine error crossed as `engine`, which is
+`Transport.Unreachable`, so the rule would have stopped on exactly the failure it exists for; and the
+Apple relay collapsed every `Server` code into "no playable source" and both content failures into
+`MalformedEnvelope`. Each now crosses with its value, and a test in each language pins the round
+trip. **A known gap:** a failure the engine never reports cannot be skipped. **OBSERVED** with a
+plain `AVPlayer` on macOS: a FLAC whose frames are corrupt becomes ready and then, over eight
+seconds, neither progresses nor fails. Whether the engine's own stall handling ever reports it is
+**ASSUMED** not, and not measured.
+
+**2. Direction.** The skip moves one entry in the direction of travel that reached the failed entry:
+Previous reached it, so to the entry before; anything else -- an automatic or gapless advance, Next,
+a tap, a jump, a new queue, a restore -- to the entry after. Try Again keeps the direction the entry
+was reached in. The skip follows the repeat mode exactly as Next and Previous do: repeat-all wraps,
+and nothing else does. With nowhere to go -- the last entry without repeat, the first entry reached
+by Previous, a one-entry queue under repeat-all -- it stops and presents the failure exactly as
+before. Skip's availability on the bar and in the player and the automatic skip's target are **one
+predicate** in the core, published with the queue snapshot as `canSkipPastCurrent`; no shell keeps a
+copy.
+
+**3. The guard.** A chain is the run of entries that have failed with no `PlaybackProgressBegan`
+between them. It stops, presenting the failure of the entry it stopped on, when the next entry has
+already failed in the same chain (a cycle under repeat-all), or when the **fifth** consecutive entry
+has failed. Only progress ends a chain; a person's own Skip, Try Again, jump or new queue does not, so
+once the guard has stopped, each further failure is presented until something plays. **Why five:**
+each automatic skip costs a request against the server, and five unplayable entries in a row say
+more about the server, or whatever answers for it, than about the entries. Five passes a short run
+of damaged files in one album and presents a server-wide fault within a few requests. At the stop,
+Try Again and Skip work as §3.1 and §12.1 say.
+
+**4. Identity.** An automatic skip is a next-item advance (§12.1): the failed entry's session ends,
+and the next entry gets a new session and attempt. It records no play for the failed entry beyond
+what §15.2 already evaluated at its failure, and it does not touch the Try Again rules. A queue
+restored paused moves past a failed entry still paused: a restore starts no sound.
+
+**5. The person is told.** Each skipped entry produces a brief notice naming it -- "Couldn't play
+*title*. Skipped.", or "Couldn't play a track. Skipped." when the title is not known -- in whole
+sentences under §3.1's copy rules. It is non-blocking, VoiceOver announces it, and on Apple it shows
+for four seconds on the surface in front. The failure line is never left for a track that is not
+playing: the next entry's preparing state replaces it. Previously Played lists a skipped entry like
+any other entry the queue passed, and does **not** mark it: the list is positional (§3.1), and the
+notice is where the skip is said.
+
+**6. Preload.** Only the current session's current attempt moves the queue (§12.8). A preload's
+failure skips nothing the person has not reached; when the queue reaches that entry it is started
+afresh, and a failure then follows this contract.
+
+**7. The Apple shell's own gaps.** An entry the shell's catalog cannot name -- track lists are read
+one album at a time, so an entry from an album nobody has opened since launch is unread -- says
+nothing about the item. It crosses as a transport failure and stops, as before this revision, and
+never sends the queue skipping past tracks that play. An item the server gave no playable container
+crosses as the item's own. **Android does not adopt this yet:** it does not share this controller,
+and `FEATURES.yml` claims nothing for it. The classification is a pure core function so that it can.
+
+**Evidence.** Core: `PlaybackAutoSkipTest` (every `DomainError` case, direction, repeat, both guard
+conditions, identity, preload, a paused restore); 16 of its first 18 tests failed on the code before
+the change, and the other two pin behaviour it already had;
+`ApplePlaybackFailureRelayTest` and its Swift twin for the round trip. Apple: two
+`DulcetCorePlaybackSystemTests` cases drive the real Kotlin queue with a fake engine through an
+automatic advance into an undecodable entry (skipped, the next entry starts) and into a connection
+failure (stopped); `AVPlayerDecodeFailureTests` the engine's naming. **OBSERVED** on an iPhone
+simulator against the disposable reference server (`testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays`):
+tapping a track whose MP3 frames do not decode shows the notice naming it -- the notice's own handler
+ran once -- then the next track plays with no failure line, the notice goes, and Previously Played
+lists the skipped track unmarked; the server's play count for the skipped track stayed at zero.
 
 ---
 
@@ -5406,10 +5546,27 @@ wrong:
    replay, a new session from the start, and it has its own row.
 8. **A drag onto the queue never drops silently** (§3.1). Attaching the drag interaction to every
    tile made disabled ones lift and drop nothing without a word; the drop is now refused out loud.
-9. **The player's cover and history** (§3.1): swipes on the cover change track, what has played is
-   listed under Up Next, and the cover tints the player with a glow confined to the cover -- not a
-   blurred background, which would put arbitrary colour under text whose contrast is measured
-   against the window.
+9. **The player's cover and history** (§3.1): swipes on the cover change track, the queue's earlier
+   entries are listed under Up Next, and the cover tints the player with a glow reaching 12 points
+   past the cover -- not a blurred background, which would put arbitrary colour under text whose
+   contrast is measured against the window.
+   **Corrected (2026-09-24):** three sentences did not match the code. "What has already played,
+   most recent first" described a listening log; the list is positional -- the entries before the
+   current one, nearest first -- so an entry jumped over or skipped past is in it, unmarked. "A glow
+   confined to the cover" and "only there" overstated it: the glow is drawn up to 12 points past the
+   cover, which is safe because every gap to text is wider, and a render test now shows it. And the
+   glow was drawn on tvOS, whose player was meant to be unchanged; it is not drawn there now. The
+   queue column's height was an estimate (the cover plus 380 points) presented as "spans the
+   player's height"; it is now the player's measured height.
+10. **Added (2026-09-24): a failure that belongs to the track moves the queue on** (§12.12, with
+    §12.1, §12.2, §12.8 and §3.1). The maintainer's decision: auto-skip on a failure that belongs
+    to the track, stop on one that belongs to the connection or the account. The classification is
+    a closed `when` over `DomainError` in the core; the skip follows the direction of travel and
+    the repeat mode, uses the one Skip predicate, stops at a cycle or the fifth consecutive failed
+    entry, is a next-item advance that adds no play, and is announced. Two relays had to be
+    repaired first, because they would have misclassified: the Apple engine named every decode
+    failure `engine` (a transport failure, so the rule would never have fired), and the Apple
+    relay collapsed server codes and content failures into classes that meant something else.
 
 **Revision 105 (2026-09-24)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a
