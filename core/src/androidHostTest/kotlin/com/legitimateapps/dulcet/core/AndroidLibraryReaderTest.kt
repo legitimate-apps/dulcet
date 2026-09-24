@@ -2,14 +2,25 @@ package com.legitimateapps.dulcet.core
 
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
@@ -26,17 +37,34 @@ class AndroidLibraryReaderTest {
     private val server = SessionTestServer()
     private val readers = mutableListOf<AndroidLibraryReader>()
 
+    private fun session(scope: kotlinx.coroutines.CoroutineScope) = LibraryReaderSession(
+        database.database, store.bind(SessionEnv.BINDING), server, scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+    )
+
     private fun reader(main: CoroutineDispatcher = Dispatchers.Unconfined): AndroidLibraryReader = AndroidLibraryReader(
         account = null,
-        compose = { scope ->
-            AndroidLibraryReaderComposition(
-                LibraryReaderSession(database.database, store.bind(SessionEnv.BINDING), server, scope,
-                    LibraryReaderConfig(lookAheadMaxPerViewport = 0)),
-            )
-        },
+        compose = { scope -> AndroidLibraryReaderComposition(session(scope)) },
         readerDispatcher = newLibraryReaderDispatcher(),
         mainDispatcher = main,
     ).also { readers += it }
+
+    /** A main thread that runs nothing until the test drains it: a publication can be caught queued. */
+    private class QueuedMain : CoroutineDispatcher() {
+        val queue = LinkedBlockingQueue<Runnable>()
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            queue.put(block)
+        }
+        fun awaitQueued() {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (queue.isEmpty()) {
+                check(System.nanoTime() < deadline) { "nothing was queued for the main thread" }
+                Thread.sleep(5)
+            }
+        }
+        fun drain() {
+            while (true) (queue.poll() ?: return).run()
+        }
+    }
 
     private fun AndroidLibraryReader.closeAndWait() = runBlocking {
         close()
@@ -131,6 +159,97 @@ class AndroidLibraryReaderTest {
         reader.openWindow(AndroidLibraryQuery.Artists()) { closed += it }
         assertEquals(listOf<AndroidLibraryFreshness>(AndroidLibraryFreshness.Unavailable(AndroidLibraryUnavailableReason.Closed)),
             closed.map { it.freshness })
+    }
+
+    @Test
+    fun closeWaitsForCancelledWorkToUnwindBeforeReleasingAndForTheThreadToStop() {
+        val released = AtomicBoolean(false)
+        val releasedWhenCleanupRan = AtomicReference<Boolean?>(null)
+        val running = CountDownLatch(1)
+        val dispatcher = newLibraryReaderDispatcher()
+        val reader = AndroidLibraryReader(
+            account = null,
+            compose = { scope ->
+                // Work of the reader's own, in flight at the close, whose cleanup takes a while.
+                scope.launch {
+                    try {
+                        running.countDown()
+                        awaitCancellation()
+                    } finally {
+                        Thread.sleep(300)
+                        releasedWhenCleanupRan.set(released.get())
+                    }
+                }
+                AndroidLibraryReaderComposition(session(scope), release = { released.set(true) })
+            },
+            readerDispatcher = dispatcher,
+            mainDispatcher = Dispatchers.Unconfined,
+        ).also { readers += it }
+        assertTrue(running.await(30, TimeUnit.SECONDS), "control: the work was running when the close began")
+        reader.closeAndWait()
+        assertEquals(false, releasedWhenCleanupRan.get(), "the cancelled work finished unwinding before the store was released")
+        assertTrue(released.get(), "the store was released")
+        val executor = (dispatcher as ExecutorCoroutineDispatcher).executor as ExecutorService
+        assertTrue(executor.isTerminated, "once close has completed, no task can run on the reader's thread")
+    }
+
+    @Test
+    fun aPublicationQueuedForTheMainThreadIsNotDeliveredAfterACloseThatRanFirst() {
+        val main = QueuedMain()
+        val reader = reader(main)
+        val first = Collections.synchronizedList(mutableListOf<AndroidLibraryPublication>())
+        val window = reader.openHomeRow(AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Newest)) { first += it }
+        main.awaitQueued()
+        window.close()
+        main.drain()
+        assertEquals(emptyList(), first.toList(), "a window closed before delivery receives nothing")
+
+        val second = Collections.synchronizedList(mutableListOf<AndroidLibraryPublication>())
+        reader.openHomeRow(AndroidLibraryHomeRow.Favourites) { second += it }
+        main.awaitQueued()
+        var completed = false
+        reader.close { completed = true }
+        runBlocking { withTimeout(30_000) { reader.awaitTermination() } }
+        main.drain()
+        assertEquals(emptyList(), second.toList(), "a reader closed before delivery delivers nothing")
+        assertTrue(completed, "control: the close's own completion was delivered by the same drain")
+    }
+
+    @Test
+    fun aReaderWhoseSetupFailedIsReplacedAndItsReplacementWaitsForItsThreadToStop() {
+        val account = AndroidLibraryReaderAccount("provider", "http://127.0.0.1:1", "user", "password", true)
+        val failingDispatcher = newLibraryReaderDispatcher()
+        val failing = AndroidLibraryReader.obtain(account) { previous ->
+            AndroidLibraryReader(account, { error("setup failed") }, failingDispatcher, Dispatchers.Unconfined, previous)
+        }.also { readers += it }
+        val failed = CountDownLatch(1)
+        failing.openWindow(AndroidLibraryQuery.Artists()) { if (it.freshness is AndroidLibraryFreshness.Unavailable) failed.countDown() }
+        assertTrue(failed.await(30, TimeUnit.SECONDS), "control: the failed setup answers a screen with a failure")
+
+        // Keep the failing reader's thread busy, so its close cannot finish until the gate opens.
+        val gate = CountDownLatch(1)
+        (failingDispatcher as ExecutorCoroutineDispatcher).executor.execute { gate.await(30, TimeUnit.SECONDS) }
+        val composedAfterPredecessorStopped = AtomicReference<Boolean?>(null)
+        val replacement = AndroidLibraryReader.obtain(account) { previous ->
+            assertSame(failing, previous, "the failed reader is the one replaced")
+            AndroidLibraryReader(account, { scope ->
+                composedAfterPredecessorStopped.set(previous!!.hasTerminated)
+                AndroidLibraryReaderComposition(session(scope))
+            }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, previous)
+        }.also { readers += it }
+        assertNotSame(failing, replacement, "a reader whose setup failed is not kept")
+        Thread.sleep(300)
+        assertEquals(null, composedAfterPredecessorStopped.get(), "the replacement did not open the database while its predecessor ran")
+        gate.countDown()
+        val live = CountDownLatch(1)
+        replacement.openHomeRow(AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Newest)) {
+            if (it.freshness == AndroidLibraryFreshness.Live) live.countDown()
+        }
+        assertTrue(live.await(30, TimeUnit.SECONDS), "the replacement works")
+        assertEquals(true, composedAfterPredecessorStopped.get(), "it composed only once its predecessor's thread had stopped")
+        assertSame(replacement, AndroidLibraryReader.obtain(account) { error("a working reader is not rebuilt") })
+        assertFalse(replacement.isClosed)
+        runBlocking { withTimeout(30_000) { replacement.close(); replacement.awaitTermination() } }
     }
 
     @Test

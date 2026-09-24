@@ -8,12 +8,14 @@ import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
 import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
+import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.shared.R
+import java.text.NumberFormat
 
 /*
  * The words for what the core published (spec §16.14, §16.15). One place, used by the phone and the
@@ -52,21 +54,57 @@ public fun Resources.unavailableLine(reason: AndroidLibraryUnavailableReason, su
 
 /**
  * A list's coverage, stated above the list (§16.14): an open window only while it cannot be extended
- * (offline), a scanning or changing server always. Null when there is nothing to say.
+ * (offline), a scanning or changing server always. Null when there is nothing to say. Both numbers
+ * and the noun are stated: "Showing 120 of 2,950 albums — the rest need a connection".
  */
 public fun Resources.coverageLine(publication: AndroidLibraryPublication): String? = when (publication.coverage) {
     AndroidLibraryCoverage.Open -> if (publication.freshness.isOffline() || publication.order == AndroidLibraryItemsOrder.LocalView) {
         val shown = publication.items.size
-        publication.total?.takeIf { it > shown }?.let { getString(R.string.library_coverage_open_total, shown, it) }
-            ?: getString(R.string.library_coverage_open, shown)
+        val plural = countPlural(publication.items)
+        publication.total?.takeIf { it > shown }?.let { total ->
+            getString(R.string.library_coverage_open_total, formatCount(shown), getQuantityString(plural, total, formatCount(total)))
+        } ?: getString(R.string.library_coverage_open, getQuantityString(plural, shown, formatCount(shown)))
     } else {
         null
     }
     AndroidLibraryCoverage.UnverifiedScanning -> getString(R.string.library_coverage_scanning)
     AndroidLibraryCoverage.UnverifiedChanging -> getString(R.string.library_coverage_changing)
-    // Stated once per account, never on every list (§16.12).
+    // Stated once per account, never on every list (§16.12): see noEpochLine.
     AndroidLibraryCoverage.UnverifiedNoEpoch, AndroidLibraryCoverage.Complete, null -> null
 }
+
+/** The plural naming what a list holds, from the core's own item kinds. */
+private fun countPlural(items: List<AndroidLibraryItem>): Int = when {
+    items.isEmpty() -> R.plurals.library_count_items
+    items.all { it is AndroidLibraryItem.Album } -> R.plurals.library_count_albums
+    items.all { it is AndroidLibraryItem.Artist } -> R.plurals.library_count_artists
+    items.all { it is AndroidLibraryItem.Track } -> R.plurals.library_count_tracks
+    items.all { it is AndroidLibraryItem.Playlist } -> R.plurals.library_count_playlists
+    else -> R.plurals.library_count_items
+}
+
+private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().format(count)
+
+/**
+ * The connection's own failure, stated once above the screen (§16.14): a reconnect that reached the
+ * server but could not read the epoch — credentials, TLS, a timeout, the server's own error — leaves
+ * the reader offline, and every screen's line says so; this line says why. Null otherwise.
+ */
+public fun Resources.connectionLine(state: LibraryConnectionState): String? = when (state) {
+    is LibraryConnectionState.Failed -> getString(
+        R.string.library_connection_failed,
+        state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal),
+    )
+    else -> null
+}
+
+/** `unverified(noEpoch)`, stated once per account rather than on every list (§16.12, §16.14). */
+public fun Resources.noEpochLine(state: LibraryConnectionState): String? =
+    if ((state as? LibraryConnectionState.Online)?.serverReportsNoEpoch == true) getString(R.string.library_no_epoch) else null
+
+/** Unsent changes discarded when the account's user changed, told once (§16.10). */
+public fun Resources.discardedChangesLine(count: Long): String? =
+    if (count > 0) getQuantityString(R.plurals.library_discarded_changes, count.toQuantity(), count.toQuantity()) else null
 
 /** "Available offline" above a list sorted on this device while offline (§16.14). */
 public fun Resources.orderLine(publication: AndroidLibraryPublication): String? =

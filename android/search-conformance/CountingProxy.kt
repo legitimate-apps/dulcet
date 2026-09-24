@@ -24,7 +24,11 @@ class CountingProxy(private val target: String) : AutoCloseable {
         val endpoint: String,
         val parameters: Map<String, String>,
         @Volatile var answered: Boolean = false,
-    )
+        /** The HTTP status the app received; 0 until answered. */
+        @Volatile var status: Int = 0,
+    ) {
+        override fun toString(): String = "$endpoint${parameters["type"]?.let { "[$it]" } ?: ""}:$status"
+    }
 
     private val lock = Any()
     private val seen = mutableListOf<Seen>()
@@ -85,6 +89,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
             }
             if (held) latch.await(HOLD_CEILING_SECONDS, TimeUnit.SECONDS)
             if (failing) {
+                entry.status = 500
                 exchange.sendResponseHeaders(500, -1)
                 return
             }
@@ -104,9 +109,11 @@ class CountingProxy(private val target: String) : AutoCloseable {
             connection.headerFields.forEach { (name, values) ->
                 if (name != null && name.lowercase() !in HOP_HEADERS) values.forEach { exchange.responseHeaders.add(name, it) }
             }
+            entry.status = status
             exchange.sendResponseHeaders(status, if (answer.isEmpty()) -1 else answer.size.toLong())
             if (answer.isNotEmpty()) exchange.responseBody.use { it.write(answer) }
         } catch (_: Throwable) {
+            entry.status = 502
             runCatching { exchange.sendResponseHeaders(502, -1) }
         } finally {
             entry.answered = true

@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
 import com.legitimateapps.dulcet.core.AndroidLibraryConnection
@@ -12,6 +14,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryHomeRow
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
+import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryOutcomeRegistration
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidLibraryQuery
@@ -32,8 +35,9 @@ import kotlinx.coroutines.flow.update
  * The reader itself is the process's one [AndroidLibraryReader] for the account; this class opens its
  * windows, turns each window's publications into a [StateFlow] for Compose — the only place a `Flow`
  * appears, inside the shell (§16.18) — and reports the platform's reachability and foreground state.
- * It computes no product rule: freshness, coverage, playability and the overlay of a pending change
- * all arrive in the core's publications and are only drawn.
+ * Freshness, coverage, playability and the overlay of a pending change all arrive in the core's
+ * publications and are only drawn. What this class decides is the platform's part: when the app is
+ * in the foreground, what the platform says about the network, and when to ask for a reconnect.
  *
  * **Freshness policy (§16.11).** There is no import and no timer here. The reader reads the catalog
  * epoch on reconnect and, while this session is started, every five minutes (core policy); a changed
@@ -43,8 +47,11 @@ import kotlinx.coroutines.flow.update
  * goes around it: the platform's default-network callback reports reachability with
  * [AndroidLibraryReader.setOnline] — whose `true`, while offline, REQUESTS a reconnect rather than
  * flipping any state — and [start] reconnects when the app comes to the foreground with a network. A
- * reconnect that finds the server unreachable reports it unreachable, so every screen says offline
- * rather than failing request by request; the next network change, foreground or [retry] tries again.
+ * reconnect whose transport found the server unreachable reports it unreachable, so every screen says
+ * offline rather than failing request by request; any other failure (a timeout, credentials, TLS, the
+ * server's own error) is [LibraryConnectionState.Failed], which the screens state with its reason. The
+ * next network change, foreground, [retry] or [refresh] tries again. Every callback of this class runs
+ * on the main thread, the platform's network callbacks included.
  */
 public class LibrarySession internal constructor(
     private val reader: AndroidLibraryReader,
@@ -70,8 +77,31 @@ public class LibrarySession internal constructor(
 
     private val lastOutcome = MutableStateFlow<AndroidLibraryChangeOutcome?>(null)
 
-    /** The latest favourite or rating outcome, for a one-line message; [Saved][AndroidLibraryChangeOutcome.Saved] needs none. */
+    /**
+     * The latest favourite or rating outcome, for a one-line message on the screen showing its
+     * target; [Saved][AndroidLibraryChangeOutcome.Saved] needs none. A screen clears it with
+     * [dismissOutcome] when it goes, so it is never shown again elsewhere.
+     */
     public val outcomes: StateFlow<AndroidLibraryChangeOutcome?> = lastOutcome.asStateFlow()
+
+    /** Clears the outcome message if it is about [rawId]. */
+    public fun dismissOutcome(rawId: String) {
+        lastOutcome.update { current -> if (current?.target?.rawId == rawId) null else current }
+    }
+
+    private val discarded = MutableStateFlow(0L)
+
+    /**
+     * Unsent changes the reader discarded because this device is now signed in as someone else
+     * (§16.10), to be told once: nonzero until [dismissDiscardedChanges], and never raised again for
+     * the same session.
+     */
+    public val discardedChanges: StateFlow<Long> = discarded.asStateFlow()
+    private var discardedTold = false
+
+    public fun dismissDiscardedChanges() {
+        discarded.value = 0
+    }
 
     private val surfaces = mutableListOf<LibrarySurface>()
     private var started = false
@@ -89,9 +119,11 @@ public class LibrarySession internal constructor(
     /*
      * Every surface below is opened by the screen that shows it and closed when that screen goes, so
      * the reader's "visible screen" — what a reconnect or a changed epoch revalidates (§16.14 step 3) —
-     * is exactly what is on screen. A screen opens its surfaces while it is composed, before this
-     * session's lifecycle effects run, so a relaunch paints from the cache before [start] issues its
-     * first request.
+     * is exactly what is on screen. Whatever the order of a surface's open and [start], its first
+     * publication is built from the cache before that window issues any request (CONF-76). The order
+     * differs by app: the TV's screens are composed before the lifecycle effect that calls [start];
+     * the phone's are composed inside its scaffold, whose content is composed during layout, after
+     * that effect has run, so on the phone [start]'s epoch read is issued first.
      */
 
     /** The home screen: N independent single-page rows (§16.9, CONF-86). The caller closes each. */
@@ -126,13 +158,24 @@ public class LibrarySession internal constructor(
     public fun collectAlbums(albumRawIds: List<String>, completion: (List<AndroidLibraryPublication>) -> Unit): AutoCloseable {
         val settled = arrayOfNulls<AndroidLibraryPublication>(albumRawIds.size)
         val windows = mutableListOf<AndroidLibraryWindow>()
-        var done = albumRawIds.isEmpty()
+        var done = albumRawIds.isEmpty() || closed
+        lateinit var handle: AutoCloseable
         fun finishIfSettled() {
             if (done || settled.any { it == null }) return
             done = true
             windows.forEach(AndroidLibraryWindow::close)
+            collections -= handle
             completion(settled.map { it!! })
         }
+        handle = AutoCloseable {
+            if (!done) {
+                done = true
+                windows.forEach(AndroidLibraryWindow::close)
+            }
+            collections -= handle
+        }
+        if (closed) return handle
+        collections += handle
         albumRawIds.forEachIndexed { index, rawId ->
             windows += reader.openWindow(AndroidLibraryQuery.Album(rawId)) { publication ->
                 if (!done && publication.tracksSettled()) {
@@ -141,13 +184,19 @@ public class LibrarySession internal constructor(
                 }
             }
         }
-        if (albumRawIds.isEmpty()) completion(emptyList())
-        return AutoCloseable {
-            if (!done) {
-                done = true
-                windows.forEach(AndroidLibraryWindow::close)
-            }
+        if (albumRawIds.isEmpty()) {
+            collections -= handle
+            completion(emptyList())
         }
+        return handle
+    }
+
+    /** Collections still waiting for their albums; [close] abandons them. */
+    private val collections = mutableListOf<AutoCloseable>()
+
+    /** What this device has seen of these tracks, from the seen-cache alone; see [AndroidLibraryReader.seenTracks]. */
+    public fun seenTracks(rawIds: List<String>, completion: (List<AndroidTrack>) -> Unit) {
+        if (closed) completion(emptyList()) else reader.seenTracks(rawIds, completion)
     }
 
     /** Makes [target] a favourite or not; it shows in the next publication, before any request. */
@@ -183,21 +232,29 @@ public class LibrarySession internal constructor(
         reader.setForeground(false)
     }
 
-    /** "Try again" after the server could not be reached: a reconnect, the only way back online. */
+    /**
+     * "Try again": a reconnect, the only way back online. With no network at all there is nothing to
+     * try — the reader is not told the server is reachable when the platform says nothing is.
+     */
     public fun retry() {
-        if (!closed) reconnect()
+        if (closed) return
+        if (!networkAvailable()) {
+            report(false)
+            return
+        }
+        reconnect()
     }
 
     /**
      * An explicit refresh (§16.11 rule 3): every open screen re-reads what is visible, whatever its
-     * age; while offline it is a reconnect instead.
+     * age. While the reader is not online — offline, or its last reconnect failed — it is a
+     * reconnect instead, because an offline reader reads nothing.
      */
     public fun refresh() {
         if (closed) return
-        if (connectionState.value is LibraryConnectionState.Offline) {
-            reconnect()
-        } else {
-            surfaces.toList().forEach(LibrarySurface::refresh)
+        when (connectionState.value) {
+            is LibraryConnectionState.Offline, is LibraryConnectionState.Failed -> retry()
+            else -> surfaces.toList().forEach(LibrarySurface::refresh)
         }
     }
 
@@ -206,6 +263,8 @@ public class LibrarySession internal constructor(
         stop()
         closed = true
         outcomeRegistration.close()
+        collections.toList().forEach(AutoCloseable::close)
+        collections.clear()
         surfaces.toList().forEach(LibrarySurface::close)
         surfaces.clear()
     }
@@ -238,7 +297,11 @@ public class LibrarySession internal constructor(
 
     private fun registerNetworkCallback() {
         val manager = connectivity ?: return
-        callbackRegistered = runCatching { manager.registerDefaultNetworkCallback(networkCallback) }.isSuccess
+        // On the main thread, like everything else here: without a handler the platform calls back on
+        // its own thread, racing the reconnect outcomes this class handles on the main thread.
+        callbackRegistered = runCatching {
+            manager.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
+        }.isSuccess
     }
 
     private fun unregisterNetworkCallback() {
@@ -265,6 +328,7 @@ public class LibrarySession internal constructor(
      * reconnect in the core; the [reconnect] call after it joins that one, for its outcome.
      */
     private fun report(reachable: Boolean) {
+        if (closed) return
         reachabilityGeneration += 1
         lastReport = reachable
         observationState.update { it.copy(reachabilityReports = it.reachabilityReports + reachable) }
@@ -289,6 +353,10 @@ public class LibrarySession internal constructor(
 
     private fun reconnected(outcome: AndroidLibraryConnection, generation: Int) {
         if (closed || outcome.closed) return
+        if (outcome.discardedPendingChanges > 0 && !discardedTold) {
+            discardedTold = true
+            discarded.value = outcome.discardedPendingChanges
+        }
         when {
             outcome.epochRead -> setConnection(LibraryConnectionState.Online(outcome.serverReportsNoEpoch))
             outcome.error.meansUnreachable() -> when {
@@ -338,8 +406,8 @@ public class LibrarySession internal constructor(
 private fun NetworkCapabilities.isConstrained(): Boolean =
     !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
 
-private fun DomainError?.meansUnreachable(): Boolean =
-    this == DomainError.Transport.Unreachable || this == DomainError.Transport.Timeout
+/** The transport's own finding that the server cannot be reached; a slow server is not an offline one. */
+private fun DomainError?.meansUnreachable(): Boolean = this == DomainError.Transport.Unreachable
 
 /** One open window's publications as Compose state. */
 public class LibrarySurface internal constructor(
@@ -409,6 +477,7 @@ public data class LibraryFrame(
     val itemsState: AndroidLibraryItemsState,
     val headerRawId: String?,
     val favourite: Boolean?,
+    val itemsUnavailableReason: com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason? = null,
 ) {
     internal companion object {
         fun of(publication: AndroidLibraryPublication) = LibraryFrame(
@@ -423,6 +492,7 @@ public data class LibraryFrame(
                 is AndroidLibraryItem.Track -> header.favourite
                 else -> null
             },
+            itemsUnavailableReason = publication.itemsUnavailableReason,
         )
     }
 }
@@ -432,11 +502,16 @@ public fun SearchAccount.toReaderAccount(): AndroidLibraryReaderAccount =
 
 // ---- Playback adapters ---------------------------------------------------------------------------------
 
-/** The album header's tracks as playable queue entries; tracks with no metadata are skipped. */
+/**
+ * The album header's tracks as queue entries: those the core says can play now, by their playability
+ * (§16.14), and never one with no metadata to show.
+ */
 public fun AndroidLibraryPublication.playableTracks(providerInstanceId: String): List<AndroidTrack> {
     val album = header as? AndroidLibraryItem.Album
     if (itemsState != AndroidLibraryItemsState.Present) return emptyList()
-    return items.filterIsInstance<AndroidLibraryItem.Track>().mapNotNull { it.toTrack(providerInstanceId, album) }
+    return items.filterIsInstance<AndroidLibraryItem.Track>()
+        .filter { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+        .mapNotNull { it.toTrack(providerInstanceId, album) }
 }
 
 /** A queue entry for one track; a track without its own artwork or credits uses its album's. */

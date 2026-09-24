@@ -46,6 +46,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryHomeRow
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R
@@ -74,7 +75,8 @@ public fun LibraryEntry(account: SearchAccount, search: @Composable () -> Unit) 
             Modifier.align(Alignment.TopEnd).testTag("library.open")
                 .background(Color.White).clickable { showingLibrary = !showingLibrary; album = null }.padding(16.dp))
     }
-    // After the screens above have opened their windows: a relaunch paints from the cache first.
+    // After the screens above have opened their windows, which on the TV are composed here, directly:
+    // each has painted from the cache before start() issues the reconnect's first request.
     LibraryLifecycle(session)
 }
 
@@ -99,9 +101,9 @@ public fun LibraryLifecycle(session: LibrarySession) {
 }
 
 /**
- * The home screen's rows, opened WHILE COMPOSING — so each paints from the cache before the host's
- * lifecycle effects run — and closed when the screen leaves composition, so the reader's visible
- * screen is exactly what is shown.
+ * The home screen's rows, opened WHILE COMPOSING — so each paints from the cache in its first frame,
+ * before its own read is issued — and closed when the screen leaves composition, so the reader's
+ * visible screen is exactly what is shown.
  */
 @Composable
 public fun rememberHomeRows(session: LibrarySession): List<LibraryHomeRowSurface> =
@@ -128,6 +130,7 @@ private fun TvLibraryHome(session: LibrarySession, openAlbum: (String) -> Unit) 
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         item { BasicText("Library", style = TextStyle(fontSize = 32.sp)) }
+        item { TvConnectionNotices(session, accountNotices = true) }
         itemsIndexed(rows) { index, row -> TvHomeRow(index, row, session, openAlbum) }
     }
 }
@@ -166,13 +169,43 @@ private fun TvHomeRow(index: Int, row: LibraryHomeRowSurface, session: LibrarySe
     }
 }
 
+/** The phone's `ConnectionNotices`, in the TV's type: the same statements, from the same copy. */
+@Composable
+private fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+    val connection by session.connection.collectAsState()
+    val discarded by session.discardedChanges.collectAsState()
+    val resources = libraryResources()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        resources.connectionLine(connection)?.let { line ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                BasicText(line, Modifier.testTag("library.connection"), style = TextStyle(color = Color(0xFFB00020)))
+                TvButton(resources.getString(R.string.library_try_again), "library.connection.retry", onClick = session::retry)
+            }
+        }
+        if (accountNotices) {
+            resources.noEpochLine(connection)?.let { BasicText(it, Modifier.testTag("library.noEpoch")) }
+            resources.discardedChangesLine(discarded)?.let { line ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    BasicText(line, Modifier.testTag("library.discarded"))
+                    TvButton(resources.getString(R.string.library_dismiss), "library.discarded.dismiss",
+                        onClick = session::dismissDiscardedChanges)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Unit) {
     val surface = rememberSurface(session, rawId) { openAlbum(rawId) }
     BackHandler(onBack = back)
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
-    val outcome by session.outcomes.collectAsState()
+    val latestOutcome by session.outcomes.collectAsState()
+    // Only an outcome about this album is said here, and it goes when the screen does.
+    val outcome = latestOutcome?.takeIf { it.target.rawId == rawId }
+    DisposableEffect(session, rawId) { onDispose { session.dismissOutcome(rawId) } }
+    var note by remember(rawId) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     LazyColumn(
         Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }
@@ -185,6 +218,7 @@ private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Un
                 TvButton("Refresh", "album.refresh", onClick = session::refresh)
             }
         }
+        item { TvConnectionNotices(session, accountNotices = false) }
         val current = publication ?: return@LazyColumn
         val album = current.header as? AndroidLibraryItem.Album
         item {
@@ -206,30 +240,36 @@ private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Un
                     ) { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId)) }
                 }
                 resources.outcomeLine(outcome)?.let { BasicText(it, Modifier.testTag("album.outcome")) }
+                note?.let { BasicText(it, Modifier.testTag("album.note")) }
             }
         }
         when (current.itemsState) {
             AndroidLibraryItemsState.Loading -> item { BasicText("…", Modifier.testTag("album.tracks.loading")) }
             AndroidLibraryItemsState.Unavailable -> if (current.header != null) item {
-                // The header is cached; the track list was never read on this device (§16.14).
+                // The header is cached and the track list is not: the core says why (§16.14).
                 BasicText(
                     resources.unavailableLine(
-                        (current.freshness as? AndroidLibraryFreshness.Unavailable)?.reason
-                            ?: com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason.NotCachedOffline,
+                        current.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure,
                         LibrarySubject.Album,
                     ),
                     Modifier.testTag("album.tracks.unavailable"),
                 )
             }
             AndroidLibraryItemsState.Present -> itemsIndexed(current.items) { position, item ->
-                if (item is AndroidLibraryItem.Track) TvTrackRow(item, position)
+                if (item is AndroidLibraryItem.Track) TvTrackRow(item, position) {
+                    note = resources.getString(R.string.library_plays_on_reconnect)
+                }
             }
         }
     }
 }
 
+/**
+ * One track. The TV's library does not play from an album yet; a row this device cannot play offline
+ * says why when selected, as the phone's does (§16.14).
+ */
 @Composable
-private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int) {
+private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, onUnavailable: () -> Unit) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val resources = libraryResources()
     var focused by remember { mutableStateOf(false) }
@@ -239,6 +279,7 @@ private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int) {
                 if (unavailable) contentDescription = "${track.title.orEmpty()}, ${resources.getString(R.string.library_not_available_offline)}"
             }
             .onFocusChanged { focused = it.isFocused }.focusable()
+            .clickable(enabled = unavailable, onClick = onUnavailable)
             .background(if (focused) Color.LightGray else Color.White).padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {

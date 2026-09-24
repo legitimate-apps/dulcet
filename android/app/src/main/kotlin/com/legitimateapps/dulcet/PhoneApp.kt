@@ -39,7 +39,6 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.library.LibraryLifecycle
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.playableTracks
-import com.legitimateapps.dulcet.library.toTrack
 import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
@@ -108,10 +107,19 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
         playAlbum = { album, start, shuffle -> playAlbum(playback, provider, album, start, shuffle) },
-        playArtist = { artist, shuffle -> playArtist(playback, library, provider, artist, shuffle) },
+        playArtist = { artist, shuffle, done -> playArtist(playback, library, provider, artist, shuffle, done) },
         // Up Next rows take their titles from albums already on screen; no request is made for them.
         rememberAlbum = { album -> playback?.rememberTracks(album.playableTracks(provider)) },
     )
+    // A restored Up Next row with no title takes it from what this device has seen, as it did from the
+    // whole-library mirror: a seen-cache read, never a request.
+    val untitled = remember(playbackState.queue) {
+        playbackState.queue.map { it.track }.filter { it.title.isBlank() }.map { it.rawId }.distinct()
+    }
+    LaunchedEffect(playback, library, untitled) {
+        val controller = playback ?: return@LaunchedEffect
+        if (untitled.isNotEmpty()) library.seenTracks(untitled) { tracks -> controller.rememberTracks(tracks) }
+    }
     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
 
     Box(Modifier.fillMaxSize()) {
@@ -162,7 +170,10 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's
-    // presenter uses the same process reader, so it follows the same reachability.
+    // presenter uses the same process reader, so it follows the same reachability. The scaffold
+    // composes its content during layout, after this effect has run, so on the phone start() — and
+    // its reconnect's first request — comes before the screens open their windows; each window still
+    // paints from the cache before its own read is issued.
     LibraryLifecycle(library)
 }
 
@@ -176,8 +187,11 @@ internal class PhoneActions(
     val back: () -> Unit,
     /** An album publication and the index of a row in its items. */
     val playAlbum: (AndroidLibraryPublication, Int, Boolean) -> Unit,
-    /** An artist publication: every album's tracks, in the artist's album order. */
-    val playArtist: (AndroidLibraryPublication, Boolean) -> Unit,
+    /**
+     * An artist publication: every album's playable tracks, in the artist's album order. The last
+     * argument hears whether anything played; the returned handle abandons the albums still opening.
+     */
+    val playArtist: (AndroidLibraryPublication, Boolean, (Boolean) -> Unit) -> AutoCloseable?,
     val rememberAlbum: (AndroidLibraryPublication) -> Unit = {},
 )
 
@@ -203,15 +217,14 @@ private fun playArtist(
     provider: String,
     publication: AndroidLibraryPublication,
     shuffle: Boolean,
-) {
-    val artist = publication.header as? AndroidLibraryItem.Artist ?: return
+    done: (Boolean) -> Unit,
+): AutoCloseable? {
+    val artist = publication.header as? AndroidLibraryItem.Artist ?: return null
     val albums = publication.items.filterIsInstance<AndroidLibraryItem.Album>()
-    if (playback == null || albums.isEmpty()) return
-    library.collectAlbums(albums.map { it.rawId }) { details ->
-        val tracks = details.flatMap { detail ->
-            val album = detail.header as? AndroidLibraryItem.Album
-            detail.items.filterIsInstance<AndroidLibraryItem.Track>().mapNotNull { it.toTrack(provider, album) }
-        }
+    if (playback == null || albums.isEmpty()) return null
+    return library.collectAlbums(albums.map { it.rawId }) { details ->
+        val tracks = details.flatMap { it.playableTracks(provider) }
         if (tracks.isNotEmpty()) playback.playQueue(tracks, 0, AndroidQueueSource.Artist, artist.name, artist.rawId, shuffle)
+        done(tracks.isNotEmpty())
     }
 }

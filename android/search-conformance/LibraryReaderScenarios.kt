@@ -24,6 +24,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
+import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidLibrarySeenCounts
@@ -57,7 +58,8 @@ interface ReaderAppUi {
  *
  * Request counts exclude `getCoverArt`: cover art is fetched by the image pipeline when a cell is
  * drawn, not by the reader, and the reader's budget is what these tests measure. Every scenario
- * reports how many it saw.
+ * prints how many cover-art requests it saw. The image pipeline does not consult reachability, so
+ * "the reader requests nothing offline" is what the offline legs prove — not that the app does.
  */
 class LibraryReaderScenarios<A : ComponentActivity>(
     private val compose: AndroidComposeTestRule<ActivityScenarioRule<A>, A>,
@@ -73,6 +75,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     fun conf76CachedPaintBeforeAnyRequestAndOfflineUnavailable() {
         ui.openLibrary()
         awaitHomeLive()
+        awaitQuiet()
+        val firstLaunchOrder = readerRequests(0).map { it.endpoint }
         val liveCounts = HOME.map { last(it).itemCount }
         assertTrue(liveCounts[0] > 0, "setup: the newest row must have albums")
         val opened = server.albumId(OPENED_ALBUM)
@@ -83,22 +87,27 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         ui.backFromAlbum()
         awaitQuiet()
 
-        // A cold relaunch while the server answers nothing: the reader's thread is stopped (a new
-        // process, as far as the core can tell) and every request the new one issues is held.
+        // A cold relaunch: the reader's thread is stopped (a new process, as far as the core can tell)
+        // and every content read the new one issues is held. The epoch reads are answered, so each
+        // row's own read is issued — and is still unanswered when the row paints.
         val relaunchMark = proxy.size()
-        proxy.holdAll()
+        proxy.hold { it.endpoint !in EPOCH_READS }
         closeProcessReader()
         compose.activityRule.scenario.recreate()
         ui.openLibrary()
         await("every home row to paint") { HOME.all { frames(it).isNotEmpty() } }
+        await("each row's own read to be issued, and held") {
+            val held = proxy.since(relaunchMark).filter { !it.answered }
+            ROW_READS.all { (endpoint, type) -> held.any { it.endpoint == endpoint && it.parameters["type"] == type } }
+        }
         HOME.forEachIndexed { index, key ->
             val first = frames(key).first()
             assertIs<AndroidLibraryFreshness.Cached>(first.freshness, "$key's first publication after relaunch")
             assertEquals(liveCounts[index], first.itemCount, "$key painted what was last seen")
             assertTrue(frames(key).none { it.freshness == AndroidLibraryFreshness.Loading }, "$key published no loading state")
         }
-        assertEquals(0, proxy.since(relaunchMark).count { it.answered }, "the paint used no answer from the server")
-        assertTrue(readerRequests(relaunchMark).isNotEmpty(), "control: the relaunched reader did ask the server (and was held)")
+        assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in EPOCH_READS },
+            "the paint used no content answer from the server")
         compose.onNodeWithTag("library.home.0.item.0").assertExists()
         compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
         openHomeAlbum(OPENED_ALBUM)
@@ -107,10 +116,29 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertIs<AndroidLibraryFreshness.Cached>(album.freshness)
         assertEquals(AndroidLibraryItemsState.Present, album.itemsState)
         assertEquals(tracks, album.itemCount)
-        assertEquals(0, proxy.since(relaunchMark).count { it.answered }, "the album painted with no answer either")
+        assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in EPOCH_READS },
+            "the album painted with no content answer either")
         ui.backFromAlbum()
+
+        // Online, an album seen only in a grid paints its cached header at once, with its track list
+        // loading — never a whole-screen spinner — while its own read is held.
+        val gridOnly = server.albumId(GRID_ONLY_ALBUM)
+        openHomeAlbum(GRID_ONLY_ALBUM)
+        await("the grid-only album to paint") { frames("album:$gridOnly").isNotEmpty() }
+        val header = frames("album:$gridOnly").first()
+        assertIs<AndroidLibraryFreshness.Cached>(header.freshness, "a grid-only album's first publication is its cached header")
+        assertEquals(gridOnly, header.headerRawId)
+        assertEquals(AndroidLibraryItemsState.Loading, header.itemsState, "its track list says it is loading")
+        await("its own read to be issued, and held") {
+            proxy.since(relaunchMark).any { it.endpoint == "getAlbum" && it.parameters["id"] == gridOnly && !it.answered }
+        }
+        ui.backFromAlbum()
+        awaitQuiet(held = true)
+        val heldOrder = readerRequests(relaunchMark).map { it.endpoint }
         proxy.release()
         awaitHomeLive()
+        awaitQuiet()
+        val relaunchOrder = readerRequests(relaunchMark).map { it.endpoint }
 
         // Offline, an album this device never opened says so — no spinner, and nothing is asked.
         environment.network.lose()
@@ -121,19 +149,31 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         openHomeAlbum(NEVER_OPENED_ALBUM)
         await("the never-opened album to publish") { frames("album:$neverOpened").isNotEmpty() }
         val offline = frames("album:$neverOpened")
-        assertTrue(offline.none { it.freshness == AndroidLibraryFreshness.Loading }, "no loading state offline")
+        assertTrue(offline.none { it.freshness == AndroidLibraryFreshness.Loading || it.itemsState == AndroidLibraryItemsState.Loading },
+            "no loading state offline, for the screen or its track list")
         val final = offline.last()
-        assertTrue(
-            final.freshness == AndroidLibraryFreshness.Unavailable(AndroidLibraryUnavailableReason.NotCachedOffline) ||
-                final.itemsState == AndroidLibraryItemsState.Unavailable,
-            "a never-opened album offline is unavailable, was $final",
-        )
-        compose.onAllNodes(hasText(UNAVAILABLE_ALBUM_COPY)).onFirst().assertExists()
-        assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "nothing is requested offline")
+        // Seen in a grid, so its header is cached; its track list was never read.
+        assertTrue((final.freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Offline,
+            "the cached header says offline, was ${final.freshness}")
+        assertEquals(AndroidLibraryItemsState.Unavailable, final.itemsState)
+        assertEquals(AndroidLibraryUnavailableReason.NotCachedOffline, final.itemsUnavailableReason,
+            "the track list is unavailable because it was never opened and the device is offline")
+        compose.onNodeWithTag("album.tracks.unavailable").assertTextEquals(UNAVAILABLE_ALBUM_COPY)
+
+        // An opened album's tracks are listed offline, and a tap on one that cannot play says why
+        // rather than doing nothing (§16.14).
+        ui.backFromAlbum()
+        openHomeAlbum(OPENED_ALBUM)
+        await("the opened album offline, with its tracks") {
+            last("album:$opened").let { it.freshness.isOfflineCached() && it.itemsState == AndroidLibraryItemsState.Present }
+        }
+        compose.onNodeWithTag("album.track.0").performClick()
+        compose.onNodeWithTag("album.note").assertTextEquals(PLAYS_ON_RECONNECT_COPY)
+        assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "the reader requests nothing offline")
         assertNoCredentialLeak()
         println("CONF-76 OBSERVED $platform relaunch-first-publication=cached rows=${liveCounts} album-tracks=$tracks " +
             "answered-before-paint=0 offline-never-opened=${final.freshness::class.simpleName}/${final.itemsState} " +
-            "offline-requests=0 cover-art=${coverArt()}")
+            "offline-requests=0 cover-art=${coverArt()} first-launch-order=$firstLaunchOrder relaunch-held-order=$heldOrder relaunch-order=$relaunchOrder")
     }
 
     // ---- CONF-77 ----------------------------------------------------------------------------------
@@ -171,7 +211,21 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals(VISIBLE_HOME_READS, names.drop(3).sorted(), "then the visible screen, and nothing else: $names")
         assertEquals(setOf("newest", "recent", "frequent"),
             sent.filter { it.endpoint == "getAlbumList2" }.mapNotNull { it.parameters["type"] }.toSet())
-        assertTrue(server.albumStarred(album), "the flushed change reached the server")
+        assertTrue(server.albumStarred(album),
+            "the flushed change reached the server: sent=$sent outcomes=${observed().changeOutcomes}")
+
+        // A reconnect that reaches the server but cannot read the epoch is not "offline": the
+        // connection line says why, with "Try again", and trying again is the way back.
+        environment.network.lose()
+        await("offline again") { observed().connections.last() is LibraryConnectionState.Offline }
+        proxy.fail { it.endpoint == "getScanStatus" }
+        environment.network.restore()
+        await("the reconnect to fail") { observed().connections.last() is LibraryConnectionState.Failed }
+        compose.onNodeWithTag("library.connection").assertTextContains("Couldn't connect to your server — ", substring = true)
+        proxy.fail(null)
+        compose.onNodeWithTag("library.connection.retry").performClick()
+        await("trying again to reconnect") { observed().connections.last() is LibraryConnectionState.Online }
+        assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         assertNoCredentialLeak()
         println("CONF-77 OBSERVED $platform reconnect requests=${names.size} flush=1 epoch=2 revalidated=4 " +
             "downloaded-recheck=0 (no downloads in this phase) other=0 order=$names cover-art=${coverArt(mark)}")
@@ -199,7 +253,51 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             "the epoch read and the visible screen, nothing else: $names")
         assertNoCredentialLeak()
         println("CONF-77 OBSERVED $platform foreground-return background-requests=0 after-16min requests=${names.size} " +
-            "epoch=2 revalidated=4 order=$names")
+            "epoch=2 revalidated=4 order=$names cover-art=${coverArt(mark)}")
+    }
+
+    /**
+     * The core's in-foreground epoch cadence (§16.11 policy 1) runs while the app is in the foreground
+     * with a library screen open, reads only the epoch while it is unchanged, and stops in the
+     * background. The cadence runs on the reader's own thread in real time, so this test gives the
+     * process's next reader a short interval and waits in real time.
+     */
+    fun conf77EpochCadenceRunsInTheForegroundOnly() {
+        AndroidLibraryReader.testEpochIntervalMillis = CADENCE_MILLIS
+        try {
+            closeProcessReader()
+            compose.activityRule.scenario.recreate()
+            ui.openLibrary()
+            awaitHomeLive()
+            val foregroundMark = proxy.size()
+            idleRealTime(CADENCE_MILLIS * 6)
+            val ticks = readerRequests(foregroundMark).map { it.endpoint }
+            assertTrue(ticks.count { it == "getScanStatus" } >= 3, "control: the cadence ran in the foreground: $ticks")
+            assertEquals(setOf("getScanStatus", "getMusicFolders"), ticks.toSet(),
+                "an unchanged epoch revalidates nothing: $ticks")
+
+            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+            awaitQuiet(composed = false)
+            val backgroundMark = proxy.size()
+            idleRealTime(CADENCE_MILLIS * 6)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMinutes(16))
+            assertEquals(emptyList(), readerRequests(backgroundMark).map { it.endpoint }, "the cadence stops in the background")
+            assertNoCredentialLeak()
+            println("CONF-77 OBSERVED $platform cadence interval-ms=$CADENCE_MILLIS foreground-epoch-reads=" +
+                "${ticks.count { it == "getScanStatus" }} foreground-other=0 background-requests=0 " +
+                "cover-art=${coverArt(foregroundMark)}")
+        } finally {
+            AndroidLibraryReader.testEpochIntervalMillis = null
+        }
+    }
+
+    /** Real time passing with the main looper serviced, for work on the reader's own thread. */
+    private fun idleRealTime(millis: Long) {
+        val started = kotlin.time.TimeSource.Monotonic.markNow()
+        while (started.elapsedNow().inWholeMilliseconds < millis) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(20)
+        }
     }
 
     // ---- CONF-79 ----------------------------------------------------------------------------------
@@ -248,7 +346,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(counts.albums > 0 && counts.tracks > 0, "control: the device has seen albums and tracks")
         compose.onNodeWithTag("search.scope").assertTextEquals(
             "Searching what's available offline — ${counts.albums} albums and ${counts.tracks} tracks on this device")
-        assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "an offline search asks nothing")
+        assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "an offline search asks the reader's server nothing")
         assertNoCredentialLeak()
         println("CONF-79 OBSERVED $platform scopes=serverAndDevice,deviceWhileServerPending,deviceServerFailed,deviceOffline " +
             "offline-counts=${counts.artists}/${counts.albums}/${counts.tracks} offline-requests=0 offline-cover-art=${coverArt(mark)}")
@@ -257,6 +355,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     // ---- CONF-84 ----------------------------------------------------------------------------------
 
     fun conf84StarShowsWithTheTapSurvivesARevalidationAndAdoptsTheEcho() {
+        val started = kotlin.time.TimeSource.Monotonic.markNow()
         ui.openLibrary()
         awaitHomeLive()
         val album = server.albumId(OPENED_ALBUM)
@@ -279,16 +378,23 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals(0, proxy.answered("star"), "the send was still held")
         assertTrue(frames("album:$album").drop(before).all { it.favourite == true }, "no publication after the tap dropped the star")
 
-        // The send completes; the server's echo is adopted and nothing is left pending.
+        // The send completes. Its acknowledgement is the echo (§16.20): the sent value is written into
+        // the cache and the pending change is removed, so the star stays with no read in between.
+        val readsBeforeSend = proxy.answered("getAlbum")
         proxy.release()
         await("the change to be saved") { observed().changeOutcomes.any { it is AndroidLibraryChangeOutcome.Saved && it.target.rawId == album } }
+        awaitQuiet()
+        assertEquals(readsBeforeSend, proxy.answered("getAlbum"), "setup: no read has landed since the send")
         assertTrue(server.albumStarred(album))
+        assertEquals(1, databaseLong("SELECT starred FROM cache_album WHERE raw_id = ?", album), "the acknowledgement was adopted into the cache")
+        assertEquals(0, databaseLong("SELECT count(*) FROM mutation_outbox"), "nothing is pending")
+        assertEquals(true, last("album:$album").favourite, "the star stands on the adopted value alone")
+        assertTrue(frames("album:$album").drop(before).all { it.favourite == true }, "no publication since the tap dropped the star")
+        // And a later read agrees with it.
         val echoed = proxy.answered("getAlbum")
         compose.onNodeWithTag("album.refresh").performClick()
         await("the echo read") { proxy.answered("getAlbum") > echoed && last("album:$album").freshness == AndroidLibraryFreshness.Live }
         assertEquals(true, last("album:$album").favourite)
-        assertEquals(1, databaseLong("SELECT starred FROM cache_album WHERE raw_id = ?", album), "the cache holds the server's value")
-        assertEquals(0, databaseLong("SELECT count(*) FROM mutation_outbox"), "nothing is pending")
 
         // And back, through the app.
         compose.onNodeWithTag("album.favourite").performClick()
@@ -297,9 +403,27 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target.rawId == album } >= 2
         }
         assertEquals(false, server.albumStarred(album))
+
+        // Compaction: three taps while offline are one change, and one send when back.
+        environment.network.lose()
+        await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
+        repeat(3) { compose.onNodeWithTag("album.favourite").performClick(); compose.waitForIdle() }
+        await("the last tap to show") { last("album:$album").favourite == true }
+        assertEquals(1, databaseLong("SELECT count(*) FROM mutation_outbox"), "three taps are one pending change")
+        val compactMark = proxy.size()
+        val savedBefore = observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target.rawId == album }
+        environment.network.restore()
+        await("the compacted change saved") {
+            observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target.rawId == album } > savedBefore
+        }
+        awaitQuiet()
+        val sends = readerRequests(compactMark).map { it.endpoint }.filter { it == "star" || it == "unstar" }
+        assertEquals(listOf("star"), sends, "only the last value is sent")
+        assertTrue(server.albumStarred(album))
         assertNoCredentialLeak()
         println("CONF-84 OBSERVED $platform same-publication-as-tap=true survived-revalidation-before-send=true " +
-            "echo-adopted=true outbox-after=0")
+            "echo-adopted-without-a-read=true outbox-after=0 compacted-3-taps-to=$sends " +
+            "body-ms=${started.elapsedNow().inWholeMilliseconds} cover-art=${coverArt()}")
     }
 
     // ---- CONF-86 ----------------------------------------------------------------------------------
@@ -328,7 +452,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         proxy.fail(null)
         assertNoCredentialLeak()
         println("CONF-86 OBSERVED $platform rows-live-before-held-row=0,1 failed-row=3 other-rows-live=true " +
-            "row-sequences=${HOME.map { frames(it).size }}")
+            "row-sequences=${HOME.map { frames(it).size }} cover-art=${coverArt()}")
     }
 
     // ---- Instruments ------------------------------------------------------------------------------
@@ -370,14 +494,17 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         HOME.all { frames(it).lastOrNull()?.freshness == AndroidLibraryFreshness.Live }
     }
 
-    /** Nothing in flight, and nothing new for a while: counts taken after this are complete. */
-    private fun awaitQuiet(composed: Boolean = true) {
+    /**
+     * Nothing in flight, and nothing new for 20 polls: counts taken after this are complete. With
+     * [held], requests the proxy is holding may stay open.
+     */
+    private fun awaitQuiet(composed: Boolean = true, held: Boolean = false) {
         var stable = 0
         var size = -1
         repeat(2_000) {
             if (composed) compose.waitForIdle() else shadowOf(Looper.getMainLooper()).idle()
             val now = proxy.size()
-            if (proxy.inFlight() == 0 && now == size) stable++ else stable = 0
+            if ((held || proxy.inFlight() == 0) && now == size) stable++ else stable = 0
             size = now
             if (stable >= 20) return
             Thread.sleep(25)
@@ -423,9 +550,17 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     private companion object {
         val HOME = listOf("home.0", "home.1", "home.2", "home.3")
         val VISIBLE_HOME_READS = listOf("getAlbumList2", "getAlbumList2", "getAlbumList2", "getStarred2")
+        val EPOCH_READS = setOf("getScanStatus", "getMusicFolders")
+        /** Each home row's own read: the endpoint and, for an album list, its type. */
+        val ROW_READS = listOf("getAlbumList2" to "newest", "getAlbumList2" to "recent", "getAlbumList2" to "frequent",
+            "getStarred2" to null)
         const val OPENED_ALBUM = "Double Lines"
         const val NEVER_OPENED_ALBUM = "Threshold Boundary"
+        /** Seen in the home row, never opened, and never read by CONF-76's offline leg. */
+        const val GRID_ONLY_ALBUM = "Paging Atlas"
+        const val CADENCE_MILLIS = 400L
         const val UNAVAILABLE_ALBUM_COPY = "You haven't opened this album on this device. Connect to your server to see it."
+        const val PLAYS_ON_RECONNECT_COPY = "Not downloaded. It'll play when you reconnect."
         const val WAIT_MILLIS = 60_000L
     }
 }

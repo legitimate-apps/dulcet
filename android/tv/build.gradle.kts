@@ -74,6 +74,7 @@ tasks.withType<Test>().configureEach {
     if (productionSearchConformance) {
         filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
         outputs.upToDateWhen { false }
+        usesService(gradle.sharedServices.registrations.getByName("disposableServerAccount").service)
     } else {
         filter { excludeTestsMatching("*ProductionSearchAppConformanceTest"); excludeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
     }

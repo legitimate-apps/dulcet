@@ -52,22 +52,18 @@ public data class SearchUiState(
     val scope: AndroidLibrarySearchScope? = null,
     /** The query [rows] answer. */
     val answered: String = "",
+    /** The core's word that the server's answer to [answered] is still coming. */
+    val serverPending: Boolean = false,
 ) {
     val results: List<SearchResultItem> get() = rows.map { it.item }
 
-    /** The server's answer is still coming for a query long enough to ask it. */
-    val isLoading: Boolean
-        get() = scope == AndroidLibrarySearchScope.DeviceWhileServerPending && query.trim().length >= MINIMUM_SERVER_QUERY_LENGTH
+    /** The server's answer is still coming; the core decides, including for a query too short to send. */
+    val isLoading: Boolean get() = serverPending
 
     val error: DomainError? get() = (scope as? AndroidLibrarySearchScope.DeviceServerFailed)?.error
 
     override fun toString(): String =
         "SearchUiState(query=<redacted>, results=${rows.size}, scope=${scope?.let { it::class.simpleName }})"
-
-    private companion object {
-        /** The core asks the server from two characters (§18.1); this only decides the indicator. */
-        const val MINIMUM_SERVER_QUERY_LENGTH = 2
-    }
 }
 
 /** A search screen's state, for tests: rows carry catalog ids and titles, never account data. */
@@ -100,7 +96,10 @@ public class SearchPresenter(
 
     private val handle: SearchSourceHandle = source.open { publication ->
         if (!closed) {
-            mutableState.update { it.copy(rows = publication.rows, scope = publication.scope, answered = publication.query) }
+            mutableState.update {
+                it.copy(rows = publication.rows, scope = publication.scope, answered = publication.query,
+                    serverPending = publication.serverPending)
+            }
         }
     }
 

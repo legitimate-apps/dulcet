@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.core
 
 import android.content.Context
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
@@ -11,11 +13,16 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The Android composition root of the reader (spec §16.18, the Android paragraph): one
@@ -25,7 +32,9 @@ import kotlinx.coroutines.launch
  * **One per account, per process.** [forAccount] returns the process's reader for an account and
  * creates it the first time; the phone's library and search tabs and the TV's screens therefore
  * share one seen-cache, one reachability model and one favourites overlay. v1 has one active account
- * (CORPUS §5a item 6): asking for a different account closes the previous one.
+ * (CORPUS §5a item 6): asking for a different account closes the previous one, and the new one opens
+ * the database only once the previous one's thread has stopped. A reader whose setup failed is
+ * replaced at the next request rather than kept for the life of the process.
  *
  * **Threading, in both directions.** The reader is confined to one dedicated thread
  * ([newLibraryReaderDispatcher]) and checks it at every entry point, so this class builds the session
@@ -56,17 +65,24 @@ public class AndroidLibraryReader internal constructor(
     private val compose: (CoroutineScope) -> AndroidLibraryReaderComposition,
     private val readerDispatcher: CloseableCoroutineDispatcher,
     mainDispatcher: CoroutineDispatcher,
+    /** The previous account's reader, still closing: this one composes only once its thread has stopped. */
+    predecessor: AndroidLibraryReader? = null,
 ) {
     private val closed = AtomicBoolean(false)
 
     /** Read at every delivery, on the main thread. */
     internal val isClosed: Boolean get() = closed.get()
 
-    /** Anything that reached a scope's last-resort handler instead of a publication; for tests. */
-    internal val uncaughtFailures: MutableList<Throwable> = java.util.Collections.synchronizedList(mutableListOf())
+    /** Set once, on the reader's thread, when building the session threw. */
+    private val compositionFailed = AtomicBoolean(false)
+
+    /** The latest failures that reached a last-resort handler instead of a publication, bounded; for tests. */
+    internal val uncaughtFailures: BoundedFailures = BoundedFailures()
+
+    private val readerJob = SupervisorJob()
 
     private val readerScope = CoroutineScope(
-        SupervisorJob() + readerDispatcher + CoroutineExceptionHandler { _, failure -> uncaughtFailures += failure },
+        readerJob + readerDispatcher + CoroutineExceptionHandler { _, failure -> uncaughtFailures += failure },
     )
 
     /** A supervisor, so one listener's failure never stops another's deliveries (CONF-86). */
@@ -83,13 +99,21 @@ public class AndroidLibraryReader internal constructor(
 
     init {
         onReader {
+            if (predecessor != null) {
+                // The previous reader may still be writing to the same database file. Blocking here
+                // is deliberate: every call made meanwhile queues behind this one, on this thread, so
+                // none can run against a session that does not exist yet. Bounded, so a wedged
+                // predecessor cannot keep this reader from ever opening.
+                runBlocking { withTimeoutOrNull(PREDECESSOR_WAIT_MILLIS) { predecessor.awaitTermination() } }
+            }
             composition = try {
                 compose(readerScope).also { built -> built.session.favourites.addOutcomeListener(::fanOutOutcome) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
-                // Every entry point answers a missing session with a closed failure; the throwable's
-                // text is dropped here, because it may carry the address or credentials.
+                // Every entry point answers a missing session with a failure; the throwable's text is
+                // dropped here, because it may carry the address or credentials.
+                compositionFailed.set(true)
                 null
             }
         }
@@ -103,7 +127,9 @@ public class AndroidLibraryReader internal constructor(
      */
     public fun openWindow(query: AndroidLibraryQuery, listener: (AndroidLibraryPublication) -> Unit): AndroidLibraryWindow {
         val window = AndroidLibraryWindow(this, listener)
-        if (!onReader { window.open(composition) { reader, publish -> reader.open(query.toCore(), publish) } }) window.emitClosed()
+        onReader(onDropped = window::emitClosed) {
+            window.open(composition) { reader, publish -> reader.open(query.toCore(), publish) }
+        }
         return window
     }
 
@@ -113,14 +139,13 @@ public class AndroidLibraryReader internal constructor(
      */
     public fun openHomeRow(row: AndroidLibraryHomeRow, listener: (AndroidLibraryPublication) -> Unit): AndroidLibraryWindow {
         val window = AndroidLibraryWindow(this, listener)
-        val opened = onReader {
+        onReader(onDropped = window::emitClosed) {
             window.open(composition) { reader, publish ->
                 val home = reader.openHome(listOf(row.toCore())) { _, publication -> publish(publication) }
                 window.home = home
                 home.row(0)
             }
         }
-        if (!opened) window.emitClosed()
         return window
     }
 
@@ -129,7 +154,7 @@ public class AndroidLibraryReader internal constructor(
     /** Search as you type over what this device has seen and the server (§16.15, §18.1). */
     public fun openSearch(listener: (AndroidLibrarySearchPublication) -> Unit): AndroidLibrarySearch {
         val search = AndroidLibrarySearch(this, listener)
-        if (!onReader { search.open(composition) }) search.emitClosed()
+        onReader(onDropped = search::emitClosed) { search.open(composition) }
         return search
     }
 
@@ -169,7 +194,7 @@ public class AndroidLibraryReader internal constructor(
         fun finish(count: Long?) {
             if (delivered.compareAndSet(false, true)) onMain(checkClosed = false) { completion(count) }
         }
-        val queued = onReader {
+        onReader(onDropped = { finish(null) }) {
             val count = try {
                 composition?.session?.favourites?.pendingCount()
             } catch (cancelled: CancellationException) {
@@ -180,7 +205,47 @@ public class AndroidLibraryReader internal constructor(
             }
             finish(count)
         }
-        if (!queued) finish(null)
+    }
+
+    /**
+     * What this device has seen of these tracks, read from the seen-cache alone: no request is
+     * issued, whatever the reachability. A track never seen, seen only as an identity with no title,
+     * or known to be gone from the server is left out. Completes once, on the main thread. Restored Up Next rows take their titles
+     * from it, as they did from the whole-library mirror.
+     */
+    public fun seenTracks(rawIds: List<String>, completion: (List<AndroidTrack>) -> Unit) {
+        val delivered = AtomicBoolean(false)
+        fun finish(tracks: List<AndroidTrack>) {
+            if (delivered.compareAndSet(false, true)) onMain(checkClosed = false) { completion(tracks) }
+        }
+        onReader(onDropped = { finish(emptyList()) }) {
+            val provider = account?.providerInstanceId
+            val cache = composition?.session?.reader?.cache
+            val tracks = try {
+                if (provider == null || cache == null) {
+                    emptyList()
+                } else {
+                    rawIds.filter { it.isNotBlank() }.distinct().mapNotNull { rawId ->
+                        val record = cache.track(rawId)?.takeIf { !it.row.gone }?.record ?: return@mapNotNull null
+                        AndroidTrack(
+                            providerInstanceId = provider,
+                            rawId = rawId,
+                            title = record.title,
+                            artist = record.credits.firstOrNull()?.name,
+                            album = record.albumTitle,
+                            durationMilliseconds = record.durationMilliseconds,
+                            artworkKey = record.artworkKey,
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                finish(emptyList())
+                throw cancelled
+            } catch (_: Throwable) {
+                emptyList()
+            }
+            finish(tracks)
+        }
     }
 
     // ---- Connection lifecycle ------------------------------------------------------------------------------
@@ -196,7 +261,7 @@ public class AndroidLibraryReader internal constructor(
         fun finish(connection: AndroidLibraryConnection) {
             if (delivered.compareAndSet(false, true)) onMain(checkClosed = false) { completion(connection) }
         }
-        val queued = onReader {
+        onReader(onDropped = { finish(closedConnection()) }) {
             val session = composition?.session
             if (session == null) {
                 finish(internalFailureConnection())
@@ -214,7 +279,6 @@ public class AndroidLibraryReader internal constructor(
                 finish(session.connection(outcome))
             }.invokeOnCompletion { cause -> if (cause != null) finish(closedConnection()) }
         }
-        if (!queued) finish(closedConnection())
     }
 
     /**
@@ -237,10 +301,11 @@ public class AndroidLibraryReader internal constructor(
     }
 
     /**
-     * Closes every window and search, cancels every read, releases the database and transport and
-     * stops the reader's thread; [completion] runs on the main thread once that thread has stopped,
-     * so nothing reads or writes the database again (§14.7 step 6 waits for it). Idempotent; a second
-     * close's completion waits for the same moment. Nothing is delivered after this returns.
+     * Closes every window and search, cancels every read and waits for it to finish unwinding,
+     * releases the database and transport, and stops the reader's thread. [completion] runs on the
+     * main thread once no task can run on that thread again, so nothing reads or writes the database
+     * after it (§14.7 step 6 waits for it). Idempotent; a second close's completion waits for the same
+     * moment. Nothing is delivered to a listener after this returns.
      */
     public fun close(completion: () -> Unit = {}) {
         forget(this)
@@ -257,34 +322,57 @@ public class AndroidLibraryReader internal constructor(
                     } catch (_: Throwable) {
                         // Closing is best effort and exports nothing.
                     }
-                    // Every read is cancelled BEFORE the database and transport are released, so no
-                    // coroutine resumes into a closed store.
-                    readerScope.cancel()
+                    // Cancellation is cooperative: a cancelled read resumes later, to unwind. So every
+                    // other coroutine of this reader is cancelled and then WAITED FOR, here on the
+                    // reader's thread, before the database and transport are released; otherwise its
+                    // cleanup would run against a released store. The wait is bounded: a read that
+                    // ignores cancellation for longer is released under.
+                    val self = coroutineContext[Job]
+                    val others = readerJob.children.filter { it !== self }.toList()
+                    others.forEach { it.cancel() }
+                    withTimeoutOrNull(CLOSE_DRAIN_MILLIS) { others.joinAll() }
                     try {
                         closing?.release?.invoke()
                     } catch (_: Throwable) {
                     }
-                }.invokeOnCompletion { stopReaderThread() }
+                }.invokeOnCompletion {
+                    readerScope.cancel()
+                    stopReaderThread()
+                }
             } catch (_: Throwable) {
+                readerScope.cancel()
                 stopReaderThread()
             }
         }
         terminated.invokeOnCompletion { onMain(checkClosed = false) { completion() } }
     }
 
-    /** Completes once the reader's thread has stopped; for tests. */
+    /** Completes once no task can run on the reader's thread again. */
     internal suspend fun awaitTermination() = terminated.await()
+
+    /** Whether [awaitTermination] would return at once; for tests. */
+    internal val hasTerminated: Boolean get() = terminated.isCompleted
 
     // ---- Internals ------------------------------------------------------------------------------------------
 
-    /** Runs [block] on the reader's thread, after every call made before it; false once closed. */
-    internal fun onReader(block: () -> Unit): Boolean {
-        if (closed.get()) return false
-        return try {
-            readerScope.launch { block() }
-            true
+    /**
+     * Runs [block] on the reader's thread, after every call made before it. If it never runs — the
+     * reader is closed, or a close cancels it before its turn — [onDropped] runs instead, once, so a
+     * caller waiting on it always hears back.
+     */
+    internal fun onReader(onDropped: () -> Unit = {}, block: () -> Unit) {
+        if (closed.get()) {
+            onDropped()
+            return
+        }
+        val ran = AtomicBoolean(false)
+        try {
+            readerScope.launch {
+                ran.set(true)
+                block()
+            }.invokeOnCompletion { cause -> if (cause != null && !ran.get()) onDropped() }
         } catch (_: Throwable) {
-            false
+            if (!ran.get()) onDropped()
         }
     }
 
@@ -344,9 +432,9 @@ public class AndroidLibraryReader internal constructor(
         field: MutationField,
         apply: (LibraryFavourites, LibraryEntityRef) -> Unit,
     ): Boolean {
-        if (target.rawId.isBlank()) return false
+        if (target.rawId.isBlank() || closed.get()) return false
         val ref = LibraryEntityRef(target.kind.toCore(), target.rawId)
-        return onReader {
+        onReader {
             val favourites = composition?.session?.favourites
             if (favourites == null) {
                 fanOutOutcome(MutationOutcome.NotRecorded(ref, field))
@@ -362,14 +450,20 @@ public class AndroidLibraryReader internal constructor(
                 fanOutOutcome(MutationOutcome.NotRecorded(ref, field))
             }
         }
+        return true
     }
 
     private fun stopReaderThread() {
-        // Never on the reader's own thread: closing the dispatcher waits for that thread to finish.
+        // Never on the reader's own thread, which is the one being waited for.
         try {
-            GlobalScope.launch(Dispatchers.Default) {
+            GlobalScope.launch(Dispatchers.IO) {
                 try {
                     readerDispatcher.close()
+                    // On the JVM, closing the dispatcher only SHUTS its executor down: work already
+                    // queued still runs, and close returns at once. No task runs on the reader's
+                    // thread again only once the executor has terminated.
+                    ((readerDispatcher as? ExecutorCoroutineDispatcher)?.executor as? ExecutorService)
+                        ?.awaitTermination(THREAD_STOP_WAIT_SECONDS, TimeUnit.SECONDS)
                 } catch (_: Throwable) {
                 }
                 terminated.complete(Unit)
@@ -380,6 +474,18 @@ public class AndroidLibraryReader internal constructor(
     }
 
     public companion object {
+        /**
+         * For tests only, and null in the app: the in-foreground epoch cadence (§16.11 policy 1) of the
+         * next reader [forAccount] creates, so a test can observe the cadence run and stop in seconds.
+         */
+        @Volatile
+        @JvmStatic
+        public var testEpochIntervalMillis: Long? = null
+
+        private const val PREDECESSOR_WAIT_MILLIS = 30_000L
+        private const val CLOSE_DRAIN_MILLIS = 10_000L
+        private const val THREAD_STOP_WAIT_SECONDS = 30L
+
         private val lock = Any()
         private var current: AndroidLibraryReader? = null
 
@@ -391,17 +497,34 @@ public class AndroidLibraryReader internal constructor(
         @JvmStatic
         public fun forAccount(context: Context, account: AndroidLibraryReaderAccount): AndroidLibraryReader {
             val application = context.applicationContext
+            val epochInterval = testEpochIntervalMillis
+            return obtain(account) { previous ->
+                AndroidLibraryReader(
+                    account,
+                    productionComposer(application, account, epochInterval),
+                    newLibraryReaderDispatcher(),
+                    Dispatchers.Main,
+                    predecessor = previous,
+                )
+            }
+        }
+
+        /**
+         * The process's reader for [account], or a new one from [build], which receives the reader it
+         * replaces (closed here) so it can wait for that reader's thread to stop. A reader whose setup
+         * failed is replaced too, rather than answering every screen with a failure until the process
+         * dies.
+         */
+        internal fun obtain(
+            account: AndroidLibraryReaderAccount,
+            build: (previous: AndroidLibraryReader?) -> AndroidLibraryReader,
+        ): AndroidLibraryReader {
             val previous: AndroidLibraryReader?
             val reader: AndroidLibraryReader
             synchronized(lock) {
-                current?.takeIf { it.account == account && !it.isClosed }?.let { return it }
+                current?.takeIf { it.account == account && !it.isClosed && !it.compositionFailed.get() }?.let { return it }
                 previous = current
-                reader = AndroidLibraryReader(
-                    account,
-                    productionComposer(application, account),
-                    newLibraryReaderDispatcher(),
-                    Dispatchers.Main,
-                )
+                reader = build(previous)
                 current = reader
             }
             previous?.close()
@@ -480,6 +603,7 @@ private fun closedConnection() = AndroidLibraryConnection(false, false, 0, null,
 private fun productionComposer(
     context: Context,
     account: AndroidLibraryReaderAccount,
+    epochIntervalMillis: Long?,
 ): (CoroutineScope) -> AndroidLibraryReaderComposition = { scope ->
     var store: DulcetDatabaseStore? = null
     var transport: KtorLibraryEndpointTransport? = null
@@ -502,7 +626,10 @@ private fun productionComposer(
         AndroidLibraryReaderComposition(
             // No download source: downloads join the reader in phase R4, so nothing is published as
             // `downloaded` yet, and Android TV must be given none then either.
-            session = LibraryReaderSession(opened.database, cache, live, scope),
+            session = LibraryReaderSession(
+                opened.database, cache, live, scope,
+                epochIntervalMillis?.let { LibraryReaderConfig(epochIntervalMillis = it) } ?: LibraryReaderConfig(),
+            ),
             release = {
                 live.close()
                 opened.close()
@@ -578,7 +705,7 @@ public class AndroidLibraryWindow internal constructor(
 
     public fun close() {
         if (listener.getAndSet(null) == null) return
-        owner.onReader(::closeOnReader)
+        owner.onReader(block = ::closeOnReader)
     }
 
     internal fun open(
@@ -701,6 +828,7 @@ public class AndroidLibrarySearch internal constructor(
 
     // Reader-thread state.
     private var session: LibrarySearchSession? = null
+    private var minimumServerQueryLength = LibrarySearchConfig().minimumServerQueryLength
     private var sequence = 0
     private var emitted: AndroidLibrarySearchPublication? = null
 
@@ -715,7 +843,7 @@ public class AndroidLibrarySearch internal constructor(
 
     public fun close() {
         if (listener.getAndSet(null) == null) return
-        owner.onReader(::closeOnReader)
+        owner.onReader(block = ::closeOnReader)
     }
 
     internal fun open(composition: AndroidLibraryReaderComposition?) {
@@ -726,6 +854,7 @@ public class AndroidLibrarySearch internal constructor(
             return
         }
         try {
+            minimumServerQueryLength = composition.searchConfig.minimumServerQueryLength
             session = composition.session.openSearch(composition.searchConfig, ::publish)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -766,7 +895,7 @@ public class AndroidLibrarySearch internal constructor(
 
     private fun publish(publication: LibrarySearchPublication) {
         val converted = try {
-            publication.toAndroid(sequence + 1)
+            publication.toAndroid(sequence + 1, minimumServerQueryLength)
         } catch (_: Throwable) {
             readerFailed()
         }
@@ -846,4 +975,18 @@ private fun AndroidLibraryPublication.indexNearest(key: String?, near: Int): Int
         if (best < 0 || kotlin.math.abs(index - near) < kotlin.math.abs(best - near)) best = index
     }
     return best.takeIf { it >= 0 }
+}
+
+/** The latest failures, at most [capacity]: enough to diagnose, never a leak in a long-lived process. */
+internal class BoundedFailures(private val capacity: Int = 32) {
+    private val failures = ArrayDeque<Throwable>()
+
+    operator fun plusAssign(failure: Throwable) {
+        synchronized(failures) {
+            if (failures.size == capacity) failures.removeFirst()
+            failures.addLast(failure)
+        }
+    }
+
+    fun toList(): List<Throwable> = synchronized(failures) { failures.toList() }
 }

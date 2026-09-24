@@ -41,10 +41,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -77,11 +79,13 @@ import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.LibrarySurface
+import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
+import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
 import com.legitimateapps.dulcet.library.freshnessLine
-import com.legitimateapps.dulcet.library.isOffline
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
 import com.legitimateapps.dulcet.library.orderLine
 import com.legitimateapps.dulcet.library.outcomeLine
@@ -130,6 +134,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
                 modifier = Modifier.testTag("library.view.${option.name.lowercase()}"),
             )
         }
+        ConnectionNotices(session, accountNotices = true)
         when (view) {
             LibraryView.Home -> HomeRows(account, session, actions)
             LibraryView.Albums -> AlbumsGrid(account, session, actions)
@@ -252,7 +257,11 @@ private fun ArtistsList(session: LibrarySession, actions: PhoneActions) {
     }
 }
 
-/** A list's freshness, coverage and order lines, or the statement shown instead of it. */
+/**
+ * A list's freshness, coverage and order lines, or the statement shown instead of it. A detail's
+ * list (an artist's albums) can be loading or unavailable under a cached header: that is said, never
+ * "Nothing here yet".
+ */
 @Composable
 private fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
     val resources = libraryResources()
@@ -260,11 +269,47 @@ private fun ListStatus(publication: AndroidLibraryPublication, tag: String, retr
         FreshnessLine(publication.freshness, tag, retry)
         resources.coverageLine(publication)?.let { StatementText(it, "$tag.coverage") }
         resources.orderLine(publication)?.let { StatementText(it, "$tag.order") }
-        when (val freshness = publication.freshness) {
-            is AndroidLibraryFreshness.Unavailable ->
+        val freshness = publication.freshness
+        when {
+            freshness is AndroidLibraryFreshness.Unavailable ->
                 StatementText(resources.unavailableLine(freshness.reason, LibrarySubject.List), "$tag.unavailable")
-            AndroidLibraryFreshness.Loading -> StatementText("…", "$tag.loading")
-            else -> if (publication.items.isEmpty()) StatementText(resources.getString(SharedR.string.library_empty_list), "$tag.empty")
+            freshness == AndroidLibraryFreshness.Loading || publication.itemsState == AndroidLibraryItemsState.Loading ->
+                StatementText("…", "$tag.loading")
+            publication.itemsState == AndroidLibraryItemsState.Unavailable -> StatementText(resources.unavailableLine(
+                publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List,
+            ), "$tag.unavailable")
+            publication.items.isEmpty() -> StatementText(resources.getString(SharedR.string.library_empty_list), "$tag.empty")
+        }
+    }
+}
+
+/**
+ * What is true of the connection rather than of one screen: why the last reconnect failed, with
+ * "Try again"; and, on the library's first screen only ([accountNotices]), the two account-level
+ * statements that are made once rather than on every list (§16.12, §16.10).
+ */
+@Composable
+private fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+    val connection by session.connection.collectAsState()
+    val discarded by session.discardedChanges.collectAsState()
+    val resources = libraryResources()
+    resources.connectionLine(connection)?.let { line ->
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(line, Modifier.weight(1f).testTag("library.connection"), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = session::retry, modifier = Modifier.testTag("library.connection.retry")) {
+                Text(resources.getString(SharedR.string.library_try_again))
+            }
+        }
+    }
+    if (!accountNotices) return
+    resources.noEpochLine(connection)?.let { StatementText(it, "library.noEpoch") }
+    resources.discardedChangesLine(discarded)?.let { line ->
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(line, Modifier.weight(1f).testTag("library.discarded"), style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = session::dismissDiscardedChanges) {
+                Text(resources.getString(SharedR.string.library_dismiss))
+            }
         }
     }
 }
@@ -283,7 +328,11 @@ internal fun AlbumScreen(
     val surface = rememberSurface(session, "album:$rawId") { openAlbum(rawId) }
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
-    val outcome by session.outcomes.collectAsState()
+    val latestOutcome by session.outcomes.collectAsState()
+    // Only an outcome about this album is said here, and it goes when the screen does.
+    val outcome = latestOutcome?.takeIf { it.target.rawId == rawId }
+    DisposableEffect(session, rawId) { onDispose { session.dismissOutcome(rawId) } }
+    var note by remember(rawId) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     LaunchedEffect(publication) { publication?.let(actions.rememberAlbum) }
     Column(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
@@ -300,6 +349,7 @@ internal fun AlbumScreen(
                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
             }
         })
+        ConnectionNotices(session, accountNotices = false)
         val current = publication ?: return@Column
         val album = current.header as? AndroidLibraryItem.Album
         val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
@@ -310,6 +360,7 @@ internal fun AlbumScreen(
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     FreshnessLine(current.freshness, "album", session::retry)
                     resources.outcomeLine(outcome)?.let { StatementText(it, "album.outcome") }
+                    note?.let { StatementText(it, "album.note") }
                     (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
                         StatementText(resources.unavailableLine(unavailable.reason, LibrarySubject.Album), "album.unavailable")
                     }
@@ -345,14 +396,15 @@ internal fun AlbumScreen(
                 // The header is cached; the track list was never read on this device (§16.14).
                 AndroidLibraryItemsState.Unavailable -> if (album != null) item {
                     StatementText(resources.unavailableLine(
-                        (current.freshness as? AndroidLibraryFreshness.Unavailable)?.reason
-                            ?: AndroidLibraryUnavailableReason.NotCachedOffline,
+                        current.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure,
                         LibrarySubject.Album,
                     ), "album.tracks.unavailable")
                 }
                 AndroidLibraryItemsState.Present -> itemsIndexed(current.items, key = { position, item -> item.rawId + "#" + position }) { position, item ->
                     if (item is AndroidLibraryItem.Track) {
-                        TrackRow(item, position + 1, item.rawId == playingRawId, Modifier.testTag("album.track.$position")) {
+                        TrackRow(item, position + 1, item.rawId == playingRawId, Modifier.testTag("album.track.$position"),
+                            onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) }) {
+                            note = null
                             actions.playAlbum(current, position, false)
                         }
                     }
@@ -382,13 +434,32 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
     val publication by surface.state.collectAsState()
     val current = publication
     val artist = current?.header as? AndroidLibraryItem.Artist
+    val resources = libraryResources()
+    // Playing an artist opens each album first; leaving the screen abandons that, so nothing starts
+    // playing after the person has gone, and a second tap while it runs does nothing.
+    var collecting by remember(rawId) { mutableStateOf<AutoCloseable?>(null) }
+    var note by remember(rawId) { mutableStateOf<String?>(null) }
+    DisposableEffect(rawId) { onDispose { collecting?.close() } }
+    fun play(publication: AndroidLibraryPublication, shuffle: Boolean) {
+        if (collecting != null) return
+        note = null
+        var finished = false
+        val handle = actions.playArtist(publication, shuffle) { played ->
+            finished = true
+            collecting = null
+            if (!played) note = resources.getString(SharedR.string.library_plays_on_reconnect)
+        }
+        if (!finished) collecting = handle
+    }
     Column(Modifier.fillMaxSize().testTag("artist.surface")) {
         TopAppBar(title = { Text(artist?.name.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             navigationIcon = {
                 IconButton(onClick = actions.back) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
             })
+        ConnectionNotices(session, accountNotices = false)
         if (current == null) return@Column
         val albums = current.items.filterIsInstance<AndroidLibraryItem.Album>()
+        val listed = current.itemsState == AndroidLibraryItemsState.Present
         LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("artist.albums"),
             contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -400,11 +471,14 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                         Spacer(Modifier.height(12.dp))
                         Text(artist.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center)
-                        Text(pluralStringResource(R.plurals.library_album_count, albums.size, albums.size),
+                        if (listed) Text(pluralStringResource(R.plurals.library_album_count, albums.size, albums.size),
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(16.dp))
-                        PlayShuffleButtons(onPlay = { actions.playArtist(current, false) }, onShuffle = { actions.playArtist(current, true) },
-                            enabled = albums.isNotEmpty() && !current.freshness.isOffline(), tagPrefix = "artist")
+                        // Whether anything can play is the tracks' playability, known once each album is
+                        // open; if nothing can, the tap says so.
+                        PlayShuffleButtons(onPlay = { play(current, false) }, onShuffle = { play(current, true) },
+                            enabled = listed && albums.isNotEmpty() && collecting == null, tagPrefix = "artist")
+                        note?.let { StatementText(it, "artist.note") }
                     }
                 }
             }
@@ -470,11 +544,19 @@ private fun ArtistRow(item: AndroidLibraryItem.Artist, modifier: Modifier, onCli
 }
 
 /**
- * One track. A track this device cannot play offline says so and does nothing when tapped — the
- * statement comes from the core's playability, never from a guess here.
+ * One track. A track this device cannot play offline says so in the row, and a tap on it says why it
+ * will not play ([onUnavailable]) instead of doing nothing (§16.14) — the statement comes from the
+ * core's playability, never from a guess here.
  */
 @Composable
-internal fun TrackRow(track: AndroidLibraryItem.Track, number: Int, playing: Boolean, modifier: Modifier, onClick: () -> Unit) {
+internal fun TrackRow(
+    track: AndroidLibraryItem.Track,
+    number: Int,
+    playing: Boolean,
+    modifier: Modifier,
+    onUnavailable: () -> Unit,
+    onClick: () -> Unit,
+) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
@@ -498,7 +580,7 @@ internal fun TrackRow(track: AndroidLibraryItem.Track, number: Int, playing: Boo
         trailingContent = track.durationMilliseconds?.let { duration ->
             { Text(formatDuration(duration), style = MaterialTheme.typography.bodySmall) }
         },
-        modifier = modifier.clickable(enabled = !unavailable, onClick = onClick),
+        modifier = modifier.clickable { if (unavailable) onUnavailable() else onClick() },
     )
 }
 

@@ -113,7 +113,8 @@ private class TvRankedMergedFixtureSearchSource : SearchSource {
 
         override fun updateQuery(text: String) {
             listener(AndroidLibrarySearchPublication(text, ++sequence, AndroidLibrarySearchScope.DeviceWhileServerPending,
-                device.map { AndroidLibrarySearchRow(it, AndroidLibrarySearchRowSource.Device, null, null, null) }))
+                device.map { AndroidLibrarySearchRow(it, AndroidLibrarySearchRowSource.Device, null, null, null) },
+                serverPending = true))
             val serverIds = server.map { it.id }.toSet()
             val merged = mergeSearchResults(device, server).map { item ->
                 val source = if (item.id in serverIds) AndroidLibrarySearchRowSource.Server else AndroidLibrarySearchRowSource.Device

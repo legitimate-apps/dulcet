@@ -9,7 +9,7 @@
     <string name="library_seen_with_reason">%1$s — %2$s</string>
     <string name="library_reason_offline">you\'re offline</string>
     <string name="library_reason_revalidating">checking your server</string>
-    <string name="library_reason_stale">your library has changed, updating</string>
+    <string name="library_reason_stale">your library has changed since</string>
     <string name="library_reason_internal">something went wrong on this device</string>
 
     <string name="library_error_unreachable">couldn\'t reach your server</string>
@@ -29,8 +29,28 @@
     <string name="library_unavailable_closed">This screen has closed.</string>
     <string name="library_empty_list">Nothing here yet.</string>
 
-    <string name="library_coverage_open_total">Showing %1$d of %2$d — the rest need a connection</string>
-    <string name="library_coverage_open">Showing %1$d — the rest need a connection</string>
+    <string name="library_coverage_open_total">Showing %1$s of %2$s — the rest need a connection</string>
+    <string name="library_coverage_open">Showing %1$s — the rest need a connection</string>
+    <plurals name="library_count_albums">
+        <item quantity="one">%1$s album</item>
+        <item quantity="other">%1$s albums</item>
+    </plurals>
+    <plurals name="library_count_artists">
+        <item quantity="one">%1$s artist</item>
+        <item quantity="other">%1$s artists</item>
+    </plurals>
+    <plurals name="library_count_tracks">
+        <item quantity="one">%1$s track</item>
+        <item quantity="other">%1$s tracks</item>
+    </plurals>
+    <plurals name="library_count_playlists">
+        <item quantity="one">%1$s playlist</item>
+        <item quantity="other">%1$s playlists</item>
+    </plurals>
+    <plurals name="library_count_items">
+        <item quantity="one">%1$s item</item>
+        <item quantity="other">%1$s items</item>
+    </plurals>
     <string name="library_coverage_scanning">Your server is updating its library — this list may change</string>
     <string name="library_coverage_changing">This list kept changing while it was read — it may be incomplete</string>
     <string name="library_local_view">Available offline</string>
@@ -38,6 +58,13 @@
     <string name="library_not_available_offline">Not available offline</string>
     <string name="library_plays_on_reconnect">Not downloaded. It\'ll play when you reconnect.</string>
     <string name="library_try_again">Try again</string>
+    <string name="library_dismiss">Dismiss</string>
+    <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>
+    <string name="library_no_epoch">Your server doesn\'t say when its library changes, so lists may be out of date until you refresh.</string>
+    <plurals name="library_discarded_changes">
+        <item quantity="one">%1$d favourite or rating wasn\'t sent and has been discarded: this device is now signed in as someone else.</item>
+        <item quantity="other">%1$d favourites or ratings weren\'t sent and have been discarded: this device is now signed in as someone else.</item>
+    </plurals>
 
     <string name="library_home_newest">Recently added</string>
     <string name="library_home_recent">Recently played</string>

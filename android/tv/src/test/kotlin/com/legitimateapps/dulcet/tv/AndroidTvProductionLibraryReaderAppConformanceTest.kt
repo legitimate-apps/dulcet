@@ -58,10 +58,13 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     @Test fun conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly() =
         scenarios.conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly()
 
+    @Test fun conf77EpochCadenceRunsInTheForegroundOnly() =
+        scenarios.conf77EpochCadenceRunsInTheForegroundOnly()
+
     @Test fun conf79SearchPublishesEachScopeWithSeenCountsOffline() =
         scenarios.conf79SearchPublishesEachScopeWithSeenCountsOffline()
 
-    @Test fun conf84StarShowsWithTheTapSurvivesARevalidationAndAdoptsTheEcho() =
+    @Test fun conf84StarShowsWithTheTapSurvivesARevalidationCompactsAndAdoptsTheEcho() =
         scenarios.conf84StarShowsWithTheTapSurvivesARevalidationAndAdoptsTheEcho()
 
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =

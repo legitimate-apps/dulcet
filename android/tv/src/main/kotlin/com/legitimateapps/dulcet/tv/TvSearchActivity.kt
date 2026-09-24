@@ -87,7 +87,9 @@ class TvSearchActivity : ComponentActivity() {
 @Composable
 private fun TvSearchRoute(account: SearchAccount, dependencies: SearchHostDependencies) {
     val context = LocalContext.current
-    val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account, context) }
+    // Keyed by the whole account: a changed password or address replaces the process's reader, and a
+    // presenter still attached to the old one would never hear from it again.
+    val presenter = remember(account) { dependencies.createPresenter(account, context) }
     val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)

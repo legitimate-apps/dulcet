@@ -205,6 +205,12 @@ public data class AndroidLibraryPublication(
     /** After a rebase: the item that should stay first in the viewport, and where it now is. */
     val anchorRawId: String?,
     val anchorIndex: Int?,
+    /**
+     * Why [items] cannot be shown when [itemsState] is `unavailable`, whatever the header's own
+     * freshness: never opened on this device and offline, the read's failure, or the reader's own.
+     * Null otherwise.
+     */
+    val itemsUnavailableReason: AndroidLibraryUnavailableReason? = null,
 )
 
 /** The seen-cache's own counts, so "no match" can be told from "no match among what this device has seen". */
@@ -215,7 +221,10 @@ public sealed interface AndroidLibrarySearchScope {
     /** The server search completed and this device's rows were merged into it. */
     public data object ServerAndDevice : AndroidLibrarySearchScope
 
-    /** Fewer than two characters, or the server's answer is pending: "On this device". */
+    /**
+     * Fewer than two characters, or the server's answer is pending: "On this device". Which of the
+     * two is [AndroidLibrarySearchPublication.serverPending].
+     */
     public data object DeviceWhileServerPending : AndroidLibrarySearchScope
 
     /** The server is unreachable: what this device has seen, with its counts. */
@@ -249,6 +258,11 @@ public data class AndroidLibrarySearchPublication(
     val sequence: Int,
     val scope: AndroidLibrarySearchScope,
     val rows: List<AndroidLibrarySearchRow>,
+    /**
+     * The server's answer to [query] is still coming. False for a query too short to ask the server
+     * (§18.1), which this device alone answers: the only case in which a search may show progress.
+     */
+    val serverPending: Boolean = false,
 )
 
 /** Something a person can favourite or rate. */
@@ -338,8 +352,8 @@ private fun String.nonBlankId(): String = takeIf { it.isNotBlank() } ?: throw Il
 internal fun AndroidLibraryHomeRow.toCore(): LibraryHomeRow = when (this) {
     is AndroidLibraryHomeRow.Albums -> {
         val type = type.toCore()
-        // A home row is one page of an album list, under the same rules as the list itself.
-        LibraryQuery.AlbumList(type)
+        // A home row carries no year range or genre, so the two list types that need one cannot be rows.
+        require(type != AlbumListType.ByYear && type != AlbumListType.ByGenre) { "not a home row type" }
         LibraryHomeRow.Albums(type)
     }
     AndroidLibraryHomeRow.Favourites -> LibraryHomeRow.Favourites
@@ -364,7 +378,23 @@ internal fun LibraryPublication.toAndroid(sequence: Int): AndroidLibraryPublicat
     },
     anchorRawId = anchor?.itemRawId,
     anchorIndex = anchor?.index,
+    itemsUnavailableReason = if (itemsState == LibraryItemsState.Unavailable) itemsUnavailableReason() else null,
 )
+
+/**
+ * The core marks a detail's child list unavailable for exactly three reasons — offline, the live
+ * read failed, or the reader's own failure — and says which in the header's freshness (§16.14).
+ */
+private fun LibraryPublication.itemsUnavailableReason(): AndroidLibraryUnavailableReason =
+    when (val android = freshness.toAndroid()) {
+        is AndroidLibraryFreshness.Unavailable -> android.reason
+        is AndroidLibraryFreshness.Cached -> when (val reason = android.reason) {
+            AndroidLibraryCachedReason.Offline -> AndroidLibraryUnavailableReason.NotCachedOffline
+            is AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
+            else -> AndroidLibraryUnavailableReason.InternalFailure
+        }
+        else -> AndroidLibraryUnavailableReason.InternalFailure
+    }
 
 internal fun LibraryFreshness.toAndroid(): AndroidLibraryFreshness = when (this) {
     LibraryFreshness.Live -> AndroidLibraryFreshness.Live
@@ -420,7 +450,13 @@ internal fun LibraryItem.toAndroid(): AndroidLibraryItem = when (this) {
 
 internal fun SeenCacheCounts.toAndroid(): AndroidLibrarySeenCounts = AndroidLibrarySeenCounts(artists, albums, tracks)
 
-internal fun LibrarySearchPublication.toAndroid(sequence: Int): AndroidLibrarySearchPublication = AndroidLibrarySearchPublication(
+internal fun LibrarySearchPublication.toAndroid(
+    sequence: Int,
+    minimumServerQueryLength: Int = LibrarySearchConfig().minimumServerQueryLength,
+): AndroidLibrarySearchPublication = AndroidLibrarySearchPublication(
+    // The same test the search itself applies before asking the server (Search.kt `query`).
+    serverPending = scope == SearchScope.DeviceWhileServerPending &&
+        query.trim().let { normalizeSearchText(it).isNotEmpty() && it.length >= minimumServerQueryLength },
     query = query,
     sequence = sequence,
     scope = when (val current = scope) {
