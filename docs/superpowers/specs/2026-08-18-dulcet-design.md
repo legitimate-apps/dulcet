@@ -3824,7 +3824,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 103 (2026-09-23; written 2026-09-22)** — the
+**Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
 ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
 2026-09-11 that DEV is instead dispatched on significant merges, with a notification. `release.yml` is
@@ -3841,7 +3841,7 @@ a committed floor, separates the DEV and PROD Mac plists so the server guard is 
 configuration and says what it does not cover, and records that the release environment's approval
 is not independent review with a single maintainer.
 
-**Revision 100 (2026-09-23; written 2026-09-11)** — §4.3 records that every Xcode Run Script phase invokes Gradle through
+**Revision 100 (2026-09-23)** — written 2026-09-11. §4.3 records that every Xcode Run Script phase invokes Gradle through
 `tools/run-gradle-exclusive`. No design change: the same task runs with the same inputs, serialised.
 OBSERVED on `main`: run 34635969077 failed a required check with `Timeout waiting to lock
 Configuration Cache` when `DulcetiOS` and `DulcetKitIOSTests` built concurrently, each running the
