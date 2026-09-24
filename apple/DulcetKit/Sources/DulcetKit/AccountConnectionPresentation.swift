@@ -919,13 +919,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
             case .notDenied:
                 // Access was granted after it blocked the connection, so retry it once, as the
-                // person would have to. Visibly only while they are still on the explanation:
-                // someone who has gone to Library or Search in the meantime is connected where
-                // they are, not taken back to the Connection screen to watch a spinner.
+                // person would have to. This watch is still live, so the refusal it reported
+                // still stands: anything that ends it -- another connection, Cancel, removing
+                // the account -- cancels the watch and moves the generation on. What the status
+                // shows is not asked, because opening a saved account's library replaces the
+                // refusal there with "saved", and that person is waiting for this connection.
+                // Visibly only while they are still on the explanation: someone who has gone to
+                // Library or Search in the meantime is connected where they are, not taken back
+                // to the Connection screen to watch a spinner.
                 self.localNetworkWatch = nil
-                guard !self.localNetworkRetryUsed,
-                      case let .failed(shown) = self.currentSnapshot.accountConnection,
-                      shown.kind == .localNetworkAccessDenied else { return }
+                guard !self.localNetworkRetryUsed else { return }
                 self.localNetworkRetryUsed = true
                 self.submit(
                     request,
@@ -1148,7 +1151,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     state: .accountSavedDisconnected,
                     destination: .library,
                     form: currentSnapshot.accountForm,
-                    status: .saved(serverName: savedServerName)
+                    status: savedAccountStatus(serverName: savedServerName)
                 )
                 return
             }
@@ -1260,7 +1263,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryGeneration += 1
         let requestGeneration = libraryGeneration
         let form = currentSnapshot.accountForm
-        let status = DulcetAccountConnectionStatus.saved(serverName: savedServerName)
+        let status = savedAccountStatus(serverName: savedServerName)
         publish(
             state: .libraryLoading,
             destination: .library,
@@ -1272,6 +1275,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             guard let self,
                   self.libraryGeneration == requestGeneration,
                   self.currentSnapshot.selectedDestination == .library else { return }
+            // Reading what is held changes nothing about the account, so the status is left as
+            // it now stands: a connection running in place may have landed -- or failed -- while
+            // the read ran, and what it said then is not to be overwritten by what was true
+            // when the read began. Connecting lands by opening the library again, which moves
+            // the generation on, so a read that reaches here never overwrites a connection.
+            let status = self.currentSnapshot.accountConnection
             switch outcome {
             case let .preview(musicFolders, artists, albums):
                 // A committed read is answered from the local database in one step, so this
@@ -2097,6 +2106,15 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
             password: form.password,
             allowLocalHTTP: form.allowLocalHTTP
         ), completion: completion)
+    }
+
+    /// A saved account's status on a surface that reads it without connecting: saved -- unless a
+    /// connection to it is running where the person is, the retry after a local-network grant,
+    /// which the status goes on saying until it lands, so Connection still shows it with Cancel.
+    private func savedAccountStatus(serverName: String) -> DulcetAccountConnectionStatus {
+        activeOperation != nil && currentSnapshot.accountConnection == .connecting
+            ? .connecting
+            : .saved(serverName: serverName)
     }
 
     private func publishSavedAccountOrIdle(form: DulcetAccountConnectRequest) {

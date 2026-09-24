@@ -3157,6 +3157,98 @@ func aDifferentFailureAfterADismissalShowsTheBarWithNothingInBetween() {
     #expect(store.showsNowPlayingBar)
 }
 
+@MainActor
+private func failure(
+    entry: String,
+    attempt: String,
+    canSkip: Bool,
+    stoppedPartway: Bool = false
+) -> DulcetPlaybackPresentation {
+    DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: DulcetFailedPlayback(
+        track: fixtureLibraryAlbum().tracks[0],
+        canSkip: canSkip,
+        canRetry: true,
+        stoppedPartway: stoppedPartway,
+        queueEntryID: entry,
+        attemptID: attempt
+    ))
+}
+
+@Test @MainActor
+func aQueueEditThatChangesWhatSkipCanDoLeavesADismissedFailureAway() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: false))
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // Adding a track after the failed one gives Skip somewhere to go. The failure is the same
+    // one the person put away, so the bar stays away.
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: true))
+    #expect(store.snapshot.playbackFailure?.canSkip == true)
+    #expect(!store.showsNowPlayingBar)
+}
+
+@Test @MainActor
+func anotherAttemptOrAnotherKindOfFailureIsNotTheOneDismissed() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: true))
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The same entry and track, a later attempt: a new failure.
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:2", canSkip: true))
+    #expect(store.showsNowPlayingBar)
+
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The same attempt, now reported as having stopped partway: a different failure.
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:2", canSkip: true, stoppedPartway: true))
+    #expect(store.showsNowPlayingBar)
+
+    store.dismissPlaybackFailure()
+    // The same track at another place in the queue: a different entry, so a different failure.
+    playback.publish(failure(entry: "entry:2", attempt: "attempt:2", canSkip: true, stoppedPartway: true))
+    #expect(store.showsNowPlayingBar)
+}
+
+// MARK: - The bar and the player say the same thing
+
+@Test @MainActor
+func theBarAndThePlayerAgreeThatATrackStoppedPartway() {
+    let partway = failure(canSkip: true, stoppedPartway: true)
+    let title = fixtureLibraryAlbum().tracks[0].title
+    #expect(DulcetNowPlayingBar.failureLine(for: partway) == "Stopped partway through")
+    #expect(DulcetNowPlayingBar.failureAnnouncement(for: partway)
+        == "\u{201C}\(title)\u{201D} stopped partway through")
+    #expect(DulcetPlaybackFailedView.message(for: partway).contains("stopped partway"))
+    // None of the three says it could not play, or could not start.
+    for text in [
+        DulcetNowPlayingBar.failureLine(for: partway),
+        DulcetNowPlayingBar.failureAnnouncement(for: partway),
+        DulcetPlaybackFailedView.message(for: partway),
+    ] {
+        #expect(!text.localizedCaseInsensitiveContains("couldn\u{2019}t"), "\(text)")
+    }
+
+    let beforeStart = failure(canSkip: true)
+    #expect(DulcetNowPlayingBar.failureLine(for: beforeStart) == "Couldn\u{2019}t play this track")
+    #expect(DulcetNowPlayingBar.failureAnnouncement(for: beforeStart)
+        == "Couldn\u{2019}t play \u{201C}\(title)\u{201D}")
+    for text in [
+        DulcetNowPlayingBar.failureLine(for: beforeStart),
+        DulcetNowPlayingBar.failureAnnouncement(for: beforeStart),
+        DulcetPlaybackFailedView.message(for: beforeStart),
+    ] {
+        #expect(!text.contains("partway"), "\(text)")
+    }
+}
+
 // MARK: - A drop that carries nothing is refused out loud
 
 @Test @MainActor
@@ -3209,6 +3301,140 @@ func anInPlaceRetryNeverMovesThePersonAndConnectionShowsItConnecting() {
     #expect(store.snapshot.selectedDestination == .settings, "an in-place retry never moves them")
     #expect(store.snapshot.accountConnected)
     #expect(store.snapshot.state == .accountConnected)
+}
+
+/// The grant is answered by the live watch, not by whatever the account status happens to show:
+/// opening a saved account's library replaces the refusal on the status with "saved", and the
+/// person who went there is the one most waiting for the connection.
+@Test @MainActor
+func accessGrantedAfterASavedAccountsLibraryReplacedTheRefusalStillConnects() {
+    let connector = ControlledAccountConnector()
+    let probe = ControlledLocalNetworkAccess()
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "http://10.0.0.20:4533",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: true
+    )
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: MemoryCredentialStore(persisted: saved),
+        localNetworkAccess: probe
+    ))
+    #expect(store.snapshot.state == .accountSavedDisconnected, "the experiment needs a saved account")
+    store.navigate(to: .settings)
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied)
+    store.navigate(to: .library)
+    // The condition under test: the refusal is no longer what the status shows.
+    #expect(shownFailureKind(store) == nil)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "10.0.0.20:4533"))
+
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried the connection")
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.accountConnection == .connecting)
+
+    // Opening Library again while it runs does not make the account look saved and idle, so
+    // Connection still shows the connection running, with Cancel.
+    store.navigate(to: .library)
+    #expect(store.snapshot.accountConnection == .connecting)
+    store.navigate(to: .settings)
+    #expect(store.snapshot.state == .accountConnecting)
+    store.navigate(to: .library)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state != .accountSavedDisconnected)
+    #expect(connector.requests.count == 2, "retried once, not again")
+}
+
+@MainActor
+private final class CommittedLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing {
+    private(set) var committedReads: [@MainActor (DulcetLibraryBrowseOutcome) -> Void] = []
+
+    func browse(
+        _ request: DulcetLibraryBrowseRequest,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        ControlledLibraryOperation()
+    }
+
+    func browseCommitted(
+        providerInstanceID: String,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        committedReads.append(completion)
+        return ControlledLibraryOperation()
+    }
+}
+
+@MainActor
+private final class InstanceCredentialStore: DulcetProviderInstanceCredentialStoring {
+    private var persisted: DulcetAccountConnectRequest?
+    private(set) var providerInstanceID: String?
+
+    init(persisted: DulcetAccountConnectRequest, providerInstanceID: String) {
+        self.persisted = persisted
+        self.providerInstanceID = providerInstanceID
+    }
+
+    func load() throws -> DulcetAccountConnectRequest? { persisted }
+    func save(_ request: DulcetAccountConnectRequest) throws { persisted = request }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        persisted = request
+        self.providerInstanceID = providerInstanceID
+    }
+    func delete() throws { persisted = nil }
+}
+
+/// The same retry where the saved account's library is read from what is held on the device: a
+/// read begun while the retry ran must not overwrite how the retry ended.
+@Test @MainActor
+func aHeldLibraryReadDoesNotOverwriteHowAnInPlaceRetryEnded() {
+    let connector = ControlledAccountConnector()
+    let probe = ControlledLocalNetworkAccess()
+    let browser = CommittedLibraryBrowser()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: InstanceCredentialStore(
+            persisted: DulcetAccountConnectRequest(
+                serverURL: "http://10.0.0.20:4533",
+                username: "listener",
+                password: "fixture-password",
+                allowLocalHTTP: true
+            ),
+            providerInstanceID: "provider-instance-held"
+        ),
+        libraryBrowser: browser,
+        localNetworkAccess: probe
+    ))
+    store.navigate(to: .settings)
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .library)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried the connection")
+    // Library is opened again while the retry runs: a held read begins, and the status still
+    // says the connection is running.
+    store.navigate(to: .library)
+    #expect(browser.committedReads.count == 2, "the experiment needs a held read in flight")
+    #expect(store.snapshot.accountConnection == .connecting)
+
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    #expect(shownFailureKind(store) == .transportUnreachable)
+    browser.committedReads[1](.loaded(musicFolders: [], artists: [], albums: []))
+    #expect(store.snapshot.state != .libraryLoading, "the held read landed")
+    #expect(shownFailureKind(store) == .transportUnreachable, "the retry's outcome stands")
+    store.navigate(to: .settings)
+    #expect(store.snapshot.state != .accountConnecting, "nothing is connecting any more")
 }
 
 @Test @MainActor

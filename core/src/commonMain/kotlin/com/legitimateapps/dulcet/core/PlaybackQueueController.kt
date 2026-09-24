@@ -299,12 +299,12 @@ internal class PlaybackQueueController(
     }
 
     /**
-     * Try Again on the selected entry (§12.1). A failure before playback started is retried inside
-     * its session: a new attempt, the accumulator preserved. A failure after partial playback has
-     * already evaluated its session (§15.2), so its retry is a new play of the same entry -- the
-     * failed session is finalized and a new one begins, from the position the failure saved
-     * (§15.5). With no session, as a finished queue leaves it, the selected entry starts. A
-     * session that has not failed changes nothing: there is nothing to try again.
+     * Try Again on the selected entry (§12.1). A failure -- before playback started or after
+     * partial playback -- is retried inside its session: a new attempt, the accumulator carried
+     * across, so one listen interrupted by a failure is one play, not two and not none. A partial
+     * failure resumes from the position it saved (§15.5). With no session, as a finished queue
+     * leaves it, the selected entry starts. A session that has not failed changes nothing: there
+     * is nothing to try again.
      */
     fun retryCurrent(): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
@@ -316,15 +316,12 @@ internal class PlaybackQueueController(
         if (session.queueEntryId != entry.queueEntryId || failed.phase != PlaybackAttemptPhase.Failed) {
             return emptyTransition()
         }
-        if (session.failureOf(failed.attemptId) !is PlaybackTerminalOutcome.FailedBeforeStart) {
-            return startAt(state, index)
-        }
-        // A session that never started has no preload behind it (one is registered only after
-        // progress), but a registration must not outlive the attempt it was made for.
+        // A partial failure can leave a preload registered for the attempt that failed; the retried
+        // attempt registers its own once it progresses, so this one must not outlive it.
         val discarded = discardRegisteredPreload()
         endHeldForPreload = false
         val attemptId = AttemptId(identities.next("attempt"))
-        val retry = playback.retryAfterFailedBeforeStart(attemptId)
+        val retry = playback.retryAfterFailure(attemptId)
         check(retry is PlaybackTransitionResult.Applied)
         return PlaybackQueueTransition(
             snapshot = snapshot(),

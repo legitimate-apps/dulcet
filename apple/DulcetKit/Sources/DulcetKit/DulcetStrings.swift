@@ -167,11 +167,33 @@ enum DulcetStrings {
     static let openNowPlayingHint = text("player.open.hint", "Opens the full player")
     static let playbackLoading = text("player.loading", "Loading…")
     static let playbackFailedShort = text("player.failed.short", "Couldn\u{2019}t play this track")
-    static let playbackFailedToStart = text("player.failed.lead.start", "Dulcet couldn\u{2019}t start this track.")
-    static let playbackStoppedPartway = text("player.failed.lead.partway", "This track stopped partway through.")
-    static let playbackFailedOfferBoth = text("player.failed.offer.both", "Try it again, or skip to the next one.")
-    static let playbackFailedOfferRetry = text("player.failed.offer.retry", "Try it again.")
-    static let playbackFailedOfferSkip = text("player.failed.offer.skip", "Skip to the next one.")
+    static let playbackStoppedPartwayShort = text("player.failed.short.partway", "Stopped partway through")
+    // What the player says under a failed track's name: one whole sentence per case, so no
+    // translation is ever assembled from pieces.
+    static let playbackFailedToStartRetryOrSkip = text(
+        "player.failed.message.start.both",
+        "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one."
+    )
+    static let playbackFailedToStartRetry = text(
+        "player.failed.message.start.retry",
+        "Dulcet couldn\u{2019}t start this track. Try it again."
+    )
+    static let playbackFailedToStartSkip = text(
+        "player.failed.message.start.skip",
+        "Dulcet couldn\u{2019}t start this track. Skip to the next one."
+    )
+    static let playbackStoppedPartwayRetryOrSkip = text(
+        "player.failed.message.partway.both",
+        "This track stopped partway through. Try it again, or skip to the next one."
+    )
+    static let playbackStoppedPartwayRetry = text(
+        "player.failed.message.partway.retry",
+        "This track stopped partway through. Try it again."
+    )
+    static let playbackStoppedPartwaySkip = text(
+        "player.failed.message.partway.skip",
+        "This track stopped partway through. Skip to the next one."
+    )
     static let playbackRetry = text("player.failed.retry", "Try Again")
     static let playbackSkip = text("player.failed.skip", "Skip to Next Track")
     static let playbackSkipShort = text("player.failed.skip.short", "Skip")
@@ -215,6 +237,10 @@ enum DulcetStrings {
 
     static func playbackFailed(title: String) -> String {
         formatted("player.failed.track", "Couldn\u{2019}t play \u{201C}%@\u{201D}", title)
+    }
+
+    static func playbackStoppedPartway(title: String) -> String {
+        formatted("player.failed.track.partway", "\u{201C}%@\u{201D} stopped partway through", title)
     }
 
     static func serverConnectionFailed(_ name: String) -> String {

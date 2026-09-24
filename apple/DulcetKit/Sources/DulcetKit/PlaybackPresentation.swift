@@ -90,12 +90,44 @@ public struct DulcetFailedPlayback: Sendable, Hashable {
     public let canRetry: Bool
     /// The track played for a while and then stopped, rather than failing to start.
     public let stoppedPartway: Bool
+    /// The queue entry and the attempt that failed, when the controller has them.
+    public let queueEntryID: String?
+    public let attemptID: String?
 
-    public init(track: DulcetTrack?, canSkip: Bool, canRetry: Bool, stoppedPartway: Bool = false) {
+    public init(
+        track: DulcetTrack?,
+        canSkip: Bool,
+        canRetry: Bool,
+        stoppedPartway: Bool = false,
+        queueEntryID: String? = nil,
+        attemptID: String? = nil
+    ) {
         self.track = track
         self.canSkip = canSkip
         self.canRetry = canRetry
         self.stoppedPartway = stoppedPartway
+        self.queueEntryID = queueEntryID
+        self.attemptID = attemptID
+    }
+
+    /// Which failure this is, apart from what can be done about it: the entry and the attempt
+    /// that failed, and how. What Skip and Retry can do is left out, because a queue edit
+    /// changes whether anything follows the failed entry without making it a different failure.
+    /// The track stands in for the entry where the controller has no queue to name it by.
+    public struct Identity: Sendable, Hashable {
+        let queueEntryID: String?
+        let attemptID: String?
+        let trackID: DulcetProviderItemID?
+        let stoppedPartway: Bool
+    }
+
+    public var identity: Identity {
+        Identity(
+            queueEntryID: queueEntryID,
+            attemptID: attemptID,
+            trackID: track?.id,
+            stoppedPartway: stoppedPartway
+        )
     }
 
     /// A failure the controller cannot describe: nothing to name, nowhere to go.

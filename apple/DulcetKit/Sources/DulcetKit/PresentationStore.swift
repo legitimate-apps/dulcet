@@ -96,12 +96,13 @@ public final class DulcetPresentationStore {
     /// it is forgotten when playback does anything else -- however that was started, the lock
     /// screen and a headset included -- and whenever the person starts something through the
     /// store, even when that fails too with no moment in between; and a different failure is not
-    /// it, so it shows.
-    private var dismissedPlaybackFailure: DulcetFailedPlayback?
+    /// it, so it shows. It is kept by identity, so a queue edit that changes what Skip can do
+    /// does not bring back a failure the person put away.
+    private var dismissedPlaybackFailure: DulcetFailedPlayback.Identity?
     /// Whether the failure showing is the one the person dismissed.
     public var playbackFailureDismissed: Bool {
         guard snapshot.playbackFailed, let dismissedPlaybackFailure else { return false }
-        return dismissedPlaybackFailure == snapshot.playbackFailure ?? .undescribed
+        return dismissedPlaybackFailure == (snapshot.playbackFailure ?? .undescribed).identity
     }
     public var downloadsEnabled: Bool { source.downloadsEnabled }
     public var searchQuery: String {
@@ -241,7 +242,7 @@ public final class DulcetPresentationStore {
     /// Puts the failed track's bar away. Nothing plays until the person starts something.
     public func dismissPlaybackFailure() {
         guard snapshot.playbackFailed else { return }
-        dismissedPlaybackFailure = snapshot.playbackFailure ?? .undescribed
+        dismissedPlaybackFailure = (snapshot.playbackFailure ?? .undescribed).identity
     }
 
     /// The library artist a credit leads to, or nil when there is no page to show.

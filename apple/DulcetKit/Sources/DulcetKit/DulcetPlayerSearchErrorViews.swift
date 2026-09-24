@@ -111,17 +111,15 @@ struct DulcetPlaybackFailedView: View {
     /// offer. Skipping is mentioned only when Skip is shown, and a track that played and then
     /// stopped is not said to have failed to start.
     static func message(for failure: DulcetFailedPlayback) -> String {
-        let offer: String
-        switch (failure.canRetry, failure.canSkip) {
-        case (true, true): offer = DulcetStrings.playbackFailedOfferBoth
-        case (true, false): offer = DulcetStrings.playbackFailedOfferRetry
-        case (false, true): offer = DulcetStrings.playbackFailedOfferSkip
-        case (false, false): return DulcetStrings.nowPlayingFailedBody
+        switch (failure.stoppedPartway, failure.canRetry, failure.canSkip) {
+        case (_, false, false): DulcetStrings.nowPlayingFailedBody
+        case (false, true, true): DulcetStrings.playbackFailedToStartRetryOrSkip
+        case (false, true, false): DulcetStrings.playbackFailedToStartRetry
+        case (false, false, true): DulcetStrings.playbackFailedToStartSkip
+        case (true, true, true): DulcetStrings.playbackStoppedPartwayRetryOrSkip
+        case (true, true, false): DulcetStrings.playbackStoppedPartwayRetry
+        case (true, false, true): DulcetStrings.playbackStoppedPartwaySkip
         }
-        let lead = failure.stoppedPartway
-            ? DulcetStrings.playbackStoppedPartway
-            : DulcetStrings.playbackFailedToStart
-        return lead + " " + offer
     }
 }
 

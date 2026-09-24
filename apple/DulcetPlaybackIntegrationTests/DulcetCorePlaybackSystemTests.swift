@@ -294,11 +294,10 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.controller.currentPresentation.failure?.canSkip, false)
     }
 
-    /// A track that played and then stopped is not retried as if it had never started. Its
-    /// failure says it stopped partway, and Try Again is a new play (spec §12.1, "retry after
-    /// FailedAfterPartial"): the failed session was already evaluated at the failure, so a new one
-    /// starts -- new session, new attempt -- and it resumes where the failure left off.
-    func testRetryAfterAPartialFailureIsANewSessionResumingWhereItStopped() async throws {
+    /// A track that played and then stopped says it stopped partway, and Try Again keeps its
+    /// session as any retry does (spec §12.1): a new attempt, resuming where the failure left off,
+    /// so what was already heard still counts toward the one play this listen is.
+    func testRetryAfterAPartialFailureKeepsTheSessionAndResumesWhereItStopped() async throws {
         let fixture = makeFixture(tracks: ["a", "b"])
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
         let first = try await fixture.waitForPrepare(rawID: "a")
@@ -312,24 +311,58 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
         let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
         XCTAssertEqual(failure.track?.id.rawID, "a")
-        XCTAssertTrue(failure.stoppedPartway, "the message must not say it could not start")
+        XCTAssertTrue(failure.stoppedPartway, "the failure must be reported as stopped partway")
         XCTAssertTrue(failure.canRetry)
         XCTAssertTrue(failure.canSkip)
+        // A dismissal is kept by these (§3.1), so they must name this failure and no other.
+        XCTAssertEqual(failure.attemptID, first.rawValue, "the failure names the attempt that failed")
+        XCTAssertEqual(failure.queueEntryID, fixture.queue.snapshot().snapshot?.entries.first?.queueEntryId)
+        XCTAssertNotNil(failure.queueEntryID)
 
         let preparesBefore = fixture.engine.count("prepare")
         fixture.controller.send(.retry)
         let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
         XCTAssertNotEqual(retried, first, "Try Again is a new attempt")
-        let retriedSession = try XCTUnwrap(fixture.session(ofPrepare: retried))
-        XCTAssertNotEqual(retriedSession, failedSession,
-                          "a play that already counted as a session is not reopened")
-        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId, retriedSession)
+        XCTAssertEqual(fixture.session(ofPrepare: retried), failedSession,
+                       "Try Again after a partial failure must keep the session")
+        let retriedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        XCTAssertEqual(retriedSession.playbackSessionId, failedSession)
+        XCTAssertEqual(retriedSession.attemptId, retried.rawValue)
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
 
         fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
         await fixture.waitFor { fixture.engine.count("seek") > 0 }
         XCTAssertEqual(fixture.engine.commands.last { $0.kind == "seek" }?.position, 40,
-                       "the new play resumes where the failure left off")
+                       "the retried attempt resumes where the failure left off")
+    }
+
+    /// Every start stops the engine, and the engine's stop clears its Now Playing artwork, so a
+    /// retry inside the same session must hand the artwork over again -- a session whose artwork
+    /// was delivered once is not a session the engine still has artwork for.
+    func testARetryInTheSameSessionDeliversItsArtworkAgain() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"], artwork: Data([0xFF, 0xD8, 0xFF, 0x02]))
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+        await fixture.waitFor { fixture.engine.artwork.contains { $0.session == session } }
+        XCTAssertEqual(fixture.engine.artwork.filter { $0.session == session }.count, 1,
+                       "the case needs the artwork delivered once before the failure")
+
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        XCTAssertEqual(fixture.session(ofPrepare: retried), session, "the retry keeps the session")
+        fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: retried, wallClock: Date(), mediaPosition: 40))
+
+        await fixture.waitFor { fixture.engine.artwork.filter { $0.session == session }.count >= 2 }
+        XCTAssertEqual(fixture.engine.artwork.filter { $0.session == session }.count, 2,
+                       "the retried attempt's engine item must get the artwork again")
+        XCTAssertEqual(fixture.engine.artwork.last?.data, Data([0xFF, 0xD8, 0xFF, 0x02]))
     }
 
     /// The only track of a repeating queue has nowhere else to go: Next would start the same

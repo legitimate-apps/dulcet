@@ -215,7 +215,7 @@ struct DulcetNowPlayingBar: View {
 
     private var subtitle: String? {
         if store.snapshot.playbackFailed {
-            return failedTrack == nil ? nil : DulcetStrings.playbackFailedShort
+            return failedTrack == nil ? nil : store.snapshot.playbackFailure.map(Self.failureLine(for:))
         }
         return artists(of: store.snapshot.nowPlaying?.current)
     }
@@ -229,12 +229,26 @@ struct DulcetNowPlayingBar: View {
     private var accessibilityLabel: String {
         if store.snapshot.playbackFailed {
             return DulcetStrings.miniPlayerAccessibility(
-                title: failedTrack.map { DulcetStrings.playbackFailed(title: $0.title) }
+                title: store.snapshot.playbackFailure.map(Self.failureAnnouncement(for:))
                     ?? DulcetStrings.playbackFailedShort,
                 artists: artists(of: failedTrack) ?? ""
             )
         }
         return DulcetStrings.miniPlayerAccessibility(title: title, artists: subtitle ?? "")
+    }
+
+    /// The line under a failed track's name. It says what the player says (§3.1): a track that
+    /// played and then stopped stopped partway, and is not said to have failed to play.
+    static func failureLine(for failure: DulcetFailedPlayback) -> String {
+        failure.stoppedPartway ? DulcetStrings.playbackStoppedPartwayShort : DulcetStrings.playbackFailedShort
+    }
+
+    /// What VoiceOver hears first for a failed track, drawn from the same distinction.
+    static func failureAnnouncement(for failure: DulcetFailedPlayback) -> String {
+        guard let track = failure.track else { return failureLine(for: failure) }
+        return failure.stoppedPartway
+            ? DulcetStrings.playbackStoppedPartway(title: track.title)
+            : DulcetStrings.playbackFailed(title: track.title)
     }
 }
 

@@ -481,6 +481,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // Every start below issues a stop, and the engine's stop removes its preloaded item too;
         // the core discarded its registration when it began this session.
         abandonPreload(reason: "start")
+        // The stop also clears the engine's artwork. A retry keeps its session (§12.1), so the
+        // session's earlier delivery is no longer on the engine: forget it, and the next
+        // publication fetches the artwork for the new attempt's item.
+        cancelArtwork(sessionID: directive.playbackSessionId)
         guard let track = catalog[DulcetProviderItemID(
                 providerInstanceID: directive.providerInstanceId,
                 rawID: directive.rawId
@@ -1228,7 +1232,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             )],
             canSkip: Self.hasOtherEntryAfterCurrent(snapshot),
             canRetry: true,
-            stoppedPartway: snapshot.currentSession?.failure == "afterPartial"
+            stoppedPartway: snapshot.currentSession?.failure == "afterPartial",
+            queueEntryID: entry.queueEntryId,
+            attemptID: snapshot.currentSession?.attemptId
         )
     }
 

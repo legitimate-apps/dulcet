@@ -210,7 +210,12 @@ internal class PlaybackCoreStateMachine {
     public fun planRefresh(newAttemptId: AttemptId): PlaybackTransitionResult =
         replaceCurrentAttempt(newAttemptId)
 
-    public fun retryAfterFailedBeforeStart(newAttemptId: AttemptId): PlaybackTransitionResult =
+    /**
+     * Try Again after the current attempt failed, before start or after partial playback: a new
+     * attempt in the same session (§12.1). The accumulator carries across, so a listen that took
+     * several attempts is still evaluated -- and submitted -- once.
+     */
+    public fun retryAfterFailure(newAttemptId: AttemptId): PlaybackTransitionResult =
         replaceCurrentAttempt(newAttemptId)
 
     public fun serverOffsetSeek(newAttemptId: AttemptId): PlaybackTransitionResult =

@@ -335,7 +335,7 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
-    fun retryAfterAPartialFailureIsANewPlayFromTheSavedPosition() {
+    fun retryAfterAPartialFailureKeepsTheSessionAndResumesFromTheSavedPosition() {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
         val resumePositions = PersistentResumePositionStore(database)
@@ -365,11 +365,13 @@ class PlaybackQueueControllerTest {
 
         val retried = fixture.controller.retryCurrent()
 
-        // That failure evaluated its session (§15.2), so the retry is a new play of the entry.
+        // Any retry keeps the session (§12.1): its accumulator carries across the attempts, so
+        // one listen interrupted by a failure is still one play.
         val directive = assertNotNull(retried.startDirective)
         assertEquals(started.queueEntryId, directive.queueEntryId)
-        assertNotEquals(started.playbackSessionId, directive.playbackSessionId)
+        assertEquals(started.playbackSessionId, directive.playbackSessionId)
         assertNotEquals(started.attemptId, directive.attemptId)
+        assertEquals(directive.attemptId, assertNotNull(retried.snapshot.currentSession).currentAttempt.attemptId)
         assertEquals(40.seconds, directive.resumePosition, "from where it stopped (§15.5)")
         fixture.driver.close()
     }

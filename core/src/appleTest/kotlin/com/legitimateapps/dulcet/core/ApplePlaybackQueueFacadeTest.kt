@@ -440,7 +440,7 @@ class ApplePlaybackQueueFacadeTest {
     }
 
     @Test
-    fun retryCurrentCrossesTheBoundaryKeepingTheSessionAfterAFailureBeforeStart() {
+    fun retryCurrentCrossesTheBoundaryKeepingTheSessionAfterEitherFailure() {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
         val resumePositions = PersistentResumePositionStore(database)
@@ -468,13 +468,15 @@ class ApplePlaybackQueueFacadeTest {
         assertNotEquals(started.attemptId, directive.attemptId)
         assertNull(retried.snapshot?.currentSession?.failure, "the new attempt has not failed")
 
-        // It plays, then drops: a failure after partial playback, and its retry is a new play.
+        // It plays, then drops: a failure after partial playback. Its retry keeps the session too,
+        // and resumes where the failure left off.
         client.recordReady(directive.attemptId, 180_000, "seekable")
         client.recordPlaybackProgressBegan(directive.attemptId, 1_788_000_000_000, 1_000)
         val dropped = client.recordFailedAfterPartial(directive.attemptId, 40_000, "transport")
         assertEquals("afterPartial", dropped.snapshot?.currentSession?.failure)
         val replay = assertNotNull(client.retryCurrent().startDirective)
-        assertNotEquals(started.playbackSessionId, replay.playbackSessionId)
+        assertEquals(started.playbackSessionId, replay.playbackSessionId)
+        assertNotEquals(directive.attemptId, replay.attemptId)
         assertEquals(40_000, replay.resumePositionMilliseconds)
         client.close()
         driver.close()

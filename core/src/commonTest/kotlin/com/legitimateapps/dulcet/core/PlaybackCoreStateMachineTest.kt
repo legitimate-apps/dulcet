@@ -47,7 +47,7 @@ class PlaybackCoreStateMachineTest {
         machine.recordPlaybackEvent(
             PlaybackEngineEvent.FailedBeforeStart(ATTEMPT_1, DomainError.Transport.Unreachable),
         )
-        machine.retryAfterFailedBeforeStart(ATTEMPT_2)
+        machine.retryAfterFailure(ATTEMPT_2)
 
         val current = machine.currentSession!!
         assertEquals(SESSION_1, current.playbackSessionId)

@@ -412,14 +412,20 @@ horizontal size class**, never by the device:
   the track's name and the failure line wrap to two lines each, and the player wraps, stacks its
   actions and scrolls, so neither is cut to its first words (OBSERVED on an iPhone SE, iOS 26.5,
   with a short fixture title; a long title can still be cut after two lines in the bar). The bar
-  can be dismissed until the person starts something else or a different failure arrives. A player
-  reporting `ready` with no current item is a failure on every surface, not an empty player.
+  and the player agree on what happened: a track that stopped partway says so in both, and in what
+  VoiceOver reads from the bar. Each message is one whole sentence, never pieced together, so it
+  can be translated as written. The bar can be dismissed until the person starts something else or
+  a different failure arrives. A failure is told apart by the queue entry, the attempt and the kind
+  of failure, and not by what Skip or Try Again can do, so a queue edit that gives Skip somewhere to
+  go does not bring back a bar the person put away. A player reporting `ready` with no current item
+  is a failure on every surface, not an empty player.
 - **A drag onto the queue never drops silently.** A track, album or search result dragged onto the
   now-playing bar or Up Next is added to the end of the queue. One that cannot be added -- offline,
-  its tracks not read yet, unplayable, or while the queue cannot be edited -- still lifts, so the
-  tile keeps one identity whether or not its tracks have arrived; its drag card says it cannot be
-  added, no drop target outlines itself for it, and dropping it gives the same refusal as a queue
-  edit the core refuses. **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
+  its tracks not read yet, or unplayable -- still lifts, so the tile keeps one identity whether or
+  not its tracks have arrived; its drag card says it cannot be added, no drop target outlines itself
+  for it, and dropping it gives the same refusal as a queue edit the core refuses. While the queue
+  cannot be edited at all, every tile still lifts with a card that says it cannot be added, and
+  there is no drop target: the bar and Up Next do not accept a drop, so the card is the refusal. **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
   tap in flight when a library read replaces every tile; it was not reproduced.
 
 ---
@@ -1081,7 +1087,11 @@ they are still on the explanation, and otherwise **in place** -- someone who has
 or Search meanwhile is connected where they are, not taken back to Connection to watch a spinner.
 Once in place, always in place: where the person goes while it runs does not change that, so an
 in-place retry never moves them, and coming to Connection while it runs shows it connecting, with
-Cancel, rather than the explanation of a refusal that no longer applies. An in-place retry that
+Cancel, rather than the explanation of a refusal that no longer applies. The grant is taken from
+the watch, not from what the account status shows: opening a saved account's library replaces the
+refusal there with "saved", and that person is still owed the retry. Nothing but the retry says
+"connecting" while it runs, so opening the library again does not make it look saved and idle, and
+a library read that lands after it does not overwrite how it ended. An in-place retry that
 fails is recorded where Connection shows it. Open Settings goes to the
 app's own Settings page on iOS and iPadOS; on the Mac it goes to the Privacy & Security pane, and
 **ASSUMED**: that its `Privacy_LocalNetwork` anchor lands on the Local Network row. Apple documents
@@ -1212,19 +1222,19 @@ server-offset seek). **Every engine event carries its `AttemptId`; the core maps
 |---|---|---|---|
 | start playing an entry | new | new | starts at zero |
 | plan refresh (expiry / mid-stream 401) | same | new | preserved |
-| retry after `FailedBeforeStart` | same | new | preserved (still zero) |
-| retry after `FailedAfterPartial` | outgoing finalized, then new | new | outgoing evaluated at the failure, then new at zero |
+| retry after a failure (`FailedBeforeStart` or `FailedAfterPartial`) | same | new | preserved; a partial failure resumes from its saved position |
 | server-offset seek (§12.7) | same | new | preserved |
 | next queue item (manual or auto) | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
 | repeat-one | outgoing finalized, then new | new | outgoing evaluated, then new at zero |
 | queue replaced wholesale | outgoing finalized | new | outgoing evaluated |
 
-A failure **after** partial playback is terminal for its session: §15.2 evaluates the threshold at
-`FailedAfterPartial`, so the play it describes is over. Try Again on it is therefore a new play of
-the same entry, not a further attempt of a play already evaluated, and it starts from the position
-the failure saved (§15.5). A failure **before** start evaluated nothing, and its retry stays inside
-the session. The core decides which, from the failed attempt's terminal outcome; the shell only
-asks to retry (revision 106).
+Try Again after **any** failure is a further attempt of the same play, not a new play. A failure
+before start evaluated nothing. A failure after partial playback is terminal for its *attempt*:
+§15.2 evaluates the threshold at `FailedAfterPartial`, and the retry resumes from the position the
+failure saved (§15.5) with the accumulator carried across. So a listen that took several attempts is
+evaluated as the one listen it was -- submitted once when its time crosses the threshold, however
+the attempts divide it -- and `submitted` keeps an evaluation at the failure from being followed by
+a second submission. The shell only asks to retry (revision 106).
 
 **Event acceptance rule (this is the fix for the drop-stale-events race):** an event for a superseded
 `AttemptId` is **not** discarded outright. It is routed to its **session**, which is still live during a
@@ -1660,7 +1670,9 @@ rejected, not applied to the current one.
 favourites outbox (§18.3) exists: a lock-screen heart whose handler answers "failed" is worse than
 none. **Artwork** reaches the system entry as image bytes that already passed the core's artwork
 validation, keyed by playback session so a late image cannot land on a later track — never as a
-URL, because every artwork URL this client can build carries credentials. Elapsed time is written
+URL, because every artwork URL this client can build carries credentials. Every start stops the
+engine, and the stop clears its artwork, so an attempt that keeps its session -- Try Again (§12.1) --
+has the artwork delivered again rather than treated as already there. Elapsed time is written
 when the transport changes (play, pause, seek, rate, buffering) or when the system's own
 extrapolation has drifted by more than 0.75 s, not on every position sample; while **buffering** the
 entry stays "playing" with rate 0, so the lock-screen scrubber does not run ahead of the audio.
@@ -2177,7 +2189,9 @@ function `(state, event) -> (state, effects)`:
   31 s becomes eligible; the reverse makes it ineligible only pre-submission.
 - **Duration unknown:** no submission is possible; the session is recorded in diagnostics.
 - **Terminal:** `EndedNaturally`, `Skipped`, `FailedAfterPartial` and session finalization each evaluate
-  the threshold once. `FailedBeforeStart` never submits.
+  the threshold once. `FailedBeforeStart` never submits. `FailedAfterPartial` ends its attempt and not
+  necessarily its session: a retry continues the session (§12.1), accruing onto the same accumulator,
+  so a play is still submitted at most once per session.
 - **Unit-test vectors are a deliverable**: every case above, plus suspension mid-track, a seek to 99%,
   repeat-one, and a transcode-offset `AttemptReplaced`.
 
@@ -2229,8 +2243,9 @@ Phase-1 deliverable**; it belongs to the feature that adopts the extension.
 Play position and "played" are distinct (§9.5 invariant 5), so the behavior is defined rather than
 implied.
 
-**v1 scope: local only.** `resume_position` is written on pause, on session finalization, and on a
-30-second cadence while progressing; restored when the same item is started again; cleared on
+**v1 scope: local only.** `resume_position` is written on pause, on `FailedAfterPartial`, on session
+finalization, and on a 30-second cadence while progressing; restored when the same item is started
+again, and when Try Again retries a partial failure (§12.1); cleared on
 `EndedNaturally` and on a submitted play that reached the end. It is protected data (§11.4).
 
 **Server-side bookmarks (`getBookmarks` / `createBookmark` / `deleteBookmark`) are not implemented in
@@ -5031,7 +5046,9 @@ wrong:
    failure table, and its automatic retry took a person who had moved on back to the Connection
    screen. The retry now runs visibly only for someone still on the explanation, and otherwise in
    place; an in-place retry never moves them, even when they come to Connection before it lands,
-   where it shows as connecting.
+   where it shows as connecting. **Corrected (2026-09-24):** the retry waited for the refusal to be
+   showing, and opening a saved account's library replaces it with "saved", so for that person a
+   grant retried nothing. The watch that reported the refusal now decides (§10.3).
 6. **The iOS and iPadOS shell is specified** (§3.1): tab bar or sidebar by the window's size class,
    Now Playing a presentation rather than a destination, a navigation stack per destination that
    survives leaving it and returns to its root when chosen again, a player that survives the window
@@ -5046,6 +5063,13 @@ wrong:
    table's row for a retry after `FailedBeforeStart`; it now keeps the session and replaces only the
    attempt. The table had no row for a retry after `FailedAfterPartial`; it gains one -- a new play
    from the saved position, because that failure already evaluated the session.
+   **Corrected (2026-09-24):** that new row was wrong, and it is removed. A new session per retry
+   starts a new accumulator, so one listen was counted by how the failures divided it rather than by
+   what was heard: a 10-minute track that failed at 5 minutes and was retried to the end submitted
+   two plays, and a 5-minute track heard in full across two partial failures submitted none, because
+   no single session reached the threshold. Try Again after any failure now keeps the session, and
+   one row says so; §15.2 and §15.5 say what a retried partial failure evaluates and restores. The
+   two cases are tests in the core, with the one uninterrupted listen as their positive control.
 8. **A drag onto the queue never drops silently** (§3.1). Attaching the drag interaction to every
    tile made disabled ones lift and drop nothing without a word; the drop is now refused out loud.
 
