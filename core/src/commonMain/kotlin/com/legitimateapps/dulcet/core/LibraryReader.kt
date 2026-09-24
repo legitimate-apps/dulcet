@@ -126,17 +126,22 @@ internal class LibraryReader(
     /**
      * Reconnect or return to the foreground online (§16.14), in this order and nothing else:
      * flush the outboxes (user-authored data first); read the catalog epoch; revalidate the visible
-     * screen — every open handle; and, only if the epoch changed, re-read the albums that contain
-     * downloads, one at a time. No catch-up walk, no bulk refetch, nothing re-read because it is old.
+     * screen — every open handle, then every other visible surface ([addVisibleSurface]: open
+     * searches re-run); and, only if the epoch changed, re-read the albums that contain downloads,
+     * one at a time. No catch-up walk, no bulk refetch, nothing re-read because it is old. When the
+     * epoch cannot be read, nothing is revalidated: windows and searches keep what they show.
      */
     suspend fun reconnect() {
         checkConfined()
+        // Marked online WITHOUT telling the surfaces: they are revalidated below, after the flush
+        // and the epoch read. Telling them here would send a search before the outbox flush.
         online = true
         // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
         flushOutboxes()
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
         val epoch = readEpoch() ?: return
         visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
+        revalidateSurfaces()
         if (before == null || before != epoch.key) recheckDownloadedAlbums()
     }
 
@@ -179,12 +184,42 @@ internal class LibraryReader(
         if (changed) recheckDownloadedAlbums()
     }
 
+    /**
+     * Reachability, as the platform reports it. A change republishes every window — no request —
+     * and revalidates every other visible surface, so an open search re-runs with the scope the
+     * new reachability allows. No change, no effect.
+     */
     fun setOnline(reachable: Boolean) {
         checkConfined()
         if (online == reachable) return
         online = reachable
         if (!reachable) lookAhead.cancelAll()
         visibleHandles().forEach { it.republish() }
+        revalidateSurfaces()
+    }
+
+    /**
+     * Registers a visible surface that is not a window — the session's open searches (§16.15).
+     * It is revalidated whenever reachability changes, and at reconnect's revalidation step, so no
+     * order in which a shell reports reachability and reconnects can leave it on a stale scope.
+     */
+    internal fun addVisibleSurface(surface: ReaderVisibleSurface) {
+        checkConfined()
+        surfaces += surface
+    }
+
+    private val surfaces = mutableListOf<ReaderVisibleSurface>()
+
+    private fun revalidateSurfaces() {
+        surfaces.toList().forEach { surface ->
+            try {
+                surface.revalidate()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                uncaughtFailures += failure
+            }
+        }
     }
 
     fun setNetworkConstrained(constrained: Boolean) {
@@ -892,6 +927,14 @@ internal fun interface DownloadedTrackSource {
     companion object {
         val None = DownloadedTrackSource { emptySet() }
     }
+}
+
+/**
+ * A visible surface that is not a window: the session's open searches. [revalidate] runs on the
+ * reader's thread, after a reachability change and at reconnect's revalidation step (§16.14 step 3).
+ */
+internal fun interface ReaderVisibleSurface {
+    fun revalidate()
 }
 
 /** The scrobble and mutation outboxes, flushed first on reconnect (§16.14 step 1). */

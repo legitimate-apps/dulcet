@@ -875,6 +875,15 @@ internal class LibraryReaderSession(
         }
     }
 
+    init {
+        // The reader, not this session, owns reachability: it tells the searches when it changes
+        // and when reconnect revalidates the screen, whichever entry point the shell called.
+        reader.addVisibleSurface {
+            searches.removeAll { it.isClosed }
+            searches.toList().forEach(LibrarySearchSession::refresh)
+        }
+    }
+
     /** A search over this reader whose rows carry the same overlaid favourite state (§16.15). */
     fun openSearch(
         config: LibrarySearchConfig = LibrarySearchConfig(),
@@ -890,13 +899,11 @@ internal class LibraryReaderSession(
     /**
      * Reachability, as the platform reports it: the reader republishes its windows, and every open
      * search re-runs so its scope says `deviceOffline` (or merges the server again) without waiting
-     * for a keystroke.
+     * for a keystroke. The same happens when the shell reports it to [reader] directly, and a
+     * [LibraryReader.reconnect] re-runs the searches itself, after its flush and epoch read.
      */
     fun setOnline(reachable: Boolean) {
         reader.checkConfined()
-        val changed = reader.online != reachable
         reader.setOnline(reachable)
-        searches.removeAll { it.isClosed }
-        if (changed) searches.toList().forEach(LibrarySearchSession::refresh)
     }
 }
