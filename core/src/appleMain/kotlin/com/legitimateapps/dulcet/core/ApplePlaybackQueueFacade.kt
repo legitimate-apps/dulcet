@@ -32,6 +32,16 @@ public class ApplePlaybackQueueRequestDto(
     public val shuffle: Boolean,
 )
 
+/** "Play Next" / "Play Later" (§14.1). `mode` is `playNext` or `playLater`. */
+public class ApplePlaybackQueueInsertionDto(
+    public val items: List<ApplePlaybackQueueItemDto>,
+    /** `album`, `playlist`, `search`, `artist`, or `library`. */
+    public val sourceKind: String,
+    public val sourceRawId: String?,
+    public val sourceDisplayName: String,
+    public val mode: String,
+)
+
 public class ApplePlaybackQueueEntryDto internal constructor(
     public val queueEntryId: String,
     public val providerInstanceId: String,
@@ -52,6 +62,11 @@ public class ApplePlaybackCoreSessionDto internal constructor(
     public val durationMilliseconds: Long,
     public val seekability: String,
     public val rate: Double,
+    /**
+     * How the current attempt failed: `beforeStart`, `afterPartial` -- it played, then stopped --
+     * or null while it has not failed.
+     */
+    public val failure: String? = null,
 )
 
 public class ApplePlaybackQueueSnapshotDto internal constructor(
@@ -82,6 +97,13 @@ public class ApplePlaybackQueueTransitionDto internal constructor(
     public val startDirective: ApplePlaybackStartDirectiveDto?,
     /** `input`, `persistence`, or null. */
     public val errorKind: String?,
+    /**
+     * A registered gapless preload to resolve and hand to the engine's `preloadNext`. Never
+     * something to start: the engine reports `AdvancedToPreloaded` when it takes over.
+     */
+    public val preloadDirective: ApplePlaybackStartDirectiveDto? = null,
+    /** A preload the core discarded; the shell must remove it from the engine. */
+    public val discardedPreloadAttemptId: String? = null,
 )
 
 public class ApplePlaybackDeliveryConfigurationOutcomeDto internal constructor(
@@ -277,6 +299,76 @@ public class ApplePlaybackQueueClient private constructor(
                 shuffle = request.shuffle,
             ),
         )
+    }
+
+    public fun enqueue(insertion: ApplePlaybackQueueInsertionDto): ApplePlaybackQueueTransitionDto =
+        runClosed {
+            val first = insertion.items.firstOrNull()
+                ?: throw IllegalArgumentException("Nothing to add")
+            val providerInstanceId = first.providerInstanceId
+            require(insertion.items.all { it.providerInstanceId == providerInstanceId })
+            controllerOrThrow().enqueue(
+                PlaybackQueueInsertion(
+                    items = insertion.items.map { item ->
+                        PlaybackQueueItem(
+                            itemId = ProviderItemId(item.providerInstanceId, item.rawId),
+                            duration = item.durationMilliseconds.takeIf { it >= 0 }?.milliseconds,
+                        )
+                    },
+                    sourceContext = QueueSourceContext(
+                        kind = insertion.sourceKind.toQueueSourceKind(),
+                        sourceId = insertion.sourceRawId?.let {
+                            ProviderItemId(providerInstanceId, it)
+                        },
+                        displayName = insertion.sourceDisplayName,
+                    ),
+                    mode = when (insertion.mode) {
+                        "playNext" -> QueueInsertionMode.PlayNext
+                        "playLater" -> QueueInsertionMode.Append
+                        else -> throw IllegalArgumentException("Unknown insertion mode")
+                    },
+                ),
+            )
+        }
+
+    public fun moveEntry(queueEntryId: String, toIndex: Int): ApplePlaybackQueueTransitionDto =
+        runClosed { controllerOrThrow().move(QueueEntryId(queueEntryId), toIndex) }
+
+    public fun removeEntry(queueEntryId: String): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().remove(QueueEntryId(queueEntryId))
+    }
+
+    public fun clearUpcoming(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().clearUpcoming()
+    }
+
+    public fun jumpTo(queueEntryId: String): ApplePlaybackQueueTransitionDto = runClosed {
+        val entry = QueueEntryId(queueEntryId)
+        val transition = controllerOrThrow().jumpTo(entry)
+        // The controller treats a vanished entry as a no-op; this facade's contract reports it as a
+        // closed input refusal, like removeEntry and moveEntry, so Swift can tell the two apart.
+        require(transition.snapshot.entries.any { it.queueEntryId == entry }) { "Unknown queue entry" }
+        transition
+    }
+
+    public fun startCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().startCurrent()
+    }
+
+    /**
+     * Try Again on the selected entry. The core decides what that is (§12.1): the same session
+     * with a new attempt after a failure before start, a new play after a failure after partial
+     * playback, the selected entry's start when no session exists, and nothing otherwise.
+     */
+    public fun retryCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().retryCurrent()
+    }
+
+    public fun preloadNextForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
+        runClosed { controllerOrThrow().preloadNext(PlaybackSessionId(playbackSessionId)) }
+
+    public fun discardPreload(attemptId: String): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().discardPreload(AttemptId(attemptId))
     }
 
     public fun next(): ApplePlaybackQueueTransitionDto = runClosed {
@@ -869,19 +961,21 @@ private fun String.toClosedPlaybackDomainError(): DomainError = when (this) {
 
 private fun PlaybackQueueTransition.toAppleDto() = ApplePlaybackQueueTransitionDto(
     snapshot = snapshot.toAppleDto(),
-    startDirective = startDirective?.let { directive ->
-        ApplePlaybackStartDirectiveDto(
-            queueEntryId = directive.queueEntryId.value,
-            playbackSessionId = directive.playbackSessionId.value,
-            attemptId = directive.attemptId.value,
-            providerInstanceId = directive.itemId.providerInstanceId,
-            rawId = directive.itemId.rawId,
-            durationMilliseconds = directive.duration?.inWholeMilliseconds ?: -1,
-            resumePositionMilliseconds = directive.resumePosition?.inWholeMilliseconds ?: -1,
-            shouldAutoPlay = directive.shouldAutoPlay,
-        )
-    },
+    startDirective = startDirective?.toAppleDto(),
     errorKind = null,
+    preloadDirective = preloadDirective?.toAppleDto(),
+    discardedPreloadAttemptId = discardedPreloadAttemptId?.value,
+)
+
+private fun PlaybackQueueStartDirective.toAppleDto() = ApplePlaybackStartDirectiveDto(
+    queueEntryId = queueEntryId.value,
+    playbackSessionId = playbackSessionId.value,
+    attemptId = attemptId.value,
+    providerInstanceId = itemId.providerInstanceId,
+    rawId = itemId.rawId,
+    durationMilliseconds = duration?.inWholeMilliseconds ?: -1,
+    resumePositionMilliseconds = resumePosition?.inWholeMilliseconds ?: -1,
+    shouldAutoPlay = shouldAutoPlay,
 )
 
 private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
@@ -908,6 +1002,11 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
             durationMilliseconds = session.currentAttempt.duration?.inWholeMilliseconds ?: -1,
             seekability = session.currentAttempt.seekability.name,
             rate = session.currentAttempt.rate,
+            failure = when (session.failureOf(session.currentAttempt.attemptId)) {
+                is PlaybackTerminalOutcome.FailedBeforeStart -> "beforeStart"
+                is PlaybackTerminalOutcome.FailedAfterPartial -> "afterPartial"
+                else -> null
+            },
         )
     },
 )

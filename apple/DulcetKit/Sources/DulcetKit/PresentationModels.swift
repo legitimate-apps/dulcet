@@ -135,6 +135,9 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
     case transportUnreachable
     case transportTimeout
     case transportCancelled
+    /// The system's local-network privacy stopped the connection: access was refused, or the
+    /// person has not yet answered the prompt asking for it.
+    case localNetworkAccessDenied
     case tlsUntrusted
     case localNetworkPolicyRejected
     case redirectRejected
@@ -155,7 +158,8 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .invalidServerURL:
             .input
-        case .transportUnreachable, .transportTimeout, .transportCancelled:
+        case .transportUnreachable, .transportTimeout, .transportCancelled,
+             .localNetworkAccessDenied:
             .transport
         case .tlsUntrusted, .localNetworkPolicyRejected, .redirectRejected:
             .security
@@ -649,6 +653,11 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let shuffleEnabled: Bool
     public let canGoNext: Bool
     public let canGoPrevious: Bool
+    /// The queue with its entry identities, aligned with each other: a track may appear twice,
+    /// so an edit must name the entry, never the track. Empty where the source has no identities.
+    public let queueEntries: [DulcetQueueEntry]
+    /// Index of the current entry within `queueEntries`, or nil when none is current.
+    public let currentEntryIndex: Int?
 
     public init(
         sessionID: DulcetPlaybackSessionID? = nil,
@@ -667,7 +676,9 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         repeatMode: DulcetRepeatMode = .off,
         shuffleEnabled: Bool = false,
         canGoNext: Bool = true,
-        canGoPrevious: Bool = true
+        canGoPrevious: Bool = true,
+        queueEntries: [DulcetQueueEntry] = [],
+        currentEntryIndex: Int? = nil
     ) {
         self.sessionID = sessionID
         self.current = current
@@ -686,6 +697,8 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.shuffleEnabled = shuffleEnabled
         self.canGoNext = canGoNext
         self.canGoPrevious = canGoPrevious
+        self.queueEntries = queueEntries
+        self.currentEntryIndex = currentEntryIndex
     }
 
 }
@@ -759,6 +772,15 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let selectedAlbum: DulcetAlbum?
     public let selectedArtist: DulcetArtist?
     public let nowPlaying: DulcetNowPlaying?
+    /// The playback surface's status, carried on every snapshot whatever the destination, so a
+    /// persistent now-playing bar can say "preparing" or "failed" rather than vanishing.
+    public let playbackStatus: DulcetPlaybackSurfaceStatus
+    /// Which track failed and what can be done about it, while `playbackFailed`.
+    public let playbackFailure: DulcetFailedPlayback?
+    /// How many queue edits the playback controller has refused. It only grows: a surface that
+    /// sees it change says the edit did not happen, rather than leaving a gesture that did
+    /// nothing unexplained.
+    public let refusedQueueEdits: Int
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
     public let searchHasMoreKinds: Set<DulcetSearchResultKind>
@@ -786,6 +808,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
         selectedAlbum: DulcetAlbum? = nil,
         selectedArtist: DulcetArtist? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
+        playbackStatus: DulcetPlaybackSurfaceStatus? = nil,
+        playbackFailure: DulcetFailedPlayback? = nil,
+        refusedQueueEdits: Int = 0,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -810,6 +835,10 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.selectedAlbum = selectedAlbum
         self.selectedArtist = selectedArtist
         self.nowPlaying = nowPlaying
+        // A snapshot built with a now-playing value and no status is ready by construction.
+        self.playbackStatus = playbackStatus ?? (nowPlaying == nil ? .unavailable : .ready)
+        self.playbackFailure = playbackFailure
+        self.refusedQueueEdits = refusedQueueEdits
         self.searchQuery = searchQuery
         self.searchResults = searchResults
         self.searchHasMoreKinds = searchHasMoreKinds
@@ -831,6 +860,13 @@ public struct DulcetSnapshot: Sendable, Hashable,
     /// can be asserted.
     public var canPlayWholeLibrary: Bool {
         albums.contains { !$0.tracks.isEmpty } || !looseTracks.isEmpty
+    }
+
+    /// Whether playback failed: the controller said so, or said it was ready with nothing to
+    /// present, which is an item that went missing. One predicate, so the now-playing bar, the
+    /// iPhone and iPad player and the Mac and tvOS Now Playing surface cannot disagree about it.
+    public var playbackFailed: Bool {
+        playbackStatus == .failed || (playbackStatus == .ready && nowPlaying == nil)
     }
 
     public var description: String {

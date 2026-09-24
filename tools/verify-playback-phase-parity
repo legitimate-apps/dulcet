@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Require the Apple shell to name every playback phase the Kotlin core can send it.
+
+The phase crosses the boundary as a bare string: `ApplePlaybackQueueFacade` writes
+`session.currentAttempt.phase.name`, so the Swift side is matching against Kotlin enum case
+names with nothing in between to fail on. A case added to the enum therefore arrives at a shell
+that has never heard of it, and the compiler cannot say so.
+
+That is not hypothetical. Before this gate existed the shell matched four names and sent
+everything else to one `else` branch that published `.preparing` -- putting `Created`,
+`Preparing`, `Stopped` and `TornDown` behind one presentation when a spinner is right for two of
+them and unresolvable for the other two.
+
+The gate also asserts the MECHANISM, not only the two lists. If the facade stops deriving the
+wire value from the enum's own name, comparing enum cases to Swift string literals verifies
+nothing at all, and it would keep passing while doing it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import sys
+
+REPO = Path(__file__).resolve().parent.parent
+KOTLIN_ENUM = REPO / "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/PlaybackCoreStateMachine.kt"
+KOTLIN_FACADE = REPO / "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/ApplePlaybackQueueFacade.kt"
+SWIFT_CONTROLLER = REPO / "apple/DulcetAppleShared/DulcetCorePlaybackController.swift"
+
+ENUM_BLOCK = re.compile(r"enum class PlaybackAttemptPhase\s*\{(.*?)\}", re.S)
+ENUM_CASE = re.compile(r"^\s*([A-Z][A-Za-z0-9]*)\s*,\s*$", re.M)
+WIRE_DERIVATION = re.compile(r"phase\s*=\s*session\.currentAttempt\.phase\.name\b")
+# STATEMENT position only. `DulcetCorePlaybackController` contains a SECOND `switch
+# session.phase` in expression position -- `let phase: ... = switch session.phase {` --
+# which maps the four playing phases to a presentation phase and is not the mapping this
+# gate governs. A pattern that matched either would read the wrong one the moment the first
+# was removed, which is precisely the change this gate must catch. Anchoring to the start of
+# a line excludes the assignment form, and the count is asserted rather than assumed.
+SWITCH_BLOCK = re.compile(r"^[ \t]*switch session\.phase \{(.*?)\n[ \t]*\}", re.S | re.M)
+SWIFT_CASE = re.compile(r'"([A-Za-z0-9]+)"')
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def read(path: Path) -> str:
+    try:
+        return path.read_text()
+    except OSError as error:
+        fail(f"cannot read {path.relative_to(REPO)}: {error}")
+    return ""
+
+
+def kotlin_phases(text: str) -> list[str]:
+    block = ENUM_BLOCK.search(text)
+    if block is None:
+        fail(
+            f"{KOTLIN_ENUM.relative_to(REPO)} no longer declares `enum class PlaybackAttemptPhase`."
+            " This gate reads that enum; it cannot fail open."
+        )
+    cases = ENUM_CASE.findall(block.group(1))
+    if not cases:
+        fail("PlaybackAttemptPhase parsed to zero cases, which is never correct")
+    return cases
+
+
+def swift_phases(text: str) -> list[str]:
+    blocks = SWITCH_BLOCK.findall(text)
+    if len(blocks) > 1:
+        fail(
+            f"{SWIFT_CONTROLLER.relative_to(REPO)} contains {len(blocks)} statement-position"
+            " `switch session.phase` blocks. Exactly one maps the phase to a presentation;"
+            " this gate cannot tell which of several is authoritative."
+        )
+    block = SWITCH_BLOCK.search(text)
+    if block is None:
+        fail(
+            f"{SWIFT_CONTROLLER.relative_to(REPO)} no longer contains `switch session.phase {{`."
+            " The presentation must map the phase with a switch that names every case, not an"
+            " allow-list with an else branch -- that shape is what this gate exists to prevent."
+        )
+    cases = SWIFT_CASE.findall(block.group(1))
+    if not cases:
+        fail("the Swift phase switch parsed to zero cases, which is never correct")
+    return cases
+
+
+def main() -> int:
+    facade = read(KOTLIN_FACADE)
+    if WIRE_DERIVATION.search(facade) is None:
+        fail(
+            f"{KOTLIN_FACADE.relative_to(REPO)} no longer sets the DTO's phase from"
+            " `session.currentAttempt.phase.name`. Comparing Kotlin enum cases against Swift"
+            " string literals only means something while the wire value IS the enum case name."
+            " Re-derive this gate against whatever the facade now sends."
+        )
+
+    kotlin = kotlin_phases(read(KOTLIN_ENUM))
+    swift = swift_phases(read(SWIFT_CONTROLLER))
+
+    duplicates = sorted({name for name in swift if swift.count(name) > 1})
+    if duplicates:
+        fail(
+            "the Swift phase switch names the same phase more than once, so one branch is"
+            f" unreachable: {', '.join(duplicates)}"
+        )
+
+    missing = [name for name in kotlin if name not in swift]
+    if missing:
+        fail(
+            "the Apple shell does not name every playback phase the core can send it."
+            f" Unhandled: {', '.join(missing)}."
+            " Each needs an explicit presentation; a default branch is how Stopped came to be"
+            " presented as a spinner that could never resolve."
+        )
+
+    unknown = [name for name in swift if name not in kotlin]
+    if unknown:
+        fail(
+            "the Apple shell matches a phase the core cannot send, so that branch is dead:"
+            f" {', '.join(unknown)}"
+        )
+
+    print(
+        f"playback phase parity: {len(kotlin)} phases named on both sides"
+        f" ({', '.join(kotlin)})"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

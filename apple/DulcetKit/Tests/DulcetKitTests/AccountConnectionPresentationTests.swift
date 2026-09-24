@@ -2477,3 +2477,1056 @@ func playingTheWholeLibraryBeforeTrackListsExistQueuesNothing() throws {
     store.playLibrary(shuffle: false)
     #expect(playback.queueIntents.count == 1)
 }
+
+// MARK: - Shell navigation: playback leaves the person where they are
+
+@MainActor
+private func connectedShellStore(
+    navigation: DulcetPlaybackStartNavigation
+) -> (DulcetPresentationStore, ControlledPlaybackController, DulcetAlbum, DulcetArtist) {
+    let connector = ControlledAccountConnector()
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: libraryBrowser,
+        playbackController: playback,
+        providerInstanceIDFactory: { "provider-instance-fixture" },
+        playbackStartNavigation: navigation
+    ))
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    let album = fixtureLibraryAlbum()
+    let artist = DulcetArtist(
+        id: try! #require(album.credits.first?.id),
+        name: "Opaque Artist",
+        mediaSourceID: nil
+    )
+    store.selectDestination(.library)
+    libraryBrowser.complete(.loaded(musicFolders: [], artists: [artist], albums: [album]))
+    return (store, playback, album, artist)
+}
+
+@MainActor
+private func readyPresentation(for album: DulcetAlbum) -> DulcetPlaybackPresentation {
+    DulcetPlaybackPresentation(status: .ready, nowPlaying: DulcetNowPlaying(
+        sessionID: DulcetPlaybackSessionID("session-shell"),
+        current: album.tracks[0],
+        queue: album.tracks,
+        elapsed: .seconds(3),
+        isPlaying: true,
+        outputName: "Fixture output",
+        volume: 1,
+        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1)
+    ))
+}
+
+@Test @MainActor
+func playingATrackLeavesTheAlbumPageShowingAndCarriesNowPlayingEverywhere() {
+    let (store, playback, album, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.selectAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    #expect(playback.queueIntents.count == 1)
+    // Still on the album: the bar says what is playing, the page does not go away.
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(store.snapshot.playbackStatus == .preparing)
+
+    playback.publish(readyPresentation(for: album))
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+
+    // Every later publication carries it -- navigation used to drop it until the next tick.
+    store.selectDestination(.search)
+    #expect(store.snapshot.selectedDestination == .search)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.selectDestination(.library)
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.selectDestination(.settings)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+
+    playback.publish(.unavailable)
+    #expect(store.snapshot.nowPlaying == nil)
+    #expect(store.snapshot.playbackStatus == .unavailable)
+}
+
+@Test @MainActor
+func showNowPlayingNavigationStillMovesToNowPlayingForTV() {
+    let (store, playback, album, _) = connectedShellStore(navigation: .showNowPlaying)
+    store.selectAlbum(album.id)
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    #expect(store.snapshot.selectedDestination == .nowPlaying)
+    playback.publish(readyPresentation(for: album))
+    #expect(store.snapshot.state == .nowPlaying)
+}
+
+@Test
+func playbackStartNavigationDefaultsStayPutWhereANowPlayingBarExists() {
+#if os(tvOS)
+    #expect(DulcetPlaybackStartNavigation.platformDefault == .showNowPlaying)
+#else
+    #expect(DulcetPlaybackStartNavigation.platformDefault == .stayOnCurrentSurface)
+#endif
+}
+
+@Test @MainActor
+func aPlaybackTickDoesNotEmptyTheArtistPage() {
+    let (store, playback, album, artist) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.showArtist(artist.id)
+    #expect(store.snapshot.state == .artistDetail)
+    #expect(store.snapshot.selectedArtist?.id == artist.id)
+    playback.publish(readyPresentation(for: album))
+    #expect(store.snapshot.state == .artistDetail)
+    #expect(store.snapshot.selectedArtist?.id == artist.id)
+}
+
+@Test @MainActor
+func artistAndAlbumLinksResolveOnlyToPagesTheLibraryHolds() {
+    let (store, _, album, artist) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    let track = album.tracks[0]
+
+    // By identity, then by an unambiguous name; never to an artist the library does not list.
+    #expect(store.libraryArtistID(for: DulcetCredit(role: .artist, name: "x", id: artist.id)) == artist.id)
+    #expect(store.libraryArtistID(for: DulcetCredit(role: .artist, name: artist.name, id: nil)) == artist.id)
+    #expect(store.libraryArtistID(for: DulcetCredit(role: .artist, name: "Nobody", id: nil)) == nil)
+    #expect(store.libraryArtistID(for: DulcetCredit(
+        role: .artist,
+        name: "Featured",
+        id: DulcetProviderItemID(providerInstanceID: "provider-instance-fixture", rawID: "artist:unlisted")
+    )) == nil)
+
+    #expect(store.libraryAlbumID(for: track) == album.id)
+    let unknown = DulcetTrack(
+        id: DulcetProviderItemID(providerInstanceID: "p", rawID: "t:other"),
+        title: "Other",
+        credits: [],
+        albumTitle: "Some Other Album",
+        duration: .seconds(1),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: "o", palette: .tealSun)
+    )
+    #expect(store.libraryAlbumID(for: unknown) == nil)
+
+    store.selectDestination(.search)
+    store.showArtist(artist.id)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state == .artistDetail)
+    store.showAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+}
+
+@Test @MainActor
+func queueEditingIsOfferedOnlyWhenTheControllerCanEdit() {
+    let (store, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    #expect(!store.queueEditingEnabled)
+
+    let editing = EditingPlaybackController()
+    let editingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    #expect(editingStore.queueEditingEnabled)
+    let album = fixtureLibraryAlbum()
+    let addition = DulcetQueueAddition.album(album)
+    editingStore.editQueue(.playNext(addition))
+    #expect(editing.edits == [.playNext(addition)])
+}
+
+@Test @MainActor
+func droppingDraggedItemsOntoTheQueueAddsEachResolvableOneToTheEnd() throws {
+    DulcetQueueDragRegistry.removeAll()
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    let album = fixtureLibraryAlbum()
+    let albumAddition = DulcetQueueAddition.album(album)
+    let trackAddition = DulcetQueueAddition.searchResult(try #require(album.tracks.first))
+
+    let albumDrag = DulcetQueueDragRegistry.register(albumAddition)
+    let trackDrag = DulcetQueueDragRegistry.register(trackAddition)
+    let nothing = DulcetQueueDragRegistry.register(nil)
+    let foreign = DulcetQueueDragItem(ticket: UUID())
+
+    // Order is the drop's, and tickets the process never issued, or issued for nothing, add
+    // nothing rather than failing the whole drop.
+    #expect(DulcetQueueDragRegistry.dropOntoQueue([trackDrag, foreign, nothing, albumDrag], store: store))
+    #expect(editing.edits == [.playLater(trackAddition), .playLater(albumAddition)])
+
+    // A drop made only of unresolvable tickets reports that it did nothing.
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([foreign, nothing], store: store))
+    #expect(editing.edits.count == 2)
+}
+
+@Test @MainActor
+func theDragRegistryForgetsAbandonedDragsBeyondItsCapacity() {
+    DulcetQueueDragRegistry.removeAll()
+    let addition = DulcetQueueAddition.album(fixtureLibraryAlbum())
+    let first = DulcetQueueDragRegistry.register(addition)
+    let rest = (0..<DulcetQueueDragRegistry.capacity).map { _ in DulcetQueueDragRegistry.register(addition) }
+    #expect(DulcetQueueDragRegistry.addition(for: first) == nil)
+    #expect(DulcetQueueDragRegistry.addition(for: rest[0]) == addition)
+    #expect(DulcetQueueDragRegistry.addition(for: rest[rest.count - 1]) == addition)
+}
+
+@Test @MainActor
+func aDropCannotEditAQueueTheControllerCannotEdit() {
+    DulcetQueueDragRegistry.removeAll()
+    let (store, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    let drag = DulcetQueueDragRegistry.register(.album(fixtureLibraryAlbum()))
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([drag], store: store))
+}
+
+@Test @MainActor
+func theSearchCommandAsksTheFieldForFocusUntilTheFieldTakesIt() {
+    let (store, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    #expect(!store.searchFocusRequested)
+    store.focusSearch()
+    #expect(store.selectedDestination == .search)
+    #expect(store.searchFocusRequested)
+    // Already on Search: the command still asks, because the field may have lost focus.
+    store.searchFocusRequestHandled()
+    store.focusSearch()
+    #expect(store.searchFocusRequested)
+    store.searchFocusRequestHandled()
+    #expect(!store.searchFocusRequested)
+}
+
+@MainActor
+private final class EditingPlaybackController: DulcetPlaybackControlling, DulcetQueueEditing {
+    private(set) var edits: [DulcetQueueEditIntent] = []
+    var refusesEdits = false
+    let currentPresentation: DulcetPlaybackPresentation = .unavailable
+    func setPresentationHandler(_ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void) {}
+    func configure(account: DulcetPlaybackAccount) {}
+    func restorePersistedQueue(with tracks: [DulcetTrack], catalogCoverage: DulcetLibraryCatalogCoverage) {}
+    func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {}
+    func send(_ intent: DulcetPlaybackControlIntent) {}
+    func disconnect() {}
+    func edit(_ intent: DulcetQueueEditIntent) -> Bool {
+        edits.append(intent)
+        return !refusesEdits
+    }
+}
+
+// MARK: Local-network access
+
+@MainActor
+private final class ControlledLocalNetworkAccess: DulcetLocalNetworkAccessProbing {
+    final class Watch: DulcetLocalNetworkAccessWatch {
+        var cancelled = false
+        func cancel() { cancelled = true }
+    }
+
+    private(set) var watchedURLs: [String] = []
+    private(set) var watches: [Watch] = []
+    private var onChange: (@MainActor (DulcetLocalNetworkAccess) -> Void)?
+
+    func watch(
+        serverURL: String,
+        onChange: @escaping @MainActor (DulcetLocalNetworkAccess) -> Void
+    ) -> any DulcetLocalNetworkAccessWatch {
+        watchedURLs.append(serverURL)
+        self.onChange = onChange
+        let watch = Watch()
+        watches.append(watch)
+        return watch
+    }
+
+    func answer(_ access: DulcetLocalNetworkAccess) {
+        onChange?(access)
+    }
+}
+
+@MainActor
+private func localNetworkStore() -> (DulcetPresentationStore, ControlledAccountConnector, ControlledLocalNetworkAccess) {
+    let connector = ControlledAccountConnector()
+    let probe = ControlledLocalNetworkAccess()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        localNetworkAccess: probe
+    ))
+    store.accountServerURL = "http://10.0.0.20:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.accountAllowLocalHTTP = true
+    return (store, connector, probe)
+}
+
+private func accountFailure(_ kind: DulcetAccountFailureKind) -> DulcetAccountFailurePresentation {
+    DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(kind: kind, serverName: "10.0.0.20"))
+}
+
+@MainActor
+private func shownFailureKind(_ store: DulcetPresentationStore) -> DulcetAccountFailureKind? {
+    if case let .failed(failure) = store.snapshot.accountConnection { return failure.kind }
+    return nil
+}
+
+@Test @MainActor
+func aLocalServerBlockedByLocalNetworkPrivacySaysSoAndConnectsOnceAccessIsGranted() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+
+    // The system is asked before the server is blamed, and the spinner stays up meanwhile.
+    #expect(probe.watchedURLs == ["http://10.0.0.20:4533"])
+    #expect(store.snapshot.state == .accountConnecting)
+
+    probe.answer(.denied)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied)
+    #expect(connector.requests.count == 1)
+
+    // Granting access -- answering the prompt, or turning the switch on -- retries by itself.
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+    #expect(store.snapshot.state == .accountConnecting)
+
+    // Once per request: a server still unreachable after the grant is reported, not retried
+    // again every time the permission is toggled.
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+}
+
+@Test @MainActor
+func anUnreachableServerThatPrivacyDidNotBlockKeepsItsOwnFailure() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportTimeout)))
+    probe.answer(.notDenied)
+    #expect(shownFailureKind(store) == .transportTimeout)
+    #expect(connector.requests.count == 1)
+}
+
+@Test @MainActor
+func onlyTransportFailuresConsultLocalNetworkPrivacy() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.invalidCredentials)))
+    #expect(probe.watchedURLs.isEmpty)
+    #expect(shownFailureKind(store) == .invalidCredentials)
+}
+
+@Test @MainActor
+func aNewSubmissionStopsWatchingForTheOldOnesAccess() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.submitAccountConnection()
+    #expect(probe.watches.first?.cancelled == true)
+    // A late grant for the superseded request starts nothing.
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+}
+
+@Test
+func localNetworkDenialHasCatalogedCopy() {
+    let presentation = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
+        kind: .localNetworkAccessDenied,
+        serverName: "10.0.0.20"
+    ))
+    #expect(presentation.title == "Allow Dulcet to find devices on your local network")
+    #expect(presentation.kind.family == .transport)
+}
+
+// MARK: - Per-destination navigation (a tab bar and a sidebar keep each place as it was left)
+
+@Test @MainActor
+func libraryComesBackAsItWasLeftAndChoosingItAgainReturnsToTheGrid() {
+    let (store, _, album, artist) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.showArtist(artist.id)
+    store.selectAlbum(album.id)
+    #expect(store.libraryPath == [.artist(artist.id), .album(album.id)])
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+
+    // Away and back: the stack is kept while away, and the album is what comes back.
+    store.navigate(to: .search)
+    #expect(store.snapshot.selectedDestination == .search)
+    #expect(store.libraryPath == [.artist(artist.id), .album(album.id)])
+    store.navigate(to: .library)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    #expect(store.libraryPath == [.artist(artist.id), .album(album.id)])
+
+    // Back pops one page -- to the artist, not the grid.
+    store.popLibrary(to: [.artist(artist.id)])
+    #expect(store.snapshot.state == .artistDetail)
+    #expect(store.snapshot.selectedArtist?.id == artist.id)
+    #expect(store.libraryPath == [.artist(artist.id)])
+
+    // Choosing the destination already showing returns it to its root.
+    store.navigate(to: .library)
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.libraryPath.isEmpty)
+    // And a root stays a root when the person leaves and returns.
+    store.navigate(to: .settings)
+    store.navigate(to: .library)
+    #expect(store.snapshot.state == .libraryBrowse)
+}
+
+@Test @MainActor
+func aPageOpenedFromAnotherDestinationStartsTheLibraryStackOnTheGrid() {
+    let (store, _, album, artist) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.showArtist(artist.id)
+    store.navigate(to: .search)
+    // "Go to Album" from the player or a search result: the album on the grid, not on top of
+    // an artist page the person left somewhere else.
+    store.showAlbum(album.id)
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.libraryPath == [.album(album.id)])
+    store.popLibrary(to: [])
+    #expect(store.snapshot.state == .libraryBrowse)
+    #expect(store.libraryPath.isEmpty)
+}
+
+@Test @MainActor
+func aBackGestureThatIsNotAPopChangesNothing() {
+    let (store, _, album, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    store.selectAlbum(album.id)
+    // The navigation stack reporting the path it already holds, or one it never held, is not a
+    // request to go anywhere.
+    store.popLibrary(to: [.album(album.id)])
+    store.popLibrary(to: [.artist(album.id)])
+    #expect(store.snapshot.state == .albumDetailMultiDisc)
+    #expect(store.libraryPath == [.album(album.id)])
+}
+
+@Test @MainActor
+func theFixtureKeepsLibraryPagesPerDestinationToo() throws {
+    let store = DulcetPresentationStore(source: DulcetDeterministicDataSource())
+    let album = try #require(store.snapshot.albums.first)
+    store.selectAlbum(album.id)
+    store.navigate(to: .search)
+    store.navigate(to: .library)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    store.navigate(to: .library)
+    #expect(store.snapshot.state == .libraryBrowse)
+}
+
+// MARK: - Playback start navigation reaches the fixture's shell proofs
+
+@Test @MainActor
+func theFixtureFollowsThePlaybackStartNavigationItIsGiven() throws {
+    for navigation in [DulcetPlaybackStartNavigation.stayOnCurrentSurface, .showNowPlaying] {
+        let store = DulcetPresentationStore(source: DulcetDeterministicDataSource(
+            playbackStartNavigation: navigation
+        ))
+        let album = try #require(store.snapshot.albums.first { !$0.tracks.isEmpty })
+        store.selectAlbum(album.id)
+        store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+        #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+        #expect(store.snapshot.selectedDestination
+            == (navigation == .showNowPlaying ? .nowPlaying : .library))
+    }
+}
+
+// MARK: - A failed track is not a dead end
+
+@Test @MainActor
+func aFailedTrackNamesItselfAndSkipAndRetryReachPlayback() throws {
+    let source = DulcetDeterministicDataSource(failingTrackTitles: ["Disc 1 Track 1"])
+    let store = DulcetPresentationStore(source: source)
+    let album = try #require(store.snapshot.albums.first { $0.tracks.first?.title == "Disc 1 Track 1" })
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    #expect(store.snapshot.playbackFailed)
+    #expect(store.snapshot.playbackFailure?.track?.title == "Disc 1 Track 1")
+    #expect(store.snapshot.playbackFailure?.canSkip == true)
+    #expect(store.snapshot.playbackFailure?.canRetry == true)
+    #expect(store.showsNowPlayingBar)
+
+    // Dismissed, the bar goes away -- until playback does anything else.
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    store.sendPlaybackControl(.retry)
+    #expect(!store.snapshot.playbackFailed)
+    #expect(store.snapshot.nowPlaying?.current.title == "Disc 1 Track 1")
+    #expect(store.showsNowPlayingBar)
+}
+
+@Test @MainActor
+func aNewFailureAfterADismissalShowsTheBarAgain() throws {
+    let source = DulcetDeterministicDataSource(failingTrackTitles: ["Disc 1 Track 1"])
+    let store = DulcetPresentationStore(source: source)
+    let album = try #require(store.snapshot.albums.first { $0.tracks.first?.title == "Disc 1 Track 1" })
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The fixture goes from failed straight to failed again, with no playing or preparing
+    // snapshot in between: the person starting it is what makes it a new failure to show.
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    #expect(store.snapshot.playbackFailed)
+    #expect(store.showsNowPlayingBar)
+}
+
+@Test @MainActor
+func skippingAFailedTrackPlaysTheNextEntry() throws {
+    let store = DulcetPresentationStore(source: DulcetDeterministicDataSource(
+        failingTrackTitles: ["Disc 1 Track 1"]
+    ))
+    let album = try #require(store.snapshot.albums.first { $0.tracks.first?.title == "Disc 1 Track 1" })
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    store.sendPlaybackControl(.next)
+    #expect(!store.snapshot.playbackFailed)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[1].id)
+}
+
+@Test(arguments: [DulcetPlaybackSurfaceStatus.ready, .failed]) @MainActor
+func everySurfaceReadsOneFailurePredicate(status: DulcetPlaybackSurfaceStatus) {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    // `.ready` with nothing to present is an item that went missing: the Mac and tvOS surface
+    // already called it a failure, and the iPhone and iPad player and bar must agree.
+    playback.publish(DulcetPlaybackPresentation(status: status, nowPlaying: nil))
+    #expect(store.snapshot.playbackFailed)
+    #expect(store.showsNowPlayingBar)
+    store.selectDestination(.nowPlaying)
+    #expect(store.snapshot.state == .nowPlayingFailed)
+}
+
+// MARK: - A refused queue edit says so
+
+@Test @MainActor
+func aRefusedQueueEditIsCountedOnTheSnapshot() {
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    let entry = DulcetQueueEntryID("entry-gone")
+    store.editQueue(.remove(entry))
+    #expect(store.snapshot.refusedQueueEdits == 0)
+    editing.refusesEdits = true
+    store.editQueue(.remove(entry))
+    store.editQueue(.clearUpcoming)
+    #expect(store.snapshot.refusedQueueEdits == 2)
+    #expect(editing.edits.count == 3)
+}
+
+// MARK: - A late local-network grant connects where the person is
+
+@Test @MainActor
+func accessGrantedAfterThePersonMovedOnConnectsWithoutTakingThemBack() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    #expect(store.snapshot.selectedDestination == .settings)
+
+    store.navigate(to: .library)
+    let libraryState = store.snapshot.state
+    #expect(store.snapshot.selectedDestination == .library)
+
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2)
+    #expect(store.snapshot.selectedDestination == .library, "no spinner on Settings")
+    #expect(store.snapshot.state == libraryState)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.state == .emptyLibraryConnected, "the library opens on the connection")
+}
+
+@Test @MainActor
+func anInPlaceRetryThatFailsIsRecordedWhereSettingsShowsIt() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .search)
+    probe.answer(.notDenied)
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    #expect(store.snapshot.selectedDestination == .search)
+    #expect(shownFailureKind(store) == .transportUnreachable)
+    store.navigate(to: .settings)
+    #expect(shownFailureKind(store) == .transportUnreachable)
+}
+
+// MARK: - The failure message offers only what is there
+
+@MainActor
+private func failure(canSkip: Bool, canRetry: Bool = true, stoppedPartway: Bool = false) -> DulcetFailedPlayback {
+    DulcetFailedPlayback(
+        track: fixtureLibraryAlbum().tracks[0],
+        canSkip: canSkip,
+        canRetry: canRetry,
+        stoppedPartway: stoppedPartway
+    )
+}
+
+@Test @MainActor
+func theLastEntrysFailureDoesNotOfferASkipThatIsNotThere() {
+    // The last entry with repeat off, and a one-track queue under repeat-all, both reach the
+    // player as a failure that cannot skip: nothing else follows the failed track.
+    let message = DulcetPlaybackFailedView.message(for: failure(canSkip: false))
+    #expect(message == "Dulcet couldn\u{2019}t start this track. Try it again.")
+    #expect(!message.localizedCaseInsensitiveContains("skip"))
+}
+
+@Test @MainActor
+func aFailureWithSomewhereToGoOffersBoth() {
+    #expect(DulcetPlaybackFailedView.message(for: failure(canSkip: true))
+        == "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one.")
+}
+
+@Test @MainActor
+func aTrackThatStoppedPartwayIsNotSaidToHaveFailedToStart() {
+    let withSkip = DulcetPlaybackFailedView.message(for: failure(canSkip: true, stoppedPartway: true))
+    let withoutSkip = DulcetPlaybackFailedView.message(for: failure(canSkip: false, stoppedPartway: true))
+    #expect(withSkip == "This track stopped partway through. Try it again, or skip to the next one.")
+    #expect(withoutSkip == "This track stopped partway through. Try it again.")
+    #expect(![withSkip, withoutSkip].contains { $0.contains("start") })
+}
+
+@Test @MainActor
+func aFailureWithNothingOnOfferSendsThePersonBackToTheLibrary() {
+    #expect(DulcetPlaybackFailedView.message(for: .undescribed)
+        == "Return to your library and choose another track.")
+    #expect(DulcetPlaybackFailedView.message(for: failure(canSkip: true, canRetry: false))
+        == "Dulcet couldn\u{2019}t start this track. Skip to the next one.")
+}
+
+// MARK: - Only the failure dismissed stays away
+
+@Test @MainActor
+func aDismissedFailureComesBackWhenPlaybackStartsWithoutTheStore() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    let failed = DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: failure(canSkip: true))
+    playback.publish(failed)
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // Started from the lock screen or a headset: nothing goes through the store, and the same
+    // track fails again. Playback did something else in between, so this is a new failure.
+    playback.publish(DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil))
+    playback.publish(failed)
+    #expect(store.showsNowPlayingBar)
+}
+
+@Test @MainActor
+func aDifferentFailureAfterADismissalShowsTheBarWithNothingInBetween() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: failure(canSkip: true)))
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The same failure republished stays dismissed...
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: failure(canSkip: true)))
+    #expect(!store.showsNowPlayingBar)
+    // ...but another track failing is not the failure the person put away.
+    let otherTrack = DulcetTrack(
+        id: DulcetProviderItemID(providerInstanceID: "provider-instance-fixture", rawID: "track:other"),
+        title: "Other Track",
+        credits: [],
+        albumTitle: "Opaque Album",
+        duration: .seconds(90),
+        mediaSourceID: nil,
+        artwork: DulcetArtwork(seed: "track:other", palette: .indigoCoral)
+    )
+    let other = DulcetFailedPlayback(track: otherTrack, canSkip: false, canRetry: true)
+    playback.publish(DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: other))
+    #expect(store.snapshot.playbackFailure == other)
+    #expect(store.showsNowPlayingBar)
+}
+
+@MainActor
+private func failure(
+    entry: String,
+    attempt: String,
+    canSkip: Bool,
+    stoppedPartway: Bool = false
+) -> DulcetPlaybackPresentation {
+    DulcetPlaybackPresentation(status: .failed, nowPlaying: nil, failure: DulcetFailedPlayback(
+        track: fixtureLibraryAlbum().tracks[0],
+        canSkip: canSkip,
+        canRetry: true,
+        stoppedPartway: stoppedPartway,
+        queueEntryID: entry,
+        attemptID: attempt
+    ))
+}
+
+@Test @MainActor
+func aQueueEditThatChangesWhatSkipCanDoLeavesADismissedFailureAway() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: false))
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // Adding a track after the failed one gives Skip somewhere to go. The failure is the same
+    // one the person put away, so the bar stays away.
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: true))
+    #expect(store.snapshot.playbackFailure?.canSkip == true)
+    #expect(!store.showsNowPlayingBar)
+}
+
+@Test @MainActor
+func anotherAttemptOrAnotherKindOfFailureIsNotTheOneDismissed() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: true))
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The same entry and track, a later attempt: a new failure.
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:2", canSkip: true))
+    #expect(store.showsNowPlayingBar)
+
+    store.dismissPlaybackFailure()
+    #expect(!store.showsNowPlayingBar)
+    // The same attempt, now reported as having stopped partway: a different failure.
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:2", canSkip: true, stoppedPartway: true))
+    #expect(store.showsNowPlayingBar)
+
+    store.dismissPlaybackFailure()
+    // The same track at another place in the queue: a different entry, so a different failure.
+    playback.publish(failure(entry: "entry:2", attempt: "attempt:2", canSkip: true, stoppedPartway: true))
+    #expect(store.showsNowPlayingBar)
+}
+
+// MARK: - The bar and the player say the same thing
+
+// tvOS has no now-playing bar, so there is nothing there for the player to agree with.
+#if os(macOS) || os(iOS)
+@Test @MainActor
+func theBarAndThePlayerAgreeThatATrackStoppedPartway() {
+    let partway = failure(canSkip: true, stoppedPartway: true)
+    let title = fixtureLibraryAlbum().tracks[0].title
+    #expect(DulcetNowPlayingBar.failureLine(for: partway) == "Stopped partway through")
+    #expect(DulcetNowPlayingBar.failureAnnouncement(for: partway)
+        == "\u{201C}\(title)\u{201D} stopped partway through")
+    #expect(DulcetPlaybackFailedView.message(for: partway).contains("stopped partway"))
+    // None of the three says it could not play, or could not start.
+    for text in [
+        DulcetNowPlayingBar.failureLine(for: partway),
+        DulcetNowPlayingBar.failureAnnouncement(for: partway),
+        DulcetPlaybackFailedView.message(for: partway),
+    ] {
+        #expect(!text.localizedCaseInsensitiveContains("couldn\u{2019}t"), "\(text)")
+    }
+
+    let beforeStart = failure(canSkip: true)
+    #expect(DulcetNowPlayingBar.failureLine(for: beforeStart) == "Couldn\u{2019}t play this track")
+    #expect(DulcetNowPlayingBar.failureAnnouncement(for: beforeStart)
+        == "Couldn\u{2019}t play \u{201C}\(title)\u{201D}")
+    for text in [
+        DulcetNowPlayingBar.failureLine(for: beforeStart),
+        DulcetNowPlayingBar.failureAnnouncement(for: beforeStart),
+        DulcetPlaybackFailedView.message(for: beforeStart),
+    ] {
+        #expect(!text.contains("partway"), "\(text)")
+    }
+}
+#endif
+
+// MARK: - A drop that carries nothing is refused out loud
+
+@Test @MainActor
+func aDropThatCarriesNothingIsRefusedOutLoud() throws {
+    DulcetQueueDragRegistry.removeAll()
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    // A disabled tile -- offline, or its track list not read yet -- still lifts, so the drag
+    // interaction keeps one identity; what it carries is nothing, and the drag says so.
+    let nothing = DulcetQueueDragRegistry.register(nil)
+    #expect(!DulcetQueueDragRegistry.activeDragCarriesAddition)
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([nothing], store: store))
+    #expect(editing.edits.isEmpty)
+    #expect(store.snapshot.refusedQueueEdits == 1, "a drop that adds nothing must not be silent")
+
+    // A drag that carries something is not refused.
+    let addition = DulcetQueueAddition.album(fixtureLibraryAlbum())
+    let something = DulcetQueueDragRegistry.register(addition)
+    #expect(DulcetQueueDragRegistry.activeDragCarriesAddition)
+    #expect(DulcetQueueDragRegistry.dropOntoQueue([something], store: store))
+    #expect(store.snapshot.refusedQueueEdits == 1)
+}
+
+// MARK: - An in-place local-network retry never moves the person
+
+@Test @MainActor
+func anInPlaceRetryNeverMovesThePersonAndConnectionShowsItConnecting() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .library)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried in place")
+    #expect(store.snapshot.selectedDestination == .library)
+
+    // The person opens Connection while the retry runs: it is connecting, not refused.
+    store.navigate(to: .settings)
+    #expect(shownFailureKind(store) == nil, "the refusal no longer applies")
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(store.snapshot.state == .accountConnecting)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(store.snapshot.selectedDestination == .settings, "an in-place retry never moves them")
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.state == .accountConnected)
+}
+
+/// The grant is answered by the live watch, not by whatever the account status happens to show:
+/// opening a saved account's library replaces the refusal on the status with "saved", and the
+/// person who went there is the one most waiting for the connection.
+@Test @MainActor
+func accessGrantedAfterASavedAccountsLibraryReplacedTheRefusalStillConnects() {
+    let connector = ControlledAccountConnector()
+    let probe = ControlledLocalNetworkAccess()
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "http://10.0.0.20:4533",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: true
+    )
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: MemoryCredentialStore(persisted: saved),
+        localNetworkAccess: probe
+    ))
+    #expect(store.snapshot.state == .accountSavedDisconnected, "the experiment needs a saved account")
+    store.navigate(to: .settings)
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied)
+    store.navigate(to: .library)
+    // The condition under test: the refusal is no longer what the status shows.
+    #expect(shownFailureKind(store) == nil)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "10.0.0.20:4533"))
+
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried the connection")
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.accountConnection == .connecting)
+
+    // Opening Library again while it runs does not make the account look saved and idle, so
+    // Connection still shows the connection running, with Cancel.
+    store.navigate(to: .library)
+    #expect(store.snapshot.accountConnection == .connecting)
+    store.navigate(to: .settings)
+    #expect(store.snapshot.state == .accountConnecting)
+    store.navigate(to: .library)
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(store.snapshot.accountConnected)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.state != .accountSavedDisconnected)
+    #expect(connector.requests.count == 2, "retried once, not again")
+}
+
+@MainActor
+private final class CommittedLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing {
+    private(set) var committedReads: [@MainActor (DulcetLibraryBrowseOutcome) -> Void] = []
+
+    func browse(
+        _ request: DulcetLibraryBrowseRequest,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        ControlledLibraryOperation()
+    }
+
+    func browseCommitted(
+        providerInstanceID: String,
+        completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
+    ) -> any DulcetLibraryBrowseOperation {
+        committedReads.append(completion)
+        return ControlledLibraryOperation()
+    }
+}
+
+@MainActor
+private final class InstanceCredentialStore: DulcetProviderInstanceCredentialStoring {
+    private var persisted: DulcetAccountConnectRequest?
+    private(set) var providerInstanceID: String?
+
+    init(persisted: DulcetAccountConnectRequest, providerInstanceID: String) {
+        self.persisted = persisted
+        self.providerInstanceID = providerInstanceID
+    }
+
+    func load() throws -> DulcetAccountConnectRequest? { persisted }
+    func save(_ request: DulcetAccountConnectRequest) throws { persisted = request }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        persisted = request
+        self.providerInstanceID = providerInstanceID
+    }
+    func delete() throws { persisted = nil }
+}
+
+/// The same retry where the saved account's library is read from what is held on the device: a
+/// read begun while the retry ran must not overwrite how the retry ended.
+@Test @MainActor
+func aHeldLibraryReadDoesNotOverwriteHowAnInPlaceRetryEnded() {
+    let connector = ControlledAccountConnector()
+    let probe = ControlledLocalNetworkAccess()
+    let browser = CommittedLibraryBrowser()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: InstanceCredentialStore(
+            persisted: DulcetAccountConnectRequest(
+                serverURL: "http://10.0.0.20:4533",
+                username: "listener",
+                password: "fixture-password",
+                allowLocalHTTP: true
+            ),
+            providerInstanceID: "provider-instance-held"
+        ),
+        libraryBrowser: browser,
+        localNetworkAccess: probe
+    ))
+    store.navigate(to: .settings)
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .library)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried the connection")
+    // Library is opened again while the retry runs: a held read begins, and the status still
+    // says the connection is running.
+    store.navigate(to: .library)
+    #expect(browser.committedReads.count == 2, "the experiment needs a held read in flight")
+    #expect(store.snapshot.accountConnection == .connecting)
+
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    #expect(shownFailureKind(store) == .transportUnreachable)
+    browser.committedReads[1](.loaded(musicFolders: [], artists: [], albums: []))
+    #expect(store.snapshot.state != .libraryLoading, "the held read landed")
+    #expect(shownFailureKind(store) == .transportUnreachable, "the retry's outcome stands")
+    store.navigate(to: .settings)
+    #expect(store.snapshot.state != .accountConnecting, "nothing is connecting any more")
+}
+
+/// The person corrects the address while the refusal shows, and has not pressed Connect yet.
+@Test @MainActor
+func editingTheAddressWhileTheRefusalShowsEndsItAndKeepsTheEdit() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied, "the experiment needs the refusal showing")
+
+    store.accountServerURL = "http://10.0.0.99:4533"
+    #expect(probe.watches.last?.cancelled == true, "the edit ends the watch")
+    #expect(shownFailureKind(store) == nil, "Connection no longer promises to connect on its own")
+    #expect(store.snapshot.selectedDestination == .settings)
+
+    // A grant from the ended watch retries nothing, and the edit stays in the field.
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 1)
+    #expect(store.accountServerURL == "http://10.0.0.99:4533")
+    // ...and is still there after the person goes somewhere and comes back.
+    store.navigate(to: .library)
+    store.navigate(to: .settings)
+    #expect(store.accountServerURL == "http://10.0.0.99:4533")
+
+    // Connect sends what was edited.
+    store.submitAccountConnection()
+    #expect(connector.requests.last?.serverURL == "http://10.0.0.99:4533")
+}
+
+/// An edit that changes nothing is not an edit: the retry still comes.
+@Test @MainActor
+func settingTheAddressToWhatItAlreadyIsKeepsTheRetry() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.accountServerURL = "http://10.0.0.20:4533"
+    #expect(probe.watches.last?.cancelled == false)
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant retried the connection")
+}
+
+/// The privacy check can take as long as the person takes to answer the system's prompt; someone
+/// who has left the spinner meanwhile is not pulled back to Connection by its answer.
+@Test @MainActor
+func thePrivacyChecksAnswerArrivingAfterThePersonLeftDoesNotMoveThem() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    #expect(store.snapshot.state == .accountConnecting, "the spinner waits for the privacy check")
+    store.navigate(to: .library)
+    probe.answer(.denied)
+    #expect(store.snapshot.selectedDestination == .library, "a denial does not move them")
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied, "it is recorded on the status")
+    store.navigate(to: .settings)
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied, "Connection shows it")
+    probe.answer(.notDenied)
+    #expect(connector.requests.count == 2, "the grant still retries")
+
+    // The other answer -- privacy was never the obstacle -- is recorded the same way.
+    let (other, otherConnector, otherProbe) = localNetworkStore()
+    other.submitAccountConnection()
+    otherConnector.complete(.failed(accountFailure(.transportUnreachable)))
+    other.navigate(to: .search)
+    otherProbe.answer(.notDenied)
+    #expect(other.snapshot.selectedDestination == .search)
+    #expect(shownFailureKind(other) == .transportUnreachable)
+    other.navigate(to: .settings)
+    #expect(shownFailureKind(other) == .transportUnreachable)
+}
+
+@Test @MainActor
+func anInPlaceRetryCanBeCancelledFromConnection() {
+    let (store, connector, probe) = localNetworkStore()
+    store.submitAccountConnection()
+    connector.complete(.failed(accountFailure(.transportUnreachable)))
+    probe.answer(.denied)
+    store.navigate(to: .search)
+    probe.answer(.notDenied)
+    store.navigate(to: .settings)
+    store.cancelAccountConnection()
+    #expect(store.snapshot.selectedDestination == .settings)
+    #expect(store.snapshot.state != .accountConnecting)
+    // A completion arriving after the cancel changes nothing.
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "http://10.0.0.20:4533"
+    )))
+    #expect(!store.snapshot.accountConnected)
+    #expect(store.snapshot.selectedDestination == .settings)
+}

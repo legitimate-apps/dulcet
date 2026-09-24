@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS)
 import SwiftUI
 
 public enum DulcetPlaybackMenuCommand: Sendable, Hashable {
@@ -77,16 +77,18 @@ public struct DulcetPlaybackCommands: Commands {
 
             Divider()
 
+            // Command-arrow, as the system's own music player uses. A bare arrow key belongs to
+            // whatever list or text field has focus.
             Button(DulcetStrings.next) {
                 perform(.next)
             }
-            .keyboardShortcut(.rightArrow, modifiers: [])
+            .keyboardShortcut(.rightArrow, modifiers: [.command])
             .disabled(!state.isEnabled(.next))
 
             Button(DulcetStrings.previous) {
                 perform(.previous)
             }
-            .keyboardShortcut(.leftArrow, modifiers: [])
+            .keyboardShortcut(.leftArrow, modifiers: [.command])
             .disabled(!state.isEnabled(.previous))
 
             Divider()
@@ -114,6 +116,21 @@ public struct DulcetPlaybackCommands: Commands {
             }
             .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
             .disabled(!state.isEnabled(.seekBackward))
+
+            Divider()
+
+            Button(DulcetStrings.menuShowNowPlaying) {
+                store.selectDestination(.nowPlaying)
+            }
+            .keyboardShortcut("l", modifiers: [.command])
+            .disabled(store.snapshot.nowPlaying == nil)
+        }
+
+        CommandGroup(after: .textEditing) {
+            Button(DulcetStrings.menuSearch) {
+                store.focusSearch()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
         }
     }
 

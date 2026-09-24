@@ -82,7 +82,26 @@ internal data class PlaybackSessionSnapshot(
     val currentAttempt: PlaybackAttemptSnapshot,
     val accumulator: ScrobbleAccumulatorState,
     val terminalOutcomes: List<PlaybackTerminalOutcome>,
-)
+) {
+    /** How an attempt of this session failed, or null when it has not. */
+    fun failureOf(attemptId: AttemptId): PlaybackTerminalOutcome? = terminalOutcomes.lastOrNull {
+        it.attemptId == attemptId &&
+            (it is PlaybackTerminalOutcome.FailedBeforeStart || it is PlaybackTerminalOutcome.FailedAfterPartial)
+    }
+
+    /**
+     * The current attempt failed after playing to, or past, the end of a track whose length is
+     * known -- the same end the resume position is cleared at. Nothing of the listen is left to
+     * resume, so the play this session describes is over.
+     */
+    val failedAtTheEnd: Boolean
+        get() {
+            val duration = accumulator.durationKnown ?: return false
+            val position = currentAttempt.position ?: return false
+            return failureOf(currentAttempt.attemptId) is PlaybackTerminalOutcome.FailedAfterPartial &&
+                position >= duration
+        }
+}
 
 internal data class PlaybackCoreDiagnostics(
     val unknownAttemptDropCount: Long = 0,
@@ -204,7 +223,12 @@ internal class PlaybackCoreStateMachine {
     public fun planRefresh(newAttemptId: AttemptId): PlaybackTransitionResult =
         replaceCurrentAttempt(newAttemptId)
 
-    public fun retryAfterFailedBeforeStart(newAttemptId: AttemptId): PlaybackTransitionResult =
+    /**
+     * Try Again after the current attempt failed, before start or after partial playback: a new
+     * attempt in the same session (§12.1). The accumulator carries across, so a listen that took
+     * several attempts is still evaluated -- and submitted -- once.
+     */
+    public fun retryAfterFailure(newAttemptId: AttemptId): PlaybackTransitionResult =
         replaceCurrentAttempt(newAttemptId)
 
     public fun serverOffsetSeek(newAttemptId: AttemptId): PlaybackTransitionResult =

@@ -120,7 +120,7 @@ class PlaybackQueueControllerTest {
     }
 
     @Test
-    fun repeatOffNaturalCompletionLeavesThePersistedQueuePausedWithoutACurrentEntry() {
+    fun repeatOffNaturalCompletionKeepsTheLastEntrySelectedWithoutASession() {
         val fixture = fixture()
         val started = fixture.controller.replaceAndStart(request(listOf("a")))
         val first = assertNotNull(started.startDirective)
@@ -129,10 +129,18 @@ class PlaybackQueueControllerTest {
             PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds),
         )
 
+        // §14.3: the finished entry stays selected, so the shell can show the last track
+        // stopped instead of "Nothing is playing"; the session itself is finalized.
         assertNull(completed.startDirective)
-        assertNull(completed.snapshot.currentIndex)
+        assertEquals(0, completed.snapshot.currentIndex)
         assertNull(completed.snapshot.currentSession)
         assertEquals(listOf("a"), completed.snapshot.rawIds())
+
+        // Play after the end replays the selected entry as a NEW session (§12.1).
+        val replay = assertNotNull(fixture.controller.startCurrent().startDirective)
+        assertEquals("a", replay.itemId.rawId)
+        assertEquals(true, replay.shouldAutoPlay)
+        assertNotEquals(first.playbackSessionId, replay.playbackSessionId)
         fixture.driver.close()
     }
 
@@ -303,6 +311,88 @@ class PlaybackQueueControllerTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun retryAfterAFailureBeforeStartKeepsTheSessionAndReplacesOnlyTheAttempt() {
+        val fixture = fixture()
+        val started = assertNotNull(
+            fixture.controller.replaceAndStart(request(listOf("a", "b"))).startDirective,
+        )
+        fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.FailedBeforeStart(started.attemptId, DomainError.Transport.Unreachable),
+        )
+
+        val retried = fixture.controller.retryCurrent()
+
+        val directive = assertNotNull(retried.startDirective)
+        assertEquals(started.playbackSessionId, directive.playbackSessionId, "§12.1: same session")
+        assertNotEquals(started.attemptId, directive.attemptId, "§12.1: new attempt")
+        assertEquals(started.queueEntryId, directive.queueEntryId)
+        val session = assertNotNull(retried.snapshot.currentSession)
+        assertEquals(started.playbackSessionId, session.playbackSessionId)
+        assertEquals(directive.attemptId, session.currentAttempt.attemptId)
+        assertEquals(0, retried.snapshot.currentIndex)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun retryAfterAPartialFailureKeepsTheSessionAndResumesFromTheSavedPosition() {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var identity = 0
+        val fixture = Fixture(
+            driver = driver,
+            controller = PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = resumePositions,
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+        )
+        val started = assertNotNull(
+            fixture.controller.replaceAndStart(request(listOf("a", "b"))).startDirective,
+        )
+        fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.Ready(started.attemptId, 180.seconds, PlaybackSeekability.Seekable),
+        )
+        fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.PlaybackProgressBegan(started.attemptId, PlaybackWallClockTime(1_788_000_000_000), 1.seconds),
+        )
+        val dropped = fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.FailedAfterPartial(started.attemptId, 40.seconds, DomainError.Transport.Unreachable),
+        )
+        // The owner executes the effects in order, as the platform facades do.
+        PlaybackCoreEffectHandlerForTest(resumePositions).apply(dropped.effects)
+
+        val retried = fixture.controller.retryCurrent()
+
+        // Any retry keeps the session (§12.1): its accumulator carries across the attempts, so
+        // one listen interrupted by a failure is still one play.
+        val directive = assertNotNull(retried.startDirective)
+        assertEquals(started.queueEntryId, directive.queueEntryId)
+        assertEquals(started.playbackSessionId, directive.playbackSessionId)
+        assertNotEquals(started.attemptId, directive.attemptId)
+        assertEquals(directive.attemptId, assertNotNull(retried.snapshot.currentSession).currentAttempt.attemptId)
+        assertEquals(40.seconds, directive.resumePosition, "from where it stopped (§15.5)")
+        fixture.driver.close()
+    }
+
+    @Test
+    fun retryWithNothingFailedChangesNothingAndWithNoSessionStartsTheSelectedEntry() {
+        val fixture = fixture()
+        val started = assertNotNull(
+            fixture.controller.replaceAndStart(request(listOf("a"))).startDirective,
+        )
+        assertNull(fixture.controller.retryCurrent().startDirective, "a live session is not retried")
+
+        fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.EndedNaturally(started.attemptId, 180.seconds),
+        )
+        val replay = assertNotNull(fixture.controller.retryCurrent().startDirective)
+        assertEquals(started.queueEntryId, replay.queueEntryId)
+        assertNotEquals(started.playbackSessionId, replay.playbackSessionId)
+        fixture.driver.close()
+    }
+
     private fun fixture(shuffleSeed: Int = 1): Fixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
@@ -334,6 +424,17 @@ class PlaybackQueueControllerTest {
     )
 
     private fun PlaybackQueueSnapshot.rawIds(): List<String> = entries.map { it.itemId.rawId }
+
+    /** The resume-position half of what an owner does with a transition's effects. */
+    private class PlaybackCoreEffectHandlerForTest(private val store: ResumePositionStore) {
+        fun apply(effects: List<PlaybackCoreEffect>) = effects.forEach { effect ->
+            when (effect) {
+                is PlaybackCoreEffect.PersistResumePosition -> store.save(effect.itemId, effect.position)
+                is PlaybackCoreEffect.ClearResumePosition -> store.clear(effect.itemId)
+                else -> Unit
+            }
+        }
+    }
 
     private data class Fixture(
         val driver: app.cash.sqldelight.db.SqlDriver,

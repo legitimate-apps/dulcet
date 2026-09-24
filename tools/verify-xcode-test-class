@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Require every test method a Swift source declares to have executed and passed.
+
+`verify-xcode-test-execution` proves one named test ran. A whole-class run needs the
+complement: a method that silently did not execute is as unproven as one that failed, and
+an extraction that finds no methods must not verify an empty set. The declared set is read
+from the source file, so a test added later is verified without editing the workflow.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+
+from pathlib import Path
+
+from xcresult_test_evidence import EvidenceError, junit_name, read_xcresult
+
+
+def fail(message: str) -> None:
+    print(f"xcode test class invalid: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+if len(sys.argv) != 5:
+    fail(
+        "usage: verify-xcode-test-class "
+        "<bundle.xcresult> <expected-class> <swift-source> <minimum-declared>"
+    )
+
+bundle_path = Path(sys.argv[1])
+expected_class = sys.argv[2]
+source_path = Path(sys.argv[3])
+minimum_declared = int(sys.argv[4])
+expected_bundle = expected_class.split(".")[0]
+expected_suite = expected_class.split(".")[-1]
+
+declared = set(
+    re.findall(r"^\s*func (test[A-Za-z0-9_]*)\(\)", source_path.read_text(), re.MULTILINE)
+)
+if len(declared) < minimum_declared:
+    fail(f"{source_path} declares {len(declared)} test methods, expected at least {minimum_declared}")
+
+try:
+    cases = read_xcresult(bundle_path)
+except EvidenceError as error:
+    fail(str(error))
+
+in_class = {
+    junit_name(case.name): case.result
+    for case in cases
+    if case.bundle_name == expected_bundle and expected_suite in case.suite_names
+}
+missing = sorted(declared - in_class.keys())
+non_passing = sorted(f"{name}={result}" for name, result in in_class.items() if result != "Passed")
+if missing:
+    fail(f"declared but not executed: {missing}")
+if non_passing:
+    fail(f"non-passing: {non_passing}")
+
+print(
+    "xcode test class valid: "
+    f"class={expected_class} declared={len(declared)} executed={len(in_class)} terminal=Passed"
+)
