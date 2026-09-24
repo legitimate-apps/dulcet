@@ -1,0 +1,149 @@
+#!/bin/bash
+# Draw N independent samples of the iOS conformance suite under one of two host arrangements, with
+# host memory pressure recorded for every sample. Driven by .github/workflows/apple-contention-soak.yml.
+#
+#   ARM=current   what apple-ci does today: the iPhone, iPad and Apple TV simulators the platform
+#                 legs booted are still up, a fresh iPhone is created and booted, and ONE Gradle JVM
+#                 (-Xmx3g) links the test binary and then runs it.
+#   ARM=isolated  every other simulator is shut down first, the fresh iPhone is waited on with
+#                 `bootstatus -b`, and linking happens in its own Gradle JVM that exits before the
+#                 suite runs, so the compiler's heap is not resident while the tests execute.
+#
+# The link is forced every iteration in both arms (the test binary is deleted), so both arms pay
+# the same compile work and differ only in what is resident when the suite runs.
+#
+# Required env: ARM, ITERATIONS, ROOT (conformance root), OUT (results dir), PRESSURE_LOG.
+set -uo pipefail
+
+: "${ARM:?}" "${ITERATIONS:?}" "${ROOT:?}" "${OUT:?}" "${PRESSURE_LOG:?}"
+case "$ARM" in current|isolated) ;; *) echo "unknown ARM=$ARM" >&2; exit 2 ;; esac
+mkdir -p "$OUT"
+# apple-ci sets this in the composite step's env; reset-transcode-cache refuses to run without it.
+# Its absence made the first soak (run 35804385105) stop Navidrome and never restart it.
+export DULCET_CONFORMANCE_DISPOSABLE=true
+mark() { python3 tools/ci/host-pressure mark "$PRESSURE_LOG" "$1"; echo "SOAK PHASE $1"; }
+
+# Newest-runtime device with this exact name -- the same choice `OS=latest` makes for xcodebuild.
+udid_for() {
+  xcrun simctl list devices available -j | python3 -c '
+import json, re, sys
+name = sys.argv[1]
+devices = json.load(sys.stdin)["devices"]
+found = [(runtime, d["udid"]) for runtime, ds in devices.items() for d in ds if d["name"] == name]
+if not found:
+    sys.exit(f"no available simulator named {name!r}")
+version = lambda runtime: [int(n) for n in re.findall(r"\d+", runtime.rsplit(".", 1)[-1])]
+print(max(found, key=lambda item: version(item[0]))[1])' "$1"
+}
+
+set -e
+openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
+  -config tools/conformance-env/untrusted-tls-openssl.cnf \
+  -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt" 2>/dev/null
+"$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
+navidrome_pid=$!
+python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
+redirect_pid=$!
+python3 tools/conformance-env/untrusted-tls-server --port 4542 \
+  --certificate "$ROOT/untrusted-tls.crt" --key "$ROOT/untrusted-tls.key" &
+tls_pid=$!
+python3 tools/conformance-env/redirect-server --port 4543 --forward-proxy-auth &
+proxy_pid=$!
+trap 'kill "$navidrome_pid" $redirect_pid $tls_pid $proxy_pid 2>/dev/null || true' EXIT
+for _ in {1..100}; do
+  if curl --fail --silent http://127.0.0.1:4533/app/ >/dev/null && \
+    curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
+    curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null && \
+    curl --fail --silent http://127.0.0.1:4543/health >/dev/null; then break; fi
+  sleep 0.2
+done
+tools/conformance-env/health-check \
+  --base-url http://127.0.0.1:4533 \
+  --runtime darwin/arm64 \
+  --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+  --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+  --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+  --corpus-manifest "$ROOT/music/corpus-manifest.json"
+
+if [ "$ARM" = current ]; then
+  # Three resident devices: the worst case the platform legs can leave behind. (PR #136's run found
+  # one still booted at the composite's start, so this arm overstates today's typical residency.)
+  for device in "$(udid_for 'iPhone 17 Pro')" \
+                "$(python3 tools/resolve-ipad-destination --print udid)" \
+                "$(udid_for 'Apple TV 4K (3rd generation)')"; do
+    xcrun simctl boot "$device" 2>/dev/null || true
+    xcrun simctl bootstatus "$device" -b >/dev/null
+  done
+else
+  xcrun simctl shutdown all
+fi
+set +e
+
+binary_dir=core-conformance/build/bin/iosSimulatorArm64/debugTest
+env_args=(
+  SIMCTL_CHILD_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533
+  SIMCTL_CHILD_DULCET_CONFORMANCE_DISPOSABLE=true
+  SIMCTL_CHILD_DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540
+  SIMCTL_CHILD_DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542
+  DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533
+  DULCET_CONFORMANCE_DISPOSABLE=true
+  DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540
+  DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542
+)
+# The same cold restart apple-ci performs before each suite: the suite asserts an empty transcode
+# cache at its first request, and a retained library alone does not prove this process scanned.
+restart_navidrome_cold() {
+  local previous_last_scan
+  previous_last_scan="$(tools/conformance-env/await-library-ready \
+    --base-url http://127.0.0.1:4533 --print-last-scan)" || return 1
+  kill "$navidrome_pid"; wait "$navidrome_pid" 2>/dev/null
+  tools/conformance-env/reset-transcode-cache --root "$ROOT" || return 1
+  "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" >> "$ROOT/logs/navidrome.log" 2>&1 &
+  navidrome_pid=$!
+  for _ in {1..100}; do
+    curl --fail --silent http://127.0.0.1:4533/app/ >/dev/null && break
+    sleep 0.1
+  done
+  tools/conformance-env/await-library-ready \
+    --base-url http://127.0.0.1:4533 --after-last-scan "$previous_last_scan"
+}
+
+# Compile everything up to the link once, outside the samples, so iteration 1 is not the only one
+# paying for a cold Kotlin/Native compile.
+mark "warmup"
+./gradlew --no-daemon --quiet :core-conformance:compileTestKotlinIosSimulatorArm64 > "$OUT/warmup.log" 2>&1 \
+  || { cat "$OUT/warmup.log"; exit 1; }
+
+executed=0
+for i in $(seq 1 "$ITERATIONS"); do
+  dir="$OUT/iter-$i"; mkdir -p "$dir"
+  mark "iter-$i-restart"
+  if ! restart_navidrome_cold > "$dir/restart.log" 2>&1; then
+    echo "SOAK ITERATION arm=$ARM iteration=$i exit=restart-failed" | tee "$dir/result.txt"
+    cat "$dir/restart.log"
+    continue
+  fi
+  rm -rf "$binary_dir" core-conformance/build/test-results/iosSimulatorArm64Test
+  sim="$(xcrun simctl create "dulcet-soak-$i" com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+  xcrun simctl boot "$sim"
+  if [ "$ARM" = isolated ]; then
+    xcrun simctl bootstatus "$sim" -b >/dev/null
+    mark "iter-$i-link"
+    ./gradlew --no-daemon --quiet :core-conformance:linkDebugTestIosSimulatorArm64 > "$dir/link.log" 2>&1
+  fi
+  mark "iter-$i-suite"
+  started=$(date +%s)
+  env "${env_args[@]}" python3 tools/capture-conformance-stall \
+    --binary "$PWD/$binary_dir/test.kexe" --output "$dir" -- \
+    ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test --rerun \
+    -Pdulcet.iosSimulatorUdid="$sim" > "$dir/console.log" 2>&1
+  status=$?
+  echo "SOAK ITERATION arm=$ARM iteration=$i exit=$status seconds=$(( $(date +%s) - started ))" | tee "$dir/result.txt"
+  cp -R core-conformance/build/test-results/iosSimulatorArm64Test "$dir/junit" 2>/dev/null
+  xcrun simctl shutdown "$sim" >/dev/null 2>&1
+  xcrun simctl delete "$sim" >/dev/null 2>&1
+  executed=$((executed + 1))
+done
+mark "end"
+echo "SOAK EXECUTED arm=$ARM iterations=$executed"
+test "$executed" -eq "$ITERATIONS"

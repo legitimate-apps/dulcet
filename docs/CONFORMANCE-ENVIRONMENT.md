@@ -10,7 +10,7 @@ Both legs run Navidrome 0.63.2 and the same generated corpus:
 | leg | Navidrome pin | ffmpeg pin |
 |---|---|---|
 | Linux/amd64 | `deluan/navidrome` manifest digest in `tools/conformance-env/pins.json` | ffmpeg 6.1.1 inside that immutable image filesystem |
-| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.1 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, immutable GHCR blob URL, and SHA-256 is locked |
+| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.2 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, immutable GHCR blob URL, and SHA-256 is locked |
 
 Before any closure member is fetched, the Darwin installer validates the complete closure: every URL
 must be an immutable `ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and its digest

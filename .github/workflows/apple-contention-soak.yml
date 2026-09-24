@@ -1,0 +1,110 @@
+name: apple-ci contention soak
+
+# Draws N samples of the iOS conformance suite per arm, with host memory pressure recorded for each,
+# to measure whether the resident simulators and Gradle heap that apple-ci leaves on a 3-CPU hosted
+# runner are what starves the loopback fixtures. See docs/investigations/2026-09-22-apple-ci-host-contention.md.
+#
+# It takes TWO hosted macOS runners (one per arm) from the same account-wide pool apple-ci uses, for
+# roughly 90 minutes. Dispatch it when pull requests are not waiting on apple-ci.
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Suite samples per arm
+        required: true
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed on the commit as well as the ref: a soak is N accumulated samples, and a dispatch for a
+  # newer commit on the same ref must not cancel one still drawing them. Same-commit dispatches supersede.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  soak:
+    name: contention-soak (${{ matrix.arm }})
+    runs-on: macos-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [current, isolated]
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prove the host-pressure summary reports a known delta and refuses an empty record
+        run: python3 tools/test-host-pressure
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-soak)" >> "$GITHUB_OUTPUT"
+      - name: Install and verify checksum-pinned Darwin conformance closure
+        timeout-minutes: 9
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - name: Generate deterministic Darwin corpus
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/seed-corpus
+          --output "$ROOT/music"
+          --runtime native
+          --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Render Darwin Navidrome configuration
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/conformance-env/render-config
+          --output "$ROOT/config/navidrome.toml"
+          --music-folder "$ROOT/music"
+          --data-folder "$ROOT/data"
+          --cache-folder "$ROOT/cache"
+          --address 127.0.0.1
+          --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Draw iOS conformance samples
+        timeout-minutes: 125
+        env:
+          ARM: ${{ matrix.arm }}
+          ITERATIONS: ${{ inputs.iterations }}
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          export OUT="$RUNNER_TEMP/soak-$ARM" PRESSURE_LOG="$RUNNER_TEMP/host-pressure-$ARM.jsonl"
+          python3 tools/ci/host-pressure sample --output "$PRESSURE_LOG" --interval 2 &
+          tools/ci/contention-soak
+      - name: Summarise the arm
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/summarize-contention-soak
+          "$RUNNER_TEMP/soak-${{ matrix.arm }}" "$RUNNER_TEMP/host-pressure-${{ matrix.arm }}.jsonl"
+      - name: Upload soak evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apple-contention-soak-${{ matrix.arm }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/soak-${{ matrix.arm }}
+            ${{ runner.temp }}/host-pressure-${{ matrix.arm }}.jsonl
+            ${{ runner.temp }}/*/logs/*.log
+            ${{ runner.temp }}/dulcet-conformance-access-*.log
+          if-no-files-found: warn
+          retention-days: 14
