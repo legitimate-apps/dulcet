@@ -7427,38 +7427,38 @@ fresh disposable server before landing; items 11–14 are what that review chang
     prepended page moves every index by a page — so the facade carries the range over by item identity
     (kind and opaque id) to the reader's latest publication before the reader rebases or looks ahead
     around it.
-21. **Two core gaps the facade works around, recommended to the core so R3 inherits them.**
-    `LibraryReader.reconnect()` sets `online` itself, and open searches re-run only when
-    `LibraryReaderSession.setOnline` sees reachability CHANGE — so a caller that reconnects without
-    first reporting reachability, or reports it afterwards, leaves an offline search `deviceOffline`
-    until the next keystroke. The facade's `reconnect` calls the session's `setOnline(true)` before the
-    reader's `reconnect()`. And `LibraryFavourites.pendingCount()` answers a failed read with 0
+21. **Two core gaps found through the facade, since fixed in the core (items 23–24).**
+    `LibraryReader.reconnect()` set `online` itself, and open searches re-ran only when
+    `LibraryReaderSession.setOnline` saw reachability CHANGE — so a caller that reconnected without
+    first reporting reachability, or reported it afterwards, left an offline search `deviceOffline`
+    until the next keystroke. And `LibraryFavourites.pendingCount()` answered a failed read with 0
     (`guarded(0L)`), which is the one wrong answer for the sign-out offer (§14.7) — it tells the person
-    nothing will be lost; the facade reads the outbox's own count and completes with a null count and
-    an error kind instead. Both belong in the core; the facade's workarounds should go when the core
-    changes. **Also recorded:** playability is computed per track only — album, artist, playlist and
-    search rows carry none, so `playability` is null for them rather than a guess. The production
-    composition wires no download source (downloads join the reader in R4), so nothing crosses this
-    facade as `downloaded` yet. That, not a rule in the facade, is what keeps tvOS to `streamable` and
-    `unavailableOffline`: R4 must give tvOS no download source rather than rely on this. The reader's
-    error vocabulary keeps the existing facades' words and splits `invalidCredentials`/`forbidden`,
-    `serverBusy` (§18.12) and `notFound` (code 70), and adds the facade's own `internalFailure` and
-    `closed`. A transport that throws something other than a `DomainError` is mapped by the core's
-    `mapAccountConnectionFailure` to `unreachable`, so a defect in the transport reads to the person as
-    a network failure — correct for the boundary (nothing crosses, no text leaks), imprecise as copy.
-    **ASSUMED, from reading the code only:** a list opened offline and never read, then told
-    `setOnline(true)` without a `reconnect()`, republishes `loading` with no read in flight until the
-    next viewport change or refresh.
+    nothing will be lost. The facade's first cut worked around both, by reporting reachability to the
+    session before `reconnect()` and by reading the outbox's own count; items 23–24 fix both in the
+    core, so R3 inherits the fixes, and remove the workarounds. **Also recorded:** playability is
+    computed per track only — album, artist, playlist and search rows carry none, so `playability` is
+    null for them rather than a guess. The production composition wires no download source (downloads
+    join the reader in R4), so nothing crosses this facade as `downloaded` yet. That, not a rule in the
+    facade, is what keeps tvOS to `streamable` and `unavailableOffline`: R4 must give tvOS no download
+    source rather than rely on this. The reader's error vocabulary keeps the existing facades' words
+    and splits `invalidCredentials`/`forbidden`, `serverBusy` (§18.12) and `notFound` (code 70), and
+    adds the facade's own `internalFailure` and `closed`. A transport that throws something other than
+    a `DomainError` is mapped by the core's `mapAccountConnectionFailure` to `unreachable`, so a defect
+    in the transport reads to the person as a network failure — correct for the boundary (nothing
+    crosses, no text leaks), imprecise as copy. **ASSUMED, from reading the code only:** a list opened
+    offline and never read, then told `setOnline(true)` without a `reconnect()`, republishes `loading`
+    with no read in flight until the next viewport change or refresh.
 22. **Evidence for R2a-core, and what it does not reach.** OBSERVED 2026-09-24 on macOS arm64:
-    `AppleLibraryReaderFacadeTest` (23 tests) drives the production `LibraryReaderSession` over the
+    `AppleLibraryReaderFacadeTest` (24 tests) drives the production `LibraryReaderSession` over the
     core's `SessionTestServer` and `FakeReaderServer`, on the reader's real thread, with every delivery
     made through the real main dispatcher: the tests run on the main thread and pump its run loop. The
     one other facade test in `appleTest`, the playback queue's, delivers through an inline dispatcher,
-    which cannot tell a main-thread delivery from an inline one. Seventeen mutants of the facade's
-    rules were each compiled and run against a green unmutated baseline; sixteen were killed. The
-    survivor removes the client-level close guard, and survives because every step of the close
-    tolerates being repeated — the guard is not what makes `close()` idempotent; two tests call it
-    twice. The generated Objective-C header gained sixteen classes and three listener protocols, and
+    which cannot tell a main-thread delivery from an inline one. Twenty-one mutants — of the facade's
+    rules and of the two core fixes in items 23–24 — were each compiled and run against a green
+    unmutated baseline of 57 tests (the facade, search-session and outbox-review classes); twenty were
+    killed. The survivor removes the client-level close guard, and survives because every step of the
+    close tolerates being repeated — the guard is not what makes `close()` idempotent; two tests call
+    it twice. The generated Objective-C header gained sixteen classes and three listener protocols, and
     its additions are final classes, primitives, `NSString`, `NSArray`s of those classes, boxed numbers
     for nullable counts and epoch-millis, the listener protocols, and completion blocks that take one
     of the classes (§7.2's operation, as the existing facades use). **ASSUMED:** the public
@@ -7466,6 +7466,44 @@ fresh disposable server before landing; items 11–14 are what that review chang
     compiled but run by no test, which inject the composition over a private in-memory database; the
     Swift half is the first code that runs it. No Swift copy test exists yet (§7.1); that is the
     DulcetKit brief's.
+23. **Core fix: open searches follow reachability and reconnect (item 21's first gap).**
+    `LibraryReader.reconnect()` set `online` itself, and `LibraryReaderSession` re-ran its open
+    searches only when its own `setOnline` saw reachability change. So a reconnect through the reader —
+    the path a shell takes when reachability returns — left every open search on `deviceOffline` until
+    the next keystroke. A reachability report sent after the reconnect did the same, as did one sent to
+    the reader directly. The reader now owns the notification: `ReaderVisibleSurface` registers what
+    shows server data besides the windows, which is the session's searches. Those surfaces are
+    revalidated on every reachability change reported to either class. They are also revalidated at
+    reconnect's revalidation step (§16.14 step 3), after the windows, so the re-run `search3` follows
+    the outbox flush and the epoch read. `reconnect()` marks the reader online without telling the
+    surfaces, so no search can overtake the flush. When the epoch read fails, nothing is revalidated,
+    the same as for windows. The Apple facade's workaround, which reported reachability to the session
+    before calling reconnect, is removed. It is no longer needed, and it could itself send a debounced
+    `search3` while the flush was still running. OBSERVED 2026-09-24: two core tests drive the
+    production session, and both fail against the previous reader and session.
+    `reconnectAloneRerunsAnOfflineSearchAfterTheFlushAndTheEpochRead` holds the flush's `star` for four
+    search debounces and asserts that no `search3` goes out while it is held. It then asserts the order
+    `star`, `getScanStatus`, `search3` and the server's scope.
+    `reachabilityReportedToTheReaderReachesOpenSearches` covers going offline and back through the
+    reader alone. Three mutants are killed: one where reconnect does not revalidate the searches (the
+    original defect), one where the searches are told at reconnect's transition, before the flush (the
+    ordering reverted), and one where the reader's `setOnline` does not tell them. The first version of
+    the ordering test passed with the ordering reverted: the fixture answers the flush at once, so a
+    search told too early still went out after it. That is why the test now holds the flush, and it is
+    OBSERVED, run against that first version.
+24. **Core fix: an unreadable pending-change count is unknown, not zero (item 21's second gap).**
+    `LibraryFavourites.pendingCount()` now returns `Long?`, which is null when the outbox cannot be
+    read. An existing test already closed the database under the call and asserted `0`, so it certified
+    the defect it was driving; it now asserts null. OBSERVED 2026-09-24:
+    `aPendingCountThatCannotBeReadIsUnknownNeverZero` injects a failing `mutation_outbox` read through
+    the `CountingSqlDriver` test double (new `failRead`, which `sessionTest` now wraps its driver in)
+    and asserts the injection fired. Before the fix it failed with `expected:<null> but was:<0>`. The
+    facade's `pendingChangeCount` now consumes the null, completing with a null count and
+    `internalFailure`, and a facade test drives the same failure through the boundary. Two mutants that
+    map the failure back to zero, one in the core and one in the facade, are both killed. R3 inherits
+    both fixes from the core. With them, `testAndroidHostTest` ran 458 tests with 0 failures, including
+    `LibrarySearchSessionTest` (15) and `MutationOutboxReviewTest` (18).
+
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
 ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
