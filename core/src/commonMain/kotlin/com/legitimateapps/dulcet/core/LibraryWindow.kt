@@ -107,6 +107,32 @@ internal abstract class ReaderHandle(
     }
 
     /**
+     * Whether a reconnect's revalidation of this screen issues a read. Defaults to
+     * [needsRevalidation]; a screen that re-reads on every reconnect whatever its age says so.
+     */
+    protected open fun readsOnReconnect(): Boolean = needsRevalidation()
+
+    /**
+     * The reader has just come back online and is about to revalidate every screen in turn
+     * ([LibraryReader.reconnect]). Republished now, so a screen whose read is coming says
+     * `cached(revalidating)` or `loading` at once rather than `offline` until its turn, and a fresh
+     * one says `live`. Never a spinner with nothing coming: the flag set here is cleared by that
+     * revalidation, which the reconnect runs next.
+     */
+    fun prepareForReconnect() {
+        if (closed) return
+        val coming = try {
+            readsOnReconnect()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            true // the revalidation will run, and will say what failed
+        }
+        if (coming) revalidationPending = true
+        emitSnapshot()
+    }
+
+    /**
      * Publishes the cache as it stands. If building that publication itself throws, the screen is
      * told so with a publication that needs nothing from the cache — never silence, never a crash.
      */
@@ -196,11 +222,12 @@ internal abstract class ReaderHandle(
         }
     }
 
-    /** Freshness when nothing is cached. */
+    /** Freshness when nothing is cached. A read in flight or coming says so, as [cachedFreshness] does. */
     protected fun emptyFreshness(): LibraryFreshness {
         val error = failure
         return when {
             !reader.online -> LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline)
+            inFlight > 0 || revalidationPending -> LibraryFreshness.Loading
             internalFailure -> LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure)
             error != null -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Failed(error))
             else -> LibraryFreshness.Loading
@@ -378,6 +405,9 @@ internal class ListWindow(
         val state = cache.listState(spec.listKey) ?: return true
         return mustRebase(state, epoch) || !readRecently(state, epoch)
     }
+
+    /** A whole (unpaged) list is re-read by every revalidation; a paged one keeps the 60-second rule. */
+    override fun readsOnReconnect(): Boolean = !spec.paged || needsRevalidation()
 
     override fun mentionsAny(rawIds: Set<String>): Boolean = published.any { it.rawId in rawIds }
 
@@ -716,16 +746,21 @@ internal class ListWindow(
         return stampOfEpochKey(key)
     }
 
+    /**
+     * Any range is accepted and clamped to the latest publication: a shell's indexes can be past
+     * its end once a revalidation has shortened the list, and that is a moment to keep reading, never
+     * a failure. A range entirely past the end means the last item; a reversed one, its first index.
+     */
     override fun setViewport(firstIndex: Int, lastIndex: Int) {
         reader.checkConfined()
         if (closed || publishedPositions.isEmpty()) return
-        val first = publishedPositions[firstIndex.coerceIn(0, publishedPositions.lastIndex)]
-        val last = publishedPositions[lastIndex.coerceIn(firstIndex.coerceAtLeast(0), publishedPositions.lastIndex)]
-        viewport = first..last
-        if (query is LibraryQuery.AlbumList) {
-            val from = firstIndex.coerceIn(0, published.lastIndex)
-            val to = lastIndex.coerceIn(from, published.lastIndex)
-            reader.lookAhead.viewportChanged(this, published, from, to)
+        val from = firstIndex.coerceIn(0, publishedPositions.lastIndex)
+        val to = lastIndex.coerceIn(from, publishedPositions.lastIndex)
+        viewport = publishedPositions[from]..publishedPositions[to]
+        if (query is LibraryQuery.AlbumList && published.isNotEmpty()) {
+            val itemsFrom = firstIndex.coerceIn(0, published.lastIndex)
+            val itemsTo = lastIndex.coerceIn(itemsFrom, published.lastIndex)
+            reader.lookAhead.viewportChanged(this, published, itemsFrom, itemsTo)
         }
     }
 
@@ -1017,6 +1052,9 @@ internal class CollectionDetailWindow(
         val state = cache.listState(listKey) ?: return true
         return state.windowEpoch != reader.sessionEpoch?.key || cache.now() - readAt >= reader.config.revalidateWithinMillis
     }
+
+    /** An artist or playlist is re-read by every revalidation, whatever its age. */
+    override fun readsOnReconnect(): Boolean = true
 
     override fun mentionsAny(rawIds: Set<String>): Boolean =
         rawId in rawIds || queriedId in rawIds || published.any { it.rawId in rawIds }

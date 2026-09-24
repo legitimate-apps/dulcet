@@ -41,8 +41,17 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * the content already shown, never instead of it — or an error kind on a completion.
  *
  * **Credentials.** The account is held only to build the transport; nothing this facade publishes
- * has a field that can carry a URL, a query string, server text or an exception message: errors
- * cross as a closed kind (CORPUS §4 line 5, CLAUDE.md trap 12).
+ * has a field that can carry a URL, a query string, server error text or an exception message:
+ * errors cross as a closed kind (CORPUS §4 line 5, CLAUDE.md trap 12).
+ *
+ * **Reachability — the one supported pattern.** Call [setOnline] on EVERY reachability change the
+ * platform reports, and [reconnect] when the app returns to the foreground online. Nothing else is
+ * needed, and neither the order nor a duplicate matters: reporting the server reachable while the
+ * reader is offline requests the reconnect itself, a reconnect already running is joined, and a
+ * reconnect is the only way back online — so nothing is read before its outbox flush and epoch read.
+ * A reconnect whose epoch read fails says why in its completion, and nothing after that read runs:
+ * the reader stays offline and no screen is revalidated or relabelled, though the outbox flush
+ * before it may already have sent changes. The next report or reconnect tries again.
  */
 @OptIn(ExperimentalAtomicApi::class, DelicateCoroutinesApi::class)
 public class AppleLibraryReaderClient internal constructor(
@@ -110,6 +119,10 @@ public class AppleLibraryReaderClient internal constructor(
      * Opens one screen as an event stream. The first publication is the cached content if there is
      * any — built before any request is issued (CONF-76) — then each later state. A home screen is a
      * list of independent row subscriptions, one `homeRow` request each (CONF-86).
+     *
+     * A subscribe on the main thread after [close] returned publishes one `closed` failure. A
+     * subscribe on ANOTHER thread racing a [close] may instead receive nothing at all: the close can
+     * stop the reader before the open runs. Subscribe and close on the main thread.
      */
     public fun subscribeLibraryWindow(
         request: AppleLibraryWindowRequest,
@@ -122,7 +135,7 @@ public class AppleLibraryReaderClient internal constructor(
 
     // ---- Search -------------------------------------------------------------------------------------------
 
-    /** Search as you type over what this device has seen and the server (§16.15, §18.1). */
+    /** Search as you type over what this device has seen and the server (§16.15, §18.1). Threading as [subscribeLibraryWindow]. */
     public fun subscribeSearch(listener: AppleLibrarySearchListener): AppleLibrarySearchSubscription {
         val subscription = AppleLibrarySearchSubscription(this, listener)
         if (!onReader { subscription.open(composition) }) subscription.emitClosed()
@@ -171,25 +184,30 @@ public class AppleLibraryReaderClient internal constructor(
 
     // ---- Connection lifecycle --------------------------------------------------------------------------------
 
-    /** The connect-time epoch reading (two requests, §16.11). */
+    /** The connect-time epoch reading (two requests, §16.11); the completion says whether THIS call read it. */
     public fun connect(completion: (AppleLibraryReaderConnection) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = ::failedConnection) { session ->
-            session.reader.connect()
-            session.connection()
+            session.connection(session.reader.connectReporting())
         }
 
     /**
-     * Reachability returned, or the app came back to the foreground online (§16.14): the reader's
-     * reconnect runs in its fixed order — outbox flush, epoch read, visible-screen revalidation
-     * (open windows, then open searches), downloaded-album recheck — and nothing else.
+     * The app came back to the foreground online (§16.14), or the shell wants to wait for a
+     * reconnect: the reader's reconnect runs in its fixed order — outbox flush, epoch read, and only
+     * if that read succeeded, back online and the visible screen revalidated (open windows, then
+     * open searches) and the downloaded-album recheck — and nothing else. A reconnect already
+     * running (one [setOnline] requested) is joined. The completion names the failure when the epoch
+     * could not be read; cancelling this operation stops only the wait, not the reconnect.
      */
     public fun reconnect(completion: (AppleLibraryReaderConnection) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = ::failedConnection) { session ->
-            session.reader.reconnect()
-            session.connection()
+            session.connection(session.reader.reconnect())
         }
 
-    /** Reachability as the platform reports it. Offline issues no request. */
+    /**
+     * Reachability as the platform reports it; call it on every change. Unreachable takes the reader
+     * offline at once — no request is issued offline. Reachable while offline requests a
+     * [reconnect]; the reader is back online only once that reconnect has read the epoch.
+     */
     public fun setOnline(reachable: Boolean) {
         onReader { composition?.session?.setOnline(reachable) }
     }
@@ -205,11 +223,17 @@ public class AppleLibraryReaderClient internal constructor(
     }
 
     /**
-     * Closes every subscription, cancels every in-flight read, releases the database and transport
-     * and stops the reader's thread. Idempotent. Nothing is published after it returns — a
-     * publication already queued for the main thread is dropped when it arrives — provided it is
-     * called on the main thread; from another thread, a delivery already running may finish. A
-     * completion still pending is delivered once, as `cancelled`.
+     * Closes every subscription, cancels every read, releases the database and transport and stops
+     * the reader's thread. Idempotent, and returns at once. Nothing is published after it returns —
+     * a publication already queued for the main thread is dropped when it arrives — provided it is
+     * called on the main thread; from another thread, a delivery already running may finish.
+     *
+     * The teardown runs on the reader's thread BEHIND every call already queued there, which still
+     * runs first. So each pending completion is delivered exactly once, possibly after this returns:
+     * an operation that finished before the teardown with its result (a success that has already
+     * completed wins, §7.2), one still in flight at the teardown as `cancelled`, and one requested
+     * after this call as `closed`. The reader may still write to the database until the teardown has
+     * run — use [close] with a completion when that matters.
      */
     public fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -238,8 +262,26 @@ public class AppleLibraryReaderClient internal constructor(
         }
     }
 
+    /**
+     * [close], then [completion] on the main thread once the reader's thread has stopped: every call
+     * queued before the close has run, the database and transport are released, and nothing will
+     * read or write the database again. Account deletion (§14.7 step 6) must wait for this before it
+     * deletes the account's rows, or the reader could write seen-cache rows after them. Called
+     * exactly once; a second close waits for the same moment.
+     */
+    public fun close(completion: () -> Unit) {
+        close()
+        try {
+            terminated.invokeOnCompletion { onMain(completion) }
+        } catch (_: Throwable) {
+        }
+    }
+
     /** Completes once the reader's thread has stopped; for tests, which then close their database. */
     internal suspend fun awaitTermination() = terminated.await()
+
+    /** For tests: whether the reader's thread has stopped. */
+    internal val isTerminated: Boolean get() = terminated.isCompleted
 
     // ---- Internals ----------------------------------------------------------------------------------------------
 
@@ -396,12 +438,19 @@ internal class AppleLibraryReaderComposition(
     val release: () -> Unit = {},
 )
 
-private fun LibraryReaderSession.connection() = AppleLibraryReaderConnection(
-    epochKnown = reader.sessionEpoch != null,
-    serverReportsNoEpoch = reader.serverReportsNoEpoch,
-    discardedPendingChanges = discardedPendingChanges,
-    errorKind = null,
-)
+/** What THIS connect or reconnect read — never an earlier reading of the session. */
+private fun LibraryReaderSession.connection(outcome: ReaderConnectionOutcome) = when (outcome) {
+    is ReaderConnectionOutcome.Read -> AppleLibraryReaderConnection(
+        epochKnown = true,
+        serverReportsNoEpoch = outcome.epoch.stamp == null,
+        discardedPendingChanges = discardedPendingChanges,
+        errorKind = null,
+    )
+    is ReaderConnectionOutcome.Failed ->
+        AppleLibraryReaderConnection(false, false, discardedPendingChanges, outcome.error.readerErrorKind())
+    ReaderConnectionOutcome.InternalFailure ->
+        AppleLibraryReaderConnection(false, false, discardedPendingChanges, "internalFailure")
+}
 
 private fun failedConnection(kind: String) = AppleLibraryReaderConnection(false, false, 0, kind)
 
@@ -600,6 +649,10 @@ public class AppleLibraryWindowSubscription internal constructor(
     private var sequence = 0
     private var emitted: AppleLibraryWindowPublication? = null
 
+    /** The reader's wall clock, and its reading when the latest `live` publication was emitted. */
+    private var clock: (() -> Long)? = null
+    private var liveAt: Long? = null
+
     /** Reads the next page of a paged list, at most one page beyond the viewport. */
     public fun loadMore() {
         call { it.loadMore() }
@@ -618,15 +671,17 @@ public class AppleLibraryWindowSubscription internal constructor(
     /**
      * The visible range, as indexes into the latest publication THIS LISTENER RECEIVED. The reader
      * may already have published a newer one that is still on its way to the main thread (a page
-     * prepended, a rebase); the range is then carried over to that publication by item identity,
-     * so the viewport the reader rebases and looks ahead around is the one on screen.
+     * prepended, a rebase, a revalidation that shortened the list); the range is then carried over
+     * to that publication by item identity and clamped to it, so the viewport the reader rebases and
+     * looks ahead around is the one on screen. Any range is accepted. A viewport is a hint: it never
+     * publishes anything, and never a failure.
      */
     public fun setViewport(first: Int, last: Int) {
         val seen = delivered.load()
         val anchors = seen?.let { publication ->
             SeenViewport(publication.sequence, publication.items.getOrNull(first)?.key(), publication.items.getOrNull(last)?.key())
         }
-        call { handle ->
+        call(publishFailure = false) { handle ->
             val (from, to) = translateViewport(first, last, anchors, emitted)
             handle.setViewport(from, to)
         }
@@ -648,6 +703,7 @@ public class AppleLibraryWindowSubscription internal constructor(
         }
         val reader = composition.session.reader
         providerInstanceId = reader.cache.serverId
+        clock = reader.cache::now
         try {
             when (val target = request.toTarget()) {
                 is AppleLibraryWindowTarget.Screen -> handle = reader.open(target.query, ::publish)
@@ -683,7 +739,11 @@ public class AppleLibraryWindowSubscription internal constructor(
         client.unregister(this)
     }
 
-    private fun call(action: (LibraryWindowHandle) -> Unit) {
+    /**
+     * Runs [action] on the reader's thread. A throw says the screen failed — over the content shown
+     * — unless the call is only a hint ([publishFailure] false), which records it for tests instead.
+     */
+    private fun call(publishFailure: Boolean = true, action: (LibraryWindowHandle) -> Unit) {
         if (listener.load() == null) return
         client.onReader {
             val current = handle ?: return@onReader
@@ -691,18 +751,20 @@ public class AppleLibraryWindowSubscription internal constructor(
                 action(current)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                emit(readerFailurePublication(sequence + 1, emitted, errorKind = null))
+            } catch (failure: Throwable) {
+                if (publishFailure) emit(failurePublication()) else client.uncaughtFailures += failure
             }
         }
     }
+
+    private fun failurePublication() = readerFailurePublication(sequence + 1, emitted, errorKind = null, previousLiveAt = liveAt)
 
     /** The core's publication, copied into the closed shape on the reader's thread. */
     private fun publish(publication: LibraryPublication) {
         val converted = try {
             publication.toApple(providerInstanceId, sequence + 1)
         } catch (_: Throwable) {
-            readerFailurePublication(sequence + 1, emitted, errorKind = null)
+            failurePublication()
         }
         emit(converted)
     }
@@ -710,6 +772,13 @@ public class AppleLibraryWindowSubscription internal constructor(
     private fun emit(publication: AppleLibraryWindowPublication) {
         sequence = publication.sequence
         emitted = publication
+        if (publication.freshness.kind == "live") {
+            liveAt = try {
+                clock?.invoke()
+            } catch (_: Throwable) {
+                null
+            }
+        }
         client.onMain { deliver(publication) }
     }
 
@@ -883,10 +952,24 @@ private fun AppleLibraryReaderItem.key(): String = "$kind\u0000$rawId"
 
 /**
  * Carries a range of indexes into the publication the shell has seen ([seen]) over to the latest
- * one the reader has emitted, by item identity. Unchanged when they are the same publication or an
- * anchor is no longer present.
+ * one the reader has emitted, by item identity — unchanged when they are the same publication or
+ * the first anchor is no longer present — and clamps it to that publication's items: a range past
+ * the end (a list that shrank) becomes its last item, a reversed one its first index.
  */
 internal fun translateViewport(
+    first: Int,
+    last: Int,
+    seen: SeenViewport?,
+    emitted: AppleLibraryWindowPublication?,
+): Pair<Int, Int> {
+    val carried = carryViewport(first, last, seen, emitted)
+    val lastIndex = emitted?.items?.lastIndex ?: return carried
+    if (lastIndex < 0) return 0 to 0
+    val from = carried.first.coerceIn(0, lastIndex)
+    return from to carried.second.coerceIn(from, lastIndex)
+}
+
+private fun carryViewport(
     first: Int,
     last: Int,
     seen: SeenViewport?,
