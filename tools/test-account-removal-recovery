@@ -141,6 +141,8 @@ struct Snapshot {
     // method's real text, so every collaborator it names needs a stub here; a missing one
     // fails to compile rather than silently skipping the call.
     func cancelLibraryRefresh() {}
+    // Removal also stops a pending local-network permission watch (the first-connect retry).
+    func cancelLocalNetworkWatch() {}
     func publishAccountRemovalState(state: State, status: Connection) {
         currentSnapshot.state = state
         currentSnapshot.accountConnection = status
