@@ -22,9 +22,10 @@ class PlaybackContractTest {
             PlaybackCommand.SetRate(id, 1.25),
             PlaybackCommand.ReplaceCurrent(id, attempt, plan),
             PlaybackCommand.PreloadNext(id, attempt, plan),
+            PlaybackCommand.DiscardPreloaded(id, attempt),
             PlaybackCommand.Release(id),
         )
-        assertEquals(10, commands.size)
+        assertEquals(11, commands.size)
         assertTrue(commands.all { it.commandId == id })
 
         val outcomes: List<PlaybackCommandOutcome> = listOf(

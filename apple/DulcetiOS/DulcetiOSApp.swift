@@ -1,6 +1,7 @@
 import DulcetKit
 import Foundation
 import SwiftUI
+import UIKit
 
 #if DEBUG
 /// Text the UI proofs read to learn that a scrobble REACHED the server. The threshold is visible
@@ -26,8 +27,20 @@ final class DulcetDebugScrobbleDeliveryMarker {
 }
 #endif
 
+/// Gives Command-F to the app's Search shortcut. UIKit's standard menu claims Command-F for
+/// Find, which Dulcet does not offer, and that claim wins over a shortcut declared in SwiftUI --
+/// so pressing it did nothing at all. Removing the unused Find menu leaves the key to Search.
+final class DulcetiOSAppDelegate: UIResponder, UIApplicationDelegate {
+    override func buildMenu(with builder: any UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main else { return }
+        builder.remove(menu: .find)
+    }
+}
+
 @main
 struct DulcetiOSApp: App {
+    @UIApplicationDelegateAdaptor(DulcetiOSAppDelegate.self) private var appDelegate
     @State private var presentation: DulcetPresentationStore
     private let downloadController: DulcetCoreDownloadController?
 #if DEBUG
@@ -38,8 +51,14 @@ struct DulcetiOSApp: App {
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-dulcet-account-connect-layout-fixture") {
+            // A track named here fails the first time it is played and plays on Try Again, so a
+            // UI proof can reach the failed-track surface without a server that misbehaves.
+            let failingTrack = Self.launchArgumentValue("-dulcet-layout-fixture-fail-track", in: arguments)
             _presentation = State(initialValue: DulcetPresentationStore(
-                source: DulcetDeterministicDataSource(initialState: .accountConnectIdle)
+                source: DulcetDeterministicDataSource(
+                    initialState: .accountConnectIdle,
+                    failingTrackTitles: failingTrack.map { [$0] } ?? []
+                )
             ))
             downloadController = nil
             return

@@ -16,6 +16,9 @@ enum DulcetAccountConnectionFocus: String, Sendable {
 struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
     @State private var lastSubmissionTimestamp: TimeInterval?
 #if os(tvOS)
     @Namespace private var accountFocusScope
@@ -49,6 +52,11 @@ struct DulcetAccountConnectionView: View {
 
     private func setInitialFocusIfNeeded() {
         guard allowsProgrammaticFocus, focusedControl == nil else { return }
+#if os(iOS)
+        // On a phone this form is a tab. Focusing a field on arrival raises the keyboard over
+        // the tab bar every time the tab is chosen, so a compact window waits for a tap.
+        guard horizontalSizeClass != .compact else { return }
+#endif
         let initialFocus = preferredFocus(for: store.snapshot.accountConnection)
         focusedControl = initialFocus
         // onChange does not replay initial focus; report it at its source.
@@ -76,6 +84,10 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
+#if os(iOS)
+        // Dragging the form puts the keyboard away, uncovering the tab bar.
+        .scrollDismissesKeyboard(.interactively)
+#endif
 #if os(macOS)
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
@@ -383,6 +395,7 @@ struct DulcetAccountConnectionView: View {
                     store.removeAccount()
                 }
                 .buttonStyle(.borderedProminent)
+                .dulcetConnectionProminentLabel()
                 Button(DulcetStrings.keepAccount) {
                     store.dismissAccountRemovalFailure()
                 }
@@ -458,6 +471,7 @@ struct DulcetAccountConnectionView: View {
             )
         }
         .buttonStyle(.borderedProminent)
+        .dulcetConnectionProminentLabel()
         .dulcetDefaultActionShortcut()
         .accessibilityIdentifier("dulcet.account-connect.primary-action")
         .focused($focusedControl, equals: .primaryAction)
@@ -530,6 +544,7 @@ struct DulcetAccountConnectionView: View {
                     store.submitAccountConnection()
                 }
                 .buttonStyle(.borderedProminent)
+                .dulcetConnectionProminentLabel()
                 .dulcetDefaultActionShortcut()
                 .focused($focusedControl, equals: .tryAgain)
 
@@ -541,6 +556,16 @@ struct DulcetAccountConnectionView: View {
                         .buttonStyle(.bordered)
 #endif
                 }
+
+#if !os(tvOS)
+                // tvOS has no link out to Settings; its recovery text names where to go.
+                if failure.kind == .localNetworkAccessDenied,
+                   let settings = DulcetLinks.localNetworkSettings {
+                    Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("dulcet.account-connect.local-network-settings")
+                }
+#endif
             }
         }
         .padding(DulcetSpacing.md)
@@ -644,3 +669,18 @@ extension DulcetCredentialInputKind {
 #endif
 
 #endif
+
+private extension View {
+    /// The form's own foreground is the window's text colour, which a prominent button would
+    /// otherwise inherit: dark text on the accent fill. A phone draws the label in the registered
+    /// on-accent colour instead. Other platforms keep the system's treatment, which this change has
+    /// not measured there.
+    @ViewBuilder
+    func dulcetConnectionProminentLabel() -> some View {
+#if os(iOS)
+        dulcetForeground(.labelOnAccentFill)
+#else
+        self
+#endif
+    }
+}

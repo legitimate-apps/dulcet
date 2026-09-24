@@ -375,6 +375,36 @@ market is sparse and most catalogued apps are proprietary or paid, but at least 
 open-source native implementation exists.* Shelv is GPL-3.0 and is not a code donor (§24.2). The
 Navidrome client directory is not proof of nonexistence; its metadata lags.
 
+### 3.1 The iOS and iPadOS shell
+
+One `DulcetiOS` target serves the phone and the tablet, so the shell is chosen by the **window's
+horizontal size class**, never by the device:
+
+| window | navigation | full player |
+|---|---|---|
+| compact (every iPhone in portrait; a narrow iPad Split View or Stage Manager window) | a tab bar: Library, Search, Connection | a sheet from the now-playing bar |
+| regular (an iPad window; a Plus or Pro Max iPhone turned sideways) | a sidebar and a detail column | a full-screen cover from the now-playing bar, with Up Next beside the player |
+
+- **Now Playing is a presentation, not a destination.** It is never a tab or a sidebar row. The
+  persistent now-playing bar opens it; a request to show it from elsewhere (a menu command, a
+  restored selection) opens the player over the place the person was, which stays as it was left.
+  Starting playback leaves the person where they were (`DulcetPlaybackStartNavigation.platformDefault`);
+  tvOS alone moves to Now Playing, because it has no bar.
+- **Each destination keeps its own navigation stack.** Leaving a destination and coming back finds
+  the page it was left on; choosing the destination that is already selected -- its tab or its
+  sidebar row -- returns it to its root, as every tab bar does. The stack is held by the
+  presentation store, not derived from the source's snapshot: a snapshot describes one destination
+  at a time, and deriving the stack from it reset Library to its grid on every return.
+- **A window crossing the size-class boundary loses nothing.** The shell swaps between tab bar and
+  sidebar keeping the selected destination and every stack; an open player is taken down and
+  presented again in the other style once the old presentation has gone. Both styles flip in one
+  update, and the new one cannot present while the old one is still being dismissed -- which left
+  the player asked for with nothing on screen and the bar unable to open it again.
+- **A failed track is not a dead end.** The bar and the player name the track that failed and offer
+  Try Again and Skip (Skip only when an entry follows it, or the queue repeats); the bar can be
+  dismissed until the person starts something else. A player reporting `ready` with no current item
+  is a failure on every surface, not an empty player.
+
 ---
 
 ## 4. Supported OS, architecture, and toolchain
@@ -1015,11 +1045,26 @@ entitled live-app validation workflow exists.
 | envelope parsed; error code indicates bad credentials | `AuthenticationFailed` | "Wrong username or password" — never "server down" |
 | envelope parsed; error code indicates a version mismatch | `ProtocolIncompatible` | show **what Dulcet sent** and **what the server reported** in its envelope. Do not promise a "required version" — the protocol does not reliably supply one |
 | successful envelope contains present account metadata outside its strict JSON shape, or a role field outside native JSON boolean or case-insensitive string `true`/`false` | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
+| a connection attempt failed, **and** the operating system reports local-network privacy refusing the server's address (Apple platforms) | `localNetworkAccessDenied` — an Apple-shell classification layered over the core failure, not a core kind | "Allow Dulcet to find devices on your local network": the server is on the local network and Dulcet does not have permission to reach it yet, with an **Open Settings** action. Never "Can't reach the server" |
 
 **OBSERVED:** a missing `getOpenSubsonicExtensions` is consistent with a classic pre-OpenSubsonic
 server. On `ExtensionListUnavailable`: do not fail login; mark `legacySubsonic`; mark every extension
 unsupported; proceed on the classic baseline; hide extension-only UI; retain baseline capabilities
 from protocol version and user roles.
+
+**`localNetworkAccessDenied` is decided by the operating system, never by an address heuristic.**
+After a failed attempt the shell asks the Network framework whether local-network privacy is what
+refused the server; a public server simply answers "not denied" and the original failure stands.
+While access stays denied the answer is watched, and when the person grants it (the prompt, or the
+switch in Settings) the connection is retried **once**, as they would have had to: visibly while
+they are still on the explanation, and otherwise **in place** -- someone who has gone to Library
+or Search meanwhile is connected where they are, not taken back to Connection to watch a spinner.
+An in-place retry that fails is recorded where Connection shows it. Open Settings goes to the
+app's own Settings page on iOS and iPadOS; on the Mac it goes to the Privacy & Security pane, and
+**ASSUMED**: that its `Privacy_LocalNetwork` anchor lands on the Local Network row. Apple documents
+no URL for that row; on macOS 26.7 the installed Privacy & Security extension still accepts the
+legacy `com.apple.preference.security` identifier, but the anchor does not appear among those it
+carries for its other rows.
 
 ### 10.4 Gates are conjunctions, and one error does not revoke a capability
 
@@ -1149,7 +1194,12 @@ will be wrong.**
 calls:
 
 `prepare(attemptId, plan)` · `play()` · `pause()` · `stop()` · `seek(position)` · `setVolume(v)` ·
-`setRate(r)` · `replaceCurrent(attemptId, plan)` · `preloadNext(attemptId, plan)` · `release()`
+`setRate(r)` · `replaceCurrent(attemptId, plan)` · `preloadNext(attemptId, plan)` ·
+`discardPreloaded(attemptId)` · `release()`
+
+`discardPreloaded` exists because a preload can stop being the next entry while it sits behind the
+current item — a queue edit, a failed or `Server.Busy` preload. Without it the engine would advance
+into an entry the queue no longer plays next (revision 105).
 
 Each takes a `commandId` and produces exactly one of `CommandAccepted(commandId)`,
 `CommandRejected(commandId, reason)`, or `CommandCompleted(commandId, result)`. A stale acknowledgement
@@ -1202,6 +1252,36 @@ single dispatcher** before the reducer sees it, so the reducer is a single-threa
 its test vectors (§15.2) are exhaustive. Ordering is preserved per attempt. An event arriving for an
 attempt the core has never seen is dropped and counted — that is an adapter bug, not a race to
 tolerate.
+
+**Every attempt phase maps to a presentation explicitly, and a shell may not have a default branch.**
+The phase reaches a platform shell as the Kotlin enum's own case **name**, so the compiler checks
+nothing across that boundary. A shell that recognises some phases and sends the rest to one fallback
+is therefore claiming a mapping it has not made, and the claim is invisible until a person is looking
+at the wrong screen.
+
+🚨 **OBSERVED 2026-09-11 on `main`.** The Apple shell matched four phases —
+`Ready`, `Progressing`, `Buffering`, `Paused` — and published **`preparing`** for everything else.
+That put four phases behind one presentation, and for two of them a spinner is not merely imprecise,
+it is **unresolvable**: `Stopped` and `TornDown` mean nothing is playing and nothing is coming, so
+nothing will ever arrive to replace it. The reachable instance is `disconnect()`, which issues its
+own `stop`: the engine emits `Skipped`, the core maps it to `Stopped` by **copying** the current
+session rather than retiring it, and the shell delivers engine events asynchronously — so the stop's
+own event lands *after* `disconnect()` has published `unavailable` and replaced it with a spinner
+belonging to an account that no longer exists.
+
+Three rules, each because the alternative fails silently:
+
+1. **The mapping is total.** Every case of the phase enum is named. `Stopped` and `TornDown` present
+   as **unavailable**; `Created` and `Preparing` present as **preparing**; `Failed` presents as
+   **failed**; the four playing phases present the now-playing surface.
+2. **An unrecognised phase presents as `unavailable`, never as `preparing`.** Among the available
+   presentations, `preparing` is the only one that never resolves on its own, which makes it the
+   worst possible guess about a state nobody anticipated.
+3. **A source gate enforces rule 1**, because nothing else can: `tools/verify-playback-phase-parity`
+   fails when either side names a phase the other does not, and asserts that the wire value is still
+   derived from the enum's own name — a list comparison that has quietly stopped comparing anything
+   is worse than no gate. It is Apple-only today because Android has no phase-to-presentation mapping
+   on `main` at all; the Media3 work must extend it rather than repeat this.
 
 ### 12.3 Position cadence
 
@@ -1464,8 +1544,33 @@ assumed, because the protocol does not expose the cap:
 - The budget resets when the account's capability set is refreshed (§10.2).
 
 `preloadNext` resolves and validates the next plan while the current one plays; the transition emits
-`AdvancedToPreloaded`, which is a **session boundary** (§12.1). Gapless *output* is not a toolkit
-checkbox: `AVQueuePlayer` and ExoPlayer concatenation remove application-level replacement latency, but
+`AdvancedToPreloaded`, which is a **session boundary** (§12.1).
+
+**How the core and a shell share the boundary (revision 105).** A shell asks the core to register
+the preloaded session (`preloadNext(sessionId)`) only once the current session has reported
+`PlaybackProgressBegan` — current playback is established before its successor competes for the
+server. That ordering is the **shell's** obligation; the core checks only that the session is
+current. The core declines under repeat-one, when nothing follows, and when the next item has a saved
+resume position (a preloaded item starts at zero). When the current attempt reports `EndedNaturally`
+while a registered preload is still the entry that plays next, the core **starts nothing** and waits
+for the engine's `AdvancedToPreloaded`, which moves the selection; issuing a start there would stop
+and re-prepare an item that is already playing. The shell must discard a preload that it has not yet
+delivered to the engine *before* recording that `EndedNaturally`, or the core would wait for a
+boundary that is never coming. Any queue edit that changes what plays next discards the preload and
+reports it, so the shell removes it from the engine (`discardPreloaded`). A preload discarded
+**after** the core held a natural end for it — it failed at the boundary, or an edit landed between
+the end and the advance — makes the discard itself start the next entry, since no later event
+will. A preload's failure must never touch the current item: the engine does not pause the shared
+player for a refresh the preloaded item needs. A manual Next, a jump, or a
+queue replacement is a fresh start and discards every preload.
+
+**On the Apple legacy path every plan is direct play**, so the budget never blocks a preload there.
+A preload that meets `Server.Busy` is discarded, the budget records it (which matters only once a
+transcoded plan exists), and **no preload is attempted again before the server's `Retry-After`**
+(minimum one second; five when the server named none, which is what the reference server sends).
+The boundary after a failed preload is an ordinary fresh start.
+
+Gapless *output* is not a toolkit checkbox: `AVQueuePlayer` and ExoPlayer concatenation remove application-level replacement latency, but
 seamless boundaries also depend on encoder delay/padding metadata, decoder behavior, container, and
 whether a transcoder produced a clean boundary. Gapless is therefore an **empirically measured,
 per-format, per-path capability** recorded in `FEATURES.yml`, not a claimed feature.
@@ -1474,10 +1579,15 @@ per-format, per-path capability** recorded in `FEATURES.yml`, not a claimed feat
 
 Listing route and interruption events is not a policy. The normative policy:
 
-- **Apple:** playback category with the default (non-mixing) option; the session is activated on the
-  first `prepare` of a session and deactivated on `stop` or after a grace period with no queue.
-  AirPlay is permitted. On `InterruptionBegan` playback pauses; on `InterruptionEnded` it resumes
-  **only** if the system indicates resumption is appropriate.
+- **Apple:** playback category with the default (non-mixing) option and the **long-form audio**
+  route-sharing policy (the policy Apple defines for music apps, which routes the session to AirPlay
+  speakers the way Music is routed); the category is declared when the audio session object is
+  created, before the first play. The session is activated on the first `prepare` of a session and
+  deactivated on `stop` or after a grace period with no queue. AirPlay is permitted. On
+  `InterruptionBegan` playback pauses; on `InterruptionEnded` it resumes **only** if the system
+  indicates resumption is appropriate. An interruption whose reason is that the system **suspended
+  the app** (iOS) is not a call or Siri taking audio and is ignored. iOS, iPadOS and tvOS declare the
+  `audio` background mode; without it the system suspends playback at screen lock.
 - **Android:** `AudioAttributes` usage `MEDIA` / content type `MUSIC`, with
   `setAudioAttributes(attrs, handleAudioFocus = true)` so Media3 owns focus. Transient loss ducks or
   pauses per the system's request; **permanent loss pauses and does not auto-resume.**
@@ -1497,6 +1607,15 @@ from system UI, playback-rate control, and chapter navigation. Metadata updates 
 Playing is updated after `Ready` and after each `AttemptReplaced`, never speculatively at `Preparing`,
 so the system UI never shows a track that failed to start. Commands arriving for a stale session are
 rejected, not applied to the current one.
+
+**Revision 105.** Rating and like are **not registered** with the system command centre until the
+favourites outbox (§18.3) exists: a lock-screen heart whose handler answers "failed" is worse than
+none. **Artwork** reaches the system entry as image bytes that already passed the core's artwork
+validation, keyed by playback session so a late image cannot land on a later track — never as a
+URL, because every artwork URL this client can build carries credentials. Elapsed time is written
+when the transport changes (play, pause, seek, rate, buffering) or when the system's own
+extrapolation has drifted by more than 0.75 s, not on every position sample; while **buffering** the
+entry stays "playing" with rate 0, so the lock-screen scrubber does not run ahead of the audio.
 
 ### 12.11 Deferred but not precluded
 
@@ -1821,6 +1940,16 @@ death, single source of truth for every surface. Per-account, single active acco
 `sourceContext` records where the entry came from (album X, playlist Y, search Z) so the UI can say
 "playing from" and so "play next" behaves sensibly.
 
+**Editing (revision 105).** Every edit names a `QueueEntryId`, never a track, because a track may
+be queued twice. *Play Next* inserts immediately after the current entry in the order given; *Play
+Later* appends; both start playback only when there is no queue to add to. *Move* places an entry at
+a position in the order the listener sees — while shuffled only the playback order moves, so turning
+shuffle off still restores the original order. *Remove* refuses the **current** entry (it would
+either stop the music or silently start something; Next and Pause already say which). *Clear
+upcoming* removes everything after the current entry. *Jump* (tapping a queue row) is a next-item
+boundary: the outgoing session is finalized (§12.1). No edit is a session boundary, and no edit
+starts or stops anything except Jump.
+
 **Restoration recovery:** before creating a playback session from a persisted queue, check whether
 its selection can resolve in the supplied playback catalog for the active account. If it cannot,
 persist a cleared selection and present "Nothing is playing"; do not select or start a replacement.
@@ -1848,6 +1977,12 @@ positions.
 
 `repeat one` starts a **new session** (§12.1) — a new scrobble clock and a new eligible scrobble. This
 is stated because the naive implementation (seek to zero) produces no scrobble at all.
+
+**When the queue runs out (revision 105)** — natural completion of the last entry with repeat off, or
+Next on the last entry — the session is finalized and the **selection stays on that entry**. The
+shell shows the last track stopped at its start, as Music does, and Play (or Previous) replays it as
+a new session. Clearing the selection here presented "Nothing is playing" at the end of every album.
+Restoration after relaunch then prepares that entry paused, exactly as for any saved selection.
 
 ### 14.4 Server-side queue sync is not in v1
 
@@ -3845,6 +3980,58 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 105 (2026-09-23)** — written 2026-09-22. The Apple playback system. Four contracts that did not exist or were
+wrong:
+
+1. **Gapless preload is wired, and the boundary belongs to the engine** (§12.8). The engine had
+   `preloadNext` and the core had `registerPreloaded`; nothing called either, so every advance was a
+   stop and a fresh prepare. Two defects were waiting behind that wiring: the engine's preloaded item
+   did not inherit the outgoing item's play request, so the position sampler never sampled it and a
+   gaplessly-advanced track would have played **audibly and never scrobbled**; and the core advanced
+   on `EndedNaturally` itself, which would have stopped and re-prepared an item the engine was
+   already playing. A `discardPreloaded` command joins §12.2.
+2. **The end of the queue keeps the last entry selected** (§14.3), replacing "Nothing is playing".
+3. **Queue editing is specified** (§14.1): entry-identity edits, the current entry cannot be removed,
+   a move while shuffled moves only the playback order.
+4. **System Now Playing** (§12.9, §12.10): long-form route sharing, background audio declared,
+   suspended-app interruptions ignored, artwork as validated bytes, rating/like withdrawn until
+   favourites exist, transport writes only on change or drift.
+5. **The local-network refusal has a presentation** (§10.3). It existed in code with no row in the
+   failure table, and its automatic retry took a person who had moved on back to the Connection
+   screen; the retry now completes in place unless they are still on the explanation.
+6. **The iOS and iPadOS shell is specified** (§3.1): tab bar or sidebar by the window's size class,
+   Now Playing a presentation rather than a destination, a navigation stack per destination that
+   survives leaving it and returns to its root when chosen again, a player that survives the window
+   crossing the size-class boundary, and a failed track that offers Try Again and Skip. None of these
+   was written down, and three were broken: the stack was derived from a one-destination snapshot and
+   reset on every return, the size-class flip left the player unopenable, and a failed track
+   offered only disabled play and next buttons and a generic message.
+
+**Revision 104 (2026-09-23)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
+exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a
+shell handled every case, and the Apple shell handled four of nine.
+
+`Stopped` and `TornDown` were presented as **preparing** — the one presentation that cannot resolve
+by itself. Reachable through `disconnect()`, which issues its own `stop`: the engine emits `Skipped`,
+the core maps it to `Stopped` by copying the current session rather than retiring it, and engine
+events are delivered asynchronously, so the stop's event overwrites the `unavailable` that
+`disconnect()` had just published. The result is a spinner for an account that no longer exists.
+
+This is the third instance of one shape in this project: the sidebar wired to nothing, failed
+playback presenting as preparing (`docs/verification/failed-playback-presentation.md`), and now this.
+Each time the correct state existed, was computed, and never reached the screen. Each time the defect
+lived in a **fallback branch** that looked like defensive coding.
+
+It was also already written down. That same verification document says `Stopped` is *"deliberately
+unchanged here and separately suspect"* and traces the mechanism correctly. A correct diagnosis sat
+in the repository for two days with nothing scheduled to act on it, which is the argument for the
+gate rather than for a second correct note.
+
+The mapping is now total, an unrecognised phase presents as `unavailable`, and
+`tools/verify-playback-phase-parity` fails the build when either side names a phase the other does
+not. The gate also asserts that the DTO still derives the wire value from the enum's `name`, because
+a list comparison whose two lists have stopped describing the same thing passes forever.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

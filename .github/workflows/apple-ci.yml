@@ -548,7 +548,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit/TEST-DulcetKeychainTVOSTests.xml" \
             DulcetKeychainTVOSTests
-      - name: Verify compact sidebar re-selection restores the detail
+      - name: Verify the compact shell keeps the album and opens Now Playing from the bar
         # 12, not 5, and this is INHERITED rather than measured -- the step is new, so there is no
         # CI duration history for it yet. It was first written at 5 because the control takes ~21s
         # locally; CI simulator launch-and-test is a different regime, and 5 was already known to be
@@ -567,9 +567,10 @@ jobs:
           # sequential list, so a step's position decides what its failure SKIPS; putting a new
           # iPhone step above the iPadOS launch would let it gate iPadOS layout evidence that
           # nothing else produces.
-          # Compact-width navigation only, on the deterministic layout fixture -- no disposable
-          # server, so this step cannot fail for a reason that belongs to the fixture server and
-          # can run here rather than inside the conformance step.
+          # Compact-width shell (tab bar, album layout, now-playing bar and sheet) on the
+          # deterministic layout fixture -- no disposable server, so this step cannot fail for a
+          # reason that belongs to the fixture server and can run here rather than inside the
+          # conformance step.
           xcodebuild test-without-building \
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetiOS \
@@ -578,12 +579,12 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             -parallel-testing-enabled NO \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactSidebarRestoresTheDetailForTheSameDestination 2>&1 | \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ios-compact-nav.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
-            testCompactSidebarRestoresTheDetailForTheSameDestination
+            testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar
       - name: Assert Kotlin and Xcode OS floors
         run: >-
           python3 tools/verify_os_floors.py
@@ -883,6 +884,24 @@ jobs:
             "$RUNNER_TEMP/dulcet-playback-failure-delivery.xcresult" \
             DulcetPlaybackIntegrationTests.DulcetCorePlaybackPresentationTests \
             testEngineFailureAfterPlayingReachesPresentationStore
+          # The playback system's boundary, preload and queue-end contracts. This class ran in no
+          # workflow once, and a disabled branch it catches reached a TestFlight build. Every test
+          # method declared in the source must be proven to have executed and passed; the count
+          # floor stops an extraction that finds nothing from verifying nothing.
+          xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetPlaybackIntegration \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData" \
+              -parallel-testing-enabled NO \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-playback-system.xcresult" \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetCorePlaybackSystemTests 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-playback-system.log"
+          python3 tools/verify-xcode-test-class \
+            "$RUNNER_TEMP/dulcet-playback-system.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetCorePlaybackSystemTests \
+            apple/DulcetPlaybackIntegrationTests/DulcetCorePlaybackSystemTests.swift \
+            12
           download_xctestrun="$(find \
             "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData/Build/Products" \
             -name 'DulcetPlaybackIntegration_*.xctestrun' -print -quit)"

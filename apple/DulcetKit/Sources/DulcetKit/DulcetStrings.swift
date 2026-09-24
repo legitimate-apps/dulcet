@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 enum DulcetStrings {
     static let appName = text("app.name", "Dulcet")
@@ -26,6 +29,7 @@ enum DulcetStrings {
     static let tryAgain = text("action.tryAgain", "Try Again")
     static let connectionSettings = text("action.connectionSettings", "Review Connection Settings")
     static let openCertificateHelp = text("action.certificateHelp", "Open CA Installation Guide")
+    static let openLocalNetworkSettings = text("action.localNetworkSettings", "Open Settings")
     static let more = text("action.more", "More")
     static let play = text("action.play", "Play")
     static let download = text("action.download", "Download")
@@ -152,6 +156,40 @@ enum DulcetStrings {
     static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t finish signing out")
     static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
     static let keepAccount = text("account.remove.keep", "Keep Account")
+    static let playNext = text("action.playNext", "Play Next")
+    static let addToQueue = text("action.addToQueue", "Add to Queue")
+    static let goToAlbum = text("action.goToAlbum", "Go to Album")
+    static let goToArtist = text("action.goToArtist", "Go to Artist")
+    static let upNext = text("player.upNext", "Up Next")
+    static let showUpNext = text("player.upNext.show", "Show Up Next")
+    static let hideUpNext = text("player.upNext.hide", "Hide Up Next")
+    static let closeNowPlaying = text("player.close", "Close Now Playing")
+    static let openNowPlayingHint = text("player.open.hint", "Opens the full player")
+    static let playbackLoading = text("player.loading", "Loading…")
+    static let playbackFailedShort = text("player.failed.short", "Couldn\u{2019}t play this track")
+    static let playbackFailedActionsBody = text(
+        "player.failed.body.actions",
+        "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one."
+    )
+    static let playbackRetry = text("player.failed.retry", "Try Again")
+    static let playbackSkip = text("player.failed.skip", "Skip to Next Track")
+    static let playbackSkipShort = text("player.failed.skip.short", "Skip")
+    static let playbackFailureDismiss = text("player.failed.dismiss", "Dismiss")
+    static let queueEditRefused = text("queue.edit.refused", "Couldn\u{2019}t change Up Next")
+    static let openAlbumHint = text("library.album.hint", "Opens the album")
+    static let remainingTime = text("player.remaining", "Remaining")
+    static let elapsedTime = text("player.elapsed", "Elapsed")
+    static let menuSearch = text("menu.search", "Search Library")
+    static let menuShowNowPlaying = text("menu.showNowPlaying", "Show Now Playing")
+    static let menuGo = text("menu.go", "Go")
+
+    static func remaining(_ value: String) -> String {
+        formatted("player.remainingValue", "\u{2212}%@", value)
+    }
+
+    static func miniPlayerAccessibility(title: String, artists: String) -> String {
+        formatted("player.mini.accessibility", "Now Playing, %1$@, %2$@", title, artists)
+    }
 
     static func albumCount(_ count: Int) -> String {
         pluralized("library.albumCount", fallback: "%d albums", count: count)
@@ -171,6 +209,10 @@ enum DulcetStrings {
 
     static func serverStatus(_ name: String) -> String {
         formatted("status.server", "%@ · Online", name)
+    }
+
+    static func playbackFailed(title: String) -> String {
+        formatted("player.failed.track", "Couldn\u{2019}t play \u{201C}%@\u{201D}", title)
     }
 
     static func serverConnectionFailed(_ name: String) -> String {
@@ -358,4 +400,24 @@ enum DulcetLinks {
     static let certificateInstallationGuide = URL(
         string: "https://support.apple.com/guide/keychain-access/add-certificates-to-a-keychain-kyca2431/mac"
     )!
+
+    /// Where Dulcet's Local Network switch lives: the app's own page in Settings on iOS, the
+    /// Local Network privacy pane on the Mac. ASSUMED for the Mac: the pane URL is not documented
+    /// API, and a wrong one opens System Settings at its top level rather than failing.
+    ///
+    /// What is and is not known (checked against macOS 26.7): Apple's own help for this setting
+    /// links only to Privacy & Security, and TN3179 names no URL. The installed Privacy & Security
+    /// extension still declares `com.apple.preference.security` as its legacy identifier and
+    /// accepts this URL scheme, so the pane itself is reached. The `Privacy_LocalNetwork` anchor
+    /// does not appear verbatim among the anchors that extension carries for its other rows, so
+    /// landing on the Local Network row rather than on Privacy & Security is the unverified part.
+    static let localNetworkSettings: URL? = {
+#if os(iOS)
+        URL(string: UIApplication.openSettingsURLString)
+#elseif os(macOS)
+        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+#else
+        nil
+#endif
+    }()
 }

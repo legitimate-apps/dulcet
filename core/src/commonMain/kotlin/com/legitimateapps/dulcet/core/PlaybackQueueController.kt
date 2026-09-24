@@ -58,7 +58,34 @@ internal data class PlaybackQueueTransition(
     val snapshot: PlaybackQueueSnapshot,
     val startDirective: PlaybackQueueStartDirective?,
     val effects: List<PlaybackCoreEffect>,
+    /**
+     * A session registered for gapless preload (§12.8). It is never something to start: the engine
+     * holds it behind the current item and reports `AdvancedToPreloaded` when it takes over.
+     */
+    val preloadDirective: PlaybackQueueStartDirective? = null,
+    /**
+     * A preload the core has just discarded because the entry it was prepared for is no longer
+     * the one that plays next. The owner must remove it from the engine, or the engine would
+     * advance into an entry the queue no longer names.
+     */
+    val discardedPreloadAttemptId: AttemptId? = null,
 )
+
+/** Items added to an existing queue by "Play Next" or "Play Later" (§14.1, §14.2). */
+internal data class PlaybackQueueInsertion(
+    val items: List<PlaybackQueueItem>,
+    val sourceContext: QueueSourceContext,
+    val mode: QueueInsertionMode,
+) {
+    init {
+        require(items.isNotEmpty())
+        require(items.all { it.itemId.providerInstanceId == items.first().itemId.providerInstanceId })
+        require(
+            sourceContext.sourceId == null ||
+                sourceContext.sourceId.providerInstanceId == items.first().itemId.providerInstanceId,
+        )
+    }
+}
 
 /**
  * The single core-owned queue decision point used by every presentation and system-media surface.
@@ -72,7 +99,20 @@ internal class PlaybackQueueController(
     private val shuffleRandom: Random = Random.Default,
     private val playback: PlaybackCoreStateMachine = PlaybackCoreStateMachine(),
 ) {
+    private data class RegisteredPreload(
+        val queueEntryId: QueueEntryId,
+        val start: PlaybackSessionStart,
+    )
+
     private val knownDurations = mutableMapOf<QueueEntryId, Duration?>()
+    private var registeredPreload: RegisteredPreload? = null
+    /**
+     * The current attempt ended naturally and the core deliberately started nothing, because the
+     * registered preload was about to take over. If that preload is then discarded -- it failed,
+     * or an edit made it stale -- nothing else will ever advance the queue, so the discard itself
+     * must start the next entry.
+     */
+    private var endHeldForPreload = false
 
     /** The server whose queue is active, or null when none is. Owners use it to refuse a foreign queue. */
     fun activeServerId(): ServerId? = queues.activeServerId()
@@ -118,6 +158,133 @@ internal class PlaybackQueueController(
         check(persisted >= 0)
         queues.setCurrentIndex(serverId, persisted)
         return beginSession(selected, replacingQueue = true)
+    }
+
+    /**
+     * "Play Next" places the items immediately after the current entry, in the order given; "Play
+     * Later" appends them. Both follow §14.2 while shuffled. Adding never starts playback and never
+     * touches the current session: a queue edit is not a session boundary (§12.1).
+     */
+    fun enqueue(insertion: PlaybackQueueInsertion): PlaybackQueueTransition {
+        val serverId = ServerId(insertion.items.first().itemId.providerInstanceId)
+        require(queues.activeServerId() == serverId) { "No active queue for this account" }
+        val entries = insertion.items.map { item ->
+            QueueEntry(
+                queueEntryId = nextQueueEntryId(),
+                providerItemId = item.itemId,
+                sourceContext = insertion.sourceContext,
+                addedBy = when (insertion.mode) {
+                    QueueInsertionMode.PlayNext -> QueueAddedBy.PlayNext
+                    QueueInsertionMode.Append -> QueueAddedBy.AddToQueue
+                },
+            ).also { knownDurations[it.queueEntryId] = item.duration }
+        }
+        // Each PlayNext insert lands directly after the current entry, so inserting in reverse
+        // keeps the caller's order: the first item given is the first one heard.
+        // With no current entry every PlayNext insert appends, so reversing would reverse the batch.
+        val hasCurrent = queues.load(serverId).currentIndex != null
+        val ordered = if (insertion.mode == QueueInsertionMode.PlayNext && hasCurrent) {
+            entries.asReversed()
+        } else {
+            entries
+        }
+        ordered.forEach { queues.insert(serverId, it, insertion.mode) }
+        return editedTransition()
+    }
+
+    /** Moves an entry to [toIndex] in the listener-visible order. The current session continues. */
+    fun move(queueEntryId: QueueEntryId, toIndex: Int): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        queues.move(serverId, queueEntryId, toIndex)
+        return editedTransition()
+    }
+
+    /**
+     * Removes a queue entry that is not playing. Removing the current entry is refused rather than
+     * interpreted: it would either stop the music or silently start something, and a listener who
+     * wants either has Next and Pause.
+     */
+    fun remove(queueEntryId: QueueEntryId): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val current = state.currentIndex?.let(state.entries::get)
+        require(current?.queueEntryId != queueEntryId) { "The current entry cannot be removed" }
+        require(state.entries.any { it.queueEntryId == queueEntryId }) { "Unknown queue entry" }
+        queues.remove(serverId, queueEntryId)
+        knownDurations.remove(queueEntryId)
+        return editedTransition()
+    }
+
+    fun clearUpcoming(): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        queues.removeUpcoming(serverId)
+        return editedTransition()
+    }
+
+    /** Tapping a queue row: a next-item boundary, so the outgoing session is finalized (§12.1). */
+    fun jumpTo(queueEntryId: QueueEntryId): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val index = state.entries.indexOfFirst { it.queueEntryId == queueEntryId }
+        require(index >= 0) { "Unknown queue entry" }
+        return startAt(state, index)
+    }
+
+    /**
+     * Starts the selected entry when no session exists — the state a finished queue leaves behind
+     * (§14.3). Play after the last track therefore replays it, from the start, as a new session.
+     */
+    fun startCurrent(): PlaybackQueueTransition {
+        if (playback.currentSession != null) return emptyTransition()
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val index = state.currentIndex ?: return emptyTransition()
+        return startAt(state, index)
+    }
+
+    /**
+     * Registers the entry that will play after the current one as a preloaded session (§12.8) and
+     * returns its directive for the owner to resolve and hand to the engine's `preloadNext`.
+     *
+     * Declines — returns no directive — when nothing follows, under repeat-one (which restarts
+     * through a fresh start), when the named session is not current, and when the next item has a
+     * saved resume position, because a preloaded item begins at zero and the engine has no seek
+     * for an item it has not started.
+     */
+    fun preloadNext(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition {
+        if (!acceptsCommand(playbackSessionId)) return emptyTransition()
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        val next = upcomingEntry(state)
+        val existing = registeredPreload
+        if (existing != null && existing.queueEntryId == next?.queueEntryId) return emptyTransition()
+        val discarded = discardRegisteredPreload()
+        if (next == null || resumePositions.restore(next.providerItemId) != null) {
+            return emptyTransition().copy(discardedPreloadAttemptId = discarded)
+        }
+        val start = newStart(next)
+        check(playback.registerPreloaded(start) is PlaybackTransitionResult.Applied)
+        registeredPreload = RegisteredPreload(next.queueEntryId, start)
+        return PlaybackQueueTransition(
+            snapshot = snapshot(),
+            startDirective = null,
+            effects = emptyList(),
+            preloadDirective = start.directive(next),
+            discardedPreloadAttemptId = discarded,
+        )
+    }
+
+    /**
+     * The owner could not deliver a registered preload (resolution failed, the engine refused it,
+     * or the server answered `Server.Busy`). Before the boundary, the next natural completion
+     * then starts normally. After it -- the end was already held for this preload -- the discard
+     * starts the next entry itself, because no later event will.
+     */
+    fun discardPreload(attemptId: AttemptId): PlaybackQueueTransition {
+        val existing = registeredPreload ?: return emptyTransition()
+        if (existing.start.attemptId != attemptId) return emptyTransition()
+        val discarded = discardRegisteredPreload()
+        return resumeHeldEnd(discarded) ?: emptyTransition().copy(discardedPreloadAttemptId = discarded)
     }
 
     fun next(): PlaybackQueueTransition = moveBy(1)
@@ -195,12 +362,12 @@ internal class PlaybackQueueController(
 
     fun setShuffle(enabled: Boolean): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
-        val state = if (enabled) {
+        if (enabled) {
             queues.enableShuffle(serverId, shuffleRandom)
         } else {
             queues.disableShuffle(serverId)
         }
-        return PlaybackQueueTransition(state.snapshot(), null, emptyList())
+        return editedTransition()
     }
 
     fun cycleRepeatMode(): PlaybackQueueTransition {
@@ -211,18 +378,27 @@ internal class PlaybackQueueController(
             QueueRepeatMode.All -> QueueRepeatMode.One
             QueueRepeatMode.One -> QueueRepeatMode.Off
         }
-        return PlaybackQueueTransition(
-            queues.setRepeatMode(serverId, next).snapshot(),
-            null,
-            emptyList(),
-        )
+        queues.setRepeatMode(serverId, next)
+        return editedTransition()
     }
 
     fun recordPlaybackEvent(event: PlaybackEngineEvent): PlaybackQueueTransition {
         val reduction = playback.recordPlaybackEvent(event)
-        if (event is PlaybackEngineEvent.EndedNaturally &&
-            reduction.disposition == PlaybackEventDisposition.AcceptedCurrentAttempt
+        val accepted = reduction.disposition == PlaybackEventDisposition.AcceptedCurrentAttempt
+        if (event is PlaybackEngineEvent.AdvancedToPreloaded && accepted) {
+            return completePreloadedAdvance(event, reduction.effects)
+        }
+        if (event is PlaybackEngineEvent.EndedNaturally && accepted &&
+            event.attemptId == playback.currentSession?.currentAttempt?.attemptId
         ) {
+            if (preloadWillTakeOver()) {
+                // The engine already holds the next entry and reports `AdvancedToPreloaded` when
+                // it takes over. Starting the next entry here as well would issue a stop and a
+                // fresh prepare for an item that is already playing -- the gap preload removes.
+                // If the preload is discarded instead, `resumeHeldEnd` starts the next entry.
+                endHeldForPreload = true
+                return PlaybackQueueTransition(snapshot(), null, reduction.effects)
+            }
             return advanceAfterNaturalCompletion(reduction.effects)
         }
         return PlaybackQueueTransition(snapshot(), null, reduction.effects)
@@ -249,15 +425,84 @@ internal class PlaybackQueueController(
             return if (state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty()) {
                 startAt(state, if (delta > 0) 0 else state.entries.lastIndex)
             } else {
-                val effects = playback.clearQueue().effects
-                PlaybackQueueTransition(
-                    queues.setCurrentIndex(serverId, null).snapshot(),
-                    null,
-                    effects,
-                )
+                finishQueue(emptyList())
             }
         }
         return startAt(state, target)
+    }
+
+    /**
+     * The queue ran out. The session is finalized and the selection STAYS on the entry that just
+     * finished (§14.3): the listener sees the last track, stopped, and Play replays it. Clearing
+     * the selection here presented "Nothing is playing" at the end of every album, which throws
+     * away the one thing the person was just looking at.
+     */
+    private fun finishQueue(priorEffects: List<PlaybackCoreEffect>): PlaybackQueueTransition {
+        registeredPreload = null
+        endHeldForPreload = false
+        val finalization = playback.clearQueue()
+        return PlaybackQueueTransition(snapshot(), null, priorEffects + finalization.effects)
+    }
+
+    private fun upcomingEntry(state: QueueState): QueueEntry? {
+        val current = state.currentIndex ?: return null
+        if (state.repeatMode == QueueRepeatMode.One) return null
+        val next = current + 1
+        return when {
+            next in state.entries.indices -> state.entries[next]
+            state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty() -> state.entries[0]
+            else -> null
+        }
+    }
+
+    private fun preloadWillTakeOver(): Boolean {
+        val preload = registeredPreload ?: return false
+        val serverId = queues.activeServerId() ?: return false
+        return upcomingEntry(queues.load(serverId))?.queueEntryId == preload.queueEntryId
+    }
+
+    private fun completePreloadedAdvance(
+        event: PlaybackEngineEvent.AdvancedToPreloaded,
+        effects: List<PlaybackCoreEffect>,
+    ): PlaybackQueueTransition {
+        val preload = registeredPreload
+        registeredPreload = null
+        endHeldForPreload = false
+        val serverId = queues.activeServerId()
+        if (preload != null && serverId != null && preload.start.attemptId == event.newAttemptId) {
+            val index = queues.load(serverId).entries.indexOfFirst {
+                it.queueEntryId == preload.queueEntryId
+            }
+            if (index >= 0) queues.setCurrentIndex(serverId, index)
+        }
+        return PlaybackQueueTransition(snapshot(), null, effects)
+    }
+
+    private fun discardRegisteredPreload(): AttemptId? {
+        val preload = registeredPreload ?: return null
+        registeredPreload = null
+        playback.discardPreloaded(preload.start.attemptId)
+        return preload.start.attemptId
+    }
+
+    /**
+     * After any queue edit the preload may name an entry that no longer plays next. It is then
+     * discarded here, and the transition tells the owner to remove it from the engine.
+     */
+    private fun editedTransition(): PlaybackQueueTransition {
+        val discarded = if (registeredPreload != null && !preloadWillTakeOver()) {
+            discardRegisteredPreload()
+        } else {
+            null
+        }
+        return resumeHeldEnd(discarded) ?: emptyTransition().copy(discardedPreloadAttemptId = discarded)
+    }
+
+    /** Starts the entry after a held natural end, once its preload is gone. */
+    private fun resumeHeldEnd(discarded: AttemptId?): PlaybackQueueTransition? {
+        if (discarded == null || !endHeldForPreload) return null
+        endHeldForPreload = false
+        return advanceAfterNaturalCompletion(emptyList()).copy(discardedPreloadAttemptId = discarded)
     }
 
     private fun advanceAfterNaturalCompletion(
@@ -284,12 +529,7 @@ internal class PlaybackQueueController(
         if (state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty()) {
             return startAt(state, 0, terminalEffects)
         }
-        val finalization = playback.clearQueue()
-        return PlaybackQueueTransition(
-            queues.setCurrentIndex(serverId, null).snapshot(),
-            null,
-            terminalEffects + finalization.effects,
-        )
+        return finishQueue(terminalEffects)
     }
 
     private fun startAt(
@@ -307,6 +547,13 @@ internal class PlaybackQueueController(
         entry: QueueEntry,
         replacingQueue: Boolean,
     ): PlaybackQueueTransition {
+        // A manual start is a fresh start, and the owner's stop removes the engine's preloaded
+        // item with it. advanceToNext and replaceQueue discard every registered preload in the
+        // state machine; startPlaying runs only with no current session, when none is registered
+        // by this controller except after an engine teardown, which is discarded here.
+        registeredPreload?.let { playback.discardPreloaded(it.start.attemptId) }
+        registeredPreload = null
+        endHeldForPreload = false
         val start = newStart(entry)
         val coreTransition = when {
             playback.currentSession == null -> playback.startPlaying(start)

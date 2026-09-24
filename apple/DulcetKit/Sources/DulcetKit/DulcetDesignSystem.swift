@@ -141,6 +141,12 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case primaryTextOnRegularMaterial = "primary-text/regular-material"
     case secondaryTextOnRegularMaterial = "secondary-text/regular-material"
     case accentIconOnWindow = "accent-icon/window"
+    /// Text links: an artist or album name that navigates.
+    case accentTextOnWindow = "accent-text/window"
+    /// A prominent button's label on the accent fill. The label takes the window colour, so it
+    /// is light on the dark accent of light mode and dark on the light accent of dark mode --
+    /// the ancestor's primary-text style would otherwise paint it black on blue.
+    case labelOnAccentFill = "label/accent-fill"
     case accentIconOnTint = "accent-icon/accent-tint"
     case offlineLabelOnControl = "offline-label/control"
     case primaryTextOnOfflineTint = "primary-text/offline-tint"
@@ -156,8 +162,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
         case .secondaryTextOnWindow, .secondaryTextOnControl, .secondaryTextOnOfflineTint,
              .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial:
             .dulcetSecondaryText
-        case .accentIconOnWindow, .accentIconOnTint:
+        case .accentIconOnWindow, .accentIconOnTint, .accentTextOnWindow:
             .dulcetAccent
+        case .labelOnAccentFill:
+            .dulcetWindow
         case .offlineLabelOnControl, .offlineIconOnTint:
             .dulcetOffline
         case .dangerIconOnTint:
@@ -168,7 +176,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     /// Ordered back-to-front to match the pixels under the rendered foreground.
     var backgroundLayers: [AnyShapeStyle] {
         switch self {
-        case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow:
+        case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow,
+             .accentTextOnWindow:
             [AnyShapeStyle(Color.dulcetWindow)]
         case .primaryTextOnControl, .secondaryTextOnControl, .offlineLabelOnControl:
             [
@@ -181,6 +190,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(.regularMaterial)]
         case .accentIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent.opacity(0.10))]
+        case .labelOnAccentFill:
+            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent)]
         case .offlineIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
         case .primaryTextOnOfflineTint, .secondaryTextOnOfflineTint:
@@ -269,12 +280,29 @@ extension View {
 #endif
     }
 
+    /// A plain media control. On iPadOS it answers the pointer as system controls do: artwork
+    /// lifts, rows and text highlight.
     @ViewBuilder
-    func dulcetMediaButtonStyle() -> some View {
+    func dulcetMediaButtonStyle(hover: DulcetHoverEffect = .highlight) -> some View {
 #if os(tvOS)
         buttonStyle(.borderless)
 #else
         buttonStyle(.plain)
+            .dulcetHoverEffect(hover)
+#endif
+    }
+
+    /// The pointer effect for a control whose style draws none of its own. Nothing without a
+    /// pointer interaction to attach it to.
+    @ViewBuilder
+    func dulcetHoverEffect(_ effect: DulcetHoverEffect = .highlight) -> some View {
+#if os(iOS)
+        switch effect {
+        case .highlight: hoverEffect(.highlight)
+        case .lift: hoverEffect(.lift)
+        }
+#else
+        self
 #endif
     }
 
@@ -315,6 +343,12 @@ struct DulcetArtworkView: View {
     @State private var loadedData: Data?
     @State private var operation: (any DulcetArtworkFetchOperation)?
     @State private var loadGeneration = 0
+    @State private var retryTask: Task<Void, Never>?
+
+    /// Waits before each retry of a transient failure. A cover fetched while the network was
+    /// briefly unusable -- the local-network prompt still up, a Wi-Fi handover -- otherwise stays
+    /// a placeholder until the view happens to leave the screen and come back.
+    static let transientRetryDelays: [Duration] = [.seconds(2), .seconds(8)]
 
     var body: some View {
         ZStack {
@@ -389,20 +423,37 @@ struct DulcetArtworkView: View {
     private func startLoading() {
         cancelLoading()
         loadedData = nil
+        load(attempt: 0)
+    }
+
+    private func load(attempt: Int) {
         guard let reference = artwork.remoteReference else { return }
         loadGeneration += 1
         let generation = loadGeneration
         operation = store.loadArtwork(reference, sizeBucket: sizeBucket) { outcome in
             guard generation == loadGeneration else { return }
             operation = nil
-            if case let .loaded(data) = outcome {
+            switch outcome {
+            case let .loaded(data):
                 loadedData = data
+            case .failed where attempt < Self.transientRetryDelays.count:
+                // Only a transient failure is retried; `.unavailable` means there is no cover.
+                let delay = Self.transientRetryDelays[attempt]
+                retryTask = Task { @MainActor in
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled, generation == loadGeneration else { return }
+                    load(attempt: attempt + 1)
+                }
+            case .failed, .unavailable, .cancelled:
+                break
             }
         }
     }
 
     private func cancelLoading() {
         loadGeneration += 1
+        retryTask?.cancel()
+        retryTask = nil
         operation?.cancel()
         operation = nil
     }
@@ -470,4 +521,12 @@ extension Duration {
         return String(format: "%lld:%02lld", minutes, seconds)
     }
 }
+
+enum DulcetHoverEffect {
+    /// A tint behind a row, a link or an icon control.
+    case highlight
+    /// Artwork rising toward the pointer, for a card that is mostly image.
+    case lift
+}
+
 #endif

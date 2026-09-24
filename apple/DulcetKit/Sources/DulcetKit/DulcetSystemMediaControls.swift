@@ -52,6 +52,9 @@ public struct DulcetSystemNowPlayingState: Equatable, Sendable {
     public let isPlaying: Bool
     public let seekability: DulcetPlaybackSeekability
     public let remoteCapabilities: DulcetRemoteCommandCapabilities
+    /// Encoded image bytes that already passed the core's artwork validation. Never a URL: the
+    /// only artwork URLs this app has carry credentials in their query string.
+    public let artworkImageData: Data?
 
     public init(
         sessionID: DulcetPlaybackSessionID,
@@ -61,7 +64,8 @@ public struct DulcetSystemNowPlayingState: Equatable, Sendable {
         rate: Double,
         isPlaying: Bool,
         seekability: DulcetPlaybackSeekability,
-        remoteCapabilities: DulcetRemoteCommandCapabilities
+        remoteCapabilities: DulcetRemoteCommandCapabilities,
+        artworkImageData: Data? = nil
     ) {
         self.sessionID = sessionID
         self.metadata = metadata
@@ -71,6 +75,7 @@ public struct DulcetSystemNowPlayingState: Equatable, Sendable {
         self.isPlaying = isPlaying
         self.seekability = seekability
         self.remoteCapabilities = remoteCapabilities
+        self.artworkImageData = artworkImageData
     }
 }
 
@@ -99,14 +104,29 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     private let lock = NSLock()
     private var handler: (@Sendable (DulcetRemotePlaybackCommand) -> Bool)?
     private var state: DulcetSystemNowPlayingState?
+    private var transportAnchor: TransportAnchor?
+    private var decodedArtwork: (data: Data, artwork: MPMediaItemArtwork)?
     private var targets: [(MPRemoteCommand, Any)] = []
+    private let uptime: @Sendable () -> TimeInterval
+
+    private struct TransportAnchor {
+        let sessionID: DulcetPlaybackSessionID
+        let position: TimeInterval
+        let rate: Double
+        let isPlaying: Bool
+        let uptime: TimeInterval
+    }
+
+    static let extrapolationTolerance: TimeInterval = 0.75
 
     public init(
         commandCenter: MPRemoteCommandCenter = .shared(),
-        nowPlayingCenter: MPNowPlayingInfoCenter = .default()
+        nowPlayingCenter: MPNowPlayingInfoCenter = .default(),
+        uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.commandCenter = commandCenter
         self.nowPlayingCenter = nowPlayingCenter
+        self.uptime = uptime
         disableUnsupportedCommands()
         applyCommandAvailability(nil)
     }
@@ -126,6 +146,13 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     public func publish(_ state: DulcetSystemNowPlayingState) {
         lock.lock()
         self.state = state
+        transportAnchor = TransportAnchor(
+            sessionID: state.sessionID,
+            position: state.position,
+            rate: state.isPlaying ? state.rate : 0,
+            isPlaying: state.isPlaying,
+            uptime: uptime()
+        )
         lock.unlock()
         installTargets(for: state.sessionID)
         applyCommandAvailability(state)
@@ -152,14 +179,36 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
             rate: rate,
             isPlaying: isPlaying,
             seekability: previous.seekability,
-            remoteCapabilities: previous.remoteCapabilities
+            remoteCapabilities: previous.remoteCapabilities,
+            artworkImageData: previous.artworkImageData
         )
         state = updated
+        let now = uptime()
+        let effectiveRate = isPlaying ? rate : 0
+        // The system extrapolates elapsed time from the last write and its rate, so rewriting
+        // the dictionary on every 0.5 s sample is redundant work for every observer of the
+        // Now Playing centre. Write when the transport changed or the extrapolation drifted.
+        if let anchor = transportAnchor,
+           anchor.sessionID == sessionID,
+           anchor.isPlaying == isPlaying,
+           anchor.rate == effectiveRate,
+           abs(anchor.position + (now - anchor.uptime) * effectiveRate - position)
+            < Self.extrapolationTolerance {
+            lock.unlock()
+            return
+        }
+        transportAnchor = TransportAnchor(
+            sessionID: sessionID,
+            position: position,
+            rate: effectiveRate,
+            isPlaying: isPlaying,
+            uptime: now
+        )
         lock.unlock()
         var information = nowPlayingCenter.nowPlayingInfo ?? nowPlayingInfo(for: updated)
         information[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
-        information[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? rate : 0
-        information[MPNowPlayingInfoPropertyDefaultPlaybackRate] = rate
+        information[MPNowPlayingInfoPropertyPlaybackRate] = effectiveRate
+        information[MPNowPlayingInfoPropertyDefaultPlaybackRate] = rate > 0 ? rate : 1
         nowPlayingCenter.nowPlayingInfo = information
         nowPlayingCenter.playbackState = isPlaying ? .playing : .paused
     }
@@ -167,6 +216,7 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     public func clear() {
         lock.lock()
         state = nil
+        transportAnchor = nil
         lock.unlock()
         removeTargets()
         applyCommandAvailability(nil)
@@ -189,18 +239,9 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return nil }
             return .seek(sessionID: sessionID, position: event.positionTime)
         }
-        addTarget(commandCenter.ratingCommand, sessionID: sessionID) { sessionID, event in
-            guard let event = event as? MPRatingCommandEvent else { return nil }
-            return .rating(sessionID: sessionID, value: Double(event.rating))
-        }
-        addTarget(commandCenter.likeCommand, sessionID: sessionID) { sessionID, event in
-            guard let event = event as? MPFeedbackCommandEvent else { return nil }
-            return .favourite(sessionID: sessionID, isFavourite: !event.isNegative)
-        }
-        commandCenter.ratingCommand.minimumRating = 0
-        commandCenter.ratingCommand.maximumRating = 5
-        commandCenter.likeCommand.localizedTitle = "Favourite"
-        commandCenter.likeCommand.localizedShortTitle = "Favourite"
+        // Rating and like are deliberately NOT registered. Favourites do not exist yet (spec
+        // §18.3's outbox is unbuilt), and a registered command that answers "failed" puts a
+        // heart on the lock screen that does nothing. They come back with the feature.
     }
 
     private func addTarget(
@@ -237,9 +278,8 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
         commandCenter.nextTrackCommand.isEnabled = state?.remoteCapabilities.allowsNext == true
         commandCenter.previousTrackCommand.isEnabled = state?.remoteCapabilities.allowsPrevious == true
         commandCenter.changePlaybackPositionCommand.isEnabled = state?.seekability == .seekable
-        commandCenter.ratingCommand.isEnabled = state?.remoteCapabilities.allowsRating == true
-        commandCenter.likeCommand.isEnabled = state?.remoteCapabilities.allowsFavourite == true
-        commandCenter.likeCommand.isActive = state?.remoteCapabilities.isFavourite == true
+        commandCenter.ratingCommand.isEnabled = false
+        commandCenter.likeCommand.isEnabled = false
     }
 
     private func disableUnsupportedCommands() {
@@ -267,6 +307,26 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
         if let artist = state.metadata.artist { information[MPMediaItemPropertyArtist] = artist }
         if let album = state.metadata.albumTitle { information[MPMediaItemPropertyAlbumTitle] = album }
         if let duration = state.duration { information[MPMediaItemPropertyPlaybackDuration] = duration }
+        if let artwork = artwork(for: state.artworkImageData) {
+            information[MPMediaItemPropertyArtwork] = artwork
+        }
         return information
+    }
+
+    /// Decodes once per distinct image. Returning nil for bytes that do not decode keeps a
+    /// corrupt cache entry off the lock screen rather than showing a broken tile.
+    private func artwork(for data: Data?) -> MPMediaItemArtwork? {
+        guard let data else { return nil }
+        lock.lock()
+        if let cached = decodedArtwork, cached.data == data {
+            lock.unlock()
+            return cached.artwork
+        }
+        lock.unlock()
+        guard let artwork = DulcetNowPlayingArtworkDecoder.artwork(from: data) else { return nil }
+        lock.lock()
+        decodedArtwork = (data, artwork)
+        lock.unlock()
+        return artwork
     }
 }
