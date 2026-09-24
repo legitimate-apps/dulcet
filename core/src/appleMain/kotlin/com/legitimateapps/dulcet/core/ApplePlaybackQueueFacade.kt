@@ -338,7 +338,12 @@ public class ApplePlaybackQueueClient private constructor(
     }
 
     public fun jumpTo(queueEntryId: String): ApplePlaybackQueueTransitionDto = runClosed {
-        controllerOrThrow().jumpTo(QueueEntryId(queueEntryId))
+        val entry = QueueEntryId(queueEntryId)
+        val transition = controllerOrThrow().jumpTo(entry)
+        // The controller treats a vanished entry as a no-op; this facade's contract reports it as a
+        // closed input refusal, like removeEntry and moveEntry, so Swift can tell the two apart.
+        require(transition.snapshot.entries.any { it.queueEntryId == entry }) { "Unknown queue entry" }
+        transition
     }
 
     public fun startCurrent(): ApplePlaybackQueueTransitionDto = runClosed {

@@ -220,7 +220,10 @@ internal class AndroidMedia3Engine(
                 }
                 // The core owns advancement. Do not let Media3 autonomously begin an unregistered
                 // session. Explicit unsupported is part of the seam's command-outcome contract.
-                is PlaybackCommand.PreloadNext -> return rejected(PlaybackCommandRejectionReason.Unsupported)
+                // This engine holds one item at a time and never accepts a preload, so there is
+                // never a preloaded item to discard; both are refused the same way.
+                is PlaybackCommand.PreloadNext, is PlaybackCommand.DiscardPreloaded ->
+                    return rejected(PlaybackCommandRejectionReason.Unsupported)
                 is PlaybackCommand.Release -> {
                     current?.let { emit(PlaybackEngineEvent.EngineTornDown(it.attemptId, PlaybackEngineTeardownReason.Released)) }
                     released = true; current = null

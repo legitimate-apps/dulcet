@@ -221,15 +221,6 @@ internal class PlaybackQueueController(
         return editedTransition()
     }
 
-    /** Tapping a queue row: a next-item boundary, so the outgoing session is finalized (§12.1). */
-    fun jumpTo(queueEntryId: QueueEntryId): PlaybackQueueTransition {
-        val serverId = queues.activeServerId() ?: return emptyTransition()
-        val state = queues.load(serverId)
-        val index = state.entries.indexOfFirst { it.queueEntryId == queueEntryId }
-        require(index >= 0) { "Unknown queue entry" }
-        return startAt(state, index)
-    }
-
     /**
      * Starts the selected entry when no session exists — the state a finished queue leaves behind
      * (§14.3). Play after the last track therefore replays it, from the start, as a new session.
@@ -292,9 +283,12 @@ internal class PlaybackQueueController(
     fun previous(): PlaybackQueueTransition = moveBy(-1)
 
     /**
-     * Starts the entry the user picked from Up Next. Addressed by queue-entry identity, never by
-     * index: an index captured by a presentation goes stale as soon as the queue changes, and the
-     * same song may appear twice. Every entry keeps its identity; only a new session begins.
+     * Starts the entry the user picked from Up Next — a next-item boundary, so the outgoing session
+     * is finalized (§12.1). Addressed by queue-entry identity, never by index: an index captured by
+     * a presentation goes stale as soon as the queue changes, and the same song may appear twice.
+     * Every entry keeps its identity; only a new session begins. An entry that is no longer in the
+     * queue (a tap on a row an edit just removed) changes nothing rather than throwing; a platform
+     * facade that must report it as a refusal checks the returned snapshot.
      */
     fun jumpTo(queueEntryId: QueueEntryId): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
