@@ -219,6 +219,85 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertNotEqual(replay, first, "Play after the end is a new session and attempt")
     }
 
+    /// Next is offered on a finished queue exactly when it can act: under repeat-all it starts
+    /// the first entry as a new session, and without repeat there is nothing after the last
+    /// entry, so it is disabled rather than enabled and inert.
+    func testNextOnAFinishedQueueStartsTheFirstEntryUnderRepeatAllAndIsOtherwiseDisabled() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 1))
+        let last = try await fixture.waitForPrepare(rawID: "b")
+        fixture.emit(.ready(attemptID: last, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: last, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        fixture.emit(.endedNaturally(attemptID: last, finalPosition: 120))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.sessionID == nil }
+
+        let finished = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(finished.current.id.rawID, "b")
+        XCTAssertFalse(finished.canGoNext, "nothing follows the last entry without repeat")
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.send(.next)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fixture.engine.count("prepare"), preparesBefore, "a disabled Next starts nothing")
+
+        fixture.controller.send(.cycleRepeat)
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.repeatMode == .all }
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.canGoNext, true)
+        fixture.controller.send(.next)
+        let restarted = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        XCTAssertNotEqual(restarted, last)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+        XCTAssertNotNil(fixture.queue.snapshot().snapshot?.currentSession, "a new session")
+    }
+
+    /// A track that fails is not a dead end: the failure names it and says whether Skip and
+    /// Retry can act, Skip starts the next entry, and Retry starts the failed one again as a new
+    /// session rather than resuming the failed attempt.
+    func testAFailedTrackIsNamedAndSkipAndRetryStartTheRightEntries() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+
+        let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
+        XCTAssertEqual(failure.track?.id.rawID, "a")
+        XCTAssertTrue(failure.canSkip)
+        XCTAssertTrue(failure.canRetry)
+        XCTAssertEqual(try XCTUnwrap(fixture.store).snapshot.playbackFailure, failure)
+
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        XCTAssertNotEqual(retried, first, "Retry is a new attempt")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+
+        fixture.emit(.failedBeforeStart(attemptID: retried, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        let preparesBeforeSkip = fixture.engine.count("prepare")
+        fixture.controller.send(.next)
+        let lastAttempt = try await fixture.waitForPrepare(rawID: "b", after: preparesBeforeSkip)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 1)
+
+        // The last entry failing has nowhere to skip to, and says so.
+        fixture.emit(.failedBeforeStart(attemptID: lastAttempt, error: .sourceUnavailable))
+        await fixture.waitFor { fixture.controller.currentPresentation.failure?.track?.id.rawID == "b" }
+        XCTAssertEqual(fixture.controller.currentPresentation.failure?.canSkip, false)
+    }
+
+    /// A queue edit the core refuses reports that it changed nothing, so the surface can say so.
+    func testARefusedQueueEditReportsThatItChangedNothing() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        _ = try await fixture.waitForPrepare(rawID: "a")
+        let current = try XCTUnwrap(fixture.queue.snapshot().snapshot?.entries.first?.queueEntryId)
+        XCTAssertFalse(fixture.controller.edit(.remove(DulcetQueueEntryID(current))),
+                       "the current entry cannot be removed")
+        XCTAssertFalse(fixture.controller.edit(.jump(DulcetQueueEntryID("entry-never-queued"))))
+        let upcoming = try XCTUnwrap(fixture.queue.snapshot().snapshot?.entries.last?.queueEntryId)
+        XCTAssertTrue(fixture.controller.edit(.remove(DulcetQueueEntryID(upcoming))))
+    }
+
     func testArtworkReachesTheEngineAsValidatedBytesForItsOwnSession() async throws {
         let fixture = makeFixture(tracks: ["a", "b"], artwork: Data([0xFF, 0xD8, 0xFF, 0x01]))
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))

@@ -183,8 +183,253 @@ final class DulcetiOSUITests: XCTestCase {
             "Closing must dismiss the full player"
         )
         XCTAssertTrue(bar.waitForExistence(timeout: 5), "The bar must remain after the player closes")
-        print("DULCET COMPACT SHELL PASS album-fits=true bar-appeared=true stayed-on-album=true"
-            + " pause-reached-store=true bar-on-search=true sheet-opened=true sheet-closed=true")
+
+        // 4. Each tab keeps its own navigation stack. The album opened under Library is still
+        //    open when Library is chosen again from Search, and choosing Library while it is the
+        //    selected tab returns it to the grid, as every tab bar does. This is the per-tab form
+        //    of choosing a sidebar destination again, which a compact window once handled by
+        //    stranding the person on an empty column.
+        libraryTab.tap()
+        let albumKept = title.waitForExistence(timeout: 5) && title.isHittable
+        XCTAssertTrue(albumKept, "Library must come back on the album it was left on: "
+            + app.debugDescription)
+        libraryTab.tap()
+        let reselectPopped = title.waitForNonExistence(timeout: 5)
+        let gridShown = album.waitForExistence(timeout: 5)
+        XCTAssertTrue(reselectPopped && gridShown,
+                      "Choosing the selected Library tab must return it to the grid: "
+                        + app.debugDescription)
+        // The grid is now the Library tab's page, so a round trip must not bring the album back.
+        app.tabBars.buttons["Search"].firstMatch.tap()
+        XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
+                      "The Search tab must show search")
+        libraryTab.tap()
+        let gridKept = album.waitForExistence(timeout: 5) && !title.exists
+        XCTAssertTrue(gridKept, "Library must come back on the grid it was left on")
+        // Observed values, not a verdict: a line printed after a failed assertion must not read
+        // as a pass.
+        print("DULCET COMPACT SHELL OBSERVED bar-on-search=\(bar.exists)"
+            + " album-kept=\(albumKept) reselect-popped=\(reselectPopped) grid-shown=\(gridShown)"
+            + " grid-kept=\(gridKept)")
+    }
+
+    /// A failed track is not a dead end, on the deterministic fixture: the bar names the track
+    /// that failed and offers Try Again, Skip and Dismiss in place of play/pause and next; the
+    /// full player offers the same; Skip plays the next track and Try Again plays the failed one.
+    @MainActor
+    func testAFailedTrackOffersSkipAndRetryInTheBarAndThePlayer() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-account-connect-layout-fixture",
+            "-dulcet-layout-fixture-fail-track", "Disc 1 Track 1",
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertLessThan(window.frame.width, 700,
+                          "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+            return
+        }
+        let album = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
+        ).firstMatch
+        guard album.waitForExistence(timeout: 10),
+              scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
+            XCTFail("The fixture's Double Lines album must be reachable in the grid")
+            return
+        }
+        album.tap()
+        let firstTrack = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Disc 1 Track 1")
+        ).firstMatch
+        guard firstTrack.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must list its first track: " + app.debugDescription)
+            return
+        }
+        firstTrack.tap()
+
+        // The bar: the failure named, and the three ways out of it.
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let retry = app.buttons["dulcet.mini-player.retry"].firstMatch
+        let skip = app.buttons["dulcet.mini-player.skip"].firstMatch
+        let dismiss = app.buttons["dulcet.mini-player.dismiss"].firstMatch
+        guard retry.waitForExistence(timeout: 10) else {
+            XCTFail("A failed track must offer Try Again on the bar: " + app.debugDescription)
+            return
+        }
+        let failureLine = bar.label
+        XCTAssertTrue(failureLine.contains("Couldn") && failureLine.contains("Disc 1 Track 1"),
+                      "The bar must say which track failed; label=\(failureLine)")
+        XCTAssertTrue(skip.exists && skip.isEnabled, "A failed track with a next entry must offer Skip")
+        XCTAssertTrue(dismiss.exists, "A failed track's bar must be dismissable")
+        XCTAssertFalse(app.buttons["dulcet.mini-player.play-pause"].exists,
+                       "Play/pause has nothing to act on while the track has failed")
+        attachScreenshot(named: "failed-track-bar", app: app)
+
+        // The player says the same, with the same actions.
+        bar.tap()
+        let failure = app.descendants(matching: .any)["dulcet.now-playing.failure"].firstMatch
+        guard failure.waitForExistence(timeout: 10) else {
+            XCTFail("The player must show the failure: " + app.debugDescription)
+            return
+        }
+        let playerSkip = app.buttons["dulcet.now-playing.skip"].firstMatch
+        XCTAssertTrue(app.buttons["dulcet.now-playing.retry"].firstMatch.exists,
+                      "The player must offer Try Again")
+        XCTAssertTrue(playerSkip.exists && playerSkip.isEnabled, "The player must offer Skip")
+        attachScreenshot(named: "failed-track-player", app: app)
+        playerSkip.tap()
+        let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        let skippedTo = nowPlayingTitle.waitForExistence(timeout: 10) ? nowPlayingTitle.label : "<none>"
+        XCTAssertEqual(skippedTo, "Disc 1 Track 2", "Skip must play the entry after the failed one")
+        app.buttons["dulcet.now-playing.close"].firstMatch.tap()
+        XCTAssertTrue(nowPlayingTitle.waitForNonExistence(timeout: 10), "Closing must dismiss the player")
+
+        // Dismiss puts a failure the person has seen away. The fixture fails the track until
+        // Try Again, which Skip did not use, so playing it again fails it again.
+        firstTrack.tap()
+        guard dismiss.waitForExistence(timeout: 10) else {
+            XCTFail("Playing the failed track again must fail it again: " + app.debugDescription)
+            return
+        }
+        dismiss.tap()
+        let dismissed = bar.waitForNonExistence(timeout: 5)
+        XCTAssertTrue(dismissed, "Dismiss must put the failed track's bar away")
+
+        // A new attempt after a dismissal is a new failure, and it must be shown, not stay away
+        // with the old one.
+        firstTrack.tap()
+        let failureShownAgain = retry.waitForExistence(timeout: 10)
+        XCTAssertTrue(failureShownAgain, "A failure after a dismissal must show the bar again")
+
+        // Try Again plays the failed track itself. A Try Again wired to Next would name Disc 1
+        // Track 2 here instead.
+        retry.tap()
+        let retried = waitForLabelContaining("Disc 1 Track 1", of: bar, timeout: 10)
+            && !retry.exists
+        XCTAssertTrue(retried, "Try Again must play the failed track; bar=\(bar.label)")
+        print("DULCET FAILED TRACK OBSERVED bar=\(failureLine.debugDescription) skipped-to=\(skippedTo) dismissed=\(dismissed)"
+            + " shown-again=\(failureShownAgain) retried=\(retried)")
+    }
+
+    /// The player survives the window crossing the compact/regular boundary while it is open --
+    /// a large iPhone turned sideways here, iPad Split View and Stage Manager in use. The two
+    /// presentation styles flip in one update, and once left the player asked for with nothing on
+    /// screen, so the bar's tap changed nothing and the player could not be opened again.
+    ///
+    /// Requires an iPhone whose landscape width is regular (a Pro Max or Plus model); a device
+    /// that stays compact when turned cannot express the defect, and the test says so rather than
+    /// passing.
+    @MainActor
+    func testThePlayerFollowsTheWindowAcrossASizeClassChange() {
+        // Every compact proof starts by setting portrait, so a run that fails while turned does
+        // not leave the next one on a landscape window.
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments.append("-dulcet-account-connect-layout-fixture")
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertLessThan(window.frame.width, 700, "The proof starts on a compact portrait window")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+            return
+        }
+        let album = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
+        ).firstMatch
+        guard album.waitForExistence(timeout: 10),
+              scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
+            XCTFail("The fixture's Double Lines album must be reachable in the grid")
+            return
+        }
+        album.tap()
+        let firstTrack = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Disc 1 Track 1")
+        ).firstMatch
+        guard firstTrack.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must list its first track")
+            return
+        }
+        firstTrack.tap()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 10) else {
+            XCTFail("Playing must bring up the bar")
+            return
+        }
+        bar.tap()
+        let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        guard nowPlayingTitle.waitForExistence(timeout: 10) else {
+            XCTFail("The bar must open the player")
+            return
+        }
+
+        // Across the boundary with the player open: it must come back in the other style.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let presentedAfterTurn = close.waitForExistence(timeout: 10)
+            && nowPlayingTitle.waitForExistence(timeout: 5)
+        let landscapeWidth = window.frame.width
+        attachScreenshot(named: "player-after-turn-to-landscape", app: app)
+        XCTAssertTrue(presentedAfterTurn,
+                      "The player must still be on screen after the window turned regular: "
+                        + app.debugDescription)
+        guard presentedAfterTurn else { return }
+        close.tap()
+        XCTAssertTrue(nowPlayingTitle.waitForNonExistence(timeout: 10), "Close must dismiss the player")
+        // Checks the experiment: the turn must actually have produced the regular shell.
+        let regularShell = !app.tabBars.firstMatch.exists
+            && app.staticTexts["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
+        XCTAssertTrue(regularShell,
+                      "Landscape must be a regular-width window (sidebar, no tab bar); a device that"
+                        + " stays compact cannot express this defect. width=\(landscapeWidth)")
+        attachScreenshot(named: "regular-shell-landscape", app: app)
+
+        // The defect's own symptom: after the flip, the bar must still open the player.
+        guard bar.waitForExistence(timeout: 5) else {
+            XCTFail("The bar must remain in the regular shell")
+            return
+        }
+        bar.tap()
+        let reopenedInLandscape = nowPlayingTitle.waitForExistence(timeout: 10)
+        XCTAssertTrue(reopenedInLandscape, "The bar must open the player after the window changed")
+
+        // And back across, with the player open again.
+        XCUIDevice.shared.orientation = .portrait
+        let presentedAfterReturn = close.waitForExistence(timeout: 10)
+            && nowPlayingTitle.waitForExistence(timeout: 5)
+        XCTAssertTrue(presentedAfterReturn,
+                      "The player must still be on screen after the window turned compact again")
+        if presentedAfterReturn { close.tap() }
+        let closedInPortrait = nowPlayingTitle.waitForNonExistence(timeout: 10)
+        bar.tap()
+        let reopenedInPortrait = nowPlayingTitle.waitForExistence(timeout: 10)
+        XCTAssertTrue(reopenedInPortrait, "The bar must open the player after the window turned back")
+        print("DULCET SIZE CLASS PLAYER OBSERVED landscape-width=\(landscapeWidth)"
+            + " regular-shell=\(regularShell) presented-after-turn=\(presentedAfterTurn)"
+            + " reopened-landscape=\(reopenedInLandscape) presented-after-return=\(presentedAfterReturn)"
+            + " closed-portrait=\(closedInPortrait) reopened-portrait=\(reopenedInPortrait)")
+    }
+
+    @MainActor
+    private func waitForLabelContaining(
+        _ text: String, of element: XCUIElement, timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !(element.exists && element.label.contains(text)), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return element.exists && element.label.contains(text)
+    }
+
+    /// Kept in the result bundle whatever the outcome, so a layout can be read after the run.
+    @MainActor
+    private func attachScreenshot(named name: String, app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     /// Reaches a top-level destination the way a person does on the window's size class: the tab
@@ -297,8 +542,12 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     /// A grid tile opens its album on a phone against a live library, by element tap -- the path
-    /// a device run reported dead -- for a tile in the first row and for one whose top starts
-    /// behind the now-playing bar and tab bar, which the tap must scroll to rather than lose.
+    /// a device run reported dead. Two cases: a tile in the first row, and, with playback running
+    /// so the now-playing bar is on screen, a tile whose frame reaches under the bar or the tab
+    /// bar, which the tap must scroll to rather than lose to the controls on top of it.
+    ///
+    /// Every tile's frame is printed with the bar's and the tab bar's, so the geometry here can be
+    /// compared with a device build's.
     @MainActor
     func testCompactLibraryTileOpensItsAlbumOnALiveLibrary() {
         XCUIDevice.shared.orientation = .portrait
@@ -325,32 +574,79 @@ final class DulcetiOSUITests: XCTestCase {
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return
         }
-        // Diagnostic, not an assertion: a device run showed a full-screen Toolbar element over
-        // the grid. Record what this runtime exposes so the two can be compared.
-        for toolbar in app.toolbars.allElementsBoundByIndex {
-            print("DULCET GRID TOOLBAR frame=\(toolbar.frame)")
+        let tiles = app.buttons.matching(identifier: "dulcet.library.album")
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        guard tiles.firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live library must show album tiles: " + app.debugDescription)
+            return
         }
 
-        for title in ["Double Lines", "Dulcet Conformance"] {
-            let tile = app.buttons.matching(NSPredicate(
-                format: "label BEGINSWITH %@ AND identifier != %@", title, "dulcet.mini-player.open"
-            )).firstMatch
-            guard tile.waitForExistence(timeout: 30) else {
-                XCTFail("The live library must show the \(title) tile: " + app.debugDescription)
-                return
-            }
-            print("DULCET GRID TILE \(title) frame=\(tile.frame) hittable=\(tile.isHittable)")
-            tile.tap()
-            let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
-            guard albumTitle.waitForExistence(timeout: 10) else {
-                XCTFail("Tapping the \(title) tile must open its album: " + app.debugDescription)
-                return
-            }
-            XCTAssertEqual(albumTitle.label, title)
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(albumTitle.waitForNonExistence(timeout: 10), "Back must return to the grid")
+        // 1. A first-row tile, with nothing playing, opens its album -- and starts the playback
+        //    the second case needs. Double Lines, not whichever tile sorts first: the corpus's
+        //    untagged album holds an Ogg file, which says nothing about tiles.
+        let first = tiles.matching(NSPredicate(format: "label BEGINSWITH %@", "Double Lines")).firstMatch
+        guard first.waitForExistence(timeout: 10) else {
+            XCTFail("The live library must show the Double Lines tile: " + app.debugDescription)
+            return
         }
-        print("DULCET GRID TILE PASS first-row=true behind-bar=true")
+        let firstLabel = first.label
+        print("DULCET GRID TILE first label=\(firstLabel.debugDescription) frame=\(first.frame)"
+            + " hittable=\(first.isHittable)")
+        first.tap()
+        guard albumTitle.waitForExistence(timeout: 10) else {
+            XCTFail("Tapping the first tile must open its album: " + app.debugDescription)
+            return
+        }
+        let firstOpened = firstLabel.hasPrefix(albumTitle.label)
+        XCTAssertTrue(firstOpened,
+                      "The first tile must open its own album; tile=\(firstLabel) page=\(albumTitle.label)")
+        app.buttons["dulcet.album.play"].firstMatch.tap()
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard playPause.waitForExistence(timeout: 20), waitForLabel("Pause", of: playPause, timeout: 30) else {
+            XCTFail("Playback must start so the bar is on screen; play/pause=\(playPause.label)")
+            return
+        }
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(albumTitle.waitForNonExistence(timeout: 10), "Back must return to the grid")
+
+        // 2. A tile whose centre lies under the bar or the tab bar -- where a tap at the centre
+        //    would land on the controls on top -- located from the frames rather than assumed:
+        //    without one on screen this case measures nothing, and it fails saying so. A tile
+        //    whose top half shows above the bar is not the case; its centre is plainly tappable.
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let tabBar = app.tabBars.firstMatch
+        guard bar.waitForExistence(timeout: 5), tabBar.exists else {
+            XCTFail("The bar and the tab bar must both be on screen over the grid")
+            return
+        }
+        let covered = bar.frame.union(tabBar.frame)
+        print("DULCET GRID FRAMES window=\(window.frame) bar=\(bar.frame) tab-bar=\(tabBar.frame)")
+        var target: XCUIElement?
+        var targetLabel = ""
+        for index in 0..<tiles.count {
+            let tile = tiles.element(boundBy: index)
+            let frame = tile.frame
+            let centreCovered = frame.intersects(covered) && frame.midY >= covered.minY
+                && frame.minY < window.frame.maxY
+            print("DULCET GRID TILE \(index) label=\(tile.label.debugDescription) frame=\(frame)"
+                + " hittable=\(tile.isHittable) centre-under-bar-or-tab-bar=\(centreCovered)")
+            if target == nil, centreCovered {
+                target = tile
+                targetLabel = tile.label
+            }
+        }
+        guard let target else {
+            XCTFail("No tile's centre lay under the bar or tab bar, so the covered case was not exercised")
+            return
+        }
+        target.tap()
+        let openedCovered = albumTitle.waitForExistence(timeout: 10)
+        let openedLabel = openedCovered ? albumTitle.label : "<none>"
+        XCTAssertTrue(openedCovered && targetLabel.hasPrefix(openedLabel),
+                      "Tapping a tile under the bar must open that tile's album; tile=\(targetLabel)"
+                        + " page=\(openedLabel)")
+        print("DULCET GRID TILE OBSERVED first-opened=\(firstOpened)"
+            + " covered-tile=\(targetLabel.debugDescription) covered-opened=\(openedLabel.debugDescription)")
     }
 
     /// The iPad shell: Now Playing is not a sidebar place, and the now-playing bar opens the
@@ -433,8 +729,22 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertEqual(title.label, "Twenty Nine Seconds")
-        // Covering the window, not a detail column: the player spans past the sidebar's edge.
-        XCTAssertLessThan(title.frame.minX, 300, "The player must cover the sidebar, not sit beside it")
+        // Covering the window, not a detail column or a centred form sheet: the close control
+        // sits at the window's leading edge, and the player's navigation bar spans the window.
+        // A sheet on a regular-width window is inset on both sides, so neither holds for it.
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        let playerBar = app.navigationBars.containing(.button, identifier: "dulcet.now-playing.close").firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "The player must offer a close control")
+        let windowFrame = window.frame
+        let closeFrame = close.frame
+        let playerBarFrame = playerBar.exists ? playerBar.frame : .zero
+        attachScreenshot(named: "ipad-full-screen-player", app: app)
+        print("DULCET IPAD PLAYER FRAMES window=\(windowFrame) close=\(closeFrame)"
+            + " player-navigation-bar=\(playerBarFrame) title=\(title.frame)")
+        XCTAssertLessThan(closeFrame.minX - windowFrame.minX, 60,
+                          "The close control must sit at the window's leading edge; close=\(closeFrame)")
+        XCTAssertEqual(playerBarFrame.width, windowFrame.width, accuracy: 2,
+                       "The player must span the whole window; its bar is \(playerBarFrame)")
         XCTAssertTrue(
             app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 5),
             "A regular-width player shows Up Next beside it"
@@ -443,14 +753,30 @@ final class DulcetiOSUITests: XCTestCase {
             app.buttons["dulcet.now-playing.up-next"].exists,
             "With Up Next already beside the player there is no toggle for it"
         )
-        app.buttons["dulcet.now-playing.close"].firstMatch.tap()
+        close.tap()
         XCTAssertTrue(title.waitForNonExistence(timeout: 10), "Closing must dismiss the player")
-        XCTAssertTrue(
-            app.staticTexts["dulcet.album.title"].firstMatch.exists,
-            "Closing returns to the album the player was opened from"
-        )
-        print("DULCET IPAD PLAYER PASS no-now-playing-row=true full-screen-player=true"
-            + " up-next-beside=true closed=true")
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.exists, "Closing returns to the album the player was opened from")
+
+        // The sidebar keeps each destination as it was left: Library comes back on the album
+        // after Search, and choosing Library while it is showing returns it to the grid.
+        guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: false),
+              app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5) else {
+            XCTFail("Search must be reachable from the sidebar")
+            return
+        }
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
+            return
+        }
+        let albumKept = albumTitle.waitForExistence(timeout: 5)
+        XCTAssertTrue(albumKept, "Library must come back on the album it was left on")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
+            return
+        }
+        let reselectPopped = albumTitle.waitForNonExistence(timeout: 5) && album.waitForExistence(timeout: 5)
+        XCTAssertTrue(reselectPopped, "Choosing Library while it shows the album must return to the grid")
+        print("DULCET IPAD PLAYER OBSERVED close-min-x=\(closeFrame.minX) player-width=\(playerBarFrame.width)"
+            + " window-width=\(windowFrame.width) album-kept=\(albumKept) reselect-popped=\(reselectPopped)")
     }
 
     @MainActor

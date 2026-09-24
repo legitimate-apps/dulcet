@@ -22,8 +22,61 @@ struct DulcetPlaybackPreparingView: View {
     }
 }
 
+/// A track that could not be played, said plainly with its name, and what can be done about
+/// it: Try Again and Skip wherever the controller says they can act, and otherwise the way back
+/// to the library. The same view on every platform, so a failure reads the same everywhere.
+struct DulcetPlaybackFailedView: View {
+    let failure: DulcetFailedPlayback?
+    let onControl: (DulcetPlaybackControlIntent) -> Void
+
+    var body: some View {
+        let failure = failure ?? .undescribed
+        let offersActions = failure.canRetry || failure.canSkip
+        VStack(spacing: DulcetSpacing.lg) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 38, weight: .medium))
+                .dulcetForeground(.accentIconOnTint)
+                .accessibilityHidden(true)
+            Text(failure.track.map { DulcetStrings.playbackFailed(title: $0.title) }
+                ?? DulcetStrings.nowPlayingFailedTitle)
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier("dulcet.now-playing.failure")
+            Text(offersActions ? DulcetStrings.playbackFailedActionsBody : DulcetStrings.nowPlayingFailedBody)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
+            if offersActions {
+                HStack(spacing: DulcetSpacing.sm) {
+                    if failure.canRetry {
+                        Button(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
+                            onControl(.retry)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("dulcet.now-playing.retry")
+                    }
+                    if failure.canSkip {
+                        Button(DulcetStrings.playbackSkipShort, systemImage: "forward.end.fill") {
+                            onControl(.next)
+                        }
+                        .dulcetSecondaryActionStyle()
+                        .accessibilityLabel(DulcetStrings.playbackSkip)
+                        .accessibilityIdentifier("dulcet.now-playing.skip")
+                    }
+                }
+            }
+        }
+        .padding(DulcetSpacing.xxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+        .navigationTitle(DulcetStrings.nowPlaying)
+    }
+}
+
 struct DulcetNowPlayingView: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Presentation {
         /// A navigation destination: the sidebar's Now Playing on iPad and Mac, the tvOS section.
@@ -170,8 +223,9 @@ struct DulcetNowPlayingView: View {
         VStack(alignment: alignment, spacing: DulcetSpacing.lg) {
             DulcetArtworkView(artwork: player.current.artwork, size: artworkSize)
                 .shadow(color: .black.opacity(player.isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
-                .scaleEffect(player.isPlaying || presentation == .destination ? 1 : 0.9)
-                .animation(.spring(duration: 0.4), value: player.isPlaying)
+                .scaleEffect(player.isPlaying || presentation == .destination || reduceMotion ? 1 : 0.9)
+                // Reduce Motion keeps the cover still: the play state is carried by the control.
+                .animation(reduceMotion ? nil : .spring(duration: 0.4), value: player.isPlaying)
                 .frame(maxWidth: .infinity)
                 .modifier(DulcetSwipeDownToDismiss(onDismiss: onDismiss))
 
@@ -248,6 +302,10 @@ struct DulcetNowPlayingView: View {
         }
         .frame(maxWidth: 420)
         .frame(maxWidth: .infinity)
+        // Five controls in one row: at the accessibility text sizes their symbols outgrew an
+        // iPhone's width and the outer ones were pushed off screen. The row stops growing at the
+        // largest standard size, as the system player's does; the title above still grows.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     @ViewBuilder
@@ -294,7 +352,7 @@ struct DulcetNowPlayingView: View {
                 DulcetAirPlayRoutePicker(tint: .dulcetAccent)
                 if showsQueueToggle {
                     Button {
-                        withAnimation(.snappy) { showingQueue.toggle() }
+                        withAnimation(reduceMotion ? nil : .snappy) { showingQueue.toggle() }
                     } label: {
                         Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
                             .font(.title3)
@@ -307,13 +365,25 @@ struct DulcetNowPlayingView: View {
                 }
             }
 #endif
-            if let sourceDisplayName = player.sourceDisplayName {
+            // Up Next's header already says where the queue is playing from; with the list on
+            // screen, a second copy under the controls only repeats it.
+            if let sourceDisplayName = player.sourceDisplayName, !upNextListVisible(showsQueueToggle) {
                 Text(DulcetStrings.playingFrom(sourceDisplayName))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
         }
         .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+    }
+
+    /// Whether the editable Up Next list, whose header names the queue's source, is on screen
+    /// beside this footer: always in the side-by-side layout, and once opened in one column.
+    private func upNextListVisible(_ showsQueueToggle: Bool) -> Bool {
+#if os(tvOS)
+        false
+#else
+        !player.queueEntries.isEmpty && (!showsQueueToggle || showingQueue)
+#endif
     }
 
     private var formatBadge: some View {
@@ -504,7 +574,12 @@ struct DulcetNowPlayingSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let player = store.snapshot.nowPlaying {
+                if store.snapshot.playbackFailed {
+                    DulcetPlaybackFailedView(
+                        failure: store.snapshot.playbackFailure,
+                        onControl: store.sendPlaybackControl
+                    )
+                } else if let player = store.snapshot.nowPlaying {
                     DulcetNowPlayingView(
                         player: player,
                         presentation: presentation,
@@ -512,12 +587,6 @@ struct DulcetNowPlayingSheet: View {
                         onEdit: store.editQueue,
                         onNavigate: onClose,
                         onDismiss: presentation == .fullScreen ? onClose : nil
-                    )
-                } else if store.snapshot.playbackStatus == .failed {
-                    DulcetUnavailableDestinationView(
-                        symbol: "exclamationmark.triangle",
-                        title: DulcetStrings.nowPlayingFailedTitle,
-                        message: DulcetStrings.nowPlayingFailedBody
                     )
                 } else if store.snapshot.playbackStatus == .preparing {
                     DulcetPlaybackPreparingView()
@@ -541,6 +610,7 @@ struct DulcetNowPlayingSheet: View {
                 }
             }
         }
+        .dulcetQueueEditFeedback(store: store)
         .presentationDragIndicator(.visible)
         .presentationBackground(Color.dulcetWindow)
     }

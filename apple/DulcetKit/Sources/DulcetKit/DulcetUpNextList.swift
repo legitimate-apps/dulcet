@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 enum DulcetQueueStrings {
@@ -111,6 +112,25 @@ public struct DulcetUpNextSection: View {
         .buttonStyle(.plain)
         .dulcetHoverEffect()
         .accessibilityIdentifier("dulcet.upNext.row.\(offset)")
+        // Reordering is a drag and removal a swipe, neither of which VoiceOver or Switch Control
+        // can perform on a row; named actions put both where those users look for them.
+        .accessibilityActions {
+            if offset > 0,
+               let intent = model.moveIntent(
+                   fromOffsets: IndexSet(integer: offset),
+                   toOffset: offset - 1
+               ) {
+                Button(DulcetQueueStrings.moveUp) { onEdit(intent) }
+            }
+            if offset + 1 < model.upcoming.count,
+               let intent = model.moveIntent(
+                   fromOffsets: IndexSet(integer: offset),
+                   toOffset: offset + 2
+               ) {
+                Button(DulcetQueueStrings.moveDown) { onEdit(intent) }
+            }
+            Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
+        }
         .contextMenu {
             Button(DulcetQueueStrings.playNow) { onEdit(model.jumpIntent(to: entry)) }
             if offset > 0,
@@ -148,5 +168,53 @@ public struct DulcetUpNextList: View {
             DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit)
         }
         .accessibilityIdentifier("dulcet.upNext")
+    }
+}
+
+extension View {
+    /// Says so, briefly and to VoiceOver, when the playback controller refuses a queue edit: a
+    /// row that would not move or a track that would not queue otherwise looks like a gesture
+    /// that silently did nothing.
+    ///
+    /// `isActive` false leaves it to another surface on top -- the shell under a presented player
+    /// -- so one refusal is shown and announced once, where the person is looking.
+    func dulcetQueueEditFeedback(store: DulcetPresentationStore, isActive: Bool = true) -> some View {
+        modifier(DulcetQueueEditFeedback(store: store, isActive: isActive))
+    }
+}
+
+private struct DulcetQueueEditFeedback: ViewModifier {
+    let store: DulcetPresentationStore
+    let isActive: Bool
+    @State private var showing = false
+    @State private var hideTask: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                if showing {
+                    Label(DulcetStrings.queueEditRefused, systemImage: "exclamationmark.circle")
+                        .font(.callout.weight(.semibold))
+                        .padding(.horizontal, DulcetSpacing.md)
+                        .padding(.vertical, DulcetSpacing.xs)
+                        .background(.regularMaterial, in: Capsule())
+                        .dulcetForeground(.primaryTextOnRegularMaterial)
+                        .padding(.top, DulcetSpacing.sm)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("dulcet.queue.edit-refused")
+                }
+            }
+            .onChange(of: store.snapshot.refusedQueueEdits) { previous, current in
+                guard isActive, current > previous else { return }
+                AccessibilityNotification.Announcement(DulcetStrings.queueEditRefused).post()
+                withAnimation(.easeInOut(duration: 0.2)) { showing = true }
+                hideTask?.cancel()
+                hideTask = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(3))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) { showing = false }
+                }
+            }
     }
 }

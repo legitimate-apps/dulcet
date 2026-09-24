@@ -775,6 +775,12 @@ public struct DulcetSnapshot: Sendable, Hashable,
     /// The playback surface's status, carried on every snapshot whatever the destination, so a
     /// persistent now-playing bar can say "preparing" or "failed" rather than vanishing.
     public let playbackStatus: DulcetPlaybackSurfaceStatus
+    /// Which track failed and what can be done about it, while `playbackFailed`.
+    public let playbackFailure: DulcetFailedPlayback?
+    /// How many queue edits the playback controller has refused. It only grows: a surface that
+    /// sees it change says the edit did not happen, rather than leaving a gesture that did
+    /// nothing unexplained.
+    public let refusedQueueEdits: Int
     public let searchQuery: String
     public let searchResults: [DulcetSearchResult]
     public let searchHasMoreKinds: Set<DulcetSearchResultKind>
@@ -803,6 +809,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         selectedArtist: DulcetArtist? = nil,
         nowPlaying: DulcetNowPlaying? = nil,
         playbackStatus: DulcetPlaybackSurfaceStatus? = nil,
+        playbackFailure: DulcetFailedPlayback? = nil,
+        refusedQueueEdits: Int = 0,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
@@ -829,6 +837,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.nowPlaying = nowPlaying
         // A snapshot built with a now-playing value and no status is ready by construction.
         self.playbackStatus = playbackStatus ?? (nowPlaying == nil ? .unavailable : .ready)
+        self.playbackFailure = playbackFailure
+        self.refusedQueueEdits = refusedQueueEdits
         self.searchQuery = searchQuery
         self.searchResults = searchResults
         self.searchHasMoreKinds = searchHasMoreKinds
@@ -850,6 +860,13 @@ public struct DulcetSnapshot: Sendable, Hashable,
     /// can be asserted.
     public var canPlayWholeLibrary: Bool {
         albums.contains { !$0.tracks.isEmpty } || !looseTracks.isEmpty
+    }
+
+    /// Whether playback failed: the controller said so, or said it was ready with nothing to
+    /// present, which is an item that went missing. One predicate, so the now-playing bar, the
+    /// iPhone and iPad player and the Mac and tvOS Now Playing surface cannot disagree about it.
+    public var playbackFailed: Bool {
+        playbackStatus == .failed || (playbackStatus == .ready && nowPlaying == nil)
     }
 
     public var description: String {

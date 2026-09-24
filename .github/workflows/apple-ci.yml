@@ -901,7 +901,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-playback-system.xcresult" \
             DulcetPlaybackIntegrationTests.DulcetCorePlaybackSystemTests \
             apple/DulcetPlaybackIntegrationTests/DulcetCorePlaybackSystemTests.swift \
-            9
+            12
           download_xctestrun="$(find \
             "$RUNNER_TEMP/DulcetDownloadIntegrationDerivedData/Build/Products" \
             -name 'DulcetPlaybackIntegration_*.xctestrun' -print -quit)"

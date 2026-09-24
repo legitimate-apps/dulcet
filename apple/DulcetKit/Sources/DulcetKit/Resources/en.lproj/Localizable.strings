@@ -241,3 +241,11 @@
 "menu.go" = "Go";
 "player.remainingValue" = "−%@";
 "player.mini.accessibility" = "Now Playing, %1$@, %2$@";
+"player.failed.body.actions" = "Dulcet couldn’t start this track. Try it again, or skip to the next one.";
+"player.failed.retry" = "Try Again";
+"player.failed.skip" = "Skip to Next Track";
+"player.failed.skip.short" = "Skip";
+"player.failed.dismiss" = "Dismiss";
+"player.failed.track" = "Couldn’t play “%@”";
+"queue.edit.refused" = "Couldn’t change Up Next";
+"library.album.hint" = "Opens the album";

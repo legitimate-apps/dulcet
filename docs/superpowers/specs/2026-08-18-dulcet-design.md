@@ -375,6 +375,36 @@ market is sparse and most catalogued apps are proprietary or paid, but at least 
 open-source native implementation exists.* Shelv is GPL-3.0 and is not a code donor (§24.2). The
 Navidrome client directory is not proof of nonexistence; its metadata lags.
 
+### 3.1 The iOS and iPadOS shell
+
+One `DulcetiOS` target serves the phone and the tablet, so the shell is chosen by the **window's
+horizontal size class**, never by the device:
+
+| window | navigation | full player |
+|---|---|---|
+| compact (every iPhone in portrait; a narrow iPad Split View or Stage Manager window) | a tab bar: Library, Search, Connection | a sheet from the now-playing bar |
+| regular (an iPad window; a Plus or Pro Max iPhone turned sideways) | a sidebar and a detail column | a full-screen cover from the now-playing bar, with Up Next beside the player |
+
+- **Now Playing is a presentation, not a destination.** It is never a tab or a sidebar row. The
+  persistent now-playing bar opens it; a request to show it from elsewhere (a menu command, a
+  restored selection) opens the player over the place the person was, which stays as it was left.
+  Starting playback leaves the person where they were (`DulcetPlaybackStartNavigation.platformDefault`);
+  tvOS alone moves to Now Playing, because it has no bar.
+- **Each destination keeps its own navigation stack.** Leaving a destination and coming back finds
+  the page it was left on; choosing the destination that is already selected -- its tab or its
+  sidebar row -- returns it to its root, as every tab bar does. The stack is held by the
+  presentation store, not derived from the source's snapshot: a snapshot describes one destination
+  at a time, and deriving the stack from it reset Library to its grid on every return.
+- **A window crossing the size-class boundary loses nothing.** The shell swaps between tab bar and
+  sidebar keeping the selected destination and every stack; an open player is taken down and
+  presented again in the other style once the old presentation has gone. Both styles flip in one
+  update, and the new one cannot present while the old one is still being dismissed -- which left
+  the player asked for with nothing on screen and the bar unable to open it again.
+- **A failed track is not a dead end.** The bar and the player name the track that failed and offer
+  Try Again and Skip (Skip only when an entry follows it, or the queue repeats); the bar can be
+  dismissed until the person starts something else. A player reporting `ready` with no current item
+  is a failure on every surface, not an empty player.
+
 ---
 
 ## 4. Supported OS, architecture, and toolchain
@@ -997,11 +1027,26 @@ entitled live-app validation workflow exists.
 | envelope parsed; error code indicates bad credentials | `AuthenticationFailed` | "Wrong username or password" — never "server down" |
 | envelope parsed; error code indicates a version mismatch | `ProtocolIncompatible` | show **what Dulcet sent** and **what the server reported** in its envelope. Do not promise a "required version" — the protocol does not reliably supply one |
 | successful envelope contains present account metadata outside its strict JSON shape, or a role field outside native JSON boolean or case-insensitive string `true`/`false` | `Protocol.MalformedEnvelope` | "The server returned invalid account information" — do not create an account with silently disabled capabilities |
+| a connection attempt failed, **and** the operating system reports local-network privacy refusing the server's address (Apple platforms) | `localNetworkAccessDenied` — an Apple-shell classification layered over the core failure, not a core kind | "Allow Dulcet to find devices on your local network": the server is on the local network and Dulcet does not have permission to reach it yet, with an **Open Settings** action. Never "Can't reach the server" |
 
 **OBSERVED:** a missing `getOpenSubsonicExtensions` is consistent with a classic pre-OpenSubsonic
 server. On `ExtensionListUnavailable`: do not fail login; mark `legacySubsonic`; mark every extension
 unsupported; proceed on the classic baseline; hide extension-only UI; retain baseline capabilities
 from protocol version and user roles.
+
+**`localNetworkAccessDenied` is decided by the operating system, never by an address heuristic.**
+After a failed attempt the shell asks the Network framework whether local-network privacy is what
+refused the server; a public server simply answers "not denied" and the original failure stands.
+While access stays denied the answer is watched, and when the person grants it (the prompt, or the
+switch in Settings) the connection is retried **once**, as they would have had to: visibly while
+they are still on the explanation, and otherwise **in place** -- someone who has gone to Library
+or Search meanwhile is connected where they are, not taken back to Connection to watch a spinner.
+An in-place retry that fails is recorded where Connection shows it. Open Settings goes to the
+app's own Settings page on iOS and iPadOS; on the Mac it goes to the Privacy & Security pane, and
+**ASSUMED**: that its `Privacy_LocalNetwork` anchor lands on the Local Network row. Apple documents
+no URL for that row; on macOS 26.7 the installed Privacy & Security extension still accepts the
+legacy `com.apple.preference.security` identifier, but the anchor does not appear among those it
+carries for its other rows.
 
 ### 10.4 Gates are conjunctions, and one error does not revoke a capability
 
@@ -3837,6 +3882,16 @@ wrong:
 4. **System Now Playing** (§12.9, §12.10): long-form route sharing, background audio declared,
    suspended-app interruptions ignored, artwork as validated bytes, rating/like withdrawn until
    favourites exist, transport writes only on change or drift.
+5. **The local-network refusal has a presentation** (§10.3). It existed in code with no row in the
+   failure table, and its automatic retry took a person who had moved on back to the Connection
+   screen; the retry now completes in place unless they are still on the explanation.
+6. **The iOS and iPadOS shell is specified** (§3.1): tab bar or sidebar by the window's size class,
+   Now Playing a presentation rather than a destination, a navigation stack per destination that
+   survives leaving it and returns to its root when chosen again, a player that survives the window
+   crossing the size-class boundary, and a failed track that offers Try Again and Skip. None of these
+   was written down, and three were broken: the stack was derived from a one-destination snapshot and
+   reset on every return, the size-class flip left the player unopenable, and a failed track
+   offered only disabled play and next buttons and a generic message.
 
 **Revision 104 (2026-09-23; written 2026-09-11)** — §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a

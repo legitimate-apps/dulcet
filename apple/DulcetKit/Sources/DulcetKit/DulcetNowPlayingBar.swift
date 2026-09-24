@@ -6,7 +6,8 @@ import SwiftUI
 ///
 /// It reads the snapshot's playback status as well as its now-playing value, so a track that is
 /// still opening, or one that failed, is said out loud rather than making the bar vanish and
-/// reappear between tracks.
+/// reappear between tracks. A failed track is not a dead end: the bar names it and offers Try
+/// Again and Skip in place of play/pause and next, and can be dismissed.
 struct DulcetNowPlayingBar: View {
     enum Style {
         /// Artwork, title, play/pause and next. iPhone and iPad.
@@ -21,13 +22,6 @@ struct DulcetNowPlayingBar: View {
 
     static let identifier = "dulcet.mini-player"
 
-    /// Whether the bar has anything to show. Nothing queued means no bar at all.
-    static func isVisible(for snapshot: DulcetSnapshot) -> Bool {
-        snapshot.nowPlaying != nil
-            || snapshot.playbackStatus == .preparing
-            || snapshot.playbackStatus == .failed
-    }
-
     var body: some View {
         HStack(spacing: style == .expanded ? DulcetSpacing.md : DulcetSpacing.sm) {
             openButton
@@ -39,7 +33,11 @@ struct DulcetNowPlayingBar: View {
                 }
                 Spacer(minLength: DulcetSpacing.sm)
             }
-            transport
+            if store.snapshot.playbackFailed {
+                failureActions
+            } else {
+                transport
+            }
         }
         .padding(.leading, DulcetSpacing.xs)
         .padding(.trailing, DulcetSpacing.sm)
@@ -71,7 +69,7 @@ struct DulcetNowPlayingBar: View {
     @ViewBuilder
     private var artwork: some View {
         let size: CGFloat = style == .expanded ? 44 : 40
-        if let player = store.snapshot.nowPlaying {
+        if !store.snapshot.playbackFailed, let player = store.snapshot.nowPlaying {
             DulcetArtworkView(artwork: player.current.artwork, size: size)
                 .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
         } else {
@@ -135,6 +133,34 @@ struct DulcetNowPlayingBar: View {
         .dulcetForeground(.primaryTextOnRegularMaterial)
     }
 
+    /// Try Again, Skip and Dismiss, in place of play/pause and next while the track has failed.
+    private var failureActions: some View {
+        let failure = store.snapshot.playbackFailure ?? .undescribed
+        return HStack(spacing: style == .expanded ? DulcetSpacing.sm : DulcetSpacing.xxs) {
+            if failure.canRetry {
+                transportButton(
+                    symbol: "arrow.clockwise",
+                    label: DulcetStrings.playbackRetry,
+                    identifier: "retry",
+                    enabled: true
+                ) { store.sendPlaybackControl(.retry) }
+            }
+            transportButton(
+                symbol: "forward.end.fill",
+                label: DulcetStrings.playbackSkip,
+                identifier: "skip",
+                enabled: failure.canSkip
+            ) { store.sendPlaybackControl(.next) }
+            transportButton(
+                symbol: "xmark",
+                label: DulcetStrings.playbackFailureDismiss,
+                identifier: "dismiss",
+                enabled: true
+            ) { store.dismissPlaybackFailure() }
+        }
+        .dulcetForeground(.primaryTextOnRegularMaterial)
+    }
+
     private func transportButton(
         symbol: String,
         label: String,
@@ -161,21 +187,43 @@ struct DulcetNowPlayingBar: View {
 #endif
     }
 
+    /// The failed track's own name leads, as a playing track's does -- a bar this narrow
+    /// truncated "Couldn't play" plus the name to the first letters of the name -- and the line
+    /// under it says it failed. VoiceOver hears the failure first.
+    private var failedTrack: DulcetTrack? {
+        store.snapshot.playbackFailed ? store.snapshot.playbackFailure?.track : nil
+    }
+
     private var title: String {
+        if store.snapshot.playbackFailed {
+            return failedTrack?.title ?? DulcetStrings.playbackFailedShort
+        }
         if let player = store.snapshot.nowPlaying { return player.current.title }
-        return store.snapshot.playbackStatus == .failed
-            ? DulcetStrings.playbackFailedShort
-            : DulcetStrings.playbackLoading
+        return DulcetStrings.playbackLoading
     }
 
     private var subtitle: String? {
-        guard let player = store.snapshot.nowPlaying else { return nil }
-        let artists = DulcetStrings.artistNames(player.current.artistNames)
+        if store.snapshot.playbackFailed {
+            return failedTrack == nil ? nil : DulcetStrings.playbackFailedShort
+        }
+        return artists(of: store.snapshot.nowPlaying?.current)
+    }
+
+    private func artists(of track: DulcetTrack?) -> String? {
+        guard let track else { return nil }
+        let artists = DulcetStrings.artistNames(track.artistNames)
         return artists.isEmpty ? nil : artists
     }
 
     private var accessibilityLabel: String {
-        DulcetStrings.miniPlayerAccessibility(title: title, artists: subtitle ?? "")
+        if store.snapshot.playbackFailed {
+            return DulcetStrings.miniPlayerAccessibility(
+                title: failedTrack.map { DulcetStrings.playbackFailed(title: $0.title) }
+                    ?? DulcetStrings.playbackFailedShort,
+                artists: artists(of: failedTrack) ?? ""
+            )
+        }
+        return DulcetStrings.miniPlayerAccessibility(title: title, artists: subtitle ?? "")
     }
 }
 
@@ -227,14 +275,16 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
     var placement: Placement = .floating
     var isSuppressed = false
     let onOpen: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 0) {
-            if !isSuppressed, DulcetNowPlayingBar.isVisible(for: store.snapshot) {
-                bar.transition(.move(edge: .bottom).combined(with: .opacity))
+            if !isSuppressed, store.showsNowPlayingBar {
+                // With Reduce Motion the bar fades in place rather than sliding up the screen.
+                bar.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.snappy, value: DulcetNowPlayingBar.isVisible(for: store.snapshot))
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .snappy, value: store.showsNowPlayingBar)
     }
 
     @ViewBuilder

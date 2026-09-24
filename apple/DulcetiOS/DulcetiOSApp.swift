@@ -51,8 +51,14 @@ struct DulcetiOSApp: App {
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-dulcet-account-connect-layout-fixture") {
+            // A track named here fails the first time it is played and plays on Try Again, so a
+            // UI proof can reach the failed-track surface without a server that misbehaves.
+            let failingTrack = Self.launchArgumentValue("-dulcet-layout-fixture-fail-track", in: arguments)
             _presentation = State(initialValue: DulcetPresentationStore(
-                source: DulcetDeterministicDataSource(initialState: .accountConnectIdle)
+                source: DulcetDeterministicDataSource(
+                    initialState: .accountConnectIdle,
+                    failingTrackTitles: failingTrack.map { [$0] } ?? []
+                )
             ))
             downloadController = nil
             return

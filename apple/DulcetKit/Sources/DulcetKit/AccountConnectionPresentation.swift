@@ -489,6 +489,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var selectedAlbumTracksFailure: DulcetLibraryFailure?
     /// Whether the library currently held was read to completion for the current connection.
     private var libraryReadCompleted = false
+    /// Queue edits the playback controller refused, carried on every snapshot.
+    private var refusedQueueEdits = 0
     /// What starting playback does to the surface the person is on.
     private let playbackStartNavigation: DulcetPlaybackStartNavigation
     /// The playback controller's latest presentation. Every publication carries it, so the
@@ -676,7 +678,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             cancelSearchRequest()
             openLibrary(reason: .entered, selecting: .artist(id))
         case let .editQueue(intent):
-            (playbackController as? any DulcetQueueEditing)?.edit(intent)
+            guard let editor = playbackController as? any DulcetQueueEditing else { return }
+            if !editor.edit(intent) {
+                // Said out loud on the next publication: a swipe or a drag that changed nothing
+                // must not look as if it worked.
+                refusedQueueEdits += 1
+                receivePlaybackPresentation(latestPlaybackPresentation)
+            }
         case let .submitAccountConnection(request):
             localNetworkRetryUsed = false
             submit(request)
@@ -699,7 +707,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         publishSavedAccountOrIdle(form: currentSnapshot.accountForm)
     }
 
-    private func submit(_ request: DulcetAccountConnectRequest) {
+    /// Connects with `request`. `inPlace` is a connection nobody is watching -- the automatic
+    /// retry after local-network access was granted while the person was somewhere else -- so it
+    /// never moves them: no connecting spinner on Settings, and the outcome is recorded on
+    /// whatever surface they are on.
+    private func submit(_ request: DulcetAccountConnectRequest, inPlace: Bool = false) {
         cancelLibraryBrowse()
         cancelLibraryRefresh()
         // Whatever is held describes the connection being replaced, so it stops being an answer
@@ -715,11 +727,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         let supersededOperation = activeOperation
         activeOperation = nil
         supersededOperation?.cancel()
-        publish(state: .accountConnecting, form: request, status: .connecting)
+        if !inPlace {
+            publish(state: .accountConnecting, form: request, status: .connecting)
+        }
 
         let operation = connector.connect(request) { [weak self] outcome in
             guard let self, self.generation == submissionGeneration else { return }
             self.activeOperation = nil
+            if inPlace, self.currentSnapshot.selectedDestination != .settings {
+                self.completeInPlace(outcome, request: request)
+                return
+            }
             switch outcome {
             case let .connected(account):
                 do {
@@ -781,9 +799,77 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             }
         }
         if generation == submissionGeneration,
-           currentSnapshot.state == .accountConnecting {
+           inPlace || currentSnapshot.state == .accountConnecting {
             activeOperation = operation
         }
+    }
+
+    /// The outcome of a connection made in place, recorded where the person is. Success opens
+    /// the library or search they are looking at with the new connection; a failure is kept on
+    /// the account status, which Settings shows the next time they go there.
+    private func completeInPlace(
+        _ outcome: DulcetAccountConnectOutcome,
+        request: DulcetAccountConnectRequest
+    ) {
+        switch outcome {
+        case let .connected(account):
+            do {
+                let instanceID = providerInstanceID ?? providerInstanceIDFactory()
+                if let credentialStore = credentialStore as? any DulcetProviderInstanceCredentialStoring {
+                    try credentialStore.save(request, providerInstanceID: instanceID)
+                } else {
+                    try credentialStore?.save(request)
+                }
+                if credentialStore != nil {
+                    savedServerName = account.serverName
+                }
+                providerInstanceID = instanceID
+                configurePlayback(account: account, request: request)
+                publishInPlace(status: .connected(account), form: request)
+                switch currentSnapshot.selectedDestination {
+                case .library:
+                    openLibrary(reason: .connected)
+                case .search:
+                    openSearch()
+                case .nowPlaying, .settings:
+                    break
+                }
+            } catch {
+                publishInPlace(
+                    status: .failed(DulcetAccountErrorPresenter.presentation(
+                        for: DulcetAccountErrorContext(
+                            kind: .credentialPersistenceFailed,
+                            serverName: account.serverName
+                        )
+                    )),
+                    form: request
+                )
+            }
+        case let .failed(failure) where failure.kind == .transportCancelled:
+            break
+        case let .failed(failure):
+            publishInPlace(status: .failed(failure), form: request)
+        }
+    }
+
+    /// Republishes the surface that is showing with a new account status, moving nothing.
+    private func publishInPlace(
+        status: DulcetAccountConnectionStatus,
+        form: DulcetAccountConnectRequest
+    ) {
+        publish(
+            state: currentSnapshot.state,
+            destination: currentSnapshot.selectedDestination,
+            form: form,
+            status: status,
+            musicFolders: currentSnapshot.musicFolders,
+            artists: currentSnapshot.artists,
+            albums: currentSnapshot.albums,
+            selectedAlbum: currentSnapshot.selectedAlbum,
+            selectedArtist: currentSnapshot.selectedArtist,
+            libraryFailure: currentSnapshot.libraryFailure,
+            selectedAlbumTracksFailure: currentSnapshot.selectedAlbumTracksFailure
+        )
     }
 
     private func resolveLocalNetworkAccess(
@@ -818,14 +904,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     status: .failed(failure)
                 )
             case .notDenied:
-                // Access was granted after it blocked the connection. Retry it once, as the
-                // person would have to, while they are still looking at the explanation.
+                // Access was granted after it blocked the connection, so retry it once, as the
+                // person would have to. Visibly only while they are still on the explanation:
+                // someone who has gone to Library or Search in the meantime is connected where
+                // they are, not taken back to the Connection screen to watch a spinner.
                 self.localNetworkWatch = nil
                 guard !self.localNetworkRetryUsed,
                       case let .failed(shown) = self.currentSnapshot.accountConnection,
                       shown.kind == .localNetworkAccessDenied else { return }
                 self.localNetworkRetryUsed = true
-                self.submit(request)
+                self.submit(
+                    request,
+                    inPlace: self.currentSnapshot.selectedDestination != .settings
+                )
             }
         }
     }
@@ -866,7 +957,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchHasMoreKinds: searchHasMoreKinds,
             searchLoadingMoreKind: searchLoadingMoreKind,
             searchFailure: searchFailure,
-            accountRemoval: accountRemovalStatus
+            accountRemoval: accountRemovalStatus,
+            refusedQueueEdits: refusedQueueEdits
         )
         snapshotHandler?(currentSnapshot)
     }
@@ -889,7 +981,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchHasMoreKinds: Set<DulcetSearchResultKind> = [],
         searchLoadingMoreKind: DulcetSearchResultKind? = nil,
         searchFailure: DulcetSearchFailure? = nil,
-        accountRemoval: DulcetAccountRemovalStatus = .idle
+        accountRemoval: DulcetAccountRemovalStatus = .idle,
+        refusedQueueEdits: Int = 0
     ) -> DulcetSnapshot {
         let connectivity: DulcetConnectivity = switch status {
         case .idle, .connecting:
@@ -920,6 +1013,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             // commands and the Now Playing surface both key off its presence.
             nowPlaying: playback.status == .ready ? playback.nowPlaying : nil,
             playbackStatus: playback.status,
+            playbackFailure: playback.failure,
+            refusedQueueEdits: refusedQueueEdits,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,

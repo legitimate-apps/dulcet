@@ -58,9 +58,13 @@ enum DulcetQueueDragRegistry {
 }
 
 extension View {
-    /// Lets a track or album be dragged onto the queue, while the queue can be edited. The
-    /// addition is built only when a drag begins.
-    @ViewBuilder
+    /// Lets a track or album be dragged onto the queue. The addition is built only when a drag
+    /// begins, and a drag while the queue cannot take it carries nothing a drop can resolve.
+    ///
+    /// The drag interaction is attached unconditionally, so the view it wraps keeps one identity
+    /// for its whole life. Attaching it through an `if` made an album tile a DIFFERENT view once
+    /// its track list arrived -- every tile in the grid at once, when a library read commits --
+    /// and a tap whose touch began on the old view and ended on its replacement was lost.
     func dulcetQueueDragSource(
         store: DulcetPresentationStore,
         artwork: DulcetArtwork,
@@ -69,12 +73,10 @@ extension View {
         addition: @escaping () -> DulcetQueueAddition?
     ) -> some View {
 #if os(iOS)
-        if isEnabled, store.queueEditingEnabled {
-            draggable(DulcetQueueDragRegistry.register(addition())) {
-                DulcetQueueDragPreview(store: store, artwork: artwork, title: title)
-            }
-        } else {
-            self
+        draggable(DulcetQueueDragRegistry.register(
+            isEnabled && store.queueEditingEnabled ? addition() : nil
+        )) {
+            DulcetQueueDragPreview(store: store, artwork: artwork, title: title)
         }
 #else
         self

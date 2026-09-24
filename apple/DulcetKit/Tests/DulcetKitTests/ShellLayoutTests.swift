@@ -99,19 +99,25 @@ func nowPlayingGoesToOneColumnBelowItsSideBySideWidth() {
 
 @Test @MainActor
 func nowPlayingBarShowsOnlyWhileSomethingIsQueued() {
-    let fixture = DulcetDeterministicFixture()
-    #expect(!DulcetNowPlayingBar.isVisible(for: fixture.snapshot(for: .libraryBrowse)))
-    #expect(DulcetNowPlayingBar.isVisible(for: fixture.snapshot(for: .nowPlaying)))
+    #expect(!DulcetPresentationStore(source: DulcetDeterministicDataSource(
+        initialState: .libraryBrowse
+    )).showsNowPlayingBar)
+    #expect(DulcetPresentationStore(source: DulcetDeterministicDataSource(
+        initialState: .nowPlaying
+    )).showsNowPlayingBar)
 
-    let source = DulcetDeterministicDataSource(initialState: .albumDetailMultiDisc)
+    let source = DulcetDeterministicDataSource(
+        initialState: .albumDetailMultiDisc,
+        playbackStartNavigation: .stayOnCurrentSurface
+    )
     let store = DulcetPresentationStore(source: source)
     let album = try! #require(store.snapshot.selectedAlbum)
     store.activateTrack(albumID: album.id, trackID: album.tracks[1].id)
     #expect(store.snapshot.state == .albumDetailMultiDisc)
-    #expect(DulcetNowPlayingBar.isVisible(for: store.snapshot))
+    #expect(store.showsNowPlayingBar)
     #expect(store.snapshot.nowPlaying?.current.id == album.tracks[1].id)
     store.selectDestination(.search)
-    #expect(DulcetNowPlayingBar.isVisible(for: store.snapshot))
+    #expect(store.showsNowPlayingBar)
 }
 @Test
 func sideBySideNowPlayingArtworkFitsTheWindowItIsGiven() {

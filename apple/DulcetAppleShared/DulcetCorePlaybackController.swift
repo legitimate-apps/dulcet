@@ -259,11 +259,21 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 let transition = queueClient.startCurrent()
                 guard transition.errorKind == nil else { return publishFailure() }
                 start(transition.startDirective)
+            case .next:
+                // Next goes where the queue would have gone: round to the first entry under
+                // repeat-all. The presentation offers Next exactly when this can act, so an
+                // enabled button is never one that does nothing.
+                guard Self.hasEntryAfterCurrent(snapshot) else { return }
+                let transition = queueClient.next()
+                guard transition.errorKind == nil else { return publishFailure() }
+                start(transition.startDirective)
+            case .retry:
+                restartCurrentEntry(snapshot)
             case let .setShuffle(enabled):
                 applyEdit(queueClient.setShuffle(enabled: enabled))
             case .cycleRepeat:
                 applyEdit(queueClient.cycleRepeatMode())
-            case .pause, .next, .seek:
+            case .pause, .seek:
                 break
             }
             return
@@ -301,7 +311,29 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             applyEdit(queueClient.setShuffle(enabled: enabled))
         case .cycleRepeat:
             applyEdit(queueClient.cycleRepeatMode())
+        case .retry:
+            restartCurrentEntry(snapshot)
         }
+    }
+
+    /// Whether Next has an entry to go to: one follows the current entry, or repeat-all wraps to
+    /// the first. The same predicate decides the presentation's `canGoNext` without a session.
+    private static func hasEntryAfterCurrent(_ snapshot: ApplePlaybackQueueSnapshotDto) -> Bool {
+        let index = Int(snapshot.currentIndex)
+        guard snapshot.entries.indices.contains(index) else { return false }
+        return index + 1 < snapshot.entries.count
+            || DulcetRepeatMode(rawValue: snapshot.repeatMode) == .all
+    }
+
+    /// Retry: the current entry again, as a new session -- the same next-item boundary as
+    /// choosing it in Up Next, so the failed session is finalized rather than resumed.
+    private func restartCurrentEntry(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        let index = Int(snapshot.currentIndex)
+        guard account != nil, snapshot.entries.indices.contains(index) else { return }
+        let transition = queueClient.jumpTo(queueEntryId: snapshot.entries[index].queueEntryId)
+        guard transition.errorKind == nil else { return publishFailure() }
+        publishPreparing()
+        start(transition.startDirective)
     }
 
     /// Next past the last entry finalizes the session and starts nothing; the engine must then
@@ -316,24 +348,29 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 
     // MARK: Queue editing (spec §14.1, §14.2)
 
-    func edit(_ intent: DulcetQueueEditIntent) {
+    @discardableResult
+    func edit(_ intent: DulcetQueueEditIntent) -> Bool {
         switch intent {
         case let .playNext(addition):
-            enqueue(addition, mode: "playNext")
+            return enqueue(addition, mode: "playNext")
         case let .playLater(addition):
-            enqueue(addition, mode: "playLater")
+            return enqueue(addition, mode: "playLater")
         case let .move(entryID, toIndex):
-            guard let coreIndex = coreIndex(forPresentedIndex: toIndex) else { return }
-            applyEdit(queueClient.moveEntry(queueEntryId: entryID.rawValue, toIndex: Int32(coreIndex)))
+            guard let coreIndex = coreIndex(forPresentedIndex: toIndex) else { return false }
+            return applyEdit(queueClient.moveEntry(
+                queueEntryId: entryID.rawValue,
+                toIndex: Int32(coreIndex)
+            ))
         case let .remove(entryID):
-            applyEdit(queueClient.removeEntry(queueEntryId: entryID.rawValue))
+            return applyEdit(queueClient.removeEntry(queueEntryId: entryID.rawValue))
         case .clearUpcoming:
-            applyEdit(queueClient.clearUpcoming())
+            return applyEdit(queueClient.clearUpcoming())
         case let .jump(entryID):
             let transition = queueClient.jumpTo(queueEntryId: entryID.rawValue)
-            guard transition.errorKind == nil else { return }
+            guard transition.errorKind == nil else { return false }
             publishPreparing()
             start(transition.startDirective)
+            return true
         }
     }
 
@@ -350,8 +387,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         return core
     }
 
-    private func enqueue(_ addition: DulcetQueueAddition, mode: String) {
-        guard account != nil, !addition.tracks.isEmpty else { return }
+    private func enqueue(_ addition: DulcetQueueAddition, mode: String) -> Bool {
+        guard account != nil, !addition.tracks.isEmpty else { return false }
         let playInstead = DulcetPlaybackQueueIntent(
             tracks: addition.tracks,
             sourceKind: addition.sourceKind,
@@ -367,13 +404,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         guard let queued = queueClient.snapshot().snapshot, !queued.entries.isEmpty,
               queued.entries.first?.providerInstanceId == account?.providerInstanceId else {
             replaceQueueAndPlay(playInstead)
-            return
+            return true
         }
         catalog.merge(
             Dictionary(addition.tracks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest }),
             uniquingKeysWith: { _, latest in latest }
         )
-        applyEdit(queueClient.enqueue(insertion: ApplePlaybackQueueInsertionDto(
+        return applyEdit(queueClient.enqueue(insertion: ApplePlaybackQueueInsertionDto(
             items: addition.tracks.map { track in
                 ApplePlaybackQueueItemDto(
                     providerInstanceId: track.id.providerInstanceID,
@@ -390,17 +427,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 
     /// An edit never starts or stops anything; it republishes the queue and re-checks the
     /// preload, because the entry that plays next may have changed.
-    private func applyEdit(_ transition: ApplePlaybackQueueTransitionDto) {
-        guard transition.errorKind == nil else { return }
+    @discardableResult
+    private func applyEdit(_ transition: ApplePlaybackQueueTransitionDto) -> Bool {
+        guard transition.errorKind == nil else { return false }
         handleDiscardedPreload(transition.discardedPreloadAttemptId)
         if let directive = transition.startDirective {
             // The edit discarded a preload the core had held a natural end for: the next entry
             // starts now, or nothing ever would.
             start(directive)
-            return
+            return true
         }
         publish(transition)
         requestPreloadIfNeeded()
+        return true
     }
 
     func disconnect() {
@@ -1132,7 +1171,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 progressBegan: false,
                 repeatMode: repeatMode,
                 shuffleEnabled: snapshot.shuffleEnabled,
-                canGoNext: repeatMode == .all,
+                canGoNext: Self.hasEntryAfterCurrent(snapshot),
                 canGoPrevious: true,
                 queueEntries: queueEntries,
                 currentEntryIndex: currentEntryIndex
@@ -1152,8 +1191,32 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func publishFailure() {
-        currentPresentation = DulcetPlaybackPresentation(status: .failed, nowPlaying: nil)
+        currentPresentation = DulcetPlaybackPresentation(
+            status: .failed,
+            nowPlaying: nil,
+            failure: failedEntry()
+        )
         presentationHandler?(currentPresentation)
+    }
+
+    /// The entry a failure belongs to: the queue's current session, when that session is the
+    /// one that failed. Anything else -- a queue operation refused, no account -- is a failure
+    /// with no entry to name, skip past or retry, and says so rather than guessing.
+    private func failedEntry() -> DulcetFailedPlayback {
+        guard account != nil,
+              let snapshot = queueClient.snapshot().snapshot,
+              snapshot.currentSession?.phase == "Failed" else { return .undescribed }
+        let index = Int(snapshot.currentIndex)
+        guard snapshot.entries.indices.contains(index) else { return .undescribed }
+        let entry = snapshot.entries[index]
+        return DulcetFailedPlayback(
+            track: catalog[DulcetProviderItemID(
+                providerInstanceID: entry.providerInstanceId,
+                rawID: entry.rawId
+            )],
+            canSkip: Self.hasEntryAfterCurrent(snapshot),
+            canRetry: true
+        )
     }
 
     private func handleRemoteCommand(_ command: DulcetRemotePlaybackCommand) -> Bool {

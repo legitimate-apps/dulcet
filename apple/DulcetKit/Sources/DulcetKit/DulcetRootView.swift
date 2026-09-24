@@ -41,6 +41,7 @@ public struct DulcetRootView: View {
                         isSuppressed: store.selectedDestination == .nowPlaying,
                         onOpen: { store.selectDestination(.nowPlaying) }
                     ))
+                    .dulcetQueueEditFeedback(store: store)
                 }
             }
         }
@@ -238,6 +239,11 @@ private struct DulcetIOSShell: View {
     @Bindable var store: DulcetPresentationStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var playerPresented = false
+    /// Whether a player presentation is actually on screen, as opposed to asked for.
+    @State private var playerOnScreen = false
+    /// Set when a size-class change took the player down, so it comes back in the other style
+    /// once the old presentation has gone.
+    @State private var presentPlayerAfterDismissal = false
     /// The last place the person was, so a Now Playing destination arriving from elsewhere (the
     /// Show Now Playing command, a restored selection) opens the player over that place.
     @State private var lastPlace: DulcetSidebarDestination = .library
@@ -267,12 +273,17 @@ private struct DulcetIOSShell: View {
                 }
             }
         }
-        .sheet(isPresented: presented(whenCompact: true)) {
+        .sheet(isPresented: presented(whenCompact: true), onDismiss: playerDismissed) {
             DulcetNowPlayingSheet(store: store, presentation: .sheet, onClose: closePlayer)
+                .onAppear { playerOnScreen = true }
         }
-        .fullScreenCover(isPresented: presented(whenCompact: false)) {
+        .fullScreenCover(isPresented: presented(whenCompact: false), onDismiss: playerDismissed) {
             DulcetNowPlayingSheet(store: store, presentation: .fullScreen, onClose: closePlayer)
+                .onAppear { playerOnScreen = true }
         }
+        // The player carries its own while it is up; this one speaks for the shell under it.
+        .dulcetQueueEditFeedback(store: store, isActive: !playerPresented)
+        .onChange(of: horizontalSizeClass) { _, _ in sizeClassChanged() }
         .onAppear(perform: absorbNowPlayingDestination)
         .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
         .background {
@@ -281,7 +292,10 @@ private struct DulcetIOSShell: View {
     }
 
     private func openPlayer() { playerPresented = true }
-    private func closePlayer() { playerPresented = false }
+    private func closePlayer() {
+        presentPlayerAfterDismissal = false
+        playerPresented = false
+    }
 
     private func presented(whenCompact: Bool) -> Binding<Bool> {
         Binding(
@@ -294,12 +308,38 @@ private struct DulcetIOSShell: View {
         )
     }
 
+    /// A window crossing the compact/regular boundary with the player open: iPad Split View or
+    /// Stage Manager, or a large iPhone turned sideways. Both presentation styles flip in the same
+    /// update, and the new one cannot present while the old one is still being dismissed -- which
+    /// left `playerPresented` true with nothing on screen, so the bar's tap changed nothing and
+    /// the player could not be opened again. The player is taken down instead, and presented
+    /// again in the new style once the old presentation has gone: from its dismissal when one was
+    /// on screen, on the next pass of the run loop when none was.
+    private func sizeClassChanged() {
+        guard playerPresented else { return }
+        playerPresented = false
+        if playerOnScreen {
+            presentPlayerAfterDismissal = true
+        } else {
+            DispatchQueue.main.async { playerPresented = true }
+        }
+    }
+
+    private func playerDismissed() {
+        playerOnScreen = false
+        guard presentPlayerAfterDismissal else { return }
+        presentPlayerAfterDismissal = false
+        DispatchQueue.main.async { playerPresented = true }
+    }
+
     private func absorbNowPlayingDestination() {
         let destination = store.selectedDestination
         if Self.places.contains(destination) {
             lastPlace = destination
         } else if destination == .nowPlaying {
-            store.selectDestination(lastPlace)
+            // Back to the place the person was, as they left it: an album that was open stays
+            // open under the player.
+            store.navigate(to: lastPlace)
             playerPresented = true
         }
     }
@@ -345,7 +385,7 @@ private struct DulcetKeyboardShortcuts: View {
                 store.focusSearch()
             }
             shortcut(DulcetStrings.menuShowNowPlaying, key: "l", modifiers: .command,
-                     enabled: DulcetNowPlayingBar.isVisible(for: store.snapshot)) {
+                     enabled: store.showsNowPlayingBar) {
                 onShowNowPlaying()
             }
         }
@@ -411,9 +451,10 @@ private struct DulcetCompactShell: View {
             },
             set: { destination in
                 lastTab = destination
-                // Choosing the tab already showing returns it to its root, as tab bars do: for
-                // Library that is the grid, out of whichever album or artist was open.
-                store.selectDestination(destination)
+                // Each tab comes back as it was left, and choosing the tab already showing
+                // returns it to its root, as tab bars do: for Library that is the grid, out of
+                // whichever album or artist was open.
+                store.navigate(to: destination)
             }
         )
     }
@@ -422,30 +463,12 @@ private struct DulcetCompactShell: View {
 #endif
 
 #if !os(tvOS)
-/// Where a library page can be pushed. Derived from the snapshot, never stored beside it: the
-/// store's state names the page, and this only lets the navigation stack show it as a push, with
-/// a back button and the edge swipe.
-enum DulcetLibraryRoute: Hashable {
-    case album(DulcetProviderItemID)
-    case artist(DulcetProviderItemID)
-
-    static func path(for snapshot: DulcetSnapshot) -> [DulcetLibraryRoute] {
-        guard snapshot.selectedDestination == .library else { return [] }
-        switch snapshot.state {
-        case .albumDetailMultiDisc:
-            return snapshot.selectedAlbum.map { [.album($0.id)] } ?? []
-        case .artistDetail:
-            return snapshot.selectedArtist.map { [.artist($0.id)] } ?? []
-        default:
-            return []
-        }
-    }
-}
-
 /// One navigation stack showing a destination, with library pages pushed onto it.
 ///
-/// In a tab, `tab` names the destination this stack belongs to, and the stack draws nothing while
-/// another destination is selected -- the snapshot describes one destination at a time.
+/// In a tab, `tab` names the destination this stack belongs to. Only the Library destination
+/// pushes pages, and its stack is the store's `libraryPath`, which outlives the stack: a tab
+/// switched away from and back, or a split view's detail rebuilt for another destination, shows
+/// the pages it was left on.
 struct DulcetDestinationStack: View {
     @Bindable var store: DulcetPresentationStore
     var tab: DulcetSidebarDestination?
@@ -455,13 +478,26 @@ struct DulcetDestinationStack: View {
     /// stack drew on the root but vanished once an album was pushed.
     var barPlacement: DulcetNowPlayingBarPlacement.Placement?
     var onOpenPlayer: () -> Void = {}
+    /// The last library surface this tab drew, kept while another tab is showing. The snapshot
+    /// describes one destination at a time, so without it the Library tab would draw nothing
+    /// while hidden and rebuild its grid -- scrolled back to the top -- on every return.
+    @State private var retainedLibrary: DulcetSnapshot?
+
+    private var destination: DulcetSidebarDestination { tab ?? store.selectedDestination }
+    private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
 
     var body: some View {
-        let showing = tab.map { $0 == store.selectedDestination } ?? true
         NavigationStack(path: libraryPath) {
             Group {
-                if showing {
-                    DulcetStateSurface(store: store, libraryAsStackRoot: true)
+                if let displayed = displayedSnapshot {
+                    // One branch whether showing or retained, so the grid keeps its identity --
+                    // and its scroll position -- across a tab switch.
+                    DulcetStateSurface(
+                        store: store,
+                        libraryAsStackRoot: true,
+                        snapshotOverride: showing ? nil : displayed
+                    )
+                    .allowsHitTesting(showing)
                 } else {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
@@ -474,7 +510,20 @@ struct DulcetDestinationStack: View {
         }
         // A different destination is a different stack: switching from an open album to Search
         // must not animate as a pop.
-        .id(tab ?? store.selectedDestination)
+        .id(destination)
+        .onAppear(perform: retainLibrary)
+        .onChange(of: store.snapshot) { _, _ in retainLibrary() }
+    }
+
+    private var displayedSnapshot: DulcetSnapshot? {
+        if showing { return store.snapshot }
+        return destination == .library ? retainedLibrary : nil
+    }
+
+    private func retainLibrary() {
+        guard showing, destination == .library,
+              store.snapshot.selectedDestination == .library else { return }
+        retainedLibrary = store.snapshot
     }
 
     private var bar: DulcetOptionalNowPlayingBar {
@@ -487,14 +536,21 @@ struct DulcetDestinationStack: View {
     }
 
     private var libraryPath: Binding<[DulcetLibraryRoute]> {
-        Binding(
-            get: { DulcetLibraryRoute.path(for: store.snapshot) },
+        // The destination this stack was drawn for, fixed now rather than read when the binding
+        // is used. In a split view's detail the stack follows the selection, and the stack being
+        // replaced writes its path back as it goes: Search's empty one as Library comes back,
+        // which -- read live -- named Library and popped the album just restored to the grid;
+        // and Library's, emptied, as Search is chosen, which pulled the person back to Library.
+        // Only the stack that is showing Library can pop it.
+        let stackDestination = destination
+        return Binding(
+            get: { stackDestination == .library ? store.libraryPath : [] },
             set: { path in
-                // The back button and the edge swipe pop to the grid. Nothing pushes through
-                // this setter: pages are pushed by the store selecting them.
-                if path.isEmpty, !DulcetLibraryRoute.path(for: store.snapshot).isEmpty {
-                    store.selectDestination(.library)
-                }
+                // The back button and the edge swipe pop. Nothing pushes through this setter:
+                // pages are pushed by the store selecting them.
+                guard stackDestination == .library,
+                      store.selectedDestination == .library else { return }
+                store.popLibrary(to: path)
             }
         )
     }
@@ -536,7 +592,7 @@ private struct DulcetLibraryRouteView: View {
         Group {
             switch route {
             case let .album(id):
-                if let album = currentAlbum(id) ?? retainedAlbum {
+                if let album = currentAlbum(id) ?? retainedAlbum ?? heldAlbum(id) {
                     DulcetAlbumDetailView(
                         album: album,
                         tracksFailure: currentAlbum(id) == nil
@@ -552,14 +608,20 @@ private struct DulcetLibraryRouteView: View {
                             : nil,
                         onRetryTracks: { store.retryAlbumTracks() }
                     )
+                } else {
+                    // A page restored before the store has anything to draw for it -- a library
+                    // read still answering -- says so rather than drawing an empty page.
+                    DulcetLibraryLoadingView()
                 }
             case let .artist(id):
-                if let artist = currentArtist(id) ?? retainedArtist {
+                if let artist = currentArtist(id) ?? retainedArtist ?? heldArtist(id) {
                     DulcetArtistDetailView(
                         artist: artist,
                         albums: store.snapshot.albums.filter { $0.belongs(to: artist) },
                         onSelectAlbum: { album in store.selectAlbum(album.id) }
                     )
+                } else {
+                    DulcetLibraryLoadingView()
                 }
             }
         }
@@ -577,6 +639,16 @@ private struct DulcetLibraryRouteView: View {
         store.snapshot.state == .artistDetail && store.snapshot.selectedArtist?.id == id
             ? store.snapshot.selectedArtist
             : nil
+    }
+
+    /// A page lower in the stack than the one showing: drawn from the library the store holds,
+    /// so going back reveals the page rather than a blank one while the store catches up.
+    private func heldAlbum(_ id: DulcetProviderItemID) -> DulcetAlbum? {
+        store.snapshot.albums.first { $0.id == id }
+    }
+
+    private func heldArtist(_ id: DulcetProviderItemID) -> DulcetArtist? {
+        store.snapshot.artists.first { $0.id == id }
     }
 
     private func retain() {
@@ -655,7 +727,7 @@ private struct DulcetSidebar: View {
             get: { store.selectedDestination },
             set: { destination in
                 guard let destination else { return }
-                store.selectDestination(destination)
+                store.navigate(to: destination)
             }
         )
     }
@@ -740,8 +812,10 @@ private struct DulcetStateSurface: View {
     /// Inside a navigation stack, album and artist pages are pushed on top of the grid rather
     /// than replacing it, so the grid stays the stack's root in those states.
     var libraryAsStackRoot = false
+    /// Draws this snapshot instead of the store's: a hidden tab keeping what it last showed.
+    var snapshotOverride: DulcetSnapshot?
 
-    private var snapshot: DulcetSnapshot { store.snapshot }
+    private var snapshot: DulcetSnapshot { snapshotOverride ?? store.snapshot }
 
     var body: some View {
         switch snapshot.selectedDestination {
@@ -772,10 +846,9 @@ private struct DulcetStateSurface: View {
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()
             } else if snapshot.state == .nowPlayingFailed {
-                DulcetUnavailableDestinationView(
-                    symbol: "exclamationmark.triangle",
-                    title: DulcetStrings.nowPlayingFailedTitle,
-                    message: DulcetStrings.nowPlayingFailedBody
+                DulcetPlaybackFailedView(
+                    failure: snapshot.playbackFailure,
+                    onControl: store.sendPlaybackControl
                 )
                 .navigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             } else {
@@ -816,9 +889,10 @@ private struct DulcetStateSurface: View {
                 store.selectDestination(.library)
             }
             .navigationTitle(DulcetSidebarDestination.library.windowTitle)
-        case .libraryBrowse:
-            libraryBrowse
-        case .albumDetailMultiDisc where libraryAsStackRoot,
+        // One case, so the grid under a pushed page is the same view as the grid itself: split
+        // across two cases it was rebuilt on every push, and back returned to its top.
+        case .libraryBrowse,
+             .albumDetailMultiDisc where libraryAsStackRoot,
              .artistDetail where libraryAsStackRoot:
             libraryBrowse
         case .albumDetailMultiDisc:

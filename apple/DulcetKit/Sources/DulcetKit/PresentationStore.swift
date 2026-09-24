@@ -51,6 +51,25 @@ public protocol DulcetLibraryNavigating: AnyObject {
     var queueEditingEnabled: Bool { get }
 }
 
+/// A library page shown on top of the grid, as a navigation stack pushes it.
+public enum DulcetLibraryRoute: Hashable, Sendable {
+    case album(DulcetProviderItemID)
+    case artist(DulcetProviderItemID)
+
+    /// The page a snapshot shows on top of the library grid, if it shows one.
+    public static func page(in snapshot: DulcetSnapshot) -> DulcetLibraryRoute? {
+        guard snapshot.selectedDestination == .library else { return nil }
+        switch snapshot.state {
+        case .albumDetailMultiDisc:
+            return snapshot.selectedAlbum.map { .album($0.id) }
+        case .artistDetail:
+            return snapshot.selectedArtist.map { .artist($0.id) }
+        default:
+            return nil
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class DulcetPresentationStore {
@@ -62,6 +81,19 @@ public final class DulcetPresentationStore {
     /// Set by the search command and cleared by the search field once it has taken focus. A
     /// request, not a focus state: the field may not exist yet when the command arrives.
     public private(set) var searchFocusRequested = false
+    /// The library pages open on top of the grid, outermost first: the Library destination's own
+    /// navigation stack.
+    ///
+    /// Kept here rather than derived from the snapshot, because a snapshot describes one
+    /// destination at a time. A person who opens an album, looks something up in Search and comes
+    /// back expects to find the album, as every tab bar and sidebar keeps each place as it was
+    /// left -- deriving the stack from the snapshot reset it to the grid on every return.
+    public private(set) var libraryPath: [DulcetLibraryRoute] = []
+    /// The person dismissed the now-playing bar's failure. Cleared when playback is doing
+    /// anything else, and whenever the person starts something -- a retry, a skip, a new queue --
+    /// even when that fails too without a moment in between, so only the failure dismissed stays
+    /// away.
+    public private(set) var playbackFailureDismissed = false
     public var downloadsEnabled: Bool { source.downloadsEnabled }
     public var searchQuery: String {
         didSet {
@@ -79,6 +111,7 @@ public final class DulcetPresentationStore {
         let initialSnapshot = source.currentSnapshot
         snapshot = initialSnapshot
         selectedDestination = initialSnapshot.selectedDestination
+        libraryPath = DulcetLibraryRoute.page(in: initialSnapshot).map { [$0] } ?? []
         searchQuery = initialSnapshot.searchQuery
         accountServerURL = initialSnapshot.accountForm.serverURL
         accountUsername = initialSnapshot.accountForm.username
@@ -90,10 +123,49 @@ public final class DulcetPresentationStore {
         }
     }
 
+    /// Shows a destination's root: Library's grid, whatever was open on top of it.
     public func selectDestination(_ destination: DulcetSidebarDestination) {
         guard !isApplyingSourceSnapshot else { return }
         selectedDestination = destination
         source.send(.selectDestination(destination))
+    }
+
+    /// Chooses a top-level destination the way a tab bar or a sidebar does. Coming back to
+    /// Library shows it as it was left -- the album or artist that was open is open again -- and
+    /// choosing the destination already showing returns it to its root, as tapping the current
+    /// tab does.
+    public func navigate(to destination: DulcetSidebarDestination) {
+        guard !isApplyingSourceSnapshot else { return }
+        if destination == .library, selectedDestination != .library, let page = libraryPath.last {
+            selectedDestination = .library
+            show(page)
+            return
+        }
+        if destination == .library, selectedDestination == .library {
+            libraryPath = []
+        }
+        selectDestination(destination)
+    }
+
+    /// The back button or the edge swipe left the library stack at `path`, a prefix of the one
+    /// it held. The store is asked for the page now on top, or for the grid.
+    public func popLibrary(to path: [DulcetLibraryRoute]) {
+        guard !isApplyingSourceSnapshot,
+              path.count < libraryPath.count,
+              Array(libraryPath.prefix(path.count)) == path else { return }
+        libraryPath = path
+        if let page = path.last {
+            show(page)
+        } else {
+            selectDestination(.library)
+        }
+    }
+
+    private func show(_ page: DulcetLibraryRoute) {
+        switch page {
+        case let .album(id): source.send(.showAlbum(id))
+        case let .artist(id): source.send(.showArtist(id))
+        }
     }
 
     public func submitAccountConnection() {
@@ -127,14 +199,17 @@ public final class DulcetPresentationStore {
     }
 
     public func playLibrary(shuffle: Bool) {
+        playbackFailureDismissed = false
         source.send(.playLibrary(shuffle: shuffle))
     }
 
     public func playAlbum(_ id: DulcetProviderItemID, shuffle: Bool) {
+        playbackFailureDismissed = false
         source.send(.playAlbum(id, shuffle: shuffle))
     }
 
     public func activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID) {
+        playbackFailureDismissed = false
         source.send(.activateTrack(albumID: albumID, trackID: trackID))
     }
 
@@ -143,7 +218,21 @@ public final class DulcetPresentationStore {
     }
 
     public func sendPlaybackControl(_ intent: DulcetPlaybackControlIntent) {
+        playbackFailureDismissed = false
         source.send(.playbackControl(intent))
+    }
+
+    /// Whether the now-playing bar shows: something is queued, opening or failed -- and a
+    /// failure has not been dismissed.
+    public var showsNowPlayingBar: Bool {
+        if snapshot.playbackFailed { return !playbackFailureDismissed }
+        return snapshot.nowPlaying != nil || snapshot.playbackStatus == .preparing
+    }
+
+    /// Puts the failed track's bar away. Nothing plays until the person starts something.
+    public func dismissPlaybackFailure() {
+        guard snapshot.playbackFailed else { return }
+        playbackFailureDismissed = true
     }
 
     /// The library artist a credit leads to, or nil when there is no page to show.
@@ -198,6 +287,7 @@ public final class DulcetPresentationStore {
     }
 
     public func activateSearchResult(_ id: DulcetProviderItemID) {
+        playbackFailureDismissed = false
         source.send(.activateSearchResult(id))
     }
 
@@ -216,6 +306,8 @@ public final class DulcetPresentationStore {
 
     private func receive(_ snapshot: DulcetSnapshot) {
         isApplyingSourceSnapshot = true
+        followLibraryPage(in: snapshot, arrivingFrom: self.snapshot.selectedDestination)
+        if !snapshot.playbackFailed { playbackFailureDismissed = false }
         self.snapshot = snapshot
         selectedDestination = snapshot.selectedDestination
         searchQuery = snapshot.searchQuery
@@ -224,5 +316,30 @@ public final class DulcetPresentationStore {
         accountPassword = snapshot.accountForm.password
         accountAllowLocalHTTP = snapshot.accountForm.allowLocalHTTP
         isApplyingSourceSnapshot = false
+    }
+
+    /// Keeps the library stack in step with the page the source is showing. A page already in the
+    /// stack is the one being returned to, so everything above it is popped; a page arriving from
+    /// another destination -- an album opened from a search result or from the player -- starts
+    /// the stack afresh on the grid; any other page is pushed. A library surface with no page on
+    /// it is the grid, and empties the stack, except while a read is still loading: that read is
+    /// the answer to the page that was asked for.
+    private func followLibraryPage(
+        in snapshot: DulcetSnapshot,
+        arrivingFrom previousDestination: DulcetSidebarDestination
+    ) {
+        guard snapshot.selectedDestination == .library,
+              snapshot.state != .libraryLoading else { return }
+        guard let page = DulcetLibraryRoute.page(in: snapshot) else {
+            libraryPath = []
+            return
+        }
+        if let index = libraryPath.lastIndex(of: page) {
+            libraryPath = Array(libraryPath[...index])
+        } else if previousDestination != .library {
+            libraryPath = [page]
+        } else {
+            libraryPath.append(page)
+        }
     }
 }

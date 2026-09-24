@@ -591,7 +591,9 @@ struct DulcetAlbumShelfItem: View {
             artists: DulcetStrings.artistNames(album.albumArtists),
             tracks: DulcetStrings.trackCount(album.trackCount)
         ))
-        .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.play)
+        // The tile opens the album; Play is in its context menu and on the album page.
+        .accessibilityHint(offline ? DulcetStrings.offlineUnavailable : DulcetStrings.openAlbumHint)
+        .accessibilityIdentifier("dulcet.library.album")
         .dulcetAlbumContextMenu(album: album, isEnabled: !offline)
         // An album whose track list has not been read has nothing to queue yet.
         .dulcetQueueDragSource(

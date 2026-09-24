@@ -63,7 +63,11 @@ public enum DulcetQueueEditIntent: Sendable, Hashable {
 
 @MainActor
 public protocol DulcetQueueEditing: AnyObject {
-    func edit(_ intent: DulcetQueueEditIntent)
+    /// Applies an edit, returning whether the queue accepted it. A refused edit -- an entry that
+    /// is no longer queued, a move the queue cannot place -- changes nothing, and the caller says
+    /// so rather than leaving the gesture unexplained.
+    @discardableResult
+    func edit(_ intent: DulcetQueueEditIntent) -> Bool
 }
 
 /// What an Up Next list shows and how its gestures become queue edits. A value derived from the

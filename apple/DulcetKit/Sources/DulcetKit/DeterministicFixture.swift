@@ -216,6 +216,13 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
     /// A queue started through this source. The fixture has no engine, so this is presentation
     /// only: it lets the shell's now-playing bar and full player be driven deterministically.
     private var playing: DulcetNowPlaying?
+    /// The queue and position of a track that failed to play, while it is failed.
+    private var failed: (queue: [DulcetTrack], index: Int, source: String, shuffle: Bool)?
+    /// Tracks that fail the first time they are played, and play on Retry: what a server that
+    /// could not open a file once looks like, deterministically.
+    private var failingTrackTitles: Set<String>
+    /// What starting playback does to the surface, as the production source is told it.
+    private let playbackStartNavigation: DulcetPlaybackStartNavigation
 
     public private(set) var currentSnapshot: DulcetSnapshot
     public let downloadsEnabled = true
@@ -223,9 +230,13 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
 
     public init(
         fixture: DulcetDeterministicFixture = DulcetDeterministicFixture(),
-        initialState: DulcetPresentationState = .libraryBrowse
+        initialState: DulcetPresentationState = .libraryBrowse,
+        playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault,
+        failingTrackTitles: Set<String> = []
     ) {
         self.fixture = fixture
+        self.playbackStartNavigation = playbackStartNavigation
+        self.failingTrackTitles = failingTrackTitles
         currentSnapshot = fixture.snapshot(for: initialState)
     }
 
@@ -259,14 +270,17 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         case let .playLibrary(shuffle):
             let tracks = currentSnapshot.albums.flatMap(\.tracks)
             startPlaying(tracks, at: 0, source: DulcetStrings.library, shuffle: shuffle)
+            followPlaybackStart()
         case let .playAlbum(id, shuffle):
             if let album = currentSnapshot.albums.first(where: { $0.id == id }) {
                 startPlaying(album.tracks, at: 0, source: album.title, shuffle: shuffle)
+                followPlaybackStart()
             }
         case let .activateTrack(albumID, trackID):
             if let album = currentSnapshot.albums.first(where: { $0.id == albumID }),
                let index = album.tracks.firstIndex(where: { $0.id == trackID }) {
                 startPlaying(album.tracks, at: index, source: album.title, shuffle: false)
+                followPlaybackStart()
             }
         case let .playbackControl(intent):
             applyPlaybackControl(intent)
@@ -290,10 +304,36 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         case .dismissAccountRemovalFailure:
             currentSnapshot = fixture.snapshot(for: .accountConnected)
         }
-        if let playing {
-            currentSnapshot = currentSnapshot.replacingNowPlaying(playing)
+        if playing != nil || failed != nil {
+            currentSnapshot = currentSnapshot.replacingPlayback(presentation)
         }
         snapshotHandler?(currentSnapshot)
+    }
+
+    private var presentation: DulcetPlaybackPresentation {
+        if let playing { return DulcetPlaybackPresentation(status: .ready, nowPlaying: playing) }
+        if let failed {
+            return DulcetPlaybackPresentation(
+                status: .failed,
+                nowPlaying: nil,
+                failure: DulcetFailedPlayback(
+                    track: failed.queue[failed.index],
+                    canSkip: failed.index + 1 < failed.queue.count,
+                    canRetry: true
+                )
+            )
+        }
+        return .unavailable
+    }
+
+    /// Starting playback moves to Now Playing only where the production source would: the
+    /// fixture follows the same setting, so a shell proof run on it measures the real behaviour
+    /// rather than the fixture's.
+    private func followPlaybackStart() {
+        guard playbackStartNavigation == .showNowPlaying, playing != nil || failed != nil else {
+            return
+        }
+        currentSnapshot = fixture.snapshot(for: playing == nil ? .nowPlayingFailed : .nowPlaying)
     }
 
     public func libraryArtistID(for credit: DulcetCredit) -> DulcetProviderItemID? {
@@ -314,6 +354,12 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         shuffle: Bool
     ) {
         guard tracks.indices.contains(index) else { return }
+        if failingTrackTitles.contains(tracks[index].title) {
+            playing = nil
+            failed = (tracks, index, source, shuffle)
+            return
+        }
+        failed = nil
         playing = DulcetNowPlaying(
             current: tracks[index],
             queue: tracks,
@@ -331,6 +377,24 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
     }
 
     private func applyPlaybackControl(_ intent: DulcetPlaybackControlIntent) {
+        if let failed {
+            switch intent {
+            case .retry:
+                // Fails once, then plays: Retry has an effect a proof can observe.
+                failingTrackTitles.remove(failed.queue[failed.index].title)
+                startPlaying(failed.queue, at: failed.index, source: failed.source, shuffle: failed.shuffle)
+            case .next where failed.index + 1 < failed.queue.count:
+                startPlaying(
+                    failed.queue,
+                    at: failed.index + 1,
+                    source: failed.source,
+                    shuffle: failed.shuffle
+                )
+            default:
+                break
+            }
+            return
+        }
         guard let current = playing else { return }
         switch intent {
         case .play:
@@ -353,7 +417,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
                 source: current.sourceDisplayName ?? "",
                 shuffle: current.shuffleEnabled
             )
-        case .next, .previous, .seek, .setShuffle, .cycleRepeat:
+        case .next, .previous, .seek, .setShuffle, .cycleRepeat, .retry:
             break
         }
     }
@@ -404,7 +468,7 @@ private extension DulcetSnapshot {
         )
     }
 
-    func replacingNowPlaying(_ nowPlaying: DulcetNowPlaying) -> DulcetSnapshot {
+    func replacingPlayback(_ presentation: DulcetPlaybackPresentation) -> DulcetSnapshot {
         DulcetSnapshot(
             state: state,
             selectedDestination: selectedDestination,
@@ -417,7 +481,9 @@ private extension DulcetSnapshot {
             recentlyAddedTracks: recentlyAddedTracks,
             selectedAlbum: selectedAlbum,
             selectedArtist: selectedArtist,
-            nowPlaying: nowPlaying,
+            nowPlaying: presentation.nowPlaying,
+            playbackStatus: presentation.status,
+            playbackFailure: presentation.failure,
             searchQuery: searchQuery,
             searchResults: searchResults,
             searchHasMoreKinds: searchHasMoreKinds,

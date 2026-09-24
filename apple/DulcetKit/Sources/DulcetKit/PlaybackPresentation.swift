@@ -72,6 +72,27 @@ public enum DulcetPlaybackControlIntent: Sendable, Hashable {
     case seek(Duration)
     case setShuffle(Bool)
     case cycleRepeat
+    /// Starts the current entry again, as a new session: Retry, after it failed to play.
+    case retry
+}
+
+/// What the player can say, and offer, about a track that could not be played.
+public struct DulcetFailedPlayback: Sendable, Hashable {
+    /// The track that failed, when the controller can name it.
+    public let track: DulcetTrack?
+    /// Whether an entry follows the failed one, so Skip has somewhere to go.
+    public let canSkip: Bool
+    /// Whether the failed entry can be started again.
+    public let canRetry: Bool
+
+    public init(track: DulcetTrack?, canSkip: Bool, canRetry: Bool) {
+        self.track = track
+        self.canSkip = canSkip
+        self.canRetry = canRetry
+    }
+
+    /// A failure the controller cannot describe: nothing to name, nowhere to go.
+    public static let undescribed = Self(track: nil, canSkip: false, canRetry: false)
 }
 
 public enum DulcetPlaybackSurfaceStatus: Sendable, Hashable {
@@ -84,10 +105,17 @@ public enum DulcetPlaybackSurfaceStatus: Sendable, Hashable {
 public struct DulcetPlaybackPresentation: Sendable, Hashable {
     public let status: DulcetPlaybackSurfaceStatus
     public let nowPlaying: DulcetNowPlaying?
+    /// Set with a `.failed` status: which track failed, and whether Skip and Retry can act.
+    public let failure: DulcetFailedPlayback?
 
-    public init(status: DulcetPlaybackSurfaceStatus, nowPlaying: DulcetNowPlaying?) {
+    public init(
+        status: DulcetPlaybackSurfaceStatus,
+        nowPlaying: DulcetNowPlaying?,
+        failure: DulcetFailedPlayback? = nil
+    ) {
         self.status = status
         self.nowPlaying = nowPlaying
+        self.failure = status == .failed ? failure : nil
     }
 
     public static let unavailable = Self(status: .unavailable, nowPlaying: nil)
