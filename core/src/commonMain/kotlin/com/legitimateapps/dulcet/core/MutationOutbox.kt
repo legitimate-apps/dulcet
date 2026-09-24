@@ -126,6 +126,13 @@ internal enum class MutationRecord {
 
     /** The device could not record the change (its database failed). Nothing was recorded. */
     NotRecorded,
+
+    /**
+     * Withdrawn too late to undo: a send of the change has gone out — in flight now, or answered
+     * with nothing — so the server may hold it already. It is not sent again, and the item shows
+     * what the server answers, or its next read.
+     */
+    AlreadySent,
 }
 
 /** How a change ended, for the shell to tell the person. */
@@ -495,6 +502,9 @@ internal class LibraryFavourites(
     private val outcomeListeners = mutableListOf<(MutationOutcome) -> Unit>()
     private val changeListeners = mutableListOf<(Set<String>) -> Unit>()
 
+    /** This outbox's run of 429s: [MutationOutcome.Held] is told once per run. */
+    private val busyRun = BusyRun()
+
     /** Told how each change ended; every outcome except [MutationOutcome.Saved] needs words. */
     fun addOutcomeListener(listener: (MutationOutcome) -> Unit) {
         reader.checkConfined()
@@ -542,12 +552,15 @@ internal class LibraryFavourites(
     fun pendingChanges(): List<PendingMutation> = confined { guarded(emptyList()) { outbox.all() } }
 
     /**
-     * Takes back the pending change of [field] on [target]: it is never sent, and the item shows the
-     * server's last value again. However a change is held or failing, the person can always withdraw
-     * it (§18.6 "Failures"). A change whose send may have reached the server can already be there;
-     * the item's next read shows it. [MutationRecord.CompactedAway] when a change was withdrawn,
-     * [MutationRecord.Unchanged] when none was pending, [MutationRecord.NotRecorded] when the device's
-     * database failed and nothing changed.
+     * Takes back the pending change of [field] on [target]: it is not sent again, and the item shows
+     * the server's last value again. However a change is held or failing, the person can always
+     * withdraw it (§18.6 "Failures").
+     * - [MutationRecord.CompactedAway]: no send of it had gone out, so it never reaches the server.
+     * - [MutationRecord.AlreadySent]: too late to undo — a send of it is in flight, or was answered
+     *   with nothing ([PendingMutation.attemptedValues]), so the server may hold it already; the item
+     *   shows what the server answers, or its next read.
+     * - [MutationRecord.Unchanged] when none was pending, [MutationRecord.NotRecorded] when the
+     *   device's database failed and nothing changed.
      */
     fun withdraw(target: LibraryEntityRef, field: MutationField): MutationRecord {
         reader.checkConfined()
@@ -559,8 +572,9 @@ internal class LibraryFavourites(
             return MutationRecord.NotRecorded
         }
         if (withdrawn == null) return MutationRecord.Unchanged
+        endRunIfIdle()
         changed(setOf(target.rawId))
-        return MutationRecord.CompactedAway
+        return if (withdrawn.attemptedValues.isEmpty()) MutationRecord.CompactedAway else MutationRecord.AlreadySent
     }
 
     private fun change(target: LibraryEntityRef, field: MutationField, value: Int): MutationRecord {
@@ -573,11 +587,20 @@ internal class LibraryFavourites(
             return MutationRecord.NotRecorded
         }
         if (record == MutationRecord.Pending || record == MutationRecord.CompactedAway) {
+            if (record == MutationRecord.CompactedAway) endRunIfIdle()
             // Synchronously, before any send is launched: the tap's publication carries the change.
             changed(setOf(target.rawId))
             if (reader.online) launchFlush(reader.scope)
         }
         return record
+    }
+
+    /**
+     * Nothing left to send ends a run of 429s, however the queue emptied — a change withdrawn or
+     * undone here, as much as a flush that sent the last one (§18.6 "Failures").
+     */
+    private fun endRunIfIdle() {
+        if (guarded(-1L) { outbox.pendingCount() } == 0L) busyRun.end()
     }
 
     private fun launchFlush(scope: CoroutineScope) {
@@ -611,9 +634,11 @@ internal class LibraryFavourites(
      *   own — a rule in front of one endpoint — and the change fails on its own, as above, so it
      *   cannot hold every later change for ever. One ping per flush at most.
      * - When the server asks to wait (HTTP 429), the flush stops the same way, told once per run of
-     *   429s. Neither this flush nor the playlist one sends until `max(Retry-After, a floor that
-     *   doubles from two seconds)` has passed, capped at five minutes (§18.6 "Failures"); a change
-     *   made meanwhile does not send early. Then one flush of every outbox runs.
+     *   429s ([BusyRun]: it ends when a flush sends something and meets no 429, or when the queue
+     *   empties — not on one delivery). Neither this flush nor the playlist one sends until
+     *   `max(Retry-After, a floor that doubles through the run from two seconds)` has passed, capped
+     *   at five minutes, and a later 429 never shortens that wait (§18.6 "Failures"); a change made
+     *   meanwhile does not send early. Then one flush of every outbox runs.
      * - When the server cannot be reached at all, the flush stops and keeps every change, in order,
      *   for the next flush — the next change made online, or the reconnect of §16.14.
      * - A failure of the device's own database is thrown, never reported as the server's; every
@@ -629,6 +654,8 @@ internal class LibraryFavourites(
         val deferred = mutableSetOf<String>()
         // An authenticated ping was answered this flush: a later refusal of access is its request's own.
         var accountAnswers = false
+        // This flush met a 429 of its own: the run of them goes on.
+        var met429 = false
         // The server asked for quiet (a 429): nothing is sent until the wait has passed.
         var stoppedBy: DomainError? = reader.busyError()
         while (reader.online && stoppedBy == null) {
@@ -659,7 +686,6 @@ internal class LibraryFavourites(
                     }
                     if (failure == null) {
                         outbox.acknowledge(attempted, reader.cache.issue())
-                        reader.noteDelivered()
                         saved += 1
                         changed(setOf(change.target.rawId))
                         emit(MutationOutcome.Saved(change.target, change.field, change.value))
@@ -701,7 +727,12 @@ internal class LibraryFavourites(
                         FailureClass.Held -> {
                             stoppedBy = error
                             // A 429 is told once per run of them, not once per retry.
-                            val tell = error !is DomainError.Server.Busy || reader.noteBusy(error.retryAfter)
+                            val tell = if (error is DomainError.Server.Busy) {
+                                met429 = true
+                                reader.noteBusy(busyRun, error.retryAfter)
+                            } else {
+                                true
+                            }
                             if (tell) emit(MutationOutcome.Held(change.target, change.field, error))
                             break
                         }
@@ -713,7 +744,9 @@ internal class LibraryFavourites(
                 }
             }
         }
-        MutationFlushReport(sent, saved, adopted, refused, superseded, deferred.size, stoppedBy, outbox.pendingCount().toInt())
+        val pending = outbox.pendingCount().toInt()
+        busyRun.flushed(met429, sent, pending)
+        MutationFlushReport(sent, saved, adopted, refused, superseded, deferred.size, stoppedBy, pending)
     } }
 
     private inline fun <T> confined(block: () -> T): T {

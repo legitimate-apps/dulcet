@@ -200,7 +200,7 @@ class PlaylistEditingThirdReviewTest {
         advanceUntilIdle()
         env.server.applyThenLose.clear()
         assertTrue(session.playlists.pendingChanges().single().inDoubt)
-        assertEquals(PlaylistEditRecord.Pending, session.playlists.withdraw(localId, PlaylistRowKind.Create))
+        assertEquals(PlaylistEditRecord.AlreadySent, session.playlists.withdraw(localId, PlaylistRowKind.Create), "too late to undo")
         advanceUntilIdle()
         val made = env.server.playlists.single()
         assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(made.id)), env.outcomes.last())
@@ -608,7 +608,7 @@ class PlaylistEditingThirdReviewTest {
     @Test
     fun aCreateWaitingForAChoiceCanBeWithdrawn() = playlistTest { env ->
         val (session, localId, ids) = ambiguousLostCreate(env)
-        assertEquals(PlaylistEditRecord.Pending, session.playlists.withdraw(localId, PlaylistRowKind.Create))
+        assertEquals(PlaylistEditRecord.AlreadySent, session.playlists.withdraw(localId, PlaylistRowKind.Create), "too late to undo")
         advanceUntilIdle()
         assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Once", listOf(ids.first, ids.second)), env.outcomes.last())
         assertEquals(0, env.server.count("deletePlaylist"))

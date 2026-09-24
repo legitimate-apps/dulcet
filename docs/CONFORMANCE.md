@@ -84,7 +84,7 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-86 | multi-list screen rows publish independently |
 | CONF-87 | bounded detail look-ahead |
 | CONF-88 | reference-server playlist writes: positional removal, replace by `playlistId`, a 2,400-entry form-body replace kept in order, the stale-index hazard reproduced |
-| CONF-89 | every playlist operation through the production editor is read back as meant, with and without `formPost`; a lost create is identified by what the server listed before its send, never by a clock: adopted beside an older namesake that is never a candidate, never sent again when a second namesake appears (both named, the chosen one adopted), and never deleted by inference — its candidate is named, and removed only by a confirmed delete by id |
+| CONF-89 | every playlist operation through the production editor is read back as meant, with and without `formPost`; a lost create is identified by what the server listed before its send, never by a clock: adopted beside an older namesake that is never a candidate, never sent again when a second namesake appears (both named, the chosen one adopted), and never deleted by inference — its candidate is named, and removed only by a confirmed delete by id; each run names its playlists afresh and deletes every one it made, so a server reused after a failed run measures the same |
 | CONF-90 | a playlist edit whose base changed elsewhere is refused with nothing written; unchanged-list control |
 | CONF-91 | another user's playlist is not editable to the reader, the editor or the server; own-playlist control |
 

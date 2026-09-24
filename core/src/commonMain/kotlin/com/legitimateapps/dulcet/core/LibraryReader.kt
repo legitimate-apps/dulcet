@@ -339,36 +339,34 @@ internal class LibraryReader(
     private var busyUntil: ComparableTimeMark? = null
     private var busyRetry: Job? = null
 
-    /** 429s met since a change was last delivered: the length of the current episode. */
-    private var busyStreak = 0
-
     /**
-     * The server asked for quiet (an HTTP 429) with [retryAfter], if it said. The favourites and
-     * playlist flushes then wait `max(Retry-After, floor)`, never more than [LIBRARY_BUSY_CAP]: the
-     * floor starts at [LIBRARY_BUSY_FLOOR] and doubles with each 429 of one episode, so a server
-     * answering `Retry-After: 0` — or nothing — is not asked again at once. Until the wait has passed
-     * neither flush sends anything, whatever triggers it; then one flush of every outbox runs, as a
-     * reconnect's first step would. Returns whether this 429 began the episode: the person is told
-     * once per episode, not once per retry. The episode ends when a change is delivered
-     * ([noteDelivered]).
+     * The server asked for quiet (an HTTP 429) with [retryAfter], if it said, answering a request of
+     * the outbox whose run of 429s is [run]. Both outbox flushes then wait `max(Retry-After, floor)`,
+     * never more than [LIBRARY_BUSY_CAP]: the floor starts at [LIBRARY_BUSY_FLOOR] and doubles with
+     * each 429 of the run, so a server answering `Retry-After: 0` — or nothing — is not asked again
+     * at once. A wait already running is never shortened: the later end of the two stands, so a 429
+     * that another flush meets meanwhile cannot bring a server's longer `Retry-After` forward. Until
+     * the wait has passed neither flush sends anything, whatever triggers it; then one flush of every
+     * outbox runs, as a reconnect's first step would. Returns whether this 429 began the run: each
+     * outbox tells the person once per run, not once per retry.
      */
-    internal fun noteBusy(retryAfter: Duration?): Boolean {
-        busyStreak += 1
-        val doublings = (busyStreak - 1).coerceAtMost(BUSY_MAX_DOUBLINGS)
+    internal fun noteBusy(run: BusyRun, retryAfter: Duration?): Boolean {
+        val streak = run.met()
+        val doublings = (streak - 1).coerceAtMost(BUSY_MAX_DOUBLINGS)
         val floor = (LIBRARY_BUSY_FLOOR * (1 shl doublings)).coerceAtMost(LIBRARY_BUSY_CAP)
         val wait = maxOf(retryAfter ?: Duration.ZERO, floor).coerceAtMost(LIBRARY_BUSY_CAP)
-        busyUntil = config.monotonic.markNow() + wait
-        busyRetry?.cancel()
-        busyRetry = scope.launch {
-            delay(wait)
-            if (online) flushOutboxes()
+        val until = config.monotonic.markNow() + wait
+        val current = busyUntil
+        if (current == null || until > current) {
+            busyUntil = until
+            // The retry of the shorter wait is replaced; a longer wait keeps its own retry.
+            busyRetry?.cancel()
+            busyRetry = scope.launch {
+                delay(wait)
+                if (online) flushOutboxes()
+            }
         }
-        return busyStreak == 1
-    }
-
-    /** A flush delivered a change: the server is taking them again, and a later 429 starts afresh. */
-    internal fun noteDelivered() {
-        busyStreak = 0
+        return streak == 1
     }
 
     /**
@@ -924,7 +922,33 @@ internal val DomainError.Server.HttpStatus.refusesAccess: Boolean get() = status
 internal val DomainError.refusesAccess: Boolean
     get() = (this is DomainError.Auth && this != DomainError.Auth.Forbidden) || (this is DomainError.Server.HttpStatus && refusesAccess)
 
-/** The first wait after a 429, doubled for each further 429 of the episode (§18.6 "Failures"). ASSUMED. */
+/**
+ * One outbox's run of 429s (§18.6 "Failures"). It begins with the first 429 that outbox meets and
+ * ends when a flush of that outbox sends something and meets no 429, or when its queue empties,
+ * however that happens ([end]) — never on one delivery, so a limiter that admits one request per
+ * window is one run: told once, its floor doubling throughout ([LibraryReader.noteBusy]).
+ */
+internal class BusyRun {
+    /** The 429s met in this run; 0 between runs. */
+    var streak: Int = 0
+        private set
+
+    fun met(): Int {
+        streak += 1
+        return streak
+    }
+
+    fun end() {
+        streak = 0
+    }
+
+    /** A flush of the outbox finished: [met429] this flush, having [sent] requests, with [pending] changes left. */
+    fun flushed(met429: Boolean, sent: Int, pending: Int) {
+        if (!met429 && (sent > 0 || pending == 0)) end()
+    }
+}
+
+/** The first wait after a 429, doubled for each further 429 of the run (§18.6 "Failures"). ASSUMED. */
 internal val LIBRARY_BUSY_FLOOR: Duration = 2.seconds
 
 /**
@@ -939,8 +963,15 @@ private const val BUSY_MAX_DOUBLINGS = 16
 /** 413 or 414: the request was too large for the server or a proxy. The same request never fits. */
 internal val DomainError.Server.HttpStatus.tooLarge: Boolean get() = status == 413 || status == 414
 
-/** 502, 503 or 504: a gateway that could not reach the server — as unreachable as no answer at all. */
-internal val DomainError.Server.HttpStatus.gatewayCannotReachServer: Boolean get() = status in 502..504
+/**
+ * A gateway that could not reach the server — as unreachable as no answer at all: 502, 503 or 504,
+ * and the origin errors a CDN in front of the server answers with, 520 to 524 and 530 (OBSERVED
+ * 2026-09-24, each listed at
+ * https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/).
+ * Like any 5xx it proves nothing about whether the server applied the request ([provesNotApplied]).
+ */
+internal val DomainError.Server.HttpStatus.gatewayCannotReachServer: Boolean
+    get() = status in 502..504 || status in 520..524 || status == 530
 
 /**
  * A 4xx refused the request before anything handled it; a 5xx may come from a gateway after the

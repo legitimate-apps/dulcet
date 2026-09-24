@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlin.random.Random
 import kotlin.time.Clock
 
 /**
@@ -353,6 +354,9 @@ public object PlaylistConformanceContract {
 
     public suspend fun lostCreate(request: PlaylistConformanceRequest): PlaylistLostCreateResult = withSession(request) { env ->
         val songs = env.songs
+        // Every name is this run's own: a playlist an earlier run left on a reused server — a run that
+        // failed before its cleanup — shares no name with this one, so no count below includes it.
+        val run = Random.nextLong().toULong().toString(16).takeLast(8)
         suspend fun named(name: String) = parseReaderPlaylists(env.raw.body("getPlaylists")).filter { it.name == name }
         // Recorded offline, so no flush starts on its own: each flush below is the one named.
         fun createOffline(name: String, songs: List<String>): String {
@@ -365,7 +369,7 @@ public object PlaylistConformanceContract {
         // Adopted: an older playlist of the same name and songs is made first; then the create lands,
         // its answer is lost, and the next flush finds it — the one playlist of that name the server
         // did not list before the send, holding the songs sent. No clock is compared.
-        val adoptedName = "CONF-89 lost create"
+        val adoptedName = "CONF-89 lost create $run"
         val adoptedSongs = listOf(songs[0], songs[1], songs[0])
         val (_, adoptedOlder) = env.raw.create(adoptedName, adoptedSongs)
         env.cleanup += adoptedOlder
@@ -385,7 +389,7 @@ public object PlaylistConformanceContract {
         // Ambiguous: the create lands, its answer is lost, and another client makes a playlist of the
         // same name before the next flush. Two candidates: never sent again on a guess, the person
         // is told both and chooses.
-        val ambiguousName = "CONF-89 lost create, retried elsewhere"
+        val ambiguousName = "CONF-89 lost create, retried elsewhere $run"
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val ambiguousWritesBefore = env.writes.size
@@ -405,10 +409,12 @@ public object PlaylistConformanceContract {
         val chosenOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
         val chosenId = env.session.reader.playlistOverlay.resolve(ambiguousLocal)
         val ambiguousAfter = named(ambiguousName)
+        // A regression that sent the create again leaves a third; it goes with the rest.
+        ambiguousAfter.forEach { env.cleanup += it.rawId }
 
         // Cancelled: the create lands, its answer is lost, then the person deletes it here. Nothing
         // is deleted on inference: the candidate is named, and the person confirms its delete by id.
-        val cancelledName = "CONF-89 lost then deleted"
+        val cancelledName = "CONF-89 lost then deleted $run"
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val cancelledLocal = createOffline(cancelledName, listOf(songs[2]))
@@ -426,10 +432,12 @@ public object PlaylistConformanceContract {
         env.session.playlists.flush()
         val confirmedDeleteOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
         val cancelledAfterConfirm = named(cancelledName)
+        // A regression whose confirmed delete did not land leaves it; cleanup deletes it.
+        cancelledAfterConfirm.forEach { env.cleanup += it.rawId }
 
         // Older: a playlist of the same name and songs made BEFORE the attempt, which never arrived: it
         // was listed before the send, so it is no candidate, however close in time.
-        val olderName = "CONF-89 older namesake"
+        val olderName = "CONF-89 older namesake $run"
         val (_, older) = env.raw.create(olderName, listOf(songs[3]))
         env.cleanup += older
         env.dropRequest["createPlaylist"] = 1

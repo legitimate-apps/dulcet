@@ -137,14 +137,16 @@ class PlaylistEditingReviewTest {
     }
 
     @Test
-    fun aCandidateOfAnotherOwnerIsNeverNamed() = playlistTest { env ->
-        val (session, _) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = false)
-        env.server.add("Road", listOf("song-1"), owner = "someone-else", isPublic = true)
+    fun aCandidateOfAnotherOwnerIsNamedNeverDeleted() = playlistTest { env ->
+        // An owner never rules a candidate out (fourth review round): a server may state this account
+        // in another form, so another owner's namesake made after the send is named, and the person decides.
+        val (session, localId) = cancelledLostCreate(env, "Road", listOf("song-1"), landed = false)
+        val other = env.server.add("Road", listOf("song-1"), owner = "someone-else", isPublic = true)
         session.playlists.flush()
         advanceUntilIdle()
         assertEquals(1, env.server.playlists.size)
         assertEquals(0, env.server.count("deletePlaylist"))
-        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossiblyCreated }, "another user's playlist cannot be this create: nothing to tell")
+        assertEquals(PlaylistEditOutcome.PossiblyCreated(localId, "Road", listOf(other.id)), env.outcomes.last())
     }
 
     @Test
