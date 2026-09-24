@@ -25,7 +25,8 @@ DEFAULT_ROOT = REPOSITORY / ".build/dulcet-linux-conformance"
 MARKER = ".dulcet-conformance-root"
 DISPOSABLE_LABEL = "com.legitimateapps.dulcet.conformance"
 # The second, Navidrome-default PurgeMissing server the reader suite pins CONF-74 against
-# (tools/conformance-env/purge-default-server). It lives under the same disposable root.
+# (tools/conformance-env/purge-default-server). It lives under the same disposable root, and only
+# `up --purge-default` starts it: a job that never runs CONF-74 neither starts it nor depends on it.
 PURGE_DEFAULT = "purge-default"
 PURGE_DEFAULT_PORT = 4534
 
@@ -291,13 +292,16 @@ def clear_directory(root: Path, name: str) -> None:
     target.mkdir()
 
 
-def require_available_loopback_ports() -> None:
+def require_available_loopback_ports(purge_default: bool) -> None:
+    ports = (4533, PURGE_DEFAULT_PORT, 4540, 4541, 4542, 4543) if purge_default else (
+        4533, 4540, 4541, 4542, 4543
+    )
     deadline = time.monotonic() + 5
     while True:
         occupied: list[int] = []
         reservations: list[socket.socket] = []
         try:
-            for port in (4533, PURGE_DEFAULT_PORT, 4540, 4541, 4542, 4543):
+            for port in ports:
                 reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
@@ -584,10 +588,10 @@ def health_check(root: Path, name: str) -> None:
     )
 
 
-def up(root: Path) -> None:
+def up(root: Path, *, purge_default: bool = False) -> None:
     initialize_root(root)
     down(root)
-    require_available_loopback_ports()
+    require_available_loopback_ports(purge_default)
     clear_directory(root, "cache")
     image = pin("navidrome.linux.image")
     reset_data_volume(root, image)
@@ -599,8 +603,9 @@ def up(root: Path) -> None:
     if architecture != pin("navidrome.linux.architecture"):
         raise RuntimeError(f"pinned image architecture mismatch: {architecture}")
     render_configuration(root)
-    prepare_purge_default(root)
-    reset_data_volume(root, image, purge_default_volume_name(root))
+    if purge_default:
+        prepare_purge_default(root)
+        reset_data_volume(root, image, purge_default_volume_name(root))
     name = container_name(root)
     try:
         start_auxiliary(root)
@@ -608,9 +613,11 @@ def up(root: Path) -> None:
         wait_for_url("https://127.0.0.1:4542/health", insecure=True)
         wait_for_url("http://127.0.0.1:4543/health")
         start_container(root, image, name)
-        start_purge_default_container(root, image)
+        if purge_default:
+            start_purge_default_container(root, image)
         health_check(root, name)
-        bootstrap_purge_default()
+        if purge_default:
+            bootstrap_purge_default()
     except Exception:
         stop_container(name)
         stop_container(purge_default_container_name(root))
@@ -619,20 +626,37 @@ def up(root: Path) -> None:
     state = {
         "schema": 1,
         "container": name,
-        "purge_default_container": purge_default_container_name(root),
+        # None when `up` ran without --purge-default; `run`, `env` and `run-apple` read this.
+        "purge_default_container": purge_default_container_name(root) if purge_default else None,
         "image": image,
         "root": str(root),
         "cold_started_at": time.time(),
     }
     (root / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
-    print(f"conformance environment up cold: root={root} container={name}")
+    print(
+        f"conformance environment up cold: root={root} container={name} "
+        f"purge_default={'started' if purge_default else 'not started'}"
+    )
+    if not purge_default:
+        print("the JVM suite's CONF-74 needs the second server: start with 'up --purge-default'")
     print("run JVM tests: tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:jvmTest")
     print("then reset: tools/conformance-env/linux-local reset")
     print("run Android host tests: tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:testAndroidHostTest")
 
 
+def purge_default_started(root: Path) -> bool:
+    """Whether the last `up` for this root started the second server (`up --purge-default`)."""
+    try:
+        state = json.loads((root / "state.json").read_text())
+    except FileNotFoundError:
+        return False
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot read conformance state {root / 'state.json'}: {error}") from error
+    return state.get("purge_default_container") == purge_default_container_name(root)
+
+
 def conformance_environment(root: Path) -> dict[str, str]:
-    return {
+    environment = {
         "TZ": "UTC",
         "DULCET_CONFORMANCE_BASE_URL": "http://127.0.0.1:4533",
         "DULCET_REDIRECT_CONFORMANCE_ROOT": "http://127.0.0.1:4540",
@@ -641,16 +665,25 @@ def conformance_environment(root: Path) -> dict[str, str]:
         # The reader suite moves album directories in these host folders; the containers mount
         # them read-only and see the change through the scanner's watcher.
         "DULCET_CONFORMANCE_MUSIC_DIR": str(root / "music"),
-        "DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL": f"http://127.0.0.1:{PURGE_DEFAULT_PORT}",
-        "DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR": str(root / PURGE_DEFAULT / "music"),
     }
+    # Declared only when the second server was started, so a suite that needs it fails on the
+    # missing variable (it never skips) instead of reaching for a server that is not there.
+    if purge_default_started(root):
+        environment["DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL"] = (
+            f"http://127.0.0.1:{PURGE_DEFAULT_PORT}"
+        )
+        environment["DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR"] = str(
+            root / PURGE_DEFAULT / "music"
+        )
+    return environment
 
 
 def run_test_command(root: Path, command: list[str]) -> int:
     require_root(root)
     name = container_name(root)
     require_running_container(name)
-    require_running_container(purge_default_container_name(root), PURGE_DEFAULT_PORT)
+    if purge_default_started(root):
+        require_running_container(purge_default_container_name(root), PURGE_DEFAULT_PORT)
     if not command:
         raise RuntimeError("run requires a command after --")
     environment = os.environ.copy()
@@ -703,6 +736,10 @@ def run_apple_conformance(root: Path, ios_simulator_udid: str, tvos_simulator_ud
     require_root(root)
     name = container_name(root)
     require_running_container(name)
+    # The macOS run includes the reader suite, whose CONF-74 needs the second server.
+    if not purge_default_started(root):
+        raise RuntimeError("run-apple needs the second server; start with 'up --purge-default'")
+    require_running_container(purge_default_container_name(root), PURGE_DEFAULT_PORT)
     environment = {**os.environ, **conformance_environment(root)}
     for key, value in conformance_environment(root).items():
         if key.startswith("DULCET_"):
@@ -744,7 +781,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", help=f"disposable root (default: {DEFAULT_ROOT})")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("up", help="start from cold data/cache, reusing the generated corpus")
+    up_parser = subparsers.add_parser(
+        "up", help="start from cold data/cache, reusing the generated corpus"
+    )
+    up_parser.add_argument(
+        "--purge-default",
+        action="store_true",
+        help="also start the second, default-PurgeMissing server the reader suite's CONF-74 needs",
+    )
     subparsers.add_parser(
         "reset",
         help="reset only the live transcode cache and prove the fixed probe reports cached=false",
@@ -767,7 +811,7 @@ def main() -> int:
     root = resolve_root(args.root)
     try:
         if args.command == "up":
-            up(root)
+            up(root, purge_default=args.purge_default)
         elif args.command == "reset":
             return reset_transcode_cache(root)
         elif args.command == "down":

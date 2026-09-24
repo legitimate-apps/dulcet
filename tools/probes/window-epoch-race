@@ -49,7 +49,9 @@ def main() -> None:
         token = hashlib.md5((a.password + salt).encode()).hexdigest()
         query = dict(u=a.user, t=token, s=salt, v="1.16.1", c="dulcet-race-probe", f="json", **params)
         url = f"{a.base_url}/rest/{endpoint}?" + urllib.parse.urlencode(query)
-        with urllib.request.urlopen(url) as response:
+        # Bounded: a status read can block while a scan commits (~650 ms observed), but a server
+        # that stops answering must end the probe, not hang it.
+        with urllib.request.urlopen(url, timeout=30) as response:
             return json.loads(response.read())["subsonic-response"]
 
     stop = threading.Event()

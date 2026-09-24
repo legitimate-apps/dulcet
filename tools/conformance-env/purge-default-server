@@ -10,7 +10,10 @@ binary on Darwin, a container on Linux) exactly as it starts the fixture server.
   bootstrap  wait for the server, create the fixed admin, and wait for its first scan to finish
 
 The configuration is the fixture's with only `PurgeMissing` left unset (`render-config
---purge-missing server-default`), so the two servers differ in exactly the setting under test.
+--purge-missing server-default`), so the two configurations differ in exactly the setting under test
+(and in their paths and port). Their libraries differ as well: this server holds only the two albums
+below, while the fixture serves the whole corpus (eight albums). CONF-74 compares the removal of one
+album across the two, and that album's files here are copies of the fixture's.
 
 Never point this at a personal or production server: the suite moves files in its music folder.
 """

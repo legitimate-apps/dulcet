@@ -2724,11 +2724,16 @@ Rules the table does not show:
   `getArtists` is unpaged by protocol; at a large artist count it is one large response, which is
   still one request. OBSERVED 2026-09-22 (fixture configuration, `PurgeMissing = "always"`), 100 artists: 41,761 bytes, 3.4 ms over loopback.
 - **Responses are compared by parsed value, never by bytes.** OBSERVED 2026-09-22 by an independent
-  review run (`PurgeMissing` unset): the order of an artist's `roles` array in `getArtists` varies from call to call with no
-  catalog change (OBSERVED again 2026-09-22 by CONF-73's run on the fixture corpus, in `getArtists`
-  and in `search3`, whose artist objects carry the same array — `roles` was the only differing
-  field in either), so a byte hash of a response calls an unchanged catalog changed. Dedupe and change
-  detection use opaque ids and normalized parsed fields.
+  review run (`PurgeMissing` unset): the order of an artist's `roles` array in `getArtists` varies
+  from call to call with no catalog change. OBSERVED again 2026-09-24 on Navidrome 0.63.2 by a
+  second independent review: 20 identical `getArtists` calls returned 11 distinct response bodies,
+  and 20 identical `search3` calls, whose artist objects carry the same array, returned 3; in both
+  the bodies differed only in `roles`. A re-measurement the same day on a fresh fixture server
+  agreed (12 of 20 and 3 of 20, identical once each `roles` array was sorted, with the scan stamp
+  unchanged throughout). So a byte hash of a response calls an unchanged catalog changed. Dedupe and
+  change detection use opaque ids and normalized parsed fields. CONF-73 compares canonical forms,
+  with arrays sorted, so that this order cannot fail it; for the same reason it cannot observe the
+  order, and is not the evidence for it.
 - **Every value is the one the server returned.** A window stores the server's *positions*, so the
   cached grid and the live grid are the same order by construction. §16.7's "ordering belongs to the
   client" was a consequence of drawing one grid from two differently-collated sources; with one read
@@ -3098,27 +3103,43 @@ offline); `unverified(changing)` (the stamp kept moving through every bounded re
   every 7 s, and counts *violations*: two page reads whose *after* readings show the same stamp with
   `scanning == false` but whose contents differ. It fails if the race did not happen (fewer than two
   toggles or two stamps) and if any violation occurs. OBSERVED 2026-09-22 (`PurgeMissing` unset):
-  **42,051 samples, 976 of them read during a scan, 59 toggles, 60 distinct stamps, zero
-  violations.** An independent review run of the same probe took 27,957 samples.
+  **42,051 samples, 976 of them with a scan showing in their *after* reading, 59 toggles, 60
+  distinct stamps, zero violations.** An independent review run of the same probe took 27,957
+  samples.
 - **The *before* reading is load-bearing, not a formality.** That run judged each page by its
-  *after* reading alone, which is weaker than the check above. OBSERVED 2026-09-22 (phase R0, fixture
-  configuration, native server, fixture corpus): a page read while a scan was running returned the
-  list as it was **before** the scan's change, and the `getScanStatus` issued after that response
-  **blocked for ~650 ms** and then reported `scanning == false` under the scan's **new** stamp; the
-  next page, under the same stamp, returned the changed list. Judged by *after* alone, one stamp
-  accepted two contents. The page's *before* reading had shown `scanning == true`, so the bracketed
-  check rejects it. Measured over 160,772 samples in two runs (5 and 10 minutes, 148 toggles, both
-  directions — an album leaving and an album returning): **3 after-only violations, 0 bracketed
-  violations.** The reader must therefore require *before* and *after* both idle and equal for every
-  page, including a window's first, where *before* may be the stored foreground reading as above;
-  it must never accept a page on its *after* reading alone. The probe now reports both counts and
-  fails only on the bracketed one.
-- **In the suite.** CONF-70 runs the same race on both legs (phase R0): 30 s of bracketed page
-  reads against a directory toggled every 6 s, asserting at least two toggles, two accepted stamps
-  and one page read during a scan before it may assert zero bracketed violations, and first proving
-  on synthetic samples that its detector fires, that it rejects a busy *before* or *after* and a
-  stamp change, and that the after-only counter fires where the bracketed one does not. The probe
-  stays the instrument for long runs; it is not wired into CI. The rare after-only case is not
+  *after* reading alone, which is weaker than the check above. OBSERVED 2026-09-22 (phase R0,
+  fixture configuration, native server, fixture corpus): a page read while a scan was running
+  returned the list as it was **before** the scan's change, and the `getScanStatus` issued after
+  that response **blocked for ~650 ms** and then reported `scanning == false` under the scan's
+  **new** stamp; the next page, under the same stamp, returned the changed list. Judged by *after*
+  alone, one stamp accepted two contents. The page's *before* reading had shown `scanning == true`,
+  so the bracketed check rejects it. Seen in two probe runs (5 and 10 minutes, 148 toggles in both
+  directions — an album leaving and an album returning — so roughly 150 scans): **3 stamps that each
+  saw two different contents under after-only checking, about 2% per scan, and 0 bracketed
+  violations.** The case happens per scan, so the probe's sample count is no denominator for it. The
+  raw probe output was not preserved: these figures are recorded from R0's own notes, not from an
+  artifact that can be re-read. A fourth sighting falls outside those runs and that count: the case
+  was first seen as a macOS CONF-70 failure in one run of five, during R0's development. The reader
+  must therefore require *before* and *after* both idle and equal for every page, including a
+  window's first, where *before* may be the stored foreground reading as above; it must never accept
+  a page on its *after* reading alone. The probe now reports both counts and fails only on the
+  bracketed one.
+- **In the suite.** CONF-70 runs the same race on both legs (phase R0): 30 s of bracketed page reads
+  against a directory toggled every 6 s. Before it may assert zero bracketed violations it asserts
+  that the race happened: at least two toggles, each counted only once the album directory is seen
+  to have changed sides; at least one page the bracketed check **rejected**; at least two accepted
+  stamps; and at least two distinct accepted *contents*, so the list really changed between accepted
+  pages and a violation was possible at all. A rejected page is the deterministic witness that a
+  scan fell inside a bracket: each page's *before* reading is the previous page's *after* reading,
+  so every stamp change lands inside some page's bracket. It does **not** require a page whose
+  *after* reading showed a scan in progress — catching a scan in flight is a sampling accident, not
+  a property of the race. OBSERVED 2026-09-24 in PR #141's apple-ci run 36018294846: the hosted
+  macOS runner sampled about every 118 ms (255 samples in 30 s), the watcher scans in that job's
+  fixture log lasted 18.8 and 74.5 ms, and the race passed that former requirement with exactly one
+  such sample. The count is still printed as `scanning_samples`, never asserted. CONF-70 also first
+  proves on synthetic samples that its detector fires, that it rejects a busy *before* or *after*
+  and a stamp change, and that the after-only counter fires where the bracketed one does not. The
+  probe stays the instrument for long runs; it is not wired into CI. The rare after-only case is not
   asserted in CI: it cannot be produced on demand, and a check that passes whenever the race misses
   it is not a control.
 
@@ -5373,17 +5394,35 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `jvmTest` runs without a server; it is abstract, and one concrete subclass per leg runs it on
     exactly the JVM and `macosArm64` legs. Also measured: a removed track's `stream` answers code 70
     under the fixture setting; the fixture corpus has no genres, so `byGenre` is pinned only at
-    zero; `search3` shares `getArtists`'s nondeterministic `roles` order; CONF-70's race runs
-    in-suite on both legs. (d) A page read during a scan can return pre-change content while the
-    status read after it blocks until the scan ends and reports the new stamp with no scan running —
-    3 times in 160,772 samples. §16.12's bracketed check rejects it; an after-only check, which is
-    how the race probe had counted and how item 5 summarises the window rule, does not. §16.12 says
-    so, the probe and CONF-70 count both, and CLAUDE.md trap 18 now names both readings.
-    OBSERVED 2026-09-24 while landing, against private disposable native 0.63.2 servers in both
-    configurations: CONF-70..75 passed 8 of 8 on three runs per leg (JVM and `macosArm64`); each of
-    the six in-suite races toggled 4–5 times, accepted 5 stamps and read 16–69 pages during a scan,
+    zero; `search3` shares `getArtists`'s nondeterministic `roles` order (re-measured 2026-09-24,
+    §16.9; CONF-73 compares canonical forms and cannot see an order); CONF-70's race runs in-suite
+    on both legs. (d) A page read during a scan can return pre-change content while the status read
+    after it blocks until the scan ends and reports the new stamp with no scan running: 3 stamps
+    that each saw two different contents, across roughly 150 scans in two probe runs (about 2% per
+    scan), plus a fourth sighting outside that count, a macOS CONF-70 failure in one run of five.
+    The raw probe output was not preserved, so the figure is recorded from R0's own notes (§16.12).
+    §16.12's bracketed check rejects it; an after-only check, which is how the race probe had
+    counted and how item 5 summarises the window rule, does not. §16.12 says so, the probe and
+    CONF-70 count both, and CLAUDE.md trap 18 now names both readings. OBSERVED 2026-09-24 while
+    landing, against private disposable native 0.63.2 servers in both configurations: CONF-70..75
+    passed 8 of 8 on three runs per leg (JVM and `macosArm64`); each of the six in-suite races
+    toggled 4–5 times, accepted 5 stamps and had 16–69 samples whose *after* reading showed a scan,
     with zero bracketed and zero after-only violations in 5,237 samples; and the whole JVM
-    conformance suite passed 59 of 59 against the same servers.
+    conformance suite passed 59 of 59 against the same servers. Revised the same day after the
+    independent review of PR #141, which found the in-suite race and CONF-71 and CONF-73 able to
+    pass without the condition they claim: CONF-70 no longer requires a sample whose *after* reading
+    showed a scan (it had passed at exactly one on the hosted runner, §16.12) and instead requires a
+    rejected page and two distinct accepted contents, counting a toggle only once the directory has
+    moved; CONF-71 gained a before-state control and an 8 s quiet window before its positive
+    control; CONF-73 asserts that the conditional headers were sent. Each new assertion first failed
+    on the mutant it guards against: toggles outside the library, a disc-folder toggle that changes
+    no album list, a toggler that moves nothing, a leftover star and rating with the writes deleted,
+    a scan started right after the writes, and conditional headers never attached. OBSERVED
+    2026-09-24 after that revision, against fresh private disposable native 0.63.2 servers in both
+    configurations: CONF-70..75 passed 8 of 8 on two runs per leg; the four races toggled 4–5 times,
+    rejected 12–16 pages, accepted 5 stamps and 2 distinct contents, and had 8–12 samples whose
+    *after* reading showed a scan, with zero bracketed and zero after-only violations in 3,975
+    samples.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

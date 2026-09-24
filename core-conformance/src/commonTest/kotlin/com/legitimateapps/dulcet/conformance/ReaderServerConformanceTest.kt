@@ -6,6 +6,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsBytes
+import io.ktor.client.statement.request
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -213,7 +214,15 @@ abstract class ReaderServerConformanceTest {
                     val toggler = launch {
                         while (isActive) {
                             delay(RACE_TOGGLE_INTERVAL)
-                            if (isDirectory(inside)) moveDirectory(inside, outside) else moveDirectory(outside, inside)
+                            val (from, to) = if (isDirectory(inside)) inside to outside else outside to inside
+                            moveDirectory(from, to)
+                            // A toggle counts only once the album directory has really changed
+                            // sides. Counting loop turns let a toggler that moved nothing report
+                            // five toggles.
+                            assertTrue(
+                                isDirectory(to) && !isDirectory(from),
+                                "CONF-70 race: a toggle did not move the album directory",
+                            )
                             toggles += 1
                         }
                     }
@@ -238,23 +247,40 @@ abstract class ReaderServerConformanceTest {
                 admin.awaitQuiet("CONF-70 race restore", WATCHER_QUIET_WINDOW)
             }
             assertEquals(reference, admin.albumIds(), "CONF-70 race did not leave the fixture list restored")
-            val acceptedStamps = samples.filter(RaceSample::accepted).map { it.after.lastScan }.toSet()
+            val accepted = samples.filter(RaceSample::accepted)
+            val acceptedStamps = accepted.map { it.after.lastScan }.toSet()
+            val acceptedContents = accepted.map { it.contents }.toSet()
+            val rejected = samples.count { !it.accepted }
+            // Printed, never asserted. On the hosted macOS runner samples land ~118 ms apart and a
+            // watcher scan lasts 19-75 ms, so a race can catch a scan in progress exactly once or
+            // not at all (OBSERVED: PR #141's apple-ci run passed with scanning_samples=1).
             val scanningSamples = samples.count { it.after.scanning }
             val violations = raceViolations(samples)
             val afterOnly = afterOnlyViolations(samples)
             println(
                 "CONF-70 OBSERVED race samples=${samples.size} scanning_samples=$scanningSamples " +
-                    "toggles=$toggles accepted_stamps=${acceptedStamps.size} " +
-                    "accepted=${samples.count(RaceSample::accepted)} violations=${violations.size} " +
-                    "after_only_violations=${afterOnly.size}",
+                    "rejected=$rejected toggles=$toggles accepted_stamps=${acceptedStamps.size} " +
+                    "accepted_contents=${acceptedContents.size} accepted=${accepted.size} " +
+                    "violations=${violations.size} after_only_violations=${afterOnly.size}",
+            )
+            assertTrue(toggles >= 2, "CONF-70 the race did not happen: toggles=$toggles")
+            // The deterministic witness that the check was exercised. Each sample's before-reading
+            // is the previous sample's after-reading, so every stamp change the scans make falls
+            // inside some page's bracket, and the bracketed check must reject that page.
+            assertTrue(
+                rejected >= 1,
+                "CONF-70 the race did not happen: the bracketed check rejected no page, so no scan " +
+                    "fell inside any page's bracket",
             )
             assertTrue(
-                toggles >= 2 && acceptedStamps.size >= 2,
-                "CONF-70 the race did not happen: toggles=$toggles accepted_stamps=${acceptedStamps.size}",
+                acceptedStamps.size >= 2,
+                "CONF-70 the race did not happen: accepted_stamps=${acceptedStamps.size}",
             )
+            // Without two different accepted lists no violation is possible, so zero would prove
+            // nothing: a toggled directory that changes no album list still moves the stamp.
             assertTrue(
-                scanningSamples >= 1,
-                "CONF-70 the race did not happen: no page was read while a scan was running",
+                acceptedContents.size >= 2,
+                "CONF-70 the race did not happen: every accepted page had the same contents",
             )
             assertEquals(
                 emptySet(),
@@ -289,7 +315,16 @@ abstract class ReaderServerConformanceTest {
 
                     val album = restricted.albumNamed(USER_STATE_ALBUM_CONF71, "CONF-71")
                     val track = restricted.firstTrackId(album.id, "CONF-71")
-                    val playsBefore = restricted.albumState(album.id).playCount
+                    // Control: before the writes the user carries neither a star nor a rating, so
+                    // the read-backs below can only pass because these writes took effect. An
+                    // interrupted run leaves both set, because the cleanup is in `finally`.
+                    val stateBefore = restricted.albumState(album.id)
+                    assertNull(stateBefore.starred, "CONF-71 control: the album is already starred for this user")
+                    assertTrue(
+                        stateBefore.userRating in setOf(null, 0),
+                        "CONF-71 control: the album is already rated by this user: ${stateBefore.userRating}",
+                    )
+                    val playsBefore = stateBefore.playCount
                     try {
                         restricted.requireOk("star", mapOf("albumId" to album.id), "CONF-71")
                         assertNotNull(restricted.albumState(album.id).starred, "CONF-71 star did not take effect")
@@ -313,15 +348,27 @@ abstract class ReaderServerConformanceTest {
                         restricted.requireOk("setRating", mapOf("id" to album.id, "rating" to "0"), "CONF-71 cleanup")
                     }
 
+                    // The stamp must stay still for a quiet window after every write, the cleanup
+                    // included, before the positive control asks for a scan. Otherwise a scan the
+                    // server started by itself would be credited to `startScan`, and would hide one
+                    // that a write started late.
+                    val quiet = admin.awaitQuiet("CONF-71 before the positive control", SELF_SCAN_QUIET_WINDOW)
+                    assertEquals(
+                        opening.lastScan,
+                        quiet.lastScan,
+                        "CONF-71 the stamp moved within $SELF_SCAN_QUIET_WINDOW of the user-state writes",
+                    )
+
                     // Positive control: the same instrument sees the stamp move when a scan runs, so the
                     // unchanged readings above are a finding and not a blind probe. It also pins that a
                     // no-op scan moves the stamp (§16.11: the failure direction is a needless revalidation).
                     admin.requireOk("startScan", emptyMap(), "CONF-71")
-                    val moved = admin.awaitScanAfter(opening, "CONF-71 no-op startScan")
+                    val moved = admin.awaitScanAfter(quiet, "CONF-71 no-op startScan")
                     assertNotEquals(opening.lastScan, moved.lastScan)
                     println(
-                        "CONF-71 OBSERVED non_admin_status_equal=true star_effective=true " +
-                            "rating_effective=true scrobble_effective=true stamp_moved_by_user_state=false " +
+                        "CONF-71 OBSERVED non_admin_status_equal=true before_state_clean=true " +
+                            "star_effective=true rating_effective=true scrobble_effective=true " +
+                            "stamp_moved_by_user_state=false quiet_window=$SELF_SCAN_QUIET_WINDOW " +
                             "stamp_moved_by_noop_scan=true scan_polls=${moved.polls}",
                     )
                 }
@@ -403,6 +450,16 @@ abstract class ReaderServerConformanceTest {
                 for ((endpoint, parameters) in reads) {
                     val plain = admin.get(endpoint, parameters)
                     val conditioned = admin.get(endpoint, parameters, conditional)
+                    // The request really carried the conditional headers and the plain one did not;
+                    // otherwise the comparison below is between two plain requests.
+                    for ((name, value) in conditional) {
+                        assertEquals(
+                            value,
+                            conditioned.sentHeader(name),
+                            "CONF-73 $endpoint: the conditional request did not send $name",
+                        )
+                        assertNull(plain.sentHeader(name), "CONF-73 $endpoint: the plain request sent $name")
+                    }
                     for ((label, wire) in listOf("plain" to plain, "conditional" to conditioned)) {
                         assertEquals(200, wire.status, "CONF-73 $endpoint $label status")
                         // Header positive control on every response: the instrument reads headers.
@@ -424,7 +481,8 @@ abstract class ReaderServerConformanceTest {
                     }
                 }
                 println(
-                    "CONF-73 OBSERVED endpoints=${reads.size} validators_seen=0 conditional_status=200 " +
+                    "CONF-73 OBSERVED endpoints=${reads.size} conditional_headers_sent=true validators_seen=0 " +
+                        "conditional_status=200 " +
                         "conditional_payload_equal=true x_total_count_seen=true",
                 )
             }
@@ -595,7 +653,7 @@ abstract class ReaderServerConformanceTest {
             withContext(Dispatchers.Default) { block() }
         }
 
-    private fun fixture(): DisposableServer = DisposableServer(
+    private suspend fun fixture(): DisposableServer = DisposableServer(
         label = "fixture",
         baseUrl = disposableConformanceBaseUrl(),
         musicDirectory = requiredEnvironment("DULCET_CONFORMANCE_MUSIC_DIR"),
@@ -609,7 +667,7 @@ abstract class ReaderServerConformanceTest {
         server.prepareHolding()
     }
 
-    private fun purgeDefaultServer(): DisposableServer {
+    private suspend fun purgeDefaultServer(): DisposableServer {
         disposableConformanceBaseUrl()
         val baseUrl = requiredEnvironment("DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL")
         check(Regex("http://127\\.0\\.0\\.1:[1-9][0-9]{0,4}").matches(baseUrl)) {
@@ -639,12 +697,22 @@ abstract class ReaderServerConformanceTest {
         fun albumDirectory(album: String) = "$musicDirectory/$album"
         fun holdingDirectory(album: String) = "$holding/$album"
 
-        fun prepareHolding() {
+        suspend fun prepareHolding() {
             createDirectories(holding)
             for (album in listOf(MUTATED_ALBUM)) {
                 // A previous run that died between its move and its restore leaves the album out.
+                // Put it back and wait, bounded, for the scan that causes, so that scan cannot land
+                // ~5 s later inside the test that follows.
                 if (!isDirectory(albumDirectory(album)) && isDirectory(holdingDirectory(album))) {
-                    moveDirectory(holdingDirectory(album), albumDirectory(album))
+                    ReaderProbe(baseUrl, adminUser(), adminPassword()).use { probe ->
+                        val scan = moveAndAwaitScan(
+                            probe,
+                            holdingDirectory(album),
+                            albumDirectory(album),
+                            "$label restoring '$album' left out by an earlier run",
+                        )
+                        println("$label OBSERVED restored_from_holding album='$album' scan_polls=${scan.polls}")
+                    }
                 }
                 assertTrue(isDirectory(albumDirectory(album)), "$label music folder has no '$album' directory")
             }
@@ -745,6 +813,14 @@ abstract class ReaderServerConformanceTest {
         val RACE_DURATION = 30.seconds
         val RACE_TOGGLE_INTERVAL = 6.seconds
         val WATCHER_QUIET_WINDOW = 8.seconds
+
+        /**
+         * How long CONF-71 needs the stamp to stay still after its writes. The fixture has shown two
+         * scans the server starts by itself: the full scan a fresh database runs about 2-3 s after
+         * start, and the watcher's scan about 5 s after a file change. 8 s is longer than both.
+         * That no user-state write starts a scan later than that is ASSUMED, not measured.
+         */
+        val SELF_SCAN_QUIET_WINDOW = 8.seconds
         val RACE_SAMPLE_PAUSE = 20.milliseconds
 
         fun adminUser(): String = environmentOrNull("DULCET_CONFORMANCE_USERNAME") ?: "dulcet-admin"
@@ -769,8 +845,16 @@ internal data class AlbumUserState(
     val played: String?,
 )
 
-internal class Wire(val status: Int, private val headers: Map<String, String>, val body: ByteArray) {
+internal class Wire(
+    val status: Int,
+    private val headers: Map<String, String>,
+    val body: ByteArray,
+    private val sentHeaders: Map<String, String>,
+) {
     fun header(name: String): String? = headers[name.lowercase()]
+
+    /** A header as the client put it on the request it sent, never as the test asked for it. */
+    fun sentHeader(name: String): String? = sentHeaders[name.lowercase()]
 
     fun subsonicEnvelopeOrNull(): JsonObject? {
         val text = body.decodeToString().trimStart('﻿', ' ', '\n', '\r', '\t')
@@ -827,7 +911,10 @@ internal class ReaderProbe(
         val collected = response.headers.entries().associate { (name, values) ->
             name.lowercase() to values.joinToString(",")
         }
-        return Wire(response.status.value, collected, response.bodyAsBytes())
+        val sent = response.request.headers.entries().associate { (name, values) ->
+            name.lowercase() to values.joinToString(",")
+        }
+        return Wire(response.status.value, collected, response.bodyAsBytes(), sent)
     }
 
     suspend fun envelope(endpoint: String, parameters: Map<String, String>): JsonObject =

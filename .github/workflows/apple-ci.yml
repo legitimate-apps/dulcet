@@ -674,10 +674,11 @@ jobs:
           openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
             -config tools/conformance-env/untrusted-tls-openssl.cnf \
             -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
-          "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
-          navidrome_pid=$!
           # The reader suite's second server: the fixture configuration with PurgeMissing left at
-          # Navidrome's default, serving a copy of two corpus albums (CONF-74, spec §16.11).
+          # Navidrome's default, serving a copy of two corpus albums (CONF-74, spec §16.11). Only
+          # its files are prepared here, before this step has started any server, so a failure in
+          # the preparation cannot leave one running. The process itself lives only around the
+          # macOS conformance leg, the one phase that uses it; see that leg below.
           tools/conformance-env/purge-default-server prepare \
             --corpus "$ROOT/music" --music-folder "$ROOT/purge-default/music"
           mkdir -p "$ROOT/purge-default/data" "$ROOT/purge-default/cache"
@@ -685,9 +686,9 @@ jobs:
             --music-folder "$ROOT/purge-default/music" --data-folder "$ROOT/purge-default/data" \
             --cache-folder "$ROOT/purge-default/cache" --address 127.0.0.1 --port 4534 \
             --purge-missing server-default --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
-          "$ROOT/bin/navidrome" --configfile "$ROOT/purge-default/config/navidrome.toml" \
-            > "$ROOT/logs/navidrome-purge-default.log" 2>&1 &
-          purge_default_pid=$!
+          purge_default_pid=
+          "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
+          navidrome_pid=$!
           # Both fixture processes write capped, query-free access logs to RUNNER_TEMP by default.
           # The existing failure upload below includes these dulcet-conformance-access-*.log files.
           python3 tools/conformance-env/redirect-server --port 4540 --target-port 4541 &
@@ -706,6 +707,7 @@ jobs:
             wait "$proxy_pid" 2>/dev/null || true
             kill "$navidrome_pid" >/dev/null 2>&1 || true
             wait "$navidrome_pid" 2>/dev/null || true
+            # Backstop only: the macOS leg stops this server itself, and clears the pid when it has.
             kill "$purge_default_pid" >/dev/null 2>&1 || true
             wait "$purge_default_pid" 2>/dev/null || true
             tail -200 "$ROOT/logs/navidrome.log" || true
@@ -764,7 +766,6 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
-          tools/conformance-env/purge-default-server bootstrap --base-url http://127.0.0.1:4534
           # SEQUENCING. Every simulator phase below starts with exactly the device it needs booted
           # and nothing else. Each booted simulator costs this 7 GB runner roughly 0.7 GB of swap
           # (measured: three idle ones held ~2 GB of swap and load averages in the hundreds; none held
@@ -1074,7 +1075,14 @@ jobs:
           python3 tools/ci/isolate-simulator --phase conformance-macos --none
           restart_navidrome_cold macos baseline false
           # The macOS leg also runs ReaderServerConformanceMacosTest (CONF-70..75), which moves an
-          # album directory in each server's music folder and waits for the watcher's scan.
+          # album directory in each server's music folder and waits for the watcher's scan. The
+          # second server starts only now, AFTER the baseline restart above, so that restart's
+          # readiness window is measured with exactly the processes it always had; and it stops
+          # right after the leg, so no other phase and no later restart runs beside it.
+          "$ROOT/bin/navidrome" --configfile "$ROOT/purge-default/config/navidrome.toml" \
+            > "$ROOT/logs/navidrome-purge-default.log" 2>&1 &
+          purge_default_pid=$!
+          tools/conformance-env/purge-default-server bootstrap --base-url http://127.0.0.1:4534
           DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
             DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540 \
@@ -1084,6 +1092,7 @@ jobs:
             DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL=http://127.0.0.1:4534 \
             DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR="$ROOT/purge-default/music" \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
+          kill "$purge_default_pid"; wait "$purge_default_pid" 2>/dev/null || true; purge_default_pid=
           # RESEQUENCED ARM. This restart used to sit after the simulator create+boot below.
           # Nothing between it and the suite streams audio, so the empty-cache assertion the restart
           # makes still holds at the suite's first request; only its simulator adjacency changed.

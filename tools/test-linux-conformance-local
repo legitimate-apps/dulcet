@@ -3,6 +3,7 @@
 
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+import json
 import re
 import shlex
 import subprocess
@@ -20,29 +21,51 @@ APPLE_WORKFLOW = ROOT / ".github/workflows/apple-ci.yml"
 linux_local = SourceFileLoader("linux_conformance_local", str(TOOL)).load_module()
 
 
-environment = subprocess.run(
-    [sys.executable, str(TOOL), "env"],
-    text=True,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    check=False,
-)
-if environment.returncode != 0:
-    raise AssertionError(f"environment declaration failed: {environment.stdout}")
-default_root = linux_local.DEFAULT_ROOT.resolve()
-expected = {
-    "export TZ=UTC",
-    "export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533",
-    "export DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540",
-    "export DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542",
-    "export DULCET_CONFORMANCE_DISPOSABLE=true",
-    f"export DULCET_CONFORMANCE_MUSIC_DIR={shlex.quote(str(default_root / 'music'))}",
-    "export DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL=http://127.0.0.1:4534",
-    "export DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR="
-    f"{shlex.quote(str(default_root / 'purge-default' / 'music'))}",
-}
-if set(environment.stdout.splitlines()) != expected:
-    raise AssertionError(f"local environment drifted: {environment.stdout!r}")
+def declared_environment(root: Path) -> set[str]:
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--root", str(root), "env"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"environment declaration failed: {result.stdout}")
+    return set(result.stdout.splitlines())
+
+
+with tempfile.TemporaryDirectory(prefix="dulcet-env-control-") as directory:
+    env_root = Path(directory).resolve() / "root"
+    env_root.mkdir()
+    base_environment = {
+        "export TZ=UTC",
+        "export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533",
+        "export DULCET_REDIRECT_CONFORMANCE_ROOT=http://127.0.0.1:4540",
+        "export DULCET_UNTRUSTED_TLS_URL=https://127.0.0.1:4542",
+        "export DULCET_CONFORMANCE_DISPOSABLE=true",
+        f"export DULCET_CONFORMANCE_MUSIC_DIR={shlex.quote(str(env_root / 'music'))}",
+    }
+    purge_default_environment = {
+        "export DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL=http://127.0.0.1:4534",
+        "export DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR="
+        f"{shlex.quote(str(env_root / 'purge-default' / 'music'))}",
+    }
+    # No `up` has run for this root, so the second server is not declared.
+    observed = declared_environment(env_root)
+    if observed != base_environment:
+        raise AssertionError(f"local environment drifted without the second server: {observed!r}")
+    # An `up` without --purge-default records None, and still declares no second server.
+    (env_root / "state.json").write_text(json.dumps({"purge_default_container": None}))
+    observed = declared_environment(env_root)
+    if observed != base_environment:
+        raise AssertionError(f"a plain `up` declared the second server: {observed!r}")
+    # `up --purge-default` records the root's own second container, and only then is it declared.
+    (env_root / "state.json").write_text(
+        json.dumps({"purge_default_container": linux_local.purge_default_container_name(env_root)})
+    )
+    observed = declared_environment(env_root)
+    if observed != base_environment | purge_default_environment:
+        raise AssertionError(f"`up --purge-default` did not declare the second server: {observed!r}")
 
 with tempfile.TemporaryDirectory(prefix="dulcet-nondisposable-") as directory:
     unsafe_root = Path(directory) / "not-declared"
@@ -117,9 +140,11 @@ with tempfile.TemporaryDirectory(prefix="dulcet-volume-control-") as directory:
 with tempfile.TemporaryDirectory(prefix="dulcet-up-control-") as directory:
     lifecycle_root = Path(directory) / "root"
     events: list[tuple[str, str]] = []
-    linux_local.initialize_root = lambda root: root.mkdir(parents=True)
+    linux_local.initialize_root = lambda root: root.mkdir(parents=True, exist_ok=True)
     linux_local.down = lambda _root: events.append(("down", ""))
-    linux_local.require_available_loopback_ports = lambda: events.append(("ports", ""))
+    linux_local.require_available_loopback_ports = lambda purge_default: events.append(
+        ("ports", str(purge_default))
+    )
     linux_local.clear_directory = lambda _root, name: events.append(("clear", name))
     linux_local.pin = lambda name: {
         "navidrome.linux.image": "pinned-image",
@@ -140,7 +165,21 @@ with tempfile.TemporaryDirectory(prefix="dulcet-up-control-") as directory:
         ("purge-default-start", "")
     )
     linux_local.bootstrap_purge_default = lambda: events.append(("purge-default-bootstrap", ""))
+    # A plain `up` -- the Android emulator jobs' -- starts no second server and needs no port 4534.
     linux_local.up(lifecycle_root)
+    plain_purge_default = [event for event in events if event[0].startswith("purge-default")]
+    if plain_purge_default or ("ports", "False") not in events:
+        raise AssertionError(f"a plain `up` touched the second server: {events!r}")
+    if json.loads((lifecycle_root / "state.json").read_text())["purge_default_container"] is not None:
+        raise AssertionError("a plain `up` recorded a second server in its state")
+    events.clear()
+    linux_local.up(lifecycle_root, purge_default=True)
+    if ("ports", "True") not in events:
+        raise AssertionError(f"`up --purge-default` did not reserve the second server's port: {events!r}")
+    if json.loads((lifecycle_root / "state.json").read_text())[
+        "purge_default_container"
+    ] != linux_local.purge_default_container_name(lifecycle_root):
+        raise AssertionError("`up --purge-default` did not record its second server in its state")
     purge_default_reset = (
         "reset-data",
         f"{linux_local.purge_default_volume_name(lifecycle_root)}:pinned-image",
@@ -196,6 +235,22 @@ for required_source in (
 workflow = WORKFLOW.read_text()
 if "tools/conformance-env/linux-local --root \"$ROOT\" up" not in workflow:
     raise AssertionError("core-ci does not start the shared Linux lifecycle")
+# Only the job whose JVM suite runs CONF-74 starts the second server; every other `up` leaves it
+# out, so a failure of that server cannot fail a job that never uses it.
+up_lines = [
+    line.strip()
+    for line in workflow.splitlines()
+    if "tools/conformance-env/linux-local" in line
+    and re.search(r"\bup\b", line)
+    and not line.lstrip().startswith("#")
+]
+opted_in = [line for line in up_lines if line.endswith(" up --purge-default")]
+if opted_in != ['tools/conformance-env/linux-local --root "$ROOT" up --purge-default']:
+    raise AssertionError(f"exactly the conformance job must pass --purge-default: {up_lines!r}")
+if len(up_lines) < 2 or any(
+    not (line.endswith(" up") or line.endswith(" up --purge-default")) for line in up_lines
+):
+    raise AssertionError(f"an unexpected linux-local up form appeared: {up_lines!r}")
 if "tools/conformance-env/linux-local --root \"$ROOT\" run --" not in workflow:
     raise AssertionError("core-ci does not run tests through the shared environment declaration")
 if "deluan/navidrome@sha256:" in workflow or "/usr/bin/ffmpeg" in workflow:
@@ -247,6 +302,45 @@ if apple_sequence != expected_sequence:
         "apple-ci must restart and observe cold exactly once before each native run; observed "
         f"{apple_sequence}, expected {expected_sequence}"
     )
+# The second, default-PurgeMissing server lives only around the macOS conformance leg (CONF-74 is
+# the only thing that uses it). Its files are prepared before any server starts, so a failed
+# preparation cannot strand the fixture; it starts only AFTER that leg's baseline restart, so the
+# restart experiment's baseline is unchanged; and it stops right after the leg, before the next
+# restart and every later simulator phase. The trap's kill stays as a backstop.
+PURGE_DEFAULT_LIFETIME = (
+    ("prepare", "tools/conformance-env/purge-default-server prepare"),
+    ("render", 'tools/conformance-env/render-config --output "$ROOT/purge-default/config/navidrome.toml"'),
+    ("clear-pid", "purge_default_pid="),
+    # `> "`, not `>> "`: the restart function relaunches the fixture appending to its log.
+    ("fixture-launch", '"$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "'),
+    ("trap", "trap cleanup EXIT"),
+    ("baseline-restart", "restart_navidrome_cold macos baseline false"),
+    ("launch", '"$ROOT/bin/navidrome" --configfile "$ROOT/purge-default/config/navidrome.toml"'),
+    ("record-pid", "purge_default_pid=$!"),
+    ("bootstrap", "tools/conformance-env/purge-default-server bootstrap --base-url http://127.0.0.1:4534"),
+    ("macos-leg", "./gradlew --no-daemon :core-conformance:macosArm64Test"),
+    ("stop", 'kill "$purge_default_pid"; wait "$purge_default_pid" 2>/dev/null || true; purge_default_pid='),
+    ("next-restart", "restart_navidrome_cold ios resequenced false"),
+)
+apple_code = [line.strip() for line in apple_workflow.splitlines() if not line.lstrip().startswith("#")]
+lifetime_positions = []
+for event, text in PURGE_DEFAULT_LIFETIME:
+    # A bare assignment must match whole lines, or it would also match `purge_default_pid=$!`.
+    exact = text.endswith("=")
+    hits = [
+        index
+        for index, line in enumerate(apple_code)
+        if (line == text if exact else line.startswith(text))
+    ]
+    if len(hits) != 1:
+        raise AssertionError(f"apple-ci second-server lifetime: {event} appears {len(hits)} times: {text!r}")
+    lifetime_positions.append(hits[0])
+if lifetime_positions != sorted(lifetime_positions):
+    order = [event for _, event in sorted(zip(lifetime_positions, (e for e, _ in PURGE_DEFAULT_LIFETIME)))]
+    raise AssertionError(f"apple-ci second-server lifetime is out of order: {order}")
+if 'kill "$purge_default_pid" >/dev/null 2>&1 || true' not in apple_code:
+    raise AssertionError("apple-ci cleanup lost its backstop kill of the second server")
+
 for required_workflow in (
     'tools/conformance-env/reset-transcode-cache --root "$ROOT"',
     '--log-file "$ROOT/logs/navidrome.log" --expect-cached false',
@@ -258,5 +352,6 @@ print(
     "The conformance lifecycle rejects an unmarked root, preserves its sentinel, exports the "
     "loopback disposable contract, gives each root a labelled/reset/write-probed named data "
     "volume while keeping cache host-mounted, shares every pin/corpus/health source with core-ci, "
-    "and makes all three apple-ci and local native runs reset then require an observed cold transcode"
+    "and makes all three apple-ci and local native runs reset then require an observed cold transcode; "
+    "the second server starts only for the runs that use it"
 )
