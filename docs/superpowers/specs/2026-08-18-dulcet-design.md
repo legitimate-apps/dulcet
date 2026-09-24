@@ -3117,8 +3117,10 @@ offline); `unverified(changing)` (the stamp kept moving through every bounded re
   directions — an album leaving and an album returning — so roughly 150 scans): **3 stamps that each
   saw two different contents under after-only checking, about 2% per scan, and 0 bracketed
   violations.** The case happens per scan, so the probe's sample count is no denominator for it. The
-  raw probe output was not preserved: these figures are recorded from R0's own notes, not from an
-  artifact that can be re-read. A fourth sighting falls outside those runs and that count: the case
+  raw probe output was not preserved. The figures are the ones R0's commit `adf73cf3` recorded ("3
+  after-only violations", over "160,772 samples"); that each counts a stamp rather than a sample is
+  read from the probe, which keys `after_only_violations` by stamp (`tools/probes/window-epoch-race`),
+  not re-measured. A fourth sighting falls outside those runs and that count: the case
   was first seen as a macOS CONF-70 failure in one run of five, during R0's development. The reader
   must therefore require *before* and *after* both idle and equal for every page, including a
   window's first, where *before* may be the stored foreground reading as above; it must never accept
@@ -3127,15 +3129,16 @@ offline); `unverified(changing)` (the stamp kept moving through every bounded re
 - **In the suite.** CONF-70 runs the same race on both legs (phase R0): 30 s of bracketed page reads
   against a directory toggled every 6 s. Before it may assert zero bracketed violations it asserts
   that the race happened: at least two toggles, each counted only once the album directory is seen
-  to have changed sides; at least one page the bracketed check **rejected**; at least two accepted
-  stamps; and at least two distinct accepted *contents*, so the list really changed between accepted
-  pages and a violation was possible at all. A rejected page is the deterministic witness that a
-  scan fell inside a bracket: each page's *before* reading is the previous page's *after* reading,
-  so every stamp change lands inside some page's bracket. It does **not** require a page whose
+  to have changed sides; at least two accepted stamps; and at least two distinct accepted
+  *contents*, so the list really changed between accepted pages and a violation was possible at all.
+  Two accepted stamps already imply a page the bracketed check **rejected** — each page's *before*
+  reading is the previous page's *after* reading, so every stamp change lands inside some page's
+  bracket — and the test asserts that rejected page explicitly as well, as the deterministic witness
+  that a scan fell inside a bracket rather than as an independent condition. It does **not** require a page whose
   *after* reading showed a scan in progress — catching a scan in flight is a sampling accident, not
   a property of the race. OBSERVED 2026-09-24 in PR #141's apple-ci run 36018294846: the hosted
-  macOS runner sampled about every 118 ms (255 samples in 30 s), the watcher scans in that job's
-  fixture log lasted 18.8 and 74.5 ms, and the race passed that former requirement with exactly one
+  macOS runner sampled about every 118 ms (255 samples in 30 s); the only scans that job's fixture
+  log timed, CONF-74's, lasted 18.8 and 74.5 ms (the race's own scans were not timed); and the race passed that former requirement with exactly one
   such sample. The count is still printed as `scanning_samples`, never asserted. CONF-70 also first
   proves on synthetic samples that its detector fires, that it rejects a busy *before* or *after*
   and a stamp change, and that the after-only counter fires where the bracketed one does not. The
@@ -5400,7 +5403,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
     after it blocks until the scan ends and reports the new stamp with no scan running: 3 stamps
     that each saw two different contents, across roughly 150 scans in two probe runs (about 2% per
     scan), plus a fourth sighting outside that count, a macOS CONF-70 failure in one run of five.
-    The raw probe output was not preserved, so the figure is recorded from R0's own notes (§16.12).
+    The raw probe output was not preserved; the figure is the one R0's commit `adf73cf3` recorded,
+    with the unit read from the probe (§16.12).
     §16.12's bracketed check rejects it; an after-only check, which is how the race probe had
     counted and how item 5 summarises the window rule, does not. §16.12 says so, the probe and
     CONF-70 count both, and CLAUDE.md trap 18 now names both readings. OBSERVED 2026-09-24 while

@@ -1092,7 +1092,10 @@ jobs:
             DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL=http://127.0.0.1:4534 \
             DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR="$ROOT/purge-default/music" \
             ./gradlew --no-daemon :core-conformance:macosArm64Test
-          kill "$purge_default_pid"; wait "$purge_default_pid" 2>/dev/null || true; purge_default_pid=
+          # It must still be running here. If it exited during a leg that passed, fail with the reason
+          # rather than with kill's bare "No such process".
+          kill "$purge_default_pid" || { echo "::error::the purge-default Navidrome exited before the macOS conformance leg finished"; exit 1; }
+          wait "$purge_default_pid" 2>/dev/null || true; purge_default_pid=
           # RESEQUENCED ARM. This restart used to sit after the simulator create+boot below.
           # Nothing between it and the suite streams audio, so the empty-cache assertion the restart
           # makes still holds at the suite's first request; only its simulator adjacency changed.

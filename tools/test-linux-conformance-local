@@ -307,6 +307,9 @@ if apple_sequence != expected_sequence:
 # preparation cannot strand the fixture; it starts only AFTER that leg's baseline restart, so the
 # restart experiment's baseline is unchanged; and it stops right after the leg, before the next
 # restart and every later simulator phase. The trap's kill stays as a backstop.
+# This pins the order of the lines it names, and nothing else. A new command that can fail,
+# inserted between the fixture launch and `trap cleanup EXIT`, is not caught here: under `bash -e`
+# it would exit the step with the fixture still running. Keep that span free of such commands.
 PURGE_DEFAULT_LIFETIME = (
     ("prepare", "tools/conformance-env/purge-default-server prepare"),
     ("render", 'tools/conformance-env/render-config --output "$ROOT/purge-default/config/navidrome.toml"'),
@@ -319,7 +322,8 @@ PURGE_DEFAULT_LIFETIME = (
     ("record-pid", "purge_default_pid=$!"),
     ("bootstrap", "tools/conformance-env/purge-default-server bootstrap --base-url http://127.0.0.1:4534"),
     ("macos-leg", "./gradlew --no-daemon :core-conformance:macosArm64Test"),
-    ("stop", 'kill "$purge_default_pid"; wait "$purge_default_pid" 2>/dev/null || true; purge_default_pid='),
+    ("stop", 'kill "$purge_default_pid" || {'),
+    ("reap", 'wait "$purge_default_pid" 2>/dev/null || true; purge_default_pid='),
     ("next-restart", "restart_navidrome_cold ios resequenced false"),
 )
 apple_code = [line.strip() for line in apple_workflow.splitlines() if not line.lstrip().startswith("#")]
