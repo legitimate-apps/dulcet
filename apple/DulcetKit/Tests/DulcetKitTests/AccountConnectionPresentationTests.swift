@@ -3219,6 +3219,8 @@ func anotherAttemptOrAnotherKindOfFailureIsNotTheOneDismissed() {
 
 // MARK: - The bar and the player say the same thing
 
+// tvOS has no now-playing bar, so there is nothing there for the player to agree with.
+#if os(macOS) || os(iOS)
 @Test @MainActor
 func theBarAndThePlayerAgreeThatATrackStoppedPartway() {
     let partway = failure(canSkip: true, stoppedPartway: true)
@@ -3248,6 +3250,7 @@ func theBarAndThePlayerAgreeThatATrackStoppedPartway() {
         #expect(!text.contains("partway"), "\(text)")
     }
 }
+#endif
 
 // MARK: - A drop that carries nothing is refused out loud
 
