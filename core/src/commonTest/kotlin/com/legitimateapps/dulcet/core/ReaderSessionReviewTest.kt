@@ -87,6 +87,155 @@ class ReaderSessionReviewTest {
         handle.close()
     }
 
+    /**
+     * A rebase whose anchor lies past the server's new total re-anchors on the last page that
+     * exists: the list shrinks from 250 to 150 while the viewport sits at 210–220. No stored row at
+     * or beyond the new total is kept, shown or labelled `live` — it used to keep album 200, which
+     * the server no longer has, as a `live` one-item list.
+     */
+    @Test
+    fun aRebasePastTheNewTotalReAnchorsOnTheLastPageThatExists() = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        handle.setViewport(90, 99)
+        handle.loadMore()
+        advanceUntilIdle()
+        handle.setViewport(190, 199)
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals(listOf(250, 250), listOf(pubs.last.items.size, pubs.last.total), "fixture: the whole list is loaded")
+        handle.setViewport(210, 220)
+        env.server.base.albums.subList(150, env.server.base.albums.size).clear()
+        env.server.base.lastScan = "2026-09-24T10:00:00Z"
+        val mark = pubs.all.size
+        session.reader.refreshEpoch()
+        advanceUntilIdle()
+        val onServer = env.server.base.albums.map { it.id }.toSet()
+        fun gone(publication: LibraryPublication) = publication.items.map { it.rawId }.filter { it !in onServer }
+        val last = pubs.last
+        assertEquals(150, last.total)
+        assertEquals(LibraryFreshness.Live, last.freshness)
+        assertEquals(emptyList(), gone(last), "a deleted album is still shown")
+        assertEquals(albumId(149), last.items.last().rawId, "not re-anchored on the last page that exists")
+        assertTrue(pubs.all.drop(mark).none { it.value.freshness == LibraryFreshness.Live && gone(it.value).isNotEmpty() }, "a deleted album was labelled live")
+        assertTrue(env.cache().listMembers(ListRequestSpec.of(grid).listKey).none { it.member.rawId !in onServer }, "a deleted album is still stored in the window")
+
+        handle.setViewport(0, 0)
+        handle.loadBefore()
+        advanceUntilIdle()
+        assertEquals(emptyList(), gone(pubs.last))
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+        assertTrue(session.reader.uncaughtFailures.isEmpty(), "uncaught: ${session.reader.uncaughtFailures}")
+        handle.close()
+    }
+
+    /**
+     * With no total to go by, a rebase whose anchor page comes back empty re-anchors on the top:
+     * the list keeps only rows the server has just returned.
+     */
+    @Test
+    fun aRebasePastTheEndWithNoTotalReAnchorsOnTheTop() = sessionTest { env ->
+        env.server.base.sendTotalCount = false
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        handle.setViewport(90, 99)
+        handle.loadMore()
+        advanceUntilIdle()
+        handle.setViewport(190, 199)
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals(null, pubs.last.total, "fixture: the server sends no total")
+        assertTrue(pubs.last.items.size > 200, "fixture: the list is loaded past 200 (${pubs.last.items.size})")
+        handle.setViewport(pubs.last.items.size - 5, pubs.last.items.size - 1)
+        env.server.base.albums.subList(150, env.server.base.albums.size).clear()
+        env.server.base.lastScan = "2026-09-24T10:00:00Z"
+        session.reader.refreshEpoch()
+        advanceUntilIdle()
+        val onServer = env.server.base.albums.map { it.id }.toSet()
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+        assertEquals((0 until 100).map(::albumId), pubs.last.items.map { it.rawId }, "not re-anchored on the top")
+        assertTrue(env.cache().listMembers(ListRequestSpec.of(grid).listKey).all { it.member.rawId in onServer })
+        handle.close()
+    }
+
+    /**
+     * A list that has emptied, with no total, rebased at the top: the rebase read no rows, so it
+     * keeps none — it used to keep the row at its anchor and show that deleted album as `live`.
+     */
+    @Test
+    fun aRebaseOfAListThatEmptiedKeepsNothing() = sessionTest { env ->
+        env.server.base.sendTotalCount = false
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        assertEquals(100, pubs.last.items.size, "fixture")
+        env.server.base.albums.clear()
+        env.server.base.lastScan = "2026-09-24T10:00:00Z"
+        session.reader.refreshEpoch()
+        advanceUntilIdle()
+        assertEquals(emptyList(), pubs.last.items.map { it.rawId }, "an album the server no longer has is still shown")
+        assertEquals(emptyList(), env.cache().listMembers(ListRequestSpec.of(grid).listKey), "a deleted album is still stored")
+        handle.close()
+    }
+
+    /**
+     * Fuzz over every entry point that moves a window — viewports with extreme values, paging both
+     * ways, refreshes, shrinks with an epoch change, reachability — never throws, records no
+     * uncaught failure and publishes no internal failure. The seed is fixed: a failure reproduces.
+     */
+    @Test
+    fun windowEntryPointFuzzNeverThrowsOrFailsInternally() = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val random = kotlin.random.Random(20260924)
+        val extremes = listOf(Int.MIN_VALUE, -1, 0, 1, 99, 100, 101, 249, 250, 10_000, Int.MAX_VALUE)
+        fun pick() = if (random.nextBoolean()) extremes.random(random) else random.nextInt(-50, 400)
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        val throws = mutableListOf<String>()
+        var shrinks = 0
+        repeat(400) { step ->
+            try {
+                when (random.nextInt(8)) {
+                    0, 1, 2 -> handle.setViewport(pick(), pick())
+                    3 -> handle.loadMore()
+                    4 -> handle.loadBefore()
+                    5 -> handle.refresh()
+                    6 -> {
+                        if (random.nextBoolean()) {
+                            val keep = random.nextInt(0, env.server.base.albums.size + 1)
+                            env.server.base.albums.subList(keep, env.server.base.albums.size).clear()
+                            shrinks += 1
+                        }
+                        env.server.base.lastScan = "2026-09-24T10:00:${(step % 60).toString().padStart(2, '0')}Z"
+                        session.reader.refreshEpoch()
+                    }
+                    7 -> session.setOnline(random.nextBoolean())
+                }
+            } catch (thrown: Throwable) {
+                throws += "step $step: $thrown"
+            }
+            advanceUntilIdle()
+        }
+        assertTrue(shrinks > 0 && pubs.all.size > 100, "fixture: the fuzz shrank the list and published (${pubs.all.size})")
+        val internal = pubs.all.count {
+            (it.value.freshness as? LibraryFreshness.Cached)?.reason == LibraryCachedReason.InternalFailure ||
+                it.value.freshness == LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure)
+        }
+        assertEquals(emptyList(), throws)
+        assertEquals(0, internal, "internal-failure publications")
+        assertTrue(session.reader.uncaughtFailures.isEmpty(), "uncaught: ${session.reader.uncaughtFailures}")
+        handle.close()
+    }
+
     // ---- Search rows carry playability ----------------------------------------------------------------
 
     /**

@@ -187,7 +187,11 @@ public class AppleLibraryFavouriteOutcome internal constructor(
  * - [epochKnown]: THIS call read the catalog epoch. After `reconnect`, the reader is online and has
  *   revalidated the visible screen. False when the reading failed — nothing after the reading
  *   ran, so a reader that was offline is still offline and no screen was revalidated, though the
- *   outbox flush before it may already have sent changes.
+ *   outbox flush before it may already have sent changes. False also with `internalFailure`, when
+ *   the reader itself failed: a reader that was offline is offline again — if the failure came
+ *   after it was back online, every screen was republished saying so — and one that was already
+ *   online stays online. `connect` while the reader is offline issues no request and is false with
+ *   `unreachable`.
  * - [serverReportsNoEpoch]: the reading had no scan stamp at all; the shell states this once for
  *   the account, not per list (§16.14). False when [epochKnown] is false.
  * - [discardedPendingChanges]: changes queued as a different username that this session's

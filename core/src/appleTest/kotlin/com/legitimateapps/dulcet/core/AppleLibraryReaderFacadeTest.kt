@@ -868,11 +868,15 @@ class AppleLibraryReaderFacadeTest {
      * The defect this pins kept all forty, through the favourites' change listeners, for the life
      * of the session. One exception is allowed, and bounded. In 13 of 200 rounds run on a fresh
      * database, exactly one closed subscription stayed reachable until the reader's thread stopped.
-     * Its listener was dropped, its core search was closed and, in the one round that checked,
-     * collected. Nothing the facade or the core keeps was holding it: it outlived dropping the
-     * composition, cancelling the reader scope's work and cancelling the main scope. The cause is
-     * not known. So at most one may outlive the collections here, it must be gone once the client
-     * has closed, and any such one is printed into the test's output rather than hidden.
+     * Its listener was dropped and its core search was closed; nothing the facade or the core keeps
+     * was holding it. What holds it is the reader's dispatcher: Kotlin/Native `newSingleThreadContext`
+     * (kotlinx.coroutines 1.11.0's `MultiWorkerDispatcher`) keeps its last task reachable. OBSERVED by
+     * A/B, in the same process under the same load: 20 of 150 rounds kept one on that dispatcher, 0
+     * of 150 on a dispatcher over a bare `Worker`. The exact field is ASSUMED to be the reusable
+     * continuation behind its `tasksQueue.receive()`. So at most one may outlive the collections
+     * here, and it must be gone once the reader's thread has stopped — after `close()` returns, which
+     * is why the last check waits for that — and any such one is printed into the test's output
+     * rather than hidden.
      */
     @OptIn(kotlin.native.runtime.NativeRuntimeApi::class, kotlin.experimental.ExperimentalNativeApi::class)
     @Test
@@ -901,12 +905,13 @@ class AppleLibraryReaderFacadeTest {
         if (kept.isNotEmpty()) println("closedSearchSubscriptionsAreReleased: $kept still reachable after 4 collections")
         assertTrue(kept.size <= 1, "closed search subscriptions still reachable: $kept")
 
-        c.close()
+        c.close() // waits until the reader's thread has stopped
+        assertTrue(c.client.isTerminated, "fixture: the reader's thread has stopped")
         repeat(4) {
             pumpFor(50.milliseconds)
             kotlin.native.runtime.GC.collect()
         }
-        assertEquals(emptyList<String>(), reachable(), "a closed search subscription outlived its client")
+        assertEquals(emptyList<String>(), reachable(), "a closed search subscription outlived the reader's thread")
     }
 
     // Opened and closed in their own frames, so no local on the test's stack keeps them reachable.
@@ -1167,6 +1172,82 @@ class AppleLibraryReaderFacadeTest {
         sub.updateQuery("Album 0001")
         pumpUntil("album rows") { search.last.query == "Album 0001" && search.last.rows.any { it.kind == "album" } }
         assertTrue(search.last.rows.filter { it.kind != "track" }.all { it.playability == null })
+    }
+
+    /**
+     * A subscription call queued before a close does nothing once that close has returned — no SQL,
+     * no request, no delivery — whether the subscriptions or the whole client closed. The control
+     * shows the same queued calls do all three when nothing closes.
+     */
+    @Test
+    fun aCallQueuedBeforeACloseDoesNothingOnceTheCloseHasReturned() = facadeTest { h ->
+        fun queuedThen(close: String): Pair<List<Int>, List<String>> {
+            val c = h.client()
+            val search = SearchRecorder()
+            val sub = c.client.subscribeSearch(search)
+            sub.updateQuery("Album 0001")
+            pumpUntil("the server's answer") { search.any { it.query == "Album 0001" && it.scope == "serverAndDevice" } }
+            val grid = WindowRecorder()
+            val window = c.client.subscribeLibraryWindow(GRID, grid)
+            pumpUntil("a live grid") { grid.any { it.freshness.kind == "live" } }
+            c.onReader { }
+            pumpFor(100.milliseconds)
+            val release = c.holdReader()
+            // The reader's thread is held, so these counts are stable until the release.
+            val statements = h.driver.statements.size
+            val requests = h.server.log.size
+            val delivered = search.all.size + grid.all.size
+            sub.updateQuery("Album 0002")
+            window.refresh()
+            when (close) {
+                "subscriptions" -> {
+                    sub.close()
+                    window.close()
+                }
+                "client" -> c.client.close()
+            }
+            release()
+            if (close == "client") c.close() else c.onReader { }
+            pumpFor(300.milliseconds)
+            val after = if (close == "client") {
+                listOf(h.driver.statements.size, h.server.log.size)
+            } else {
+                c.onReader { listOf(h.driver.statements.size, h.server.log.size) }
+            }
+            val counts = listOf(after[0] - statements, after[1] - requests, search.all.size + grid.all.size - delivered)
+            val ran = if (close == "client") h.driver.statements.drop(statements) else c.onReader { h.driver.statements.drop(statements) }
+            c.close()
+            return counts to ran
+        }
+        val (control, _) = queuedThen("none")
+        assertTrue(control.all { it > 0 }, "control: the queued calls ran no SQL, sent nothing or delivered nothing: $control")
+        for (close in listOf("subscriptions", "client")) {
+            val (counts, ran) = queuedThen(close)
+            assertEquals(listOf(0, 0, 0), counts, "[SQL, requests, deliveries] after the $close closed; SQL: $ran")
+        }
+    }
+
+    /**
+     * While the reader is offline, `connect` reads the device only: no request, and a completion
+     * that says the epoch is not known because the server is unreachable. The epoch is read by the
+     * reconnect the next reachable report requests.
+     */
+    @Test
+    fun connectWhileOfflineIssuesNoRequest() = facadeTest { h ->
+        val c = h.client()
+        val connected = AtomicReference<AppleLibraryReaderConnection?>(null)
+        c.client.connect { connected.store(it) }
+        pumpUntil("connect") { connected.load() != null }
+        c.client.setOnline(false)
+        val requests = c.onReader { h.server.log.size }
+        val offline = AtomicReference<AppleLibraryReaderConnection?>(null)
+        c.client.connect { offline.store(it) }
+        pumpUntil("the offline connect") { offline.load() != null }
+        assertEquals(emptyList<String>(), c.onReader { h.server.endpoints().drop(requests) }, "connect read the server while offline")
+        assertEquals(listOf<Any?>(false, "unreachable"), listOf(offline.load()?.epochKnown, offline.load()?.errorKind))
+        c.client.setOnline(true)
+        waitOnReader(c, "the reconnect") { c.onReader { h.sessions.last().reader.online } }
+        assertEquals(listOf("getScanStatus", "getMusicFolders"), c.onReader { h.server.endpoints().drop(requests) })
     }
 
     // ---- Harness -----------------------------------------------------------------------------------------------
