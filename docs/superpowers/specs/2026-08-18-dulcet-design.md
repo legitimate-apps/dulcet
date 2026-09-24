@@ -6825,7 +6825,65 @@ fresh disposable server before landing; items 11–14 are what that review chang
     candidate the person is asked about. The seventh round's test that guarded the union now expects
     that question. (be) **Rebased onto `main`.** Rebased onto `main` at 7277d34b (#145): one textual conflict, in `docs/CONFORMANCE.md`, where `main` had added the CONF-09b evidence-boundary sections after CONF-87; resolved by keeping them whole and placing the CONF-88..91 rows after CONF-87 in the table. This record merged without conflict, `main`'s revisions above and this item inside Revision 104. `main`'s schema is still 6, so this branch's `6.sqm` and schema 7 stand. (bf) **Failing first.** The 7 new tests in `PlaylistEditingEighthReviewTest` and the flipped union guard, run against the seventh round's code (b6f40423): 4 of 24 fail on the JVM and the same 4 on `macosArm64` — p6 and p7 (the tombstone's own lookup failing out, and refused: not counted, not told), p4 (sent a third time, 3 creates for 2), and the flipped guard (the person not asked). p2, p3 and p5 pin behaviour both rounds share, and p8 is the control that a kept create's refused lookup is told. (bg)
     **Mutation run.** 18 compiling mutants against a baseline of 296 tests that all pass: 17 killed. The reviewer's M1 and M10 made the last-failure arm tell and count a tombstone's failure — which is now the code — so their inverses were run instead: that arm silencing a tombstone (killed by p6) and not counting it (p6's refused count); M2, silence taken only from the proven-unsent set (p2); the seventh round's clause restored (p7); the refused arm silencing a tombstone (p7); the set ignored; the union restored and the re-send's listing alone (p4 and the flipped guard, each); the restore arm unreachable, the re-send's name kept, its songs kept; R8; the removed tombstone not remembered, every refused create treated as deleted, a deleted create's refusal still counted; and two carried from the sixth round. The seventh round's survivor, dropping the first send's own listing, no longer exists: that listing is now all the restore keeps, and both of its alternatives are killed. 1 survives: the seventh round's check put back on the last-failure arm, equivalent by the argument in (bc) — a row still current there is never a deleted create's non-tombstone, and the tombstone's own failure no longer satisfies the check. A control that does not compile is counted as nothing. (bh) **Live.** CONF-88..91 once on the JVM against one fresh disposable Navidrome 0.63.2, 6 of 6, the server holding no playlist before and after; it was then stopped and its data deleted. Every suite run again from nothing: 639 `macosArm64` and 736 Android host tests, none failing, and the Android app (dev and prod) and TV unit tests. The first JVM run failed 3 of 637, all wall-clock deadline tests in host resolution and library browsing, which this change does not touch, with the host's load average near 157; run again at a load near 30, those two classes passed 3 times of 3 and the whole JVM suite passed 637 of 637. Every target compiles: iOS, macOS, the iOS simulator tests, the conformance JVM tests, and the Android app (dev and prod) and TV. The migration gate and `--check` pass.
-
+20. **Found while implementing R2a-core (the Apple facade over the reader,
+    `AppleLibraryReaderFacade.kt`).** The reader records the thread that constructs it and checks it at
+    every entry point, so the facade cannot build the session on the caller's thread and then hop: it
+    builds the session ON the reader's thread (`newLibraryReaderDispatcher`), from its constructor,
+    without waiting, and every entry point answers a session that could not be built with a closed kind
+    (`internalFailure`, or `notRecorded` for a change) — the build's exception text is dropped, because
+    it may carry the address. A home screen is one `openHome(listOf(row))` per `homeRow` subscription,
+    so each row has its own handle and publishes on its own (CONF-86). Two properties of §16.18's Apple
+    paragraph hold only because of where the facade reads state. "Nothing is delivered after `close()`"
+    needs the listener, and the client's closed flag, read at DELIVERY on the main thread: a
+    publication the reader built before the close is already queued for the main thread when the close
+    runs, and a check made when it was built passes. The first cut read only the subscription's
+    listener, which a client-level close cleared later on the reader's thread, so a closed client still
+    delivered what was queued; a test now queues a window frame and a search's rows, closes the client
+    and receives neither. The guarantee holds for a close made on the main thread; from another thread
+    a delivery already running may finish. And `setViewport(first, last)` indexes refer to the
+    publication the shell has RECEIVED, while the reader may already have emitted a newer one — a
+    prepended page moves every index by a page — so the facade carries the range over by item identity
+    (kind and opaque id) to the reader's latest publication before the reader rebases or looks ahead
+    around it.
+21. **Two core gaps the facade works around, recommended to the core so R3 inherits them.**
+    `LibraryReader.reconnect()` sets `online` itself, and open searches re-run only when
+    `LibraryReaderSession.setOnline` sees reachability CHANGE — so a caller that reconnects without
+    first reporting reachability, or reports it afterwards, leaves an offline search `deviceOffline`
+    until the next keystroke. The facade's `reconnect` calls the session's `setOnline(true)` before the
+    reader's `reconnect()`. And `LibraryFavourites.pendingCount()` answers a failed read with 0
+    (`guarded(0L)`), which is the one wrong answer for the sign-out offer (§14.7) — it tells the person
+    nothing will be lost; the facade reads the outbox's own count and completes with a null count and
+    an error kind instead. Both belong in the core; the facade's workarounds should go when the core
+    changes. **Also recorded:** playability is computed per track only — album, artist, playlist and
+    search rows carry none, so `playability` is null for them rather than a guess. The production
+    composition wires no download source (downloads join the reader in R4), so nothing crosses this
+    facade as `downloaded` yet. That, not a rule in the facade, is what keeps tvOS to `streamable` and
+    `unavailableOffline`: R4 must give tvOS no download source rather than rely on this. The reader's
+    error vocabulary keeps the existing facades' words and splits `invalidCredentials`/`forbidden`,
+    `serverBusy` (§18.12) and `notFound` (code 70), and adds the facade's own `internalFailure` and
+    `closed`. A transport that throws something other than a `DomainError` is mapped by the core's
+    `mapAccountConnectionFailure` to `unreachable`, so a defect in the transport reads to the person as
+    a network failure — correct for the boundary (nothing crosses, no text leaks), imprecise as copy.
+    **ASSUMED, from reading the code only:** a list opened offline and never read, then told
+    `setOnline(true)` without a `reconnect()`, republishes `loading` with no read in flight until the
+    next viewport change or refresh.
+22. **Evidence for R2a-core, and what it does not reach.** OBSERVED 2026-09-24 on macOS arm64:
+    `AppleLibraryReaderFacadeTest` (23 tests) drives the production `LibraryReaderSession` over the
+    core's `SessionTestServer` and `FakeReaderServer`, on the reader's real thread, with every delivery
+    made through the real main dispatcher: the tests run on the main thread and pump its run loop. The
+    one other facade test in `appleTest`, the playback queue's, delivers through an inline dispatcher,
+    which cannot tell a main-thread delivery from an inline one. Seventeen mutants of the facade's
+    rules were each compiled and run against a green unmutated baseline; sixteen were killed. The
+    survivor removes the client-level close guard, and survives because every step of the close
+    tolerates being repeated — the guard is not what makes `close()` idempotent; two tests call it
+    twice. The generated Objective-C header gained sixteen classes and three listener protocols, and
+    its additions are final classes, primitives, `NSString`, `NSArray`s of those classes, boxed numbers
+    for nullable counts and epoch-millis, the listener protocols, and completion blocks that take one
+    of the classes (§7.2's operation, as the existing facades use). **ASSUMED:** the public
+    constructor's own composition — the app's database opened by name and the live transport — is
+    compiled but run by no test, which inject the composition over a private in-memory database; the
+    Swift half is the first code that runs it. No Swift copy test exists yet (§7.1); that is the
+    DulcetKit brief's.
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
 ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on
