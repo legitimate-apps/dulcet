@@ -22,6 +22,11 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_17)
         }
         withHostTestBuilder {}.configure {}
+        // The same common suite, instrumented on an Android or Android TV emulator, so a playback
+        // cell's declared conformance executes on the platform runtime and not only on the host JVM.
+        withDeviceTestBuilder { sourceSetTreeName = "test" }.configure {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     macosArm64()
@@ -66,6 +71,13 @@ kotlin {
             // the same way the JVM actual does. Android's production driver needs a Context, so
             // these host-only resources are supplied by this module rather than built in core.
             implementation(libs.okio)
+        }
+        getByName("androidDeviceTest").dependencies {
+            implementation(libs.ktor.client.cio)
+            implementation(libs.sqldelight.android.driver)
+            implementation(libs.okio)
+            implementation(libs.androidx.test.runner)
+            implementation(libs.androidx.test.ext.junit)
         }
         appleTest.dependencies {
             implementation(libs.ktor.client.darwin)

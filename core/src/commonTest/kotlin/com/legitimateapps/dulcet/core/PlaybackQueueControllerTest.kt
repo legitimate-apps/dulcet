@@ -281,6 +281,28 @@ class PlaybackQueueControllerTest {
         fixture.driver.close()
     }
 
+    @Test
+    fun jumpToStartsTheNamedEntryOfADuplicatedSongAndKeepsEveryIdentity() {
+        val fixture = fixture()
+        // "b" appears twice. A jump addressed by song or by a stale index would be ambiguous.
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "b", "c", "b")))
+        val before = started.snapshot.entries.map { it.queueEntryId }
+        val secondB = started.snapshot.entries[3].queueEntryId
+
+        val jumped = fixture.controller.jumpTo(secondB)
+
+        assertEquals("b", jumped.startDirective?.itemId?.rawId)
+        assertEquals(secondB, jumped.startDirective?.queueEntryId)
+        assertEquals(3, jumped.snapshot.currentIndex)
+        assertEquals(before, jumped.snapshot.entries.map { it.queueEntryId })
+        assertNotEquals(started.startDirective?.playbackSessionId, jumped.startDirective?.playbackSessionId)
+
+        val unknown = fixture.controller.jumpTo(QueueEntryId("queue-entry:absent"))
+        assertNull(unknown.startDirective)
+        assertEquals(3, unknown.snapshot.currentIndex)
+        fixture.driver.close()
+    }
+
     private fun fixture(shuffleSeed: Int = 1): Fixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database

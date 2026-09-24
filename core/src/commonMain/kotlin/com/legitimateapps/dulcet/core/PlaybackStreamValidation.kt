@@ -121,6 +121,10 @@ internal object PlaybackStreamValidator {
             )
         }
 
+        if (envelope is SubsonicBinaryEnvelopeInspection.Unknown) {
+            return unexpectedSuccessfulPayload(response, DomainError.Protocol.UnexpectedBinary)
+        }
+
         val rule = AUDIO_SIGNATURE_RULES.getValue(expectedContainer)
         val observedContentType = response.headers.contentType.toObservedPlaybackContentType()
         if (observedContentType !in rule.acceptedContentTypes) {

@@ -10,11 +10,24 @@
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- In-app playback entries reach the same activity through a non-exported alias, so no
+             other application can start playback: only this package can resolve these actions. -->
+        <activity-alias
+            android:name=".PlaybackEntry"
+            android:exported="false"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="com.legitimateapps.dulcet.action.PLAY_TRACK" />
+                <action android:name="com.legitimateapps.dulcet.action.SHOW_NOW_PLAYING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
     </application>
 </manifest>
