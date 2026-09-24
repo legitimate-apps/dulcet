@@ -13,25 +13,17 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchRow
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.DomainError
-import com.legitimateapps.dulcet.core.SearchPageRequest
-import com.legitimateapps.dulcet.core.SearchPageResult
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
-import com.legitimateapps.dulcet.core.ServerSearch
-import com.legitimateapps.dulcet.core.mergeSearchResults
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.MainScope
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 public data class SearchAccount(
     val providerInstanceId: String,
@@ -48,118 +40,85 @@ public data class SearchAccount(
     override fun toString(): String = "SearchAccount(<redacted>)"
 }
 
+/**
+ * What a search screen draws. [query] is the text as typed, updated on every keystroke; [rows] and
+ * [scope] are the core's latest publication (§16.15), which may answer a slightly older keystroke
+ * until the next one arrives. The scope is never inferred here: it is the core's.
+ */
 public data class SearchUiState(
     val query: String = "",
-    val results: List<SearchResultItem> = emptyList(),
-    val isLoading: Boolean = false,
-    val error: DomainError? = null,
+    val rows: List<AndroidLibrarySearchRow> = emptyList(),
+    /** Null before the first publication. */
+    val scope: AndroidLibrarySearchScope? = null,
+    /** The query [rows] answer. */
+    val answered: String = "",
 ) {
+    val results: List<SearchResultItem> get() = rows.map { it.item }
+
+    /** The server's answer is still coming for a query long enough to ask it. */
+    val isLoading: Boolean
+        get() = scope == AndroidLibrarySearchScope.DeviceWhileServerPending && query.trim().length >= MINIMUM_SERVER_QUERY_LENGTH
+
+    val error: DomainError? get() = (scope as? AndroidLibrarySearchScope.DeviceServerFailed)?.error
+
     override fun toString(): String =
-        "SearchUiState(query=<redacted>, results=${results.size}, " +
-            "isLoading=$isLoading, error=$error)"
-}
-
-/** A local implementation must return its already-ranked instant result set. */
-public fun interface LocalSearchSource {
-    public suspend fun search(query: String): List<SearchResultItem>
-}
-
-public interface SearchDataSource {
-    public suspend fun localResults(query: String): List<SearchResultItem>
-    public suspend fun serverResults(account: SearchAccount, query: String): SearchPageResult
-}
-
-public class CoreSearchDataSource(
-    private val localSource: LocalSearchSource = LocalSearchSource { emptyList() },
-    private val serverSearch: ServerSearch = ServerSearch(),
-) : SearchDataSource {
-    override suspend fun localResults(query: String): List<SearchResultItem> =
-        localSource.search(query)
-
-    override suspend fun serverResults(account: SearchAccount, query: String): SearchPageResult =
-        serverSearch.search(
-            SearchPageRequest(
-                providerInstanceId = account.providerInstanceId,
-                normalizedBaseUrl = account.normalizedBaseUrl,
-                username = account.username,
-                password = account.password,
-                allowLocalHttp = account.allowLocalHttp,
-                query = query,
-                artistCount = PAGE_SIZE,
-                artistOffset = 0,
-                albumCount = PAGE_SIZE,
-                albumOffset = 0,
-                trackCount = PAGE_SIZE,
-                trackOffset = 0,
-            ),
-        )
+        "SearchUiState(query=<redacted>, results=${rows.size}, scope=${scope?.let { it::class.simpleName }})"
 
     private companion object {
-        const val PAGE_SIZE = 30
+        /** The core asks the server from two characters (§18.1); this only decides the indicator. */
+        const val MINIMUM_SERVER_QUERY_LENGTH = 2
     }
 }
 
+/** A search screen's state, for tests: rows carry catalog ids and titles, never account data. */
+public val SearchObservation: androidx.compose.ui.semantics.SemanticsPropertyKey<SearchUiState> =
+    androidx.compose.ui.semantics.SemanticsPropertyKey("SearchObservation")
+
 /**
- * Shared mobile/TV search state. Local rows publish immediately; the ranked server page arrives
- * after the contract debounce and replaces matching opaque IDs through the core merge function.
+ * Where a search screen's publications come from: the account's reader in production
+ * ([AndroidLibrarySearchSource]). The core owns the debounce, the two-character minimum, the merge,
+ * the ranking and the scope; a source only delivers its publications, on the main thread.
  */
+public fun interface SearchSource {
+    public fun open(listener: (AndroidLibrarySearchPublication) -> Unit): SearchSourceHandle
+}
+
+public interface SearchSourceHandle {
+    public fun updateQuery(text: String)
+    public fun refresh()
+    public fun close()
+}
+
+/** Shared phone/TV search state over one [SearchSource]. */
 public class SearchPresenter(
     private val account: SearchAccount,
-    private val dataSource: SearchDataSource = CoreSearchDataSource(),
-    private val serverDebounce: Duration = 250.milliseconds,
-    private val scope: CoroutineScope = MainScope(),
+    source: SearchSource,
 ) : AutoCloseable {
     private val mutableState = MutableStateFlow(SearchUiState())
     public val state: StateFlow<SearchUiState> = mutableState.asStateFlow()
+    private var closed = false
 
-    private var generation: Long = 0
-    private var searchJob: Job? = null
-
-    public fun updateQuery(value: String) {
-        generation += 1
-        val submittedGeneration = generation
-        searchJob?.cancel()
-        mutableState.value = SearchUiState(query = value)
-        val query = value.trim()
-        if (query.isEmpty()) return
-
-        searchJob = scope.launch {
-            val local = dataSource.localResults(query)
-            if (submittedGeneration != generation) return@launch
-            mutableState.value = SearchUiState(query = value, results = local)
-
-            if (query.length < MINIMUM_SERVER_QUERY_LENGTH) return@launch
-            delay(serverDebounce)
-            if (submittedGeneration != generation) return@launch
-            mutableState.value = mutableState.value.copy(isLoading = true, error = null)
-
-            when (val result = dataSource.serverResults(account, query)) {
-                is SearchPageResult.Loaded -> if (submittedGeneration == generation) {
-                    mutableState.value = SearchUiState(
-                        query = value,
-                        results = mergeSearchResults(local, result.page.results),
-                    )
-                }
-                is SearchPageResult.Failed -> if (
-                    submittedGeneration == generation &&
-                    result.error != DomainError.Transport.Cancelled
-                ) {
-                    mutableState.value = mutableState.value.copy(
-                        isLoading = false,
-                        error = result.error,
-                    )
-                }
-            }
+    private val handle: SearchSourceHandle = source.open { publication ->
+        if (!closed) {
+            mutableState.update { it.copy(rows = publication.rows, scope = publication.scope, answered = publication.query) }
         }
     }
 
-    override fun close() {
-        searchJob?.cancel()
-        scope.cancel()
+    public fun updateQuery(value: String) {
+        if (closed) return
+        mutableState.update { it.copy(query = value) }
+        handle.updateQuery(value)
     }
 
-    private companion object {
-        const val MINIMUM_SERVER_QUERY_LENGTH = 2
+    /** Runs the current query again. */
+    public fun refresh() {
+        if (!closed) handle.refresh()
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        handle.close()
     }
 }
 
@@ -214,7 +173,7 @@ public object ProductionSearchHostDependencies : SearchHostDependencies {
         }
 
     override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter =
-        SearchPresenter(account, CoreSearchDataSource(AndroidLibrarySearchSource(context, account.providerInstanceId)))
+        SearchPresenter(account, AndroidLibrarySearchSource(context, account))
 
     override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
 }

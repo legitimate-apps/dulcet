@@ -1,59 +1,170 @@
 package com.legitimateapps.dulcet.search.conformance
 
-import android.util.Base64
+import android.app.Application
+import android.net.ConnectivityManager
+import android.net.NetworkInfo
+import android.os.Looper
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
-import java.io.ByteArrayOutputStream
-import java.io.DataOutputStream
-import java.net.ConnectException
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.URI
+import java.net.URLEncoder
+import java.security.MessageDigest
+import java.security.SecureRandom
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.rules.ExternalResource
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import kotlin.test.*
 
-class ProductionLibraryEnvironment : ExternalResource() {
-    override fun before() {
-        check(System.getenv("DULCET_CONFORMANCE_DISPOSABLE") == "true" &&
-            System.getenv("DULCET_CONFORMANCE_BASE_URL") == "http://127.0.0.1:4533") {
-            "Live library tests require the disposable loopback runner"
-        }
-        val app = RuntimeEnvironment.getApplication()
-        assertFalse(app is SearchHostDependencyOwner)
-        // A real refusal is a failure, never an assumption/skip.
-        try { Socket().use { it.connect(InetSocketAddress("127.0.0.1", 4533), 1000) } }
-        catch (_: Exception) { error("Disposable library server must be reachable (endpoint redacted)") }
-        app.deleteDatabase("dulcet.db")
-        AndroidAccountCredentialStore(app).save("Disposable", "http://127.0.0.1:4533",
-            "dulcet-admin", "dulcet-ci-canary-password", true)
+/** The disposable loopback server this run was given; anything else fails setup, never skips. */
+internal fun disposableBaseUrl(): String {
+    check(System.getenv("DULCET_CONFORMANCE_DISPOSABLE") == "true") {
+        "Live library tests require the disposable conformance runner"
     }
+    val url = checkNotNull(System.getenv("DULCET_CONFORMANCE_BASE_URL")) { "No disposable server address was given" }
+    check(Regex("""http://127\.0\.0\.1:\d{2,5}""").matches(url)) {
+        "Live library tests run only against a disposable server on this machine's loopback"
+    }
+    val port = url.substringAfterLast(':').toInt()
+    // A refusal is a failure, never an assumption or a skip.
+    try {
+        Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 1000) }
+    } catch (_: Exception) {
+        error("Disposable library server must be reachable (endpoint redacted)")
+    }
+    return url
+}
 
-    fun requireRefusalAndPointSavedAccountOffline() {
-        try {
-            Socket().use { it.connect(InetSocketAddress("127.0.0.1", 1), 500) }
-            fail("Offline endpoint unexpectedly accepted a connection")
-        } catch (_: ConnectException) {
-            println("LIBRARY_OFFLINE_CONTROL connection-refused=true")
+/** Closes the process's reader and waits until its thread has stopped: a cold start follows. */
+internal fun closeProcessReader() {
+    var done = false
+    val started = kotlin.time.TimeSource.Monotonic.markNow()
+    AndroidLibraryReader.closeCurrent { done = true }
+    repeat(3_000) {
+        if (done) {
+            println("READER_CLOSED waited-ms=${started.elapsedNow().inWholeMilliseconds}")
+            return
         }
+        shadowOf(Looper.getMainLooper()).idle()
+        Thread.sleep(5)
+    }
+    error("The reader's thread did not stop")
+}
+
+/**
+ * The production app against the disposable server, through a [CountingProxy]: the saved account
+ * points at the proxy, which forwards every request unchanged and counts it. Nothing in the app is
+ * replaced — the reader, the session, the transport and the database are the production ones.
+ */
+class ProductionLibraryEnvironment : ExternalResource() {
+    lateinit var proxy: CountingProxy
+        private set
+    lateinit var server: DisposableServer
+        private set
+    val network: PlatformNetwork by lazy { PlatformNetwork(RuntimeEnvironment.getApplication()) }
+
+    override fun before() {
+        val target = disposableBaseUrl()
         val app = RuntimeEnvironment.getApplication()
-        val account = assertNotNull(AndroidAccountCredentialStore(app).load())
-        // Preserve account identity and its database while changing only the saved endpoint.
-        // This seeds the real encrypted record format; no search/library dependency is replaced.
-        val bytes = ByteArrayOutputStream().apply {
-            DataOutputStream(this).use {
-                it.writeInt(1); it.writeUTF(account.serverName); it.writeUTF("http://127.0.0.1:1")
-                it.writeUTF(account.username); it.writeUTF(account.password); it.writeBoolean(true)
-            }
-        }.toByteArray()
-        val encrypted = HostCredentialCipher().encrypt(account.id, bytes)
-        app.getSharedPreferences(AndroidAccountCredentialStore.PREFERENCES_NAME, 0).edit()
-            .putString("account.${account.id}", Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit()
-        assertEquals("http://127.0.0.1:1", AndroidAccountCredentialStore(app).load()?.serverUrl)
+        assertFalse(app is SearchHostDependencyOwner, "Application must not replace any dependency")
+        closeProcessReader()
+        app.deleteDatabase("dulcet.db")
+        server = DisposableServer(target)
+        // Favourites are per-user server state; a run starts from none, whatever an earlier run left.
+        server.unstarEverything()
+        proxy = CountingProxy(target)
+        AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
     }
 
     override fun after() {
         val app = RuntimeEnvironment.getApplication()
+        runCatching { network.restoreIfLost() }
+        runCatching { closeProcessReader() }
+        proxy.close()
+        runCatching { server.unstarEverything() }
         AndroidAccountCredentialStore(app).delete()
         app.deleteDatabase("dulcet.db")
+    }
+
+    companion object {
+        const val USERNAME = "dulcet-admin"
+        const val PASSWORD = "dulcet-ci-canary-password"
+    }
+}
+
+/**
+ * The platform's reachability, driven the way Android reports it: the default network goes away
+ * (no active network, `onLost`) and comes back (`onAvailable`) to every registered default-network
+ * callback — the production session's among them.
+ */
+class PlatformNetwork(app: Application) {
+    private val manager = app.getSystemService(ConnectivityManager::class.java)
+    private val shadow = shadowOf(manager)
+    private var saved: NetworkInfo? = null
+    private var lost = false
+
+    fun lose() {
+        check(!lost)
+        val network = checkNotNull(manager.activeNetwork) { "setup: the host must start with a network" }
+        check(shadow.networkCallbacks.isNotEmpty()) { "setup: the session registered no network callback" }
+        saved = manager.activeNetworkInfo
+        shadow.setActiveNetworkInfo(null)
+        check(manager.activeNetwork == null) { "setup: the platform still reports a network" }
+        lost = true
+        shadow.networkCallbacks.toList().forEach { it.onLost(network) }
+    }
+
+    fun restore() {
+        check(lost)
+        shadow.setActiveNetworkInfo(saved)
+        val network = checkNotNull(manager.activeNetwork) { "setup: the platform reports no network" }
+        lost = false
+        shadow.networkCallbacks.toList().forEach { it.onAvailable(network) }
+    }
+
+    internal fun restoreIfLost() {
+        if (lost) {
+            shadow.setActiveNetworkInfo(saved)
+            lost = false
+        }
+    }
+}
+
+/**
+ * Direct reads of the disposable server, bypassing the app entirely: the independent instrument
+ * for per-user state the app claims to have changed.
+ */
+class DisposableServer(private val baseUrl: String) {
+    fun get(endpoint: String, parameters: Map<String, String> = emptyMap()): JSONObject {
+        val salt = ByteArray(16).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+        val token = MessageDigest.getInstance("MD5").digest((ProductionLibraryEnvironment.PASSWORD + salt).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val query = (mapOf("u" to ProductionLibraryEnvironment.USERNAME, "t" to token, "s" to salt, "v" to "1.16.1",
+            "c" to "dulcet-conformance", "f" to "json") + parameters)
+            .entries.joinToString("&") { (key, value) -> "$key=${URLEncoder.encode(value, "UTF-8")}" }
+        val connection = URI("$baseUrl/rest/$endpoint?$query").toURL().openConnection() as HttpURLConnection
+        try {
+            val body = connection.inputStream.use { String(it.readBytes(), Charsets.UTF_8) }
+            val response = JSONObject(body).getJSONObject("subsonic-response")
+            check(response.getString("status") == "ok") { "$endpoint failed on the disposable server" }
+            return response
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun albumStarred(albumId: String): Boolean = get("getAlbum", mapOf("id" to albumId)).getJSONObject("album").has("starred")
+
+    fun unstarEverything() {
+        val starred = get("getStarred2").optJSONObject("starred2") ?: return
+        for (kind in listOf("artist", "album", "song")) {
+            val items = starred.optJSONArray(kind) ?: JSONArray()
+            for (index in 0 until items.length()) get("unstar", mapOf("id" to items.getJSONObject(index).getString("id")))
+        }
     }
 }

@@ -29,13 +29,21 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.searchScopeLabel
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchIntentRouter
+import com.legitimateapps.dulcet.search.SearchObservation
+import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
 
 @Composable
@@ -77,11 +85,16 @@ internal fun MobileSearchScreen(
                 shape = RoundedCornerShape(28.dp),
                 modifier = Modifier.fillMaxWidth().testTag("search.query"),
             )
+            // Where these results come from (§16.15): the core's scope, in the shared words. A server
+            // that failed or cannot be reached leaves the device's rows showing, labelled.
+            val scopeLine = libraryResources().searchScopeLabel(state.scope.takeIf { state.query.isNotBlank() })
+            if (scopeLine != null) Text(
+                scopeLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("search.scope"),
+            )
             when {
-                state.error != null -> Text(
-                    stringResource(R.string.search_failed),
-                    modifier = Modifier.testTag("search.error"),
-                )
                 state.isLoading && state.results.isEmpty() -> Text(
                     stringResource(R.string.search_loading),
                     modifier = Modifier.testTag("search.loading"),
@@ -92,15 +105,22 @@ internal fun MobileSearchScreen(
                 )
             }
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results"),
+                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
+                    .semantics { this[SearchObservation] = state },
             ) {
-                itemsIndexed(state.results) { index, result ->
+                itemsIndexed(state.rows) { index, row ->
+                    val result = row.item
+                    val playable = row.playability != AndroidLibraryPlayability.UnavailableOffline
                     MobileSearchResult(
                         result = result,
                         index = index,
                         account = account,
+                        // Only beside the server's rows is "on this device" news; the scope line covers the rest.
+                        deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
+                            state.scope == AndroidLibrarySearchScope.ServerAndDevice,
+                        unavailableOffline = !playable,
                         onActivate = { router.activate(result) },
-                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track }?.let { play -> { play(result) } },
+                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { play(result) } },
                     )
                 }
             }
@@ -113,9 +133,12 @@ private fun MobileSearchResult(
     result: SearchResultItem,
     index: Int,
     account: SearchAccount?,
+    deviceOnly: Boolean,
+    unavailableOffline: Boolean,
     onActivate: () -> Unit,
     onPlay: (() -> Unit)?,
 ) {
+    val resources = libraryResources()
     val kind = stringResource(when (result.type) {
         SearchResultType.Artist -> R.string.search_kind_artist
         SearchResultType.Album -> R.string.search_kind_album
@@ -125,7 +148,11 @@ private fun MobileSearchResult(
     ListItem(
         headlineContent = { Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            Text(listOf(kind, credits).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
+            val notes = listOfNotNull(
+                resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
+                resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
+            )
+            Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
         leadingContent = {

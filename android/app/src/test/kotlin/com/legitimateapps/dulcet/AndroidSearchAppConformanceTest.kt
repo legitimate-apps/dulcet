@@ -8,14 +8,18 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchRow
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AudioContainer
 import com.legitimateapps.dulcet.core.ProviderItemId
-import com.legitimateapps.dulcet.core.SearchPage
-import com.legitimateapps.dulcet.core.SearchPageResult
+import com.legitimateapps.dulcet.core.mergeSearchResults
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.search.SearchAccount
-import com.legitimateapps.dulcet.search.SearchDataSource
+import com.legitimateapps.dulcet.search.SearchSource
+import com.legitimateapps.dulcet.search.SearchSourceHandle
 import com.legitimateapps.dulcet.search.SearchDetailActivity
 import com.legitimateapps.dulcet.search.SearchDetailIntent
 import com.legitimateapps.dulcet.search.SearchIntentRouter
@@ -25,10 +29,7 @@ import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import org.junit.Rule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -79,41 +80,47 @@ class AndroidSearchTestApplication : Application(), SearchHostDependencyOwner {
     override val searchHostDependencies: SearchHostDependencies = object : SearchHostDependencies {
         override fun loadAccount(context: Context): SearchAccount = account
 
-        override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter = SearchPresenter(
-            account = account,
-            dataSource = RankedMergedFixtureSearchDataSource(),
-            serverDebounce = Duration.ZERO,
-            scope = CoroutineScope(Dispatchers.Unconfined),
-        ).also { presenter = it }
+        override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter =
+            SearchPresenter(account, RankedMergedFixtureSearchSource()).also { presenter = it }
 
         override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
     }
 }
 
-internal class RankedMergedFixtureSearchDataSource : SearchDataSource {
-    override suspend fun localResults(query: String): List<SearchResultItem> = listOf(
+/**
+ * A fixture for the SCREEN, not for search: it publishes as the core does — the device's rows at once
+ * under `deviceWhileServerPending`, then the core's own merge of device and server rows under
+ * `serverAndDevice` — so a screen test sees the two publications a real keystroke produces. The
+ * core's search itself is exercised by the production tests against the disposable server.
+ */
+internal class RankedMergedFixtureSearchSource : SearchSource {
+    private val device = listOf(
         searchResult("album::7f-opaque", "Stale Echo", SearchResultType.Album),
         searchResult("artist::f4-opaque", "Echo Ensemble", SearchResultType.Artist),
     )
+    private val server = listOf(
+        searchResult("album::7f-opaque", "Echo", SearchResultType.Album),
+        searchResult("track::a9-opaque", "Echo Track", SearchResultType.Track),
+    )
 
-    override suspend fun serverResults(account: SearchAccount, query: String): SearchPageResult =
-        SearchPageResult.Loaded(
-            SearchPage(
-                results = listOf(
-                    searchResult("album::7f-opaque", "Echo", SearchResultType.Album),
-                    searchResult("track::a9-opaque", "Echo Track", SearchResultType.Track),
-                ),
-                artistResultCount = 0,
-                albumResultCount = 1,
-                trackResultCount = 1,
-                artistConsumedRowCount = 0,
-                albumConsumedRowCount = 1,
-                trackConsumedRowCount = 1,
-                artistHasMore = false,
-                albumHasMore = false,
-                trackHasMore = false,
-            ),
-        )
+    override fun open(listener: (AndroidLibrarySearchPublication) -> Unit): SearchSourceHandle = object : SearchSourceHandle {
+        private var sequence = 0
+
+        override fun updateQuery(text: String) {
+            listener(AndroidLibrarySearchPublication(text, ++sequence, AndroidLibrarySearchScope.DeviceWhileServerPending,
+                device.map { AndroidLibrarySearchRow(it, AndroidLibrarySearchRowSource.Device, null, null, null) }))
+            val serverIds = server.map { it.id }.toSet()
+            val merged = mergeSearchResults(device, server).map { item ->
+                val source = if (item.id in serverIds) AndroidLibrarySearchRowSource.Server else AndroidLibrarySearchRowSource.Device
+                AndroidLibrarySearchRow(item, source, null, null, null)
+            }
+            listener(AndroidLibrarySearchPublication(text, ++sequence, AndroidLibrarySearchScope.ServerAndDevice, merged))
+        }
+
+        override fun refresh() = Unit
+
+        override fun close() = Unit
+    }
 }
 
 internal fun searchResult(rawId: String, title: String, type: SearchResultType): SearchResultItem =

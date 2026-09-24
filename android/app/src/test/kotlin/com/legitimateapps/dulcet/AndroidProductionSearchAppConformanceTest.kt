@@ -34,9 +34,11 @@ class AndroidProductionSearchAppConformanceTest {
             compose.onAllNodesWithText("Dulcet Health Probe", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+        val serverOnly = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+            .assertMergedOrder(environment)
         compose.onNodeWithTag("search.result.0").assertTextContains(environment.overlap.title)
         compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
-        compose.onNodeWithTag("search.result.2").assertTextContains(environment.serverOnly.title)
+        compose.onNodeWithTag("search.result.2").assertTextContains(serverOnly.title)
         compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet Health Probe")
         assertNull(shadowOf(app).nextStartedActivity, "Rendering must not activate a result")
         compose.onNodeWithTag("search.result.1").performClick()

@@ -9,8 +9,6 @@ import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchDetailActivity
 import com.legitimateapps.dulcet.search.SearchIntentRouter
 import com.legitimateapps.dulcet.search.SearchPresenter
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import org.junit.Rule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -19,7 +17,6 @@ import org.robolectric.Shadows.shadowOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 class MobileSearchPlayTest {
@@ -28,8 +25,7 @@ class MobileSearchPlayTest {
     @Test fun aTrackResultPlaysFromItsButtonWhileTheRowStillOpensDetail() {
         val app = RuntimeEnvironment.getApplication()
         val account = SearchAccount("provider::opaque", "https://music.example.invalid", "u", "p", false)
-        val presenter = SearchPresenter(account, RankedMergedFixtureSearchDataSource(), Duration.ZERO,
-            CoroutineScope(Dispatchers.Unconfined))
+        val presenter = SearchPresenter(account, RankedMergedFixtureSearchSource())
         val played = mutableListOf<SearchResultItem>()
         compose.setContent { MobileSearchScreen(presenter, SearchIntentRouter(app), account) { played += it } }
         compose.onNodeWithTag("search.query").performTextInput("echo")

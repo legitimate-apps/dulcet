@@ -86,10 +86,10 @@ dependencies {
 val productionSearchConformance = providers.gradleProperty("dulcet.productionSearchConformance").isPresent
 tasks.withType<Test>().configureEach {
     if (productionSearchConformance) {
-        filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibrarySyncAppConformanceTest") }
+        filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
         outputs.upToDateWhen { false }
     } else {
-        filter { excludeTestsMatching("*ProductionSearchAppConformanceTest"); excludeTestsMatching("*ProductionLibrarySyncAppConformanceTest") }
+        filter { excludeTestsMatching("*ProductionSearchAppConformanceTest"); excludeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
     }
     maxParallelForks = 1
 }

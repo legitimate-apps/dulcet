@@ -40,9 +40,17 @@ import androidx.tv.material3.Card
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.SearchResultItem
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.searchScopeLabel
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchIntentRouter
+import com.legitimateapps.dulcet.search.SearchObservation
+import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencies
@@ -93,6 +101,7 @@ internal fun TvSearchScreen(
     router: SearchIntentRouter,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
+    val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
     val resultFocus = remember(state.results.map { it.id }) {
         List(state.results.size) { FocusRequester() }
@@ -147,18 +156,30 @@ internal fun TvSearchScreen(
                         .testTag("search.query"),
                 )
             }
+            // Where these results come from (§16.15), in the words the phone uses for the same scope.
+            libraryResources().searchScopeLabel(state.scope.takeIf { state.query.isNotBlank() })?.let { line ->
+                Text(line, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("search.scope"))
+            }
             if (state.isLoading && state.results.isEmpty()) {
                 Text("Searching…", modifier = Modifier.testTag("search.loading"))
-            } else if (state.error != null) {
-                Text("Search could not be completed.", modifier = Modifier.testTag("search.error"))
             }
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results"),
+                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
+                    .semantics { this[SearchObservation] = state },
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                itemsIndexed(state.results) { index, result ->
+                itemsIndexed(state.rows) { index, row ->
+                    val result = row.item
                     TvSearchResult(
                         result = result,
+                        note = listOfNotNull(
+                            resources.getString(SharedR.string.search_row_device_only).takeIf {
+                                row.source == AndroidLibrarySearchRowSource.Device &&
+                                    state.scope == AndroidLibrarySearchScope.ServerAndDevice
+                            },
+                            resources.getString(SharedR.string.library_not_available_offline)
+                                .takeIf { row.playability == AndroidLibraryPlayability.UnavailableOffline },
+                        ).joinToString(" · ").ifEmpty { null },
                         index = index,
                         focusRequester = resultFocus[index],
                         previousFocusRequester = resultFocus.getOrNull(index - 1) ?: queryFocus,
@@ -174,6 +195,7 @@ internal fun TvSearchScreen(
 @Composable
 private fun TvSearchResult(
     result: SearchResultItem,
+    note: String?,
     index: Int,
     focusRequester: FocusRequester,
     previousFocusRequester: FocusRequester,
@@ -212,7 +234,7 @@ private fun TvSearchResult(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(result.title, style = MaterialTheme.typography.titleLarge)
-            Text(result.type.name, style = MaterialTheme.typography.bodyMedium)
+            Text(listOfNotNull(result.type.name, note).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
