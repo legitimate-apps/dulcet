@@ -586,6 +586,24 @@ class AppleLibraryReaderFacadeTest {
         pumpUntil("another subscription") { other.any { it.freshness.kind == "live" } }
     }
 
+    /**
+     * The same at the client level: what the reader queued for the main thread before the client
+     * closed — a window's first frame and a search's device rows — is dropped, not delivered after.
+     */
+    @Test
+    fun aClientCloseDropsWhatWasQueuedBeforeIt() = facadeTest { h ->
+        val c = h.client()
+        val grid = WindowRecorder()
+        val search = SearchRecorder()
+        c.client.subscribeLibraryWindow(GRID, grid)
+        c.client.subscribeSearch(search).updateQuery("Album 0001")
+        c.onReader { } // both have run on the reader: their first publications are queued for the main thread
+        assertTrue(c.onReader { h.server.log.isNotEmpty() }, "the open issued nothing; the test lost its precondition")
+        c.client.close()
+        pumpFor(300.milliseconds)
+        assertEquals(listOf(0, 0), listOf(grid.all.size, search.all.size), "a publication was delivered after the client closed")
+    }
+
     /** Close cancels the screen's in-flight read, and nothing is published after it. */
     @Test
     fun closeCancelsTheReadInFlight() = facadeTest { h ->

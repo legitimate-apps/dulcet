@@ -62,6 +62,13 @@ public class AppleLibraryReaderClient internal constructor(
 
     private val closed = AtomicBoolean(false)
 
+    /**
+     * Read at every delivery, on the main thread. A client-level [close] marks it on the caller's
+     * thread and only then tells the reader, so a publication already queued for the main thread
+     * when [close] returns is dropped rather than delivered after it.
+     */
+    internal val isClosed: Boolean get() = closed.load()
+
     /** Anything that reached a scope's last-resort handler instead of a publication; for tests. */
     internal val uncaughtFailures = mutableListOf<Throwable>()
 
@@ -200,8 +207,10 @@ public class AppleLibraryReaderClient internal constructor(
 
     /**
      * Closes every subscription, cancels every in-flight read, releases the database and transport
-     * and stops the reader's thread. Idempotent. Nothing is published after it; a completion still
-     * pending is delivered once, as `cancelled`.
+     * and stops the reader's thread. Idempotent. Nothing is published after it returns — a
+     * publication already queued for the main thread is dropped when it arrives — provided it is
+     * called on the main thread; from another thread, a delivery already running may finish. A
+     * completion still pending is delivered once, as `cancelled`.
      */
     public fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -705,8 +714,12 @@ public class AppleLibraryWindowSubscription internal constructor(
         client.onMain { deliver(publication) }
     }
 
-    /** Main thread. The listener is read HERE, so a close that ran first drops this publication. */
+    /**
+     * Main thread. The listener and the client's state are read HERE, so a close of this
+     * subscription or of the client that ran first drops this publication.
+     */
     private fun deliver(publication: AppleLibraryWindowPublication) {
+        if (client.isClosed) return
         val current = listener.load() ?: return
         delivered.store(publication)
         current.onWindowPublication(publication)
@@ -715,7 +728,7 @@ public class AppleLibraryWindowSubscription internal constructor(
     /** A subscription made on a closed client: one statement of fact, never silence. */
     internal fun emitClosed() {
         val publication = readerFailurePublication(1, null, errorKind = "closed")
-        client.onMain { deliver(publication) }
+        client.onMain { listener.load()?.onWindowPublication(publication) }
     }
 }
 
@@ -814,7 +827,9 @@ public class AppleLibrarySearchSubscription internal constructor(
         client.onMain { deliver(numbered) }
     }
 
+    /** Main thread; see the window subscription's `deliver`. */
     private fun deliver(publication: AppleLibrarySearchPublication) {
+        if (client.isClosed) return
         listener.load()?.onSearchPublication(publication)
     }
 
@@ -832,7 +847,7 @@ public class AppleLibrarySearchSubscription internal constructor(
 
     internal fun emitClosed() {
         val publication = AppleLibrarySearchPublication("", 1, "deviceServerFailed", "closed", null, null, null, emptyList())
-        client.onMain { deliver(publication) }
+        client.onMain { listener.load()?.onSearchPublication(publication) }
     }
 }
 
@@ -857,7 +872,7 @@ public class AppleLibraryFavouriteOutcomeSubscription internal constructor(
     /** Reader thread. */
     internal fun emit(outcome: AppleLibraryFavouriteOutcome) {
         if (listener.load() == null) return
-        client.onMain { listener.load()?.onOutcome(outcome) }
+        client.onMain { if (!client.isClosed) listener.load()?.onOutcome(outcome) }
     }
 }
 
