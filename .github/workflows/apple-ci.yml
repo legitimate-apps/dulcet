@@ -556,11 +556,17 @@ jobs:
         # killed at 5 minutes with a 4-byte log, i.e. during launch, before the test produced
         # anything at all.
         #
-        # 12 matches `Verify iPhone uses the full display`, whose 165-290s range was measured over
+        # 12 matched `Verify iPhone uses the full display`, whose 165-290s range was measured over
         # seven runs, because this step does the same work: launch the iOS simulator app and run one
-        # XCUITest. ⚠️ Re-measure once this step has its own history; an inherited budget is a
-        # starting point, not evidence about this step.
-        timeout-minutes: 12
+        # XCUITest. That inherited budget was too small. OBSERVED on run 35985802454: the step was
+        # killed at 12.05 minutes, seconds after its test had passed and its execution check had
+        # printed "valid". It spent 8.8 minutes before the test started, booting the iPhone
+        # simulator again after the tvOS step, and the test ran for 150s. Under this step's earlier
+        # name its shorter test took 2.80-9.58 minutes, median 5.77, across the 20 most recent
+        # successful runs that have the step. 25 is ceil(2 x 12.05), the rule the job-level
+        # comment applies to its measured steps. The input is a single observation of this
+        # workload, so re-measure it once the step has its own history.
+        timeout-minutes: 25
         run: |
           set -o pipefail
           # Placed after every platform UI and Keychain proof on purpose. This job is one
