@@ -57,6 +57,7 @@
 
     <string name="library_not_available_offline">Not available offline</string>
     <string name="library_plays_on_reconnect">Not downloaded. It\'ll play when you reconnect.</string>
+    <string name="library_artist_nothing_playable">Nothing on this artist\'s albums can play right now.</string>
     <string name="library_try_again">Try again</string>
     <string name="library_dismiss">Dismiss</string>
     <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>

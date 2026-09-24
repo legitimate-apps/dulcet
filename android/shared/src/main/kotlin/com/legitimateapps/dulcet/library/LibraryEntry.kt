@@ -27,11 +27,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -75,8 +81,9 @@ public fun LibraryEntry(account: SearchAccount, search: @Composable () -> Unit) 
             Modifier.align(Alignment.TopEnd).testTag("library.open")
                 .background(Color.White).clickable { showingLibrary = !showingLibrary; album = null }.padding(16.dp))
     }
-    // After the screens above have opened their windows, which on the TV are composed here, directly:
-    // each has painted from the cache before start() issues the reconnect's first request.
+    // On a return to the foreground the screens above are already open when start() reconnects. At
+    // launch the TV shows search, and the library's windows open when the person turns to it —
+    // usually after the reconnect has read the epoch; each publishes its cache before its own read.
     LibraryLifecycle(session)
 }
 
@@ -143,7 +150,7 @@ private fun TvHomeRow(index: Int, row: LibraryHomeRowSurface, session: LibrarySe
         BasicText(resources.getString(row.row.titleResource()), style = TextStyle(fontSize = 22.sp))
         val current = publication ?: return@Column
         resources.freshnessLine(current.freshness)?.let { line ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 BasicText(line, Modifier.testTag("library.home.$index.freshness"), style = TextStyle(color = Color.DarkGray))
                 if (current.freshness.offersRetry()) TvButton(resources.getString(R.string.library_try_again), "library.home.$index.retry") { session.retry() }
             }
@@ -201,10 +208,11 @@ private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Un
     BackHandler(onBack = back)
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
-    val latestOutcome by session.outcomes.collectAsState()
+    val outcomes by session.outcomes.collectAsState()
     // Only an outcome about this album is said here, and it goes when the screen does.
-    val outcome = latestOutcome?.takeIf { it.target.rawId == rawId }
-    DisposableEffect(session, rawId) { onDispose { session.dismissOutcome(rawId) } }
+    val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)
+    val outcome = outcomes[target]
+    DisposableEffect(session, target) { onDispose { session.dismissOutcome(target) } }
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     LazyColumn(
@@ -266,7 +274,10 @@ private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Un
 
 /**
  * One track. The TV's library does not play from an album yet; a row this device cannot play offline
- * says why when selected, as the phone's does (§16.14).
+ * says why when selected, as the phone's does (§16.14). Every row is ONE focus target of one kind, so
+ * the D-pad stops on it once, and a row whose playability changes while focused (going offline, or
+ * reconnecting) keeps its focus. Only a row that can say something offers an action: the centre key
+ * or Enter, and a click for accessibility services.
  */
 @Composable
 private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, onUnavailable: () -> Unit) {
@@ -275,11 +286,25 @@ private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, onUnavail
     var focused by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().testTag("album.track.$position")
-            .semantics {
-                if (unavailable) contentDescription = "${track.title.orEmpty()}, ${resources.getString(R.string.library_not_available_offline)}"
+            // One accessibility node whatever the playability: focusable() does not merge the row's
+            // texts, so this does. A row that can say something is described and clickable too.
+            .semantics(mergeDescendants = true) {
+                if (unavailable) {
+                    contentDescription = "${track.title.orEmpty()}, ${resources.getString(R.string.library_not_available_offline)}"
+                    onClick { onUnavailable(); true }
+                }
             }
-            .onFocusChanged { focused = it.isFocused }.focusable()
-            .clickable(enabled = unavailable, onClick = onUnavailable)
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { event ->
+                val select = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
+                if (unavailable && select && event.type == KeyEventType.KeyUp) {
+                    onUnavailable()
+                    true
+                } else {
+                    false
+                }
+            }
+            .focusable()
             .background(if (focused) Color.LightGray else Color.White).padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -293,8 +318,9 @@ private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, onUnavail
 private fun TvCard(item: AndroidLibraryItem, modifier: Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Column(
-        modifier.width(200.dp).onFocusChanged { focused = it.isFocused }.focusable()
-            .background(if (focused) Color.LightGray else Color(0xFFF2F2F2)).clickable(onClick = onClick).padding(16.dp),
+        // One focus target: `clickable` is focusable itself, and `onFocusChanged` observes it.
+        modifier.width(200.dp).onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick)
+            .background(if (focused) Color.LightGray else Color(0xFFF2F2F2)).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         BasicText(item.displayTitle(), maxLines = 2)
@@ -308,8 +334,8 @@ private fun TvButton(label: String, tag: String, description: String? = null, on
     BasicText(
         label,
         Modifier.testTag(tag).semantics { description?.let { contentDescription = it } }
-            .onFocusChanged { focused = it.isFocused }.focusable()
-            .background(if (focused) Color.LightGray else Color(0xFFE6E6E6)).clickable(onClick = onClick)
+            .onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick)
+            .background(if (focused) Color.LightGray else Color(0xFFE6E6E6))
             .padding(horizontal = 16.dp, vertical = 10.dp),
     )
 }

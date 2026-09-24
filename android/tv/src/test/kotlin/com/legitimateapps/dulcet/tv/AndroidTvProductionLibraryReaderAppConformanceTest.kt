@@ -1,8 +1,17 @@
 package com.legitimateapps.dulcet.tv
 
 import android.app.Application
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
@@ -21,6 +30,7 @@ import org.robolectric.annotation.Config
  * `LibrarySession` and `AndroidLibraryReader` against the disposable server. The same scenarios as
  * the phone's, driven through the TV's own screens; one test per CONF id.
  */
+@OptIn(ExperimentalTestApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, shadows = [HostCredentialCipher::class],
     instrumentedPackages = ["com.legitimateapps.dulcet"], qualifiers = "w960dp-h540dp")
@@ -46,7 +56,43 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 compose.onNodeWithTag("album.back").performClick()
                 compose.waitForIdle()
             }
+
+            /**
+             * As a remote does it: focus on [from], one step down with the D-pad, then the centre key.
+             * Where the step lands is the app's focus order, so a row that takes two steps to reach
+             * or cannot be selected from where it lands fails here. A track row is also left for
+             * the next one and re-entered, one step each way (focus order between rows), and must
+             * still hold focus after the centre key: the row handles only the key's release, so its
+             * press reaches the platform, which moves focus into any focus target inside the row. A
+             * row that is two focus targets, one inside the other, therefore loses focus there.
+             */
+            override fun select(tag: String, from: String) {
+                compose.onNodeWithTag(from).performSemanticsAction(SemanticsActions.RequestFocus)
+                compose.waitForIdle()
+                compose.onNodeWithTag(from).assertIsFocused()
+                compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+                compose.waitForIdle()
+                compose.onNodeWithTag(tag).assertIsFocused()
+                val track = TRACK_ROW.matchEntire(tag)
+                val next = track?.let { "album.track.${it.groupValues[1].toInt() + 1}" }
+                    ?.takeIf { compose.onAllNodesWithTag(it).fetchSemanticsNodes().isNotEmpty() }
+                if (next != null) {
+                    compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+                    compose.waitForIdle()
+                    compose.onNodeWithTag(next).assertIsFocused()
+                    compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+                    compose.waitForIdle()
+                    compose.onNodeWithTag(tag).assertIsFocused()
+                }
+                compose.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
+                compose.waitForIdle()
+                if (track != null) compose.onNodeWithTag(tag).assertIsFocused()
+            }
         }, platform = "androidtv")
+    }
+
+    private companion object {
+        val TRACK_ROW = Regex("album\\.track\\.(\\d+)")
     }
 
     @Test fun conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline() =

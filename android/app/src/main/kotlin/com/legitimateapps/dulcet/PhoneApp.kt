@@ -35,10 +35,14 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidQueueSource
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
+import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.library.LibraryLifecycle
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.isOffline
 import com.legitimateapps.dulcet.library.playableTracks
+import com.legitimateapps.dulcet.library.titledTracks
 import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
@@ -108,8 +112,9 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
         playAlbum = { album, start, shuffle -> playAlbum(playback, provider, album, start, shuffle) },
         playArtist = { artist, shuffle, done -> playArtist(playback, library, provider, artist, shuffle, done) },
-        // Up Next rows take their titles from albums already on screen; no request is made for them.
-        rememberAlbum = { album -> playback?.rememberTracks(album.playableTracks(provider)) },
+        // Up Next rows take their titles from albums already on screen, every titled track whether or
+        // not it can play right now; no request is made for them.
+        rememberAlbum = { album -> playback?.rememberTracks(album.titledTracks(provider)) },
     )
     // A restored Up Next row with no title takes it from what this device has seen, as it did from the
     // whole-library mirror: a seen-cache read, never a request.
@@ -189,9 +194,9 @@ internal class PhoneActions(
     val playAlbum: (AndroidLibraryPublication, Int, Boolean) -> Unit,
     /**
      * An artist publication: every album's playable tracks, in the artist's album order. The last
-     * argument hears whether anything played; the returned handle abandons the albums still opening.
+     * argument hears how it ended; the returned handle abandons the albums still opening.
      */
-    val playArtist: (AndroidLibraryPublication, Boolean, (Boolean) -> Unit) -> AutoCloseable?,
+    val playArtist: (AndroidLibraryPublication, Boolean, (ArtistPlayResult) -> Unit) -> AutoCloseable?,
     val rememberAlbum: (AndroidLibraryPublication) -> Unit = {},
 )
 
@@ -217,7 +222,7 @@ private fun playArtist(
     provider: String,
     publication: AndroidLibraryPublication,
     shuffle: Boolean,
-    done: (Boolean) -> Unit,
+    done: (ArtistPlayResult) -> Unit,
 ): AutoCloseable? {
     val artist = publication.header as? AndroidLibraryItem.Artist ?: return null
     val albums = publication.items.filterIsInstance<AndroidLibraryItem.Album>()
@@ -225,6 +230,20 @@ private fun playArtist(
     return library.collectAlbums(albums.map { it.rawId }) { details ->
         val tracks = details.flatMap { it.playableTracks(provider) }
         if (tracks.isNotEmpty()) playback.playQueue(tracks, 0, AndroidQueueSource.Artist, artist.name, artist.rawId, shuffle)
-        done(tracks.isNotEmpty())
+        done(
+            when {
+                tracks.isNotEmpty() -> ArtistPlayResult.Played
+                details.any { it.heldBackOffline() } -> ArtistPlayResult.NeedsConnection
+                else -> ArtistPlayResult.NothingPlayable
+            },
+        )
     }
 }
+
+/** How playing an artist ended, for the line the artist screen shows when nothing played. */
+internal enum class ArtistPlayResult { Played, NeedsConnection, NothingPlayable }
+
+/** An album whose tracks this device cannot play only because it is offline (§16.14). */
+private fun AndroidLibraryPublication.heldBackOffline(): Boolean =
+    itemsUnavailableReason == AndroidLibraryUnavailableReason.NotCachedOffline || freshness.isOffline() ||
+        items.any { (it as? AndroidLibraryItem.Track)?.playability == AndroidLibraryPlayability.UnavailableOffline }

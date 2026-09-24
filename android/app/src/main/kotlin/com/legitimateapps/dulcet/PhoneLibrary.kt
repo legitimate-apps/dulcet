@@ -328,10 +328,11 @@ internal fun AlbumScreen(
     val surface = rememberSurface(session, "album:$rawId") { openAlbum(rawId) }
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
-    val latestOutcome by session.outcomes.collectAsState()
+    val outcomes by session.outcomes.collectAsState()
     // Only an outcome about this album is said here, and it goes when the screen does.
-    val outcome = latestOutcome?.takeIf { it.target.rawId == rawId }
-    DisposableEffect(session, rawId) { onDispose { session.dismissOutcome(rawId) } }
+    val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)
+    val outcome = outcomes[target]
+    DisposableEffect(session, target) { onDispose { session.dismissOutcome(target) } }
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     LaunchedEffect(publication) { publication?.let(actions.rememberAlbum) }
@@ -393,7 +394,7 @@ internal fun AlbumScreen(
             }
             when (current.itemsState) {
                 AndroidLibraryItemsState.Loading -> item { RowPlaceholder(Modifier.testTag("album.tracks.loading")) }
-                // The header is cached; the track list was never read on this device (§16.14).
+                // The header is known and the track list cannot be shown: the core says why (§16.14).
                 AndroidLibraryItemsState.Unavailable -> if (album != null) item {
                     StatementText(resources.unavailableLine(
                         current.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure,
@@ -444,10 +445,15 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         if (collecting != null) return
         note = null
         var finished = false
-        val handle = actions.playArtist(publication, shuffle) { played ->
+        val handle = actions.playArtist(publication, shuffle) { result ->
             finished = true
             collecting = null
-            if (!played) note = resources.getString(SharedR.string.library_plays_on_reconnect)
+            note = when (result) {
+                ArtistPlayResult.Played -> null
+                // Some album holds tracks this device could play once it reconnects.
+                ArtistPlayResult.NeedsConnection -> resources.getString(SharedR.string.library_plays_on_reconnect)
+                ArtistPlayResult.NothingPlayable -> resources.getString(SharedR.string.library_artist_nothing_playable)
+            }
         }
         if (!finished) collecting = handle
     }

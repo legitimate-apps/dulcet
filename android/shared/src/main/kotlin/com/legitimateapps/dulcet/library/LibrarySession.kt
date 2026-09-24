@@ -48,10 +48,12 @@ import kotlinx.coroutines.flow.update
  * [AndroidLibraryReader.setOnline] — whose `true`, while offline, REQUESTS a reconnect rather than
  * flipping any state — and [start] reconnects when the app comes to the foreground with a network. A
  * reconnect whose transport found the server unreachable reports it unreachable, so every screen says
- * offline rather than failing request by request; any other failure (a timeout, credentials, TLS, the
- * server's own error) is [LibraryConnectionState.Failed], which the screens state with its reason. The
- * next network change, foreground, [retry] or [refresh] tries again. Every callback of this class runs
- * on the main thread, the platform's network callbacks included.
+ * offline rather than failing request by request. Any other failure (a timeout, credentials, TLS, the
+ * server's own error) is [LibraryConnectionState.Failed]: when it left the reader offline the screens
+ * state it with its reason and "Try again"; a reader that was online — a fresh one is — stays online
+ * and its screens keep reading. While offline or failed-offline, the next network report, foreground,
+ * [retry] or [refresh] tries again. Every callback of this class runs on the main thread, the
+ * platform's network callbacks included.
  */
 public class LibrarySession internal constructor(
     private val reader: AndroidLibraryReader,
@@ -75,32 +77,33 @@ public class LibrarySession internal constructor(
         observationState.update { it.copy(connections = (it.connections + state).takeLast(MAX_FRAMES)) }
     }
 
-    private val lastOutcome = MutableStateFlow<AndroidLibraryChangeOutcome?>(null)
+    private val latestOutcomes = MutableStateFlow<Map<AndroidLibraryEntity, AndroidLibraryChangeOutcome>>(emptyMap())
 
     /**
-     * The latest favourite or rating outcome, for a one-line message on the screen showing its
-     * target; [Saved][AndroidLibraryChangeOutcome.Saved] needs none. A screen clears it with
-     * [dismissOutcome] when it goes, so it is never shown again elsewhere.
+     * The latest favourite or rating outcome for each target, for a one-line message on the screen
+     * showing that target; [Saved][AndroidLibraryChangeOutcome.Saved] needs none. Keyed by kind and
+     * id, so an outcome about one entity is never shown on another's screen, and a later outcome
+     * about a different one never hides it. A screen clears its own with [dismissOutcome] when it goes.
      */
-    public val outcomes: StateFlow<AndroidLibraryChangeOutcome?> = lastOutcome.asStateFlow()
+    public val outcomes: StateFlow<Map<AndroidLibraryEntity, AndroidLibraryChangeOutcome>> = latestOutcomes.asStateFlow()
 
-    /** Clears the outcome message if it is about [rawId]. */
-    public fun dismissOutcome(rawId: String) {
-        lastOutcome.update { current -> if (current?.target?.rawId == rawId) null else current }
+    public fun dismissOutcome(target: AndroidLibraryEntity) {
+        latestOutcomes.update { it - target }
     }
 
     private val discarded = MutableStateFlow(0L)
 
     /**
      * Unsent changes the reader discarded because this device is now signed in as someone else
-     * (§16.10), to be told once: nonzero until [dismissDiscardedChanges], and never raised again for
-     * the same session.
+     * (§16.10): nonzero until [dismissDiscardedChanges], which acknowledges them on the process's
+     * reader, so no later session — after a rotation, or a return to the screen — says it again.
      */
     public val discardedChanges: StateFlow<Long> = discarded.asStateFlow()
     private var discardedTold = false
 
     public fun dismissDiscardedChanges() {
         discarded.value = 0
+        reader.acknowledgeDiscardedChanges()
     }
 
     private val surfaces = mutableListOf<LibrarySurface>()
@@ -112,7 +115,7 @@ public class LibrarySession internal constructor(
 
     private val outcomeRegistration: AndroidLibraryOutcomeRegistration =
         reader.addChangeOutcomeListener { outcome ->
-            lastOutcome.value = outcome
+            latestOutcomes.update { it + (outcome.target to outcome) }
             observationState.update { it.copy(changeOutcomes = (it.changeOutcomes + outcome).takeLast(MAX_FRAMES)) }
         }
 
@@ -120,10 +123,13 @@ public class LibrarySession internal constructor(
      * Every surface below is opened by the screen that shows it and closed when that screen goes, so
      * the reader's "visible screen" — what a reconnect or a changed epoch revalidates (§16.14 step 3) —
      * is exactly what is on screen. Whatever the order of a surface's open and [start], its first
-     * publication is built from the cache before that window issues any request (CONF-76). The order
-     * differs by app: the TV's screens are composed before the lifecycle effect that calls [start];
-     * the phone's are composed inside its scaffold, whose content is composed during layout, after
-     * that effect has run, so on the phone [start]'s epoch read is issued first.
+     * publication is built from the cache before that window issues any request (CONF-76). On a
+     * return to the foreground the windows are already open when [start] runs. At launch the order
+     * differs by app. The phone restores its last tab; relaunched into the library, its screens are
+     * composed inside its scaffold, whose content is composed during layout, after the lifecycle
+     * effect that calls [start]: the reconnect's epoch read is issued first, and can still be in
+     * flight when the windows open. The TV opens on search, and its library's windows open when the
+     * person turns to it.
      */
 
     /** The home screen: N independent single-page rows (§16.9, CONF-86). The caller closes each. */
@@ -247,15 +253,12 @@ public class LibrarySession internal constructor(
 
     /**
      * An explicit refresh (§16.11 rule 3): every open screen re-reads what is visible, whatever its
-     * age. While the reader is not online — offline, or its last reconnect failed — it is a
+     * age. While the reader is offline — reported so, or left so by a failed reconnect — it is a
      * reconnect instead, because an offline reader reads nothing.
      */
     public fun refresh() {
         if (closed) return
-        when (connectionState.value) {
-            is LibraryConnectionState.Offline, is LibraryConnectionState.Failed -> retry()
-            else -> surfaces.toList().forEach(LibrarySurface::refresh)
-        }
+        if (connectionState.value.readerOffline()) retry() else surfaces.toList().forEach(LibrarySurface::refresh)
     }
 
     override fun close() {
@@ -328,14 +331,15 @@ public class LibrarySession internal constructor(
      * reconnect in the core; the [reconnect] call after it joins that one, for its outcome.
      */
     private fun report(reachable: Boolean) {
-        if (closed) return
+        if (closed || connectionState.value == LibraryConnectionState.Closed) return
         reachabilityGeneration += 1
         lastReport = reachable
         observationState.update { it.copy(reachabilityReports = it.reachabilityReports + reachable) }
         reader.setOnline(reachable)
         if (!reachable) {
             setConnection(LibraryConnectionState.Offline(null))
-        } else if (connectionState.value is LibraryConnectionState.Offline) {
+        } else if (connectionState.value.readerOffline()) {
+            // Offline, or a failed reconnect left the reader offline: a new network is a new try.
             reconnect()
         }
     }
@@ -344,6 +348,8 @@ public class LibrarySession internal constructor(
     private var reconnectCalls = 0
 
     private fun reconnect() {
+        // A closed reader cannot be reconnected; the state stays Closed.
+        if (connectionState.value == LibraryConnectionState.Closed) return
         val generation = reachabilityGeneration
         val call = ++reconnectCalls
         setConnection(LibraryConnectionState.Connecting)
@@ -352,11 +358,20 @@ public class LibrarySession internal constructor(
     }
 
     private fun reconnected(outcome: AndroidLibraryConnection, generation: Int) {
-        if (closed || outcome.closed) return
+        if (closed) return
+        if (outcome.closed) {
+            // The process's reader was closed under this session: the account changed, or the person
+            // signed out. Its screens receive nothing more and keep what they last showed until
+            // they are replaced; nothing here can reconnect it, so no line and no "Try again".
+            setConnection(LibraryConnectionState.Closed)
+            return
+        }
         if (outcome.discardedPendingChanges > 0 && !discardedTold) {
             discardedTold = true
             discarded.value = outcome.discardedPendingChanges
         }
+        // The platform reported the network gone while this ran: offline stands, whatever the answer.
+        if (generation != reachabilityGeneration && lastReport == false) return
         when {
             outcome.epochRead -> setConnection(LibraryConnectionState.Online(outcome.serverReportsNoEpoch))
             outcome.error.meansUnreachable() -> when {
@@ -366,11 +381,9 @@ public class LibrarySession internal constructor(
                     reader.setOnline(false)
                 }
                 // A new network arrived while it ran: that network is tried once.
-                lastReport == true -> reconnect()
-                // The platform reported the network gone meanwhile; the reader is offline already.
-                else -> setConnection(LibraryConnectionState.Offline(outcome.error))
+                else -> reconnect()
             }
-            else -> setConnection(LibraryConnectionState.Failed(outcome.error))
+            else -> setConnection(LibraryConnectionState.Failed(outcome.error, readerOffline = !outcome.readerOnline))
         }
     }
 
@@ -380,6 +393,16 @@ public class LibrarySession internal constructor(
         lateinit var surface: LibrarySurface
         val window = open { publication ->
             surface.deliver(publication)
+            // Live content means the reader is reading again while this session still says it
+            // reads nothing: its setup, which had failed, succeeded at a later call, or another
+            // session's reconnect succeeded. The failure shown is stale. In the foreground, a
+            // reconnect settles it, with the flush and the epoch read a fresh reader has not had;
+            // in the background nothing is read (§16.11), and start() reconnects on return.
+            val state = connectionState.value
+            if (started && publication.freshness == AndroidLibraryFreshness.Live &&
+                state is LibraryConnectionState.Failed && state.readerOffline) {
+                reconnect()
+            }
             observationState.update { current ->
                 val frames = current.surfaces[key].orEmpty() + LibraryFrame.of(publication)
                 current.copy(surfaces = current.surfaces + (key to frames.takeLast(MAX_FRAMES)))
@@ -452,9 +475,24 @@ public sealed interface LibraryConnectionState {
     /** Unreachable: reported by the platform (no error) or found by a reconnect. */
     public data class Offline(val error: DomainError?) : LibraryConnectionState
 
-    /** The epoch could not be read for another reason (credentials, TLS, the server's own failure). */
-    public data class Failed(val error: DomainError?) : LibraryConnectionState
+    /**
+     * The epoch could not be read for another reason (a timeout, credentials, TLS, the server's own
+     * failure; null for the device's own, including a setup that failed). [readerOffline] when the
+     * reader reads nothing after it — it was offline, and only an epoch read brings it back (§16.14),
+     * or its setup failed — which is when the screens say so, with this reason.
+     */
+    public data class Failed(val error: DomainError?, val readerOffline: Boolean) : LibraryConnectionState
+
+    /**
+     * The process's reader was closed under this session (the account changed, or a sign-out). Final:
+     * no report or reconnect changes it.
+     */
+    public data object Closed : LibraryConnectionState
 }
+
+/** Whether the reader reads nothing now, and only a reconnect changes that. */
+internal fun LibraryConnectionState.readerOffline(): Boolean =
+    this is LibraryConnectionState.Offline || (this as? LibraryConnectionState.Failed)?.readerOffline == true
 
 /**
  * State observations for tests. They carry no account data: catalog ids and freshness only.
@@ -506,11 +544,18 @@ public fun SearchAccount.toReaderAccount(): AndroidLibraryReaderAccount =
  * The album header's tracks as queue entries: those the core says can play now, by their playability
  * (§16.14), and never one with no metadata to show.
  */
-public fun AndroidLibraryPublication.playableTracks(providerInstanceId: String): List<AndroidTrack> {
+public fun AndroidLibraryPublication.playableTracks(providerInstanceId: String): List<AndroidTrack> =
+    titledTracks(providerInstanceId, playableOnly = true)
+
+/**
+ * Every track of the album header that has a title, playable now or not: what a queue already
+ * holding them needs to show them, which does not depend on whether they can play at this moment.
+ */
+public fun AndroidLibraryPublication.titledTracks(providerInstanceId: String, playableOnly: Boolean = false): List<AndroidTrack> {
     val album = header as? AndroidLibraryItem.Album
     if (itemsState != AndroidLibraryItemsState.Present) return emptyList()
     return items.filterIsInstance<AndroidLibraryItem.Track>()
-        .filter { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+        .filter { !playableOnly || it.playability != AndroidLibraryPlayability.UnavailableOffline }
         .mapNotNull { it.toTrack(providerInstanceId, album) }
 }
 

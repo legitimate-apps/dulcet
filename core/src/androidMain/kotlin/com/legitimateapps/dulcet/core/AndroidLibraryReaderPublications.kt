@@ -206,9 +206,10 @@ public data class AndroidLibraryPublication(
     val anchorRawId: String?,
     val anchorIndex: Int?,
     /**
-     * Why [items] cannot be shown when [itemsState] is `unavailable`, whatever the header's own
-     * freshness: never opened on this device and offline, the read's failure, or the reader's own.
-     * Null otherwise.
+     * Why [items] cannot be shown when [itemsState] is `unavailable`: never opened on this device and
+     * offline, the read's failure, or the reader's own; for a screen unavailable as a whole, the same
+     * reason as its [freshness]. Null otherwise. The core publishes it, because the header's freshness
+     * cannot say it: a revalidation in flight is `cached(revalidating)` whatever the list's state.
      */
     val itemsUnavailableReason: AndroidLibraryUnavailableReason? = null,
 )
@@ -303,11 +304,19 @@ public sealed interface AndroidLibraryChangeOutcome {
 public data class AndroidLibraryConnection(
     val epochRead: Boolean,
     val serverReportsNoEpoch: Boolean,
-    /** Changes discarded because the account's username changed (§16.10); told to the person once. */
+    /**
+     * Changes discarded because the account's username changed (§16.10), until
+     * [AndroidLibraryReader.acknowledgeDiscardedChanges]; zero after it.
+     */
     val discardedPendingChanges: Long,
     val error: DomainError?,
     val internalFailure: Boolean,
     val closed: Boolean,
+    /**
+     * Whether the reader is online after this call. A failed reconnect leaves an offline reader
+     * offline; a reader that was already online — a fresh one is — stays online and keeps reading.
+     */
+    val readerOnline: Boolean = false,
 )
 
 // ---- Mapping from the core --------------------------------------------------------------------------
@@ -378,23 +387,15 @@ internal fun LibraryPublication.toAndroid(sequence: Int): AndroidLibraryPublicat
     },
     anchorRawId = anchor?.itemRawId,
     anchorIndex = anchor?.index,
-    itemsUnavailableReason = if (itemsState == LibraryItemsState.Unavailable) itemsUnavailableReason() else null,
+    itemsUnavailableReason = if (itemsState == LibraryItemsState.Unavailable) {
+        // The core's own reason, or a whole screen's; a list unavailable for no stated reason is the
+        // reader's own failure, never "offline".
+        (itemsUnavailableReason ?: (freshness as? LibraryFreshness.Unavailable)?.reason)?.toAndroid()
+            ?: AndroidLibraryUnavailableReason.InternalFailure
+    } else {
+        null
+    },
 )
-
-/**
- * The core marks a detail's child list unavailable for exactly three reasons — offline, the live
- * read failed, or the reader's own failure — and says which in the header's freshness (§16.14).
- */
-private fun LibraryPublication.itemsUnavailableReason(): AndroidLibraryUnavailableReason =
-    when (val android = freshness.toAndroid()) {
-        is AndroidLibraryFreshness.Unavailable -> android.reason
-        is AndroidLibraryFreshness.Cached -> when (val reason = android.reason) {
-            AndroidLibraryCachedReason.Offline -> AndroidLibraryUnavailableReason.NotCachedOffline
-            is AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
-            else -> AndroidLibraryUnavailableReason.InternalFailure
-        }
-        else -> AndroidLibraryUnavailableReason.InternalFailure
-    }
 
 internal fun LibraryFreshness.toAndroid(): AndroidLibraryFreshness = when (this) {
     LibraryFreshness.Live -> AndroidLibraryFreshness.Live
@@ -409,14 +410,14 @@ internal fun LibraryFreshness.toAndroid(): AndroidLibraryFreshness = when (this)
             LibraryCachedReason.InternalFailure -> AndroidLibraryCachedReason.InternalFailure
         },
     )
-    is LibraryFreshness.Unavailable -> AndroidLibraryFreshness.Unavailable(
-        when (val cause = reason) {
-            LibraryUnavailableReason.NotCachedOffline -> AndroidLibraryUnavailableReason.NotCachedOffline
-            LibraryUnavailableReason.Gone -> AndroidLibraryUnavailableReason.Gone
-            is LibraryUnavailableReason.Failed -> AndroidLibraryUnavailableReason.Failed(cause.error)
-            LibraryUnavailableReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
-        },
-    )
+    is LibraryFreshness.Unavailable -> AndroidLibraryFreshness.Unavailable(reason.toAndroid())
+}
+
+internal fun LibraryUnavailableReason.toAndroid(): AndroidLibraryUnavailableReason = when (this) {
+    LibraryUnavailableReason.NotCachedOffline -> AndroidLibraryUnavailableReason.NotCachedOffline
+    LibraryUnavailableReason.Gone -> AndroidLibraryUnavailableReason.Gone
+    is LibraryUnavailableReason.Failed -> AndroidLibraryUnavailableReason.Failed(error)
+    LibraryUnavailableReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
 }
 
 internal fun LibraryCoverage.toAndroid(): AndroidLibraryCoverage = when (this) {

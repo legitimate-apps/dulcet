@@ -43,6 +43,11 @@ class AndroidProductionLibraryReaderAppConformanceTest {
                 compose.onNodeWithTag("album.back").performClick()
                 compose.waitForIdle()
             }
+
+            override fun select(tag: String, from: String) {
+                compose.onNodeWithTag(tag).performClick()
+                compose.waitForIdle()
+            }
         }, platform = "android")
     }
 

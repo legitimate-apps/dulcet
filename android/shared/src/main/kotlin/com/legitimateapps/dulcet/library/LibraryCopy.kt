@@ -86,17 +86,17 @@ private fun countPlural(items: List<AndroidLibraryItem>): Int = when {
 private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().format(count)
 
 /**
- * The connection's own failure, stated once above the screen (§16.14): a reconnect that reached the
- * server but could not read the epoch — credentials, TLS, a timeout, the server's own error — leaves
- * the reader offline, and every screen's line says so; this line says why. Null otherwise.
+ * The connection's own failure, stated once above the screen (§16.14), when a reconnect that did not
+ * read the epoch — a timeout, credentials, TLS, the server's own error — left the reader offline.
+ * Every screen's own line then says "offline"; this one says why. Null otherwise, including for a
+ * failed reconnect of a reader that is still online, whose screens keep reading.
  */
-public fun Resources.connectionLine(state: LibraryConnectionState): String? = when (state) {
-    is LibraryConnectionState.Failed -> getString(
-        R.string.library_connection_failed,
-        state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal),
-    )
-    else -> null
-}
+public fun Resources.connectionLine(state: LibraryConnectionState): String? =
+    if (state is LibraryConnectionState.Failed && state.readerOffline) {
+        getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
+    } else {
+        null
+    }
 
 /** `unverified(noEpoch)`, stated once per account rather than on every list (§16.12, §16.14). */
 public fun Resources.noEpochLine(state: LibraryConnectionState): String? =

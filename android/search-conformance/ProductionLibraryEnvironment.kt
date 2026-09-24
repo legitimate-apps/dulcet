@@ -40,7 +40,11 @@ internal fun disposableBaseUrl(): String {
     return url
 }
 
-/** Closes the process's reader and waits until its thread has stopped: a cold start follows. */
+/**
+ * Closes the process's reader and waits until it has terminated: a cold start follows. It gives up
+ * after 3,000 polls 5 ms apart, about 15 s plus the idling, which is normally inside the reader's
+ * 30 s executor bound, so the termination it sees is a real thread stop.
+ */
 internal fun closeProcessReader() {
     var done = false
     val started = kotlin.time.TimeSource.Monotonic.markNow()
@@ -53,7 +57,9 @@ internal fun closeProcessReader() {
         shadowOf(Looper.getMainLooper()).idle()
         Thread.sleep(5)
     }
-    error("The reader's thread did not stop")
+    // The last idle may have delivered it.
+    if (done) return
+    error("The reader did not terminate within 3,000 polls")
 }
 
 /**
@@ -108,9 +114,12 @@ class PlatformNetwork(app: Application) {
     private var saved: NetworkInfo? = null
     private var lost = false
 
+    /** The default network the callbacks were last told of: the host's own, or one switched to. */
+    private var reported: android.net.Network? = null
+
     fun lose() {
         check(!lost)
-        val network = checkNotNull(manager.activeNetwork) { "setup: the host must start with a network" }
+        val network = checkNotNull(reported ?: manager.activeNetwork) { "setup: the host must start with a network" }
         check(shadow.networkCallbacks.isNotEmpty()) { "setup: the session registered no network callback" }
         saved = manager.activeNetworkInfo
         shadow.setActiveNetworkInfo(null)
@@ -124,8 +133,23 @@ class PlatformNetwork(app: Application) {
         shadow.setActiveNetworkInfo(saved)
         val network = checkNotNull(manager.activeNetwork) { "setup: the platform reports no network" }
         lost = false
+        reported = network
         shadow.networkCallbacks.toList().forEach { it.onAvailable(network) }
     }
+
+    /**
+     * The device moves to a different network while it has one — Wi-Fi to cellular, say: the platform
+     * reports a new default network, with no loss in between.
+     */
+    fun switchNetwork() {
+        check(!lost)
+        check(shadow.networkCallbacks.isNotEmpty()) { "setup: the session registered no network callback" }
+        val other = org.robolectric.shadows.ShadowNetwork.newInstance(++switches + 1_000)
+        reported = other
+        shadow.networkCallbacks.toList().forEach { it.onAvailable(other) }
+    }
+
+    private var switches = 0
 
     internal fun restoreIfLost() {
         if (lost) {

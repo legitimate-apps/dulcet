@@ -1141,6 +1141,13 @@ internal data class LibraryPublication(
      * up (§16.12: a rebased window is open on both sides of the viewport).
      */
     val leadingOffset: Int = 0,
+    /**
+     * Why a detail's child list cannot be shown while its header can (§16.14): offline and never
+     * read, the read failed, or the reader's own failure. Null otherwise, and for a screen that is
+     * unavailable as a whole, whose [freshness] says why. The header's freshness cannot say it: a
+     * revalidation in flight is `cached(revalidating)` whatever the list's state.
+     */
+    val itemsUnavailableReason: LibraryUnavailableReason? = null,
 )
 
 /** The freshness of §16.14, plus [Loading], which is only ever published with nothing cached. */
