@@ -149,7 +149,8 @@ private fun AppleSearchPageRequest.toCoreRequest(): SearchPageRequest = SearchPa
     trackOffset = trackOffset,
 )
 
-private fun SearchPageResult.toAppleOutcome(): AppleSearchOutcome = when (this) {
+// Internal, not private, so `AppleSearchFacadeTest` can pin the per-kind counts crossing to Swift.
+internal fun SearchPageResult.toAppleOutcome(): AppleSearchOutcome = when (this) {
     is SearchPageResult.Loaded -> AppleSearchOutcome(page.toAppleDto(), null)
     is SearchPageResult.Failed -> AppleSearchOutcome(null, AppleSearchErrorDto(error.appleSearchKind()))
 }

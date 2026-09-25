@@ -438,6 +438,12 @@ private extension DulcetAudioContainer {
     }
 }
 
+/// Deliberately empty: the requirements are this DTO's own property names and types, so the per-kind
+/// mapping lives in DulcetKit (`DulcetSearchPage.init(results:counts:)`), where a test reaches it.
+/// Retroactive because both sides are imported; DulcetCore cannot see DulcetKit, so it can never
+/// declare this conformance itself.
+extension AppleSearchPageDto: @retroactive DulcetSearchPageCounts {}
+
 @MainActor
 final class DulcetCoreServerSearch: DulcetServerSearching {
     private let client = AppleSearchClient()
@@ -464,15 +470,7 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
             if let page = outcome.page {
                 completion(.loaded(DulcetSearchPage(
                     results: page.results.map(Self.copyResult),
-                    artistResultCount: Int(page.artistResultCount),
-                    albumResultCount: Int(page.albumResultCount),
-                    trackResultCount: Int(page.trackResultCount),
-                    artistConsumedRowCount: Int(page.artistConsumedRowCount),
-                    albumConsumedRowCount: Int(page.albumConsumedRowCount),
-                    trackConsumedRowCount: Int(page.trackConsumedRowCount),
-                    artistHasMore: page.artistHasMore,
-                    albumHasMore: page.albumHasMore,
-                    trackHasMore: page.trackHasMore
+                    counts: page
                 )))
                 return
             }

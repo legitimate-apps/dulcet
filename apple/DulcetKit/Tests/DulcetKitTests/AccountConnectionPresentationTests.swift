@@ -751,6 +751,33 @@ func searchRepeatedFullPagesAreOneRequestPerActivationAndFailuresPreserveCursors
     }
 }
 
+/// Stands in for the core page DTO, which the app target conforms with an empty extension.
+private struct SearchPageCountsFixture: DulcetSearchPageCounts {
+    var artistResultCount: Int32 = 1
+    var albumResultCount: Int32 = 2
+    var trackResultCount: Int32 = 3
+    var artistConsumedRowCount: Int32 = 20
+    var albumConsumedRowCount: Int32 = 15
+    var trackConsumedRowCount: Int32 = 7
+    var artistHasMore = true
+    var albumHasMore = false
+    var trackHasMore = true
+}
+
+// Every value differs, so crossing any two kinds -- or a result count with a consumed-row count --
+// reads back a different number. The data source advances each kind's cursor by the consumed-row
+// count, so a crossed count here sends one kind's offset to another kind.
+@Test
+func searchPageCountsCrossTheCoreBoundaryUnderTheirOwnKinds() {
+    let page = DulcetSearchPage(results: [], counts: SearchPageCountsFixture())
+    let resultCounts: [Int] = [page.artistResultCount, page.albumResultCount, page.trackResultCount]
+    let consumedRows: [Int] = [page.artistConsumedRowCount, page.albumConsumedRowCount, page.trackConsumedRowCount]
+    let hasMore: [Bool] = [page.artistHasMore, page.albumHasMore, page.trackHasMore]
+    #expect(resultCounts == [1, 2, 3])
+    #expect(consumedRows == [20, 15, 7])
+    #expect(hasMore == [true, false, true])
+}
+
 @MainActor
 private func rawSearchPage(artists: [String], albums: [String], tracks: [String]) -> DulcetSearchPage {
     func unique(_ rows: [String], _ kind: DulcetSearchResultKind) -> [DulcetSearchResult] {

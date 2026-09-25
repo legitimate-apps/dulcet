@@ -426,6 +426,42 @@ public struct DulcetSearchPage: Sendable, Hashable {
     }
 }
 
+/// One core search page's per-kind counts, named and typed exactly as the exported core page DTO
+/// declares them.
+///
+/// The app target conforms that DTO with an empty extension, so no hand-written line there can
+/// cross one kind's count into another's; the only mapping is `DulcetSearchPage.init(results:counts:)`,
+/// which the package tests drive directly. The DTO itself has no initializer visible to Swift, so a
+/// mapping written against it could not be tested at all.
+public protocol DulcetSearchPageCounts {
+    var artistResultCount: Int32 { get }
+    var albumResultCount: Int32 { get }
+    var trackResultCount: Int32 { get }
+    var artistConsumedRowCount: Int32 { get }
+    var albumConsumedRowCount: Int32 { get }
+    var trackConsumedRowCount: Int32 { get }
+    var artistHasMore: Bool { get }
+    var albumHasMore: Bool { get }
+    var trackHasMore: Bool { get }
+}
+
+extension DulcetSearchPage {
+    public init(results: [DulcetSearchResult], counts: some DulcetSearchPageCounts) {
+        self.init(
+            results: results,
+            artistResultCount: Int(counts.artistResultCount),
+            albumResultCount: Int(counts.albumResultCount),
+            trackResultCount: Int(counts.trackResultCount),
+            artistConsumedRowCount: Int(counts.artistConsumedRowCount),
+            albumConsumedRowCount: Int(counts.albumConsumedRowCount),
+            trackConsumedRowCount: Int(counts.trackConsumedRowCount),
+            artistHasMore: counts.artistHasMore,
+            albumHasMore: counts.albumHasMore,
+            trackHasMore: counts.trackHasMore
+        )
+    }
+}
+
 public enum DulcetSearchPageOutcome: Sendable {
     case loaded(DulcetSearchPage)
     case failed(DulcetSearchFailure)

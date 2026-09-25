@@ -125,13 +125,27 @@ class SearchTest {
     fun consumedRowsReachLaterUniqueResultsForAllKinds() = runTest {
         // Defensive synthetic intra-page duplication, not evidence of real server behavior.
         // Cross-page overlap alone does not reduce this parser's per-response distinct count.
-        val rows = List(20) { "A" } + List(20) { "B" } + "C"
+        //
+        // The three kinds are deliberately unlike one another: a different page size, a different
+        // raw row count and a different de-duplicated count on every page, and the songs list ends
+        // a page before the others. A mapping that crossed two kinds' counts would otherwise read
+        // back the same numbers and pass.
+        val rows = mapOf(
+            // 20 a page: raw 20, 20, 1 -- distinct 1, 1, 1.
+            "artist" to List(20) { "A" } + List(20) { "B" } + "C",
+            // 15 a page: raw 15, 15, 2 -- distinct 2, 3, 1.
+            "album" to List(8) { "A" } + List(7) { "B" } +
+                List(5) { "C" } + List(5) { "D" } + List(5) { "E" } + List(2) { "F" },
+            // 10 a page: raw 10, 7, 0 -- distinct 7, 4, 0. The second page is short.
+            "song" to List(4) { "A" } + listOf("B", "C", "D", "E", "F", "G") +
+                listOf("H", "H", "I", "I", "J", "J", "K"),
+        )
         val offsets = mutableListOf<List<Int>>()
         val search = ServerSearch(SearchEndpointTransport { parameters ->
             offsets += listOf("artistOffset", "albumOffset", "songOffset").map {
                 parameters.getValue(it).toInt()
             }
-            fun page(kind: String, titleKey: String): String = rows
+            fun page(kind: String, titleKey: String): String = rows.getValue(kind)
                 .drop(parameters.getValue("${kind}Offset").toInt())
                 .take(parameters.getValue("${kind}Count").toInt())
                 .joinToString(",") { """{"id":"$kind-$it","$titleKey":"$it"}""" }
@@ -141,30 +155,38 @@ class SearchTest {
                 "song":[${page("song", "title")}]
             }"""))
         })
-        var next = request()
+        val consumed = listOf(listOf(20, 15, 10), listOf(20, 15, 7), listOf(1, 2, 0))
+        val distinct = listOf(listOf(1, 2, 7), listOf(1, 3, 4), listOf(1, 1, 0))
+        val hasMore = listOf(listOf(true, true, true), listOf(true, true, false), listOf(false, false, false))
+        var next = request(artistCount = 20, albumCount = 15, trackCount = 10)
         var visible = emptyList<SearchResultItem>()
         repeat(3) { index ->
             val page = assertIs<SearchPageResult.Loaded>(search.search(next)).page
             visible = mergeSearchResults(visible, page.results)
-            val expectedRows = if (index < 2) 20 else 1
-            assertEquals(listOf(expectedRows, expectedRows, expectedRows), listOf(
+            assertEquals(consumed[index], listOf(
                 page.artistConsumedRowCount, page.albumConsumedRowCount, page.trackConsumedRowCount,
-            ))
-            assertEquals(listOf(1, 1, 1), listOf(
+            ), "consumed rows, page ${index + 1}")
+            assertEquals(distinct[index], listOf(
                 page.artistResultCount, page.albumResultCount, page.trackResultCount,
-            ))
-            assertEquals(listOf(index < 2, index < 2, index < 2), listOf(
+            ), "displayable results, page ${index + 1}")
+            assertEquals(hasMore[index], listOf(
                 page.artistHasMore, page.albumHasMore, page.trackHasMore,
-            ))
+            ), "hasMore, page ${index + 1}")
             next = next.copy(
                 artistOffset = next.artistOffset + page.artistConsumedRowCount,
                 albumOffset = next.albumOffset + page.albumConsumedRowCount,
                 trackOffset = next.trackOffset + page.trackConsumedRowCount,
             )
         }
-        assertEquals(listOf(listOf(0, 0, 0), listOf(20, 20, 20), listOf(40, 40, 40)), offsets)
-        for (kind in SearchResultType.entries) {
-            assertEquals(listOf("A", "B", "C"), visible.filter { it.type == kind }.map { it.title })
+        assertEquals(listOf(listOf(0, 0, 0), listOf(20, 15, 10), listOf(40, 30, 17)), offsets)
+        val expected = mapOf(
+            SearchResultType.Artist to listOf("A", "B", "C"),
+            SearchResultType.Album to listOf("A", "B", "C", "D", "E", "F"),
+            SearchResultType.Track to listOf("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"),
+        )
+        assertEquals(SearchResultType.entries.toSet(), expected.keys, "every kind is checked")
+        for ((kind, titles) in expected) {
+            assertEquals(titles, visible.filter { it.type == kind }.map { it.title }, "visible $kind")
         }
     }
 
