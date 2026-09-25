@@ -5161,11 +5161,15 @@ the account-connect path. CONF-09b ("every declared distinct account-connect ren
 reachable") was cited on all four Apple cells by tests that reach no state through the production
 transitions: macOS cited a test that renders every state from deterministic fixtures, and iOS,
 iPadOS and tvOS cited tests that load the root view or check its layout in its initial state. The
-capability state cannot be reached at all without injecting it. The citations are withdrawn: each Apple cell now names CONF-09b as an
-explicit gap (`unevidenced_conformance`, which the parity gate requires to partition the declared ids
-with the evidence and forbids on a shipped cell), and keeps the injected-outcome presentation test
-as a bounded `observes` row. (Numbered after the highest revision on `main` when written; renumbers
-at merge.)
+capability state cannot be reached at all without injecting it. The citations are withdrawn: each
+Apple cell now names CONF-09b as an explicit gap (`unevidenced_conformance`, which the parity gate
+forbids on a shipped cell, and which must partition the declared ids with the evidence whenever the
+cell cites a conformance row or is shipped). Each keeps the injected-outcome presentation test —
+checked outcome by outcome against a table written out in the test — and the test it cited before,
+as bounded `observes` rows stating what each shows. The Android and Android TV cells cited a test of
+the same shape, reaching their render states through injected gateway results and an injected
+failing credential store; CONF-09b is a named gap there too, and that test is kept as an `observes`
+row. (Numbered after the highest revision on `main` when written; renumbers at merge.)
 
 **Revision 108 (2026-09-25)** — §12.2 rule 3 said the phase gate is Apple-only "because Android has no
 phase-to-presentation mapping on `main` at all" and that the Media3 work must extend it. The Media3

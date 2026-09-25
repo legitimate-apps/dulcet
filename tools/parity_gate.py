@@ -253,7 +253,9 @@ def validate(document: dict, source: str) -> dict[str, dict]:
             if (not isinstance(gaps, dict) or set(gaps) - declared_ids
                     or any(not isinstance(reason, str) or not reason.strip() for reason in gaps.values())):
                 fail(f"{source}: {feature_id}/{platform} unevidenced_conformance requires declared ids and nonblank reasons")
-            if gaps and (schema_version != 2 or status == "shipped"):
+            if gaps and schema_version != 2:
+                fail(f"{source}: {feature_id}/{platform} unevidenced_conformance requires schema_version 2")
+            if gaps and status == "shipped":
                 fail(f"{source}: {feature_id}/{platform} cannot ship with unevidenced conformance")
             evidence = cell.get("evidence")
             if status == "shipped" and evidence is None:

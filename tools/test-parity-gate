@@ -364,6 +364,8 @@ def _gap_cell(document):
 
 expect_rejection("gap cannot ship", lambda d: _gap_cell(d).update(status="shipped"),
                  "cannot ship with unevidenced conformance")
+expect_rejection("gap requires schema 2", lambda d: d.update(schema_version=1),
+                 "unevidenced_conformance requires schema_version 2")
 expect_rejection("unknown gap", lambda d: _gap_cell(d).update(
     unevidenced_conformance={"CONF-999": "missing"}), "requires declared ids and nonblank reasons")
 expect_rejection("blank gap reason", lambda d: _gap_cell(d).update(
