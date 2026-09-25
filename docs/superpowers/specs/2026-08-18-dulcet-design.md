@@ -1350,8 +1350,14 @@ Three rules, each because the alternative fails silently:
 3. **A source gate enforces rule 1**, because nothing else can: `tools/verify-playback-phase-parity`
    fails when either side names a phase the other does not, and asserts that the wire value is still
    derived from the enum's own name — a list comparison that has quietly stopped comparing anything
-   is worse than no gate. It is Apple-only today because Android has no phase-to-presentation mapping
-   on `main` at all; the Media3 work must extend it rather than repeat this.
+   is worse than no gate. It is Apple-only because Android has no phase-to-presentation mapping to
+   compare. **OBSERVED 2026-09-25 by source reading, after the Media3 work landed:** the Android
+   shells never branch on `AndroidPlaybackState.phase`. The phone and TV now-playing surfaces show the
+   track title, and fall back to their loading copy only when the title is blank *and* a session
+   exists (`PhoneNowPlaying.kt`, `TvPlaybackActivity.kt`), so a `Stopped` or `TornDown` session whose
+   track is known presents that track with a Play control rather than a spinner. The blank-title
+   fallback is the analogue of the Apple shell's missing-catalog `preparing`, which rule 1 does not
+   cover either. The first Android shell that branches on `phase` extends this gate to Android.
 
 ### 12.3 Position cadence
 
@@ -5127,6 +5133,13 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 108 (2026-09-25)** — §12.2 rule 3 said the phase gate is Apple-only "because Android has no
+phase-to-presentation mapping on `main` at all" and that the Media3 work must extend it. The Media3
+work has landed without adding one: the Android shells key their loading copy on a blank title with a
+live session, never on the phase, so a stopped session with a known track shows that track. The rule
+now says so, names where that was read, and moves the obligation to the first Android shell that
+branches on `phase`. (Numbered after the highest revision on `main` when written; renumbers at merge.)
 
 **Revision 107 (2026-09-25)** — §18.1 defines search continuation in raw consumed rows. It said only
 that each result type pages independently, and the code filled the gap in the units that go wrong:

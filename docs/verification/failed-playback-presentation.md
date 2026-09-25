@@ -230,7 +230,8 @@ other event branches, stale-session handling, or the rendered SwiftUI failure vi
 are removed. The fixture supplies the engine event source and initial queue/catalog
 state. This is engine-event-to-presentation-store coverage, not an assertion that
 those other product paths have been tested. The separately suspect disconnect to
-`Stopped` path remains deliberately unchanged and was not reproduced here.
+`Stopped` path was deliberately left unchanged by this work and was not reproduced here; it
+has since been closed (see **CLOSED 2026-09-11** above).
 
 Independent source review found no remaining delivery-path gap and prompted the
 additional failure-position assertion. At final verification, fetched `origin/main`
