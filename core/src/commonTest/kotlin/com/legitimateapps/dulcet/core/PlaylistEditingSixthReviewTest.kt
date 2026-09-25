@@ -134,8 +134,14 @@ class PlaylistEditingSixthReviewTest {
         env.hooked.before = { endpoint, _ ->
             if (endpoint == "createPlaylist") {
                 creates++
-                if (creates == 1) deleted = session.playlists.delete(localId!!)
-                status(429, null)
+                // One 429 only: a deleted create sent again then reaches the fake and fails the count
+                // below by name, where a limiter answering every send would keep the clock running.
+                if (creates == 1) {
+                    deleted = session.playlists.delete(localId!!)
+                    status(429, null)
+                } else {
+                    null
+                }
             } else {
                 null
             }
@@ -150,8 +156,9 @@ class PlaylistEditingSixthReviewTest {
         val held = env.outcomes.filterIsInstance<PlaylistEditOutcome.Held>()
         assertEquals(0L, session.playlists.pendingCount(), "the 429 made nothing, yet the deleted create's row was kept")
         val listings = env.server.count("getPlaylists")
-        advanceTimeBy(10_000); runCurrent(); advanceUntilIdle()
+        advanceTimeBy(10_000); runCurrent()
         assertEquals(1, creates, "the deleted create was sent again")
+        advanceUntilIdle()
         assertEquals(0, env.server.playlists.size)
         assertEquals(listings, env.server.count("getPlaylists"), "the deleted create was looked for although the 429 proved it made nothing")
         assertEquals(emptyList(), held, "Held told for a create the person deleted while its send was out: ${env.outcomes}")
@@ -209,9 +216,11 @@ class PlaylistEditingSixthReviewTest {
         session.reader.open(LibraryQuery.Playlist(p.id)) { }
         advanceUntilIdle()
         var localId: String? = null
+        var creates = 0
         env.hooked.before = { endpoint, _ ->
             when (endpoint) {
-                "createPlaylist" -> { session.playlists.delete(localId!!); status(429, null) }
+                // One 429 only, for the same reason as q2's.
+                "createPlaylist" -> { creates++; if (creates == 1) { session.playlists.delete(localId!!); status(429, null) } else null }
                 "updatePlaylist" -> status(429, null)
                 else -> null
             }

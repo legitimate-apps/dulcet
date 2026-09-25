@@ -4333,7 +4333,14 @@ status with no envelope is `Auth.InvalidCredentials` for a 401, as playback name
     so it never ends a run either (sixth review round: ending on it told `Held` twice in one limiter
     episode and reset the floor). A 429 answering a create deleted here proves that send made
     nothing: unless an earlier send of it is still in doubt, the create's row goes at once, and
-    nothing is looked for. A run ends when a flush of
+    nothing is looked for. When one is — and whenever a create edited here meanwhile has an earlier
+    send in doubt — the row, tombstone or edited create, takes back the name and songs that earlier
+    send carried. Only that send may have made anything, so a late commit of it is looked for as it
+    was sent, never under a later name or order of songs — which would find nothing, or not what was
+    sent, and send the create again or ask the person, a duplicate nobody is told of in the first
+    case (seventh review round). No recorded id is dropped: the playlists listed before the first
+    send, those listed by the lookup that led to the re-send — none of which that lookup found to be
+    the first send's — and every id recorded since. A run ends when a flush of
     that outbox sends something and meets no 429, or finishes with nothing pending, or when its
     queue empties, however that happens — the flush sending the last change, or a change withdrawn
     or undone here — and **not** on one delivery, so a limiter that admits one request per window
@@ -4364,6 +4371,10 @@ status with no envelope is `Auth.InvalidCredentials` for a 401, as playback name
 - **this change's failure**, retried up to three times, then dropped as `NotSaved` with the person
   told, and the queue moves on — any other status, the generic code 0, and a refusal of access whose
   ping was answered.
+
+A refusal of a create the person deleted here — refused outright, or on its last failure — is told
+neither way and counted as neither: the server holds what they asked for, no such playlist (seventh
+review round).
 
 A pending change can always be withdrawn — held, waiting for a choice, or failing — so none is ever
 stuck in the queue (`pendingChanges`, `withdraw`; §18.3 for favourites). Withdrawing cannot unsend,
@@ -6762,6 +6773,29 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `sqlite_autoindex_*`, by what they index rather than their numbered names — and its CHECK
     constraints, as expressions with whitespace removed (§11.4). OBSERVED 2026-09-25: a fresh install of v7 carries 34 implicit indexes (5 of them UNIQUE) and 103 CHECK clauses across 33 tables; the gate passes over the 7 real fixtures, every one upgraded to v7 equal to a fresh install, with 17 destructive negative controls. The three new controls — a UNIQUE constraint added to `cache_binding`, `cache_epoch`'s PRIMARY KEY made descending, `cache_meta`'s CHECK dropped — are each accepted by the fifth round's gate and rejected by this one, naming the table and `implicit_indexes` or `checks`. Of four mutants of the new comparison, three are killed (no implicit index read, no CHECK read, UNIQUE read without PRIMARY KEY); the fourth, comparing CHECK text with its whitespace, is equivalent on these fixtures, the normalisation being for robustness only. (at) **Failing first.**
     The 11 new tests in `PlaylistEditingSixthReviewTest`, run against 5f467f16: 7 fail on the JVM and the same 7 on `macosArm64` — q1, q2, q4, a playlist change withdrawn while out, the tombstone whose earlier send is in doubt, a deleted create's 429 beginning no run, and a create renamed while its only send was out. The four that pass there pass by design: q3 documents what a change under way may finish, q4f is favourites' control, one guards a value an earlier send left in doubt, and one pins decision 1(b)'s "awaiting the person" arm. (au) **Mutation run.** 16 compiling mutants of the final code against a baseline of 283 tests that all pass: 15 killed — among them the tombstone counted as queued, `met429` set only when queued (the inverse of the review's unconditional mutant, for favourites and for playlists), a gate before the create's comment write, a header change edited while out keeping its mark, and the review's surviving decision-1(b) mutant — and 1 survives by design: the fourth round's run-ending rule restored, without the clause that ends a run when nothing is pending — equivalent, which is why that clause is called defensive above. A control that does not compile, and a first form of the header-change mutant that did not compile, are reported as such and counted as nothing. (av) **Live.** CONF-88..91 against one fresh disposable Navidrome 0.63.2, once on the JVM and once on `macosArm64`, 6 of 6 each, the server holding no playlist before, between and after the runs; the server was then stopped and its data deleted.
+
+    **Item 21, seventh review round — a re-check of the sixth round's head found it merge-ready with
+    one new NIT; the maintainer made it a fix, with two more before the pull request.** (aw) **A
+    create re-sent while an earlier send is in doubt.** A create whose first send was in doubt, sent
+    again, edited or deleted here while that re-send was out and answered 429, kept the re-send's
+    record: the sixth round's restore required that no earlier send be in doubt. The 429 proves only
+    the re-send made nothing; the send still in doubt is the first, which carried another name when
+    the person renamed in between. Its playlist, committed late (residual 4), was then sought under
+    the later name, not found, and the create sent a third time — two playlists for one, nobody
+    told; deleted instead, the row was dropped without naming the playlist. **Decision:** the row,
+    tombstone or edited create, takes back the name and songs the earlier send carried, and keeps
+    every recorded id: those listed before the first send, and those listed by the lookup that led to
+    the re-send, which that lookup found not to be the first send's (§18.6). (ax)
+    **R8 fails by name.** The sixth round's review found the mutant that makes a deleted create
+    sendable again caught only by a test that hung: q2's limiter answered every send 429, so the
+    re-sent create looped under a clock that never went idle. q2, and the test that a deleted
+    create's 429 begins no run, now answer one 429 only, so a create sent again reaches the fake and
+    fails the send count by name. (ay) **A refusal of a create deleted here** — refused outright, or
+    dropped on its last failure — is no longer told `NotSaved` nor counted as refused: the server
+    holds what the person asked for (§18.6). The refusal's row is already gone when the flush
+    classifies it, so a tombstone that a failed send removed is remembered by key for that one
+    classification. **Failing first.** The 6 new tests in `PlaylistEditingSeventhReviewTest`, run against the rebased sixth-round code: 4 fail on the JVM and the same 4 on `macosArm64` — the create edited while its re-send was out, the create whose songs moved before its re-send, the create deleted while its re-send was out, and the refusal of a deleted create. The other 2 pass there by design: one guards that the restore drops no recorded id, and one is the control that a refusal of a create the person kept is still told. q2 and the test that a deleted create's 429 begins no run, now answering one 429, pin existing behaviour. (az) **Mutation run.** 12 compiling mutants against a baseline of 289 tests that all pass: 11 killed — the restore arm unreachable (the sixth round's code), the re-send's name kept, its songs kept, its lookup's listing and every id since dropped; R8, now a named failure (q2's "the 429 made nothing, yet the deleted create's row was kept" after 5 ms, the whole filtered run finishing in seconds, where it had hung); the removed tombstone not remembered, every refused create treated as deleted, a deleted create's refusal still counted; and two carried from the sixth round. 1 survives, kept for fidelity: dropping the first send's own listing. It differs only for a playlist listed before the first send and not by the lookup — deleted, which never returns, or another account's taken out of this account's listing, which, should it return under the name, is named to the person and never adopted, being another account's (ASSUMED equivalent; no test can tell them apart). A control that does not compile is counted as nothing. (ba) **Rebased onto `main`.** Rebased onto `main` at 90bc2467 (#141, R0; #144): one textual conflict, in this record, resolved by keeping R0's item 20 and numbering this item 21. `main`'s schema is still 6 (migrations through `5.sqm`, `databases/6.db`), so this branch's `6.sqm` and schema 7 stand. Every target compiles on the rebased tree: iOS, macOS, the iOS simulator tests, the conformance JVM tests, and the Android app (dev and prod) and TV.
+    (bb) **Live.** CONF-88..91 once on the JVM against one fresh disposable Navidrome 0.63.2, 6 of 6, the server holding no playlist before and after; it was then stopped and its data deleted. Every suite run again from nothing: 627 JVM, 628 `macosArm64` and 726 Android host tests, none failing; the migration gate with its 17 controls, and `--check`, pass.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
