@@ -414,6 +414,14 @@ public class ApplePlaybackQueueClient private constructor(
         controllerOrThrow().restoreCurrentPaused()
     }
 
+    /**
+     * The person pressed Play on the current session, reported as they press it and before the
+     * command reaches the engine (§12.12 rule 4): a Play pressed before the engine is ready
+     * produces no engine event at all, and a failure can come before Ready.
+     */
+    public fun recordPlayRequested(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
+        runClosed { controllerOrThrow().recordPlayRequested(PlaybackSessionId(playbackSessionId)) }
+
     public fun acceptsCommand(
         playbackSessionId: String,
         requiresSeekable: Boolean,

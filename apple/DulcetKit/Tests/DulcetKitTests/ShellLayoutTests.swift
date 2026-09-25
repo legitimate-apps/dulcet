@@ -183,6 +183,15 @@ func aLongNoticeWrapsAndIsNeverTruncated() {
 /// The first and last columns of a render holding anything drawn at all.
 @MainActor
 private func drawnColumns<Content: View>(_ view: Content, size: CGSize) throws -> ClosedRange<Int>? {
+    try drawnBounds(view, size: size)?.columns
+}
+
+/// The first and last columns, and rows from the top, of a render holding anything drawn at all.
+@MainActor
+private func drawnBounds<Content: View>(
+    _ view: Content,
+    size: CGSize
+) throws -> (columns: ClosedRange<Int>, rows: ClosedRange<Int>)? {
     let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
     renderer.scale = 1
     let image = try #require(renderer.cgImage, "the renderer must produce an image")
@@ -198,13 +207,14 @@ private func drawnColumns<Content: View>(_ view: Content, size: CGSize) throws -
         return true
     }
     try #require(drawn, "the render must redraw into an alpha buffer")
-    var first = Int.max, last = Int.min
+    var first = Int.max, last = Int.min, top = Int.max, bottom = Int.min
     for y in 0..<height {
         for x in 0..<width where alpha[y * width + x] > 0 {
             first = min(first, x); last = max(last, x)
+            top = min(top, y); bottom = max(bottom, y)
         }
     }
-    return first <= last ? first...last : nil
+    return first <= last ? (first...last, top...bottom) : nil
 }
 
 /// A notice that wraps stays a card clear of the screen's sides, never running edge to edge:
@@ -225,6 +235,89 @@ func aWrappingNoticeStaysClearOfTheScreensSides() throws {
             "the notice reaches \(Int(size.width) - 1 - columns.upperBound) pt from the right side")
     // The experiment is the one intended: the notice spans most of the width, so it wrapped.
     #expect(columns.count > Int(size.width) / 2, "the notice must wrap across the width; \(columns)")
+}
+
+/// The notice never grows over navigation and is never truncated (spec §12.12 rule 5): drawn in
+/// the page's frame, it is offered a share of that height, and a sentence naming a title too long
+/// for it gives way to the sentence without the title. Rendered in a region sized so the full
+/// sentence cannot fit its share and the short one can, the notice drawn is the short one, inside
+/// the region; given room, the same notice names its title.
+@Test @MainActor
+func aNoticeTooTallForItsShareOfThePageShowsTheSentenceWithoutTheTitle() throws {
+    let width: CGFloat = 402
+    let title = String(repeating: "A Very Long Title That Wraps ", count: 4)
+    let notices = DulcetPlaybackNotices(skipMessage: DulcetSkippedTrackNotice(sequence: 1, title: title).message)
+    let full = fittedSize(DulcetPlaybackNoticeStack(notices: notices), width: width).height
+    let short = fittedSize(
+        DulcetPlaybackNoticeStack(notices: DulcetPlaybackNotices(
+            skipMessage: DulcetSkippedTrackNotice(sequence: 1, title: nil).message
+        )),
+        width: width
+    ).height
+    // The experiment is the one intended: the two sentences differ by lines, not rounding.
+    try #require(full > short + 10, "the long title's sentence must be lines taller; \(full) vs \(short)")
+
+    // The region sits below a strip standing in for the navigation bar, which must stay clear.
+    let navigation = 100
+    func drawnHeight(regionHeight: CGFloat) throws -> (height: Int, top: Int) {
+        let page = VStack(spacing: 0) {
+            Color.clear.frame(height: CGFloat(navigation))
+            DulcetPlaybackNoticeRegion {
+                DulcetPlaybackNoticeStack(notices: notices)
+            }
+            .frame(height: regionHeight)
+        }
+        let bounds = try #require(
+            try drawnBounds(
+                page.environment(\.colorScheme, .light),
+                size: CGSize(width: width, height: CGFloat(navigation) + regionHeight)
+            ),
+            "the notice must be drawn in a region \(regionHeight) tall"
+        )
+        return (bounds.rows.count, bounds.rows.lowerBound)
+    }
+
+    // The share lies between the two sentences' heights.
+    let tight = 3 * (full + short) / 2
+    let constrained = try drawnHeight(regionHeight: tight)
+    // Room for the whole sentence within the share.
+    let roomy = try drawnHeight(regionHeight: 3 * full + 30)
+    print("DULCET NOTICE FALLBACK full=\(full) short=\(short) region=\(tight) "
+        + "drawn-constrained=\(constrained.height) drawn-roomy=\(roomy.height)")
+
+    #expect(CGFloat(constrained.height) <= short, "the shorter sentence must be the one drawn; \(constrained)")
+    #expect(CGFloat(constrained.height) <= tight * DulcetPlaybackNoticeRegion.maximumShare,
+            "the notice must stay inside its share of the page; \(constrained)")
+    #expect(constrained.top >= navigation, "nothing may be drawn over the navigation strip; \(constrained)")
+    #expect(CGFloat(roomy.height) > short + 10, "with room, the notice names its title; \(roomy)")
+}
+#endif
+
+#if os(iOS)
+/// A transient notice's text stops growing at ``DulcetPlaybackNoticeStack/largestTextSize``: at the
+/// largest accessibility size it measures exactly as at that one. The control is the same notice
+/// outside the stack, which does grow -- this host scales Dynamic Type, so equality is the cap.
+@Test @MainActor
+func aNoticesTextStopsGrowingAtItsLargestTextSize() {
+    let width: CGFloat = 402
+    let message = DulcetSkippedTrackNotice(sequence: 1, title: "Unplayable Probe").message
+    func stack(_ size: DynamicTypeSize) -> CGFloat {
+        fittedSize(
+            DulcetPlaybackNoticeStack(notices: DulcetPlaybackNotices(skipMessage: message))
+                .environment(\.dynamicTypeSize, size),
+            width: width
+        ).height
+    }
+    func bare(_ size: DynamicTypeSize) -> CGFloat {
+        fittedSize(
+            DulcetPlaybackNotice(text: message, systemImage: "forward.end").environment(\.dynamicTypeSize, size),
+            width: width
+        ).height
+    }
+    print("DULCET NOTICE CAP stack-ax2=\(stack(.accessibility2)) stack-ax5=\(stack(.accessibility5)) "
+        + "bare-ax2=\(bare(.accessibility2)) bare-ax5=\(bare(.accessibility5))")
+    #expect(bare(.accessibility5) > bare(.accessibility2) + 10, "this host must scale Dynamic Type")
+    #expect(stack(.accessibility5) == stack(.accessibility2), "the notice's text must stop at its cap")
 }
 #endif
 

@@ -230,15 +230,18 @@ to separate fields in `corpus-manifest.json`; the health check compares the comp
 structure to the contract. Any encoding, parsing, tag, duration, count, or format mismatch errors the
 job.
 
-### Opt-in fixture: the Skip Probe album
+### Opt-in fixture: the Skip Probe albums
 
-`tools/seed-skip-probe` adds one more album, "Skip Probe", for the automatic-skip UI proof (spec
-§12.12): an undecodable MP3 whose bytes are fixed and pinned by SHA-256, then a 40-second playable
-tone. It is never part of the default corpus above, because that corpus is counted exactly — the
-health check requires its 314 files and the conformance suites count its albums. The UI harness runs
-it against a server that has already passed the health check, with `--base-url`, and the tool
-rescans and waits until both tracks are listed. No conformance class runs against a server it has
-been added to.
+`tools/seed-skip-probe` adds two more albums for the automatic-skip UI proofs (spec §12.12). Each
+holds an undecodable MP3 whose bytes are fixed and pinned by SHA-256, then a 40-second playable tone.
+"Skip Probe" names its undecodable track "Unplayable Probe"; "Long Title Skip Probe" gives its
+undecodable track a 70-character title, for the proof that the notice shows its shorter sentence at
+the largest text size. They are separate albums so that neither proof's queue plays on into the
+other's tracks. Neither is ever part of the default corpus above, because that corpus is counted
+exactly — the health check requires its 314 files and the conformance suites count its albums. The
+UI harness runs the tool against a server that has already passed the health check, with
+`--base-url`, and the tool rescans and waits until all four tracks are listed. No conformance class
+runs against a server they have been added to.
 
 ## Fail-loud precondition gate
 

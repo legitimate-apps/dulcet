@@ -138,11 +138,22 @@ internal class PlaybackQueueController(
     private val failureChain = mutableSetOf<QueueEntryId>()
 
     /**
+     * The entries that failed and were skipped past automatically since the person last acted on
+     * playback -- played, skipped, picked an entry, or edited the queue (§12.12 rule 3). An
+     * automatic skip whose target is already here stops instead: a fault that breaks every entry
+     * after it has begun, which progress would otherwise keep forgiving, gets one pass through
+     * the queue and no more, even under repeat-all.
+     */
+    private val skippedPastFailures = mutableSetOf<QueueEntryId>()
+
+    /**
      * The attempt a restoration started paused, until the person plays it. A restore starts no
      * sound; once the person plays, the queue plays on past a failed entry (§12.12 rule 4). So a
      * skip past this attempt's failure starts the next entry paused too, and hands the mark on;
-     * the person's Play clears it. Play goes straight to the engine, so the core learns of it from
-     * the engine: `Resumed` or `PlaybackProgressBegan` for this attempt.
+     * the person's Play clears it. The owner reports that Play when the person presses it
+     * ([recordPlayRequested]), whether or not the engine is ready yet, since a failure can come
+     * before Ready. The engine's `Resumed` or `PlaybackProgressBegan` for this attempt clear it
+     * too.
      */
     private var pausedStartAttempt: AttemptId? = null
 
@@ -150,6 +161,7 @@ internal class PlaybackQueueController(
     fun activeServerId(): ServerId? = queues.activeServerId()
 
     fun replaceAndStart(request: PlaybackQueueRequest): PlaybackQueueTransition {
+        skippedPastFailures.clear()
         val serverId = ServerId(request.items.first().itemId.providerInstanceId)
         val previousRepeatMode = queues.load(serverId).repeatMode
         knownDurations.clear()
@@ -200,6 +212,7 @@ internal class PlaybackQueueController(
     fun enqueue(insertion: PlaybackQueueInsertion): PlaybackQueueTransition {
         val serverId = ServerId(insertion.items.first().itemId.providerInstanceId)
         require(queues.activeServerId() == serverId) { "No active queue for this account" }
+        skippedPastFailures.clear()
         val entries = insertion.items.map { item ->
             QueueEntry(
                 queueEntryId = nextQueueEntryId(),
@@ -227,6 +240,7 @@ internal class PlaybackQueueController(
     /** Moves an entry to [toIndex] in the listener-visible order. The current session continues. */
     fun move(queueEntryId: QueueEntryId, toIndex: Int): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
+        skippedPastFailures.clear()
         queues.move(serverId, queueEntryId, toIndex)
         return editedTransition()
     }
@@ -242,6 +256,7 @@ internal class PlaybackQueueController(
         val current = state.currentIndex?.let(state.entries::get)
         require(current?.queueEntryId != queueEntryId) { "The current entry cannot be removed" }
         require(state.entries.any { it.queueEntryId == queueEntryId }) { "Unknown queue entry" }
+        skippedPastFailures.clear()
         queues.remove(serverId, queueEntryId)
         knownDurations.remove(queueEntryId)
         return editedTransition()
@@ -249,6 +264,7 @@ internal class PlaybackQueueController(
 
     fun clearUpcoming(): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
+        skippedPastFailures.clear()
         queues.removeUpcoming(serverId)
         return editedTransition()
     }
@@ -262,6 +278,7 @@ internal class PlaybackQueueController(
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
         val index = state.currentIndex ?: return emptyTransition()
+        skippedPastFailures.clear()
         return startAt(state, index)
     }
 
@@ -327,6 +344,7 @@ internal class PlaybackQueueController(
         val state = queues.load(serverId)
         val index = state.entries.indexOfFirst { it.queueEntryId == queueEntryId }
         if (index < 0) return emptyTransition()
+        skippedPastFailures.clear()
         return startAt(state, index)
     }
 
@@ -343,6 +361,7 @@ internal class PlaybackQueueController(
         val state = queues.load(serverId)
         val index = state.currentIndex ?: return emptyTransition()
         val entry = state.entries[index]
+        skippedPastFailures.clear()
         val session = playback.currentSession ?: return startAt(state, index)
         val failed = session.currentAttempt
         if (session.queueEntryId != entry.queueEntryId || failed.phase != PlaybackAttemptPhase.Failed) {
@@ -427,6 +446,21 @@ internal class PlaybackQueueController(
         return beginSession(entry, replacingQueue = false)
     }
 
+    /**
+     * The person pressed Play on the current session (§12.12 rule 4). The owner reports it as the
+     * person presses it, before or after the engine is ready, and the core then lets a skip past
+     * this attempt's failure play on: the person asked for sound. Changes nothing else, and
+     * nothing for a session that is not current.
+     */
+    fun recordPlayRequested(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition {
+        if (!acceptsCommand(playbackSessionId)) return emptyTransition()
+        skippedPastFailures.clear()
+        if (playback.currentSession?.currentAttempt?.attemptId == pausedStartAttempt) {
+            pausedStartAttempt = null
+        }
+        return emptyTransition()
+    }
+
     fun restoreCurrentPaused(): PlaybackQueueTransition {
         if (playback.currentSession != null) return emptyTransition()
         val serverId = queues.activeServerId() ?: return emptyTransition()
@@ -437,6 +471,7 @@ internal class PlaybackQueueController(
         check(transition is PlaybackTransitionResult.Applied)
         travel = QueueTravel.Forward
         pausedStartAttempt = start.attemptId
+        skippedPastFailures.clear()
         return PlaybackQueueTransition(
             snapshot(),
             start.directive(entry, shouldAutoPlay = false),
@@ -455,6 +490,7 @@ internal class PlaybackQueueController(
 
     fun setShuffle(enabled: Boolean): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
+        skippedPastFailures.clear()
         if (enabled) {
             queues.enableShuffle(serverId, shuffleRandom)
         } else {
@@ -465,6 +501,7 @@ internal class PlaybackQueueController(
 
     fun cycleRepeatMode(): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
+        skippedPastFailures.clear()
         val state = queues.load(serverId)
         val next = when (state.repeatMode) {
             QueueRepeatMode.Off -> QueueRepeatMode.All
@@ -541,7 +578,10 @@ internal class PlaybackQueueController(
         if (failureChain.size >= MAX_CONSECUTIVE_FAILED_ENTRIES) return stop
         val target = state.otherEntryIndex(travel) ?: return stop
         if (state.entries[target].queueEntryId in failureChain) return stop
+        // An entry already skipped past since the person last acted failed then too: one pass.
+        if (state.entries[target].queueEntryId in skippedPastFailures) return stop
         val paused = attemptId == pausedStartAttempt
+        skippedPastFailures += failed.queueEntryId
         val skipped = startAt(state, target, effects, travel = travel)
         if (paused) pausedStartAttempt = skipped.startDirective?.attemptId
         return skipped.copy(
@@ -564,6 +604,7 @@ internal class PlaybackQueueController(
     }
 
     private fun moveBy(delta: Int): PlaybackQueueTransition {
+        skippedPastFailures.clear()
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
         state.currentIndex ?: return emptyTransition()

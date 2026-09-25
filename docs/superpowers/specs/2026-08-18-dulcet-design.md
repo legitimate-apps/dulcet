@@ -458,7 +458,8 @@ horizontal size class**, never by the device:
   `PlayerTintTests`): no pixel of cover colour lies past the reach at three cover sizes; nothing on
   the one-column or side-by-side player is drawn within the reach; under Reduce Transparency no glow
   is drawn; and at 0.9 the glow reaches no further than 10.8 points past the drawn cover at 120 and
-  360 points. Beside a
+  360 points -- asserted against the reach × the cover's scale, 12 playing and 10.8 paused, with the
+  farthest glow measured printed beside it (11.25 and 9.75 points). Beside a
   regular-width player, the queue column is as tall as the player it sits beside -- cover to
   footer, as measured, not estimated -- and centred with it, rather than the window's height.
 
@@ -1827,16 +1828,27 @@ any owner is part of the chain -- the connection's included, though it stops the
 a withdrawn request (`Transport.Cancelled`) is not. **Why five:**
 each automatic skip costs at least one request against the server, and five unplayable entries in a row say
 more about the server, or whatever answers for it, than about the entries. Five passes a short run
-of damaged files in one album and presents a server-wide fault within a few requests. At the stop,
-Try Again and Skip work as §3.1 and §12.1 say.
+of damaged files in one album, and stops a fault that fails every entry before it plays after five
+entries. **The pass.** A fault that lets each entry begin and then fails it -- a proxy that breaks
+every stream after its first range -- ends every chain with progress, so the chain alone does not
+bound it: under repeat-all it would loop for as long as the queue played. So an automatic skip is
+also bounded by what already failed: an entry that failed and was skipped past since the person's
+last explicit playback action -- Play, Skip, Previous, a tap or jump, Try Again, a new queue, a
+queue edit, shuffle or repeat -- is never reached again automatically, and the skip that would reach
+it stops, presenting the failure exactly as the guard does. Such a fault therefore stops within one
+pass of the queue: a pass as long as the queue, not a few requests. At either stop, Try Again and
+Skip work as §3.1 and §12.1 say, and the person's own action begins a new pass.
 
 **4. Identity.** An automatic skip is a next-item advance (§12.1): the failed entry's session ends,
 and the next entry gets a new session and attempt. It records no play for the failed entry beyond
 what §15.2 already evaluated at its failure, and it does not touch the Try Again rules. A restore
 starts no sound; once the person plays, the queue plays on past a failed entry. So a queue restored
 paused moves past an entry that fails before the person plays still paused, and hands that on to
-the next entry; the person's Play -- which reaches the core as the engine's `Resumed`, or as
-`PlaybackProgressBegan` -- ends it, and from then on a skip plays the next entry.
+the next entry; the person's Play ends it, and from then on a skip plays the next entry. The shell
+reports that Play to the core as the person presses it (`recordPlayRequested`), whatever the
+engine's readiness: a Play pressed while the entry is still preparing reaches the engine only, which
+reports no `Resumed` before Ready, and a failure can come before Ready. The engine's `Resumed` and
+`PlaybackProgressBegan` for that attempt end it too.
 
 **5. The person is told.** Each skipped entry produces a brief notice naming it -- "Couldn't play
 *title*. Skipped.", or "Couldn't play a track. Skipped." when the title is not known -- in whole
@@ -1846,10 +1858,20 @@ the now-playing bar and the tab bar and inside the safe area, and never over a n
 taps pass through it. Its card always contains its text, at every text size: a continuous rounded
 rectangle rather than a capsule, whose corners curve over 1.53 × their 10-point radius, inside a
 16-point horizontal padding, so no line reaches a corner however many it wraps to; it keeps a margin
-from the screen's sides and is never truncated. Its text is the `primaryTextOnRegularMaterial` pair
-on the regular material, which holds by construction once the text is always on the material. The
-player and tvOS, which have no now-playing bar, draw it along their own bottom edge. A disconnect or
-sign-out withdraws it, since the track it names belongs to a queue that is gone. The failure line is never left for a track that is not
+from the screen's sides and is never truncated. Never over navigation and never truncated are
+reconciled by a fallback, not by choosing one: the notice's text stops growing at the second
+accessibility text size, as a transient status line; it is offered at most a third of the height
+between the page's navigation bar and the now-playing bar; and when the sentence naming the title
+does not fit that, it shows "Couldn't play a track. Skipped." instead. VoiceOver has already
+announced the whole sentence as the notice appeared. **Why a third, ASSUMED from the type sizes,
+not measured:** at the second accessibility size a sentence naming a 70-character title wraps to
+about seven lines on a 402-point-wide phone, some 270 points, which would fit the roughly 600 points
+between the bars and cover half the page for four seconds; a third, about 200, makes it give way,
+and the shorter sentence -- about three lines -- fits on any phone. Its text is the
+`primaryTextOnRegularMaterial` pair on the regular material, which holds by construction once the
+text is always on the material. The player and tvOS, which have no now-playing bar, draw it along
+their own bottom edge. A disconnect, a sign-out, or reaching another server withdraws it, since the
+track it names belongs to a queue that is gone. The failure line is never left for a track that is not
 playing: the next entry's preparing state replaces it. Previously Played lists a skipped entry like
 any other entry the queue passed, and does **not** mark it: the list is positional (§3.1), and the
 notice is where the skip is said.
@@ -1868,16 +1890,27 @@ and `FEATURES.yml` claims nothing for it. The classification is a pure core func
 **Evidence.** Core: `PlaybackAutoSkipTest` (every `DomainError` case, direction, repeat, both guard
 conditions, identity, preload, a paused restore, a restored queue the person then plays, a
 connection failure counting toward the guard, a withdrawn request left out of the chain, Try Again
-keeping the direction, a transport restart counting as forward); 16 of its first 18 tests failed on
-the code before the change, and the other two pin behaviour it already had;
+keeping the direction, a transport restart counting as forward, a Play pressed before a restored
+entry is ready with its no-Play control, and the pass: the review's probe -- every entry of a
+repeat-all queue plays a second and then fails, which skipped 50 times of 50 -- now stops within one
+pass, and the person's Skip begins another); 16 of its first 18 tests failed on the code before the
+change, and the other two pin behaviour it already had;
 `ApplePlaybackFailureRelayTest` and its Swift twin for the round trip, and a malformed engine report
 refused as an input error without an exception crossing into Swift. Apple:
 `DulcetCorePlaybackSystemTests` drives the real Kotlin queue with a fake engine through an automatic
 advance into an undecodable entry (skipped, the next entry starts), into a connection failure
-(stopped), and through a disconnect, which withdraws the notice; `AVPlayerDecodeFailureTests` the
+(stopped), through a disconnect and a change of server, which withdraw the notice, and through a
+relaunch whose restored entry the person plays before it is ready and which then fails (the next
+entry starts playing; without the Play it is left paused); `AVPlayerDecodeFailureTests` the
 engine's naming, and `AVPlayerEngineTests` each of the six item codes, four of the system's own, and
-a wrapped error read through to its bound. The notice's card, margins and wrapping:
-`ShellLayoutTests` (macOS). The UI proofs below run against the disposable reference server with the
+a wrapped error read through to its bound. The notice's card, margins and wrapping, and its shorter
+sentence in a region too short for the long one, drawn below a strip standing for the navigation
+bar: `ShellLayoutTests` (macOS). The text size cap: `aNoticesTextStopsGrowingAtItsLargestTextSize`,
+iOS only because macOS does not scale Dynamic Type; it runs in `DulcetKitIOSTests` and had not run
+on 2026-09-25. **Mutation:** every rule above has a mutant a named test kills, but one: excluding the
+restore-marked attempt's `PlaybackProgressBegan` from ending the chain survives, and is accepted as
+near-equivalent: it differs only when an attempt still carrying the restore mark makes progress, and
+a paused attempt progresses only after the person's Play, which clears the mark as it is pressed. The UI proofs below run against the disposable reference server with the
 opt-in Skip Probe album (`tools/seed-skip-probe`, docs/CONFORMANCE-ENVIRONMENT.md).
 **OBSERVED locally on an iPhone 17 Pro simulator, iOS 26.5, 2026-09-24, on the revision before the
 notice moved to the bottom; not run by CI yet** (`testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays`):
@@ -1887,9 +1920,13 @@ lists the skipped track unmarked. **Written and not yet run on a simulator:** th
 assertions -- the skipped track's play count, read back over `/rest`, stays 0 while the next track's
 rises by one; the notice's frame intersects neither the navigation bar nor the tab bar, ends above the
 now-playing bar, and keeps 16 points from each side -- and
-`testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize`, the same at AX5. They compile; no
-simulator was available to run them on 2026-09-25. Until they run, the notice's position and its
-containment at AX5 on iPhone are ASSUMED from `ShellLayoutTests` on macOS.
+`testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize`, the same at AX5, and
+`testALongTitledSkipNoticeGivesWayToItsShorterSentenceAtTheLargestTextSize`, which at AX5 taps a
+track with a 70-character title (the fixture's second album) and requires the shorter sentence,
+below the navigation bar and above the now-playing bar. They compile; no simulator was available to
+run them on 2026-09-25. Until they run, the notice's position, its containment at AX5 on iPhone, and
+the third that makes the fallback engage there are ASSUMED from `ShellLayoutTests` on macOS and the
+arithmetic in rule 5.
 
 **Follow-ups, not done here.**
 
@@ -5621,7 +5658,7 @@ wrong:
     have fired), and the Apple relay collapsed server codes and content failures into classes that
     meant something else.
 
-    **Corrected (2026-09-24), after an adversarial review.** A restored queue the person had then
+    **Corrected (2026-09-25), after an adversarial review.** A restored queue the person had then
     played stopped at the next failure: the mark that keeps a restore silent was never cleared, so
     a skip started the next entry paused under music the person had started. It is now cleared
     when the person plays (rule 4). The notice was drawn at the top, over the navigation bar's
@@ -5637,6 +5674,17 @@ wrong:
     relay also read the engine's names and positions outside its closed boundary, where a
     malformed one would have thrown into Swift; and the error sanitizer now reads a wrapped error
     through to a bound.
+
+    **Corrected again (2026-09-25), after a second review.** "The person's Play reaches the core as
+    the engine's `Resumed`" held only after Ready: a Play pressed while a restored entry was still
+    preparing reached the engine alone, so a failure after it still skipped into silence. The shell
+    now reports the Play as it is pressed (rule 4). "Presents a server-wide fault within a few
+    requests" held only for failures before progress: entries that each began and then failed looped
+    under repeat-all without end, and an automatic skip is now bounded to one pass as well (rule 3).
+    "Never over navigation" and "never truncated" conflicted at the largest text sizes for a long
+    title, and the code had silently kept the second; the notice now caps its text and gives way to
+    a shorter sentence (rule 5). And the notice now goes when the server changes, as a comment
+    already claimed.
 
 **Revision 105 (2026-09-24)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a

@@ -1000,9 +1000,10 @@ final class DulcetiOSUITests: XCTestCase {
             + " playable-plays=\(playableBefore)->\(String(describing: playableAfter))")
     }
 
-    /// At the largest accessibility text size the skip notice wraps onto several lines and still
-    /// sits clear of the navigation bar, the tab bar and the now-playing bar, inside the screen's
-    /// margins (spec §12.12 rule 5). The screenshot is the evidence that the card contains its
+    /// At the largest accessibility text size the skip notice -- its text capped at the second
+    /// accessibility size -- wraps onto several lines, still names a short title, and sits clear of
+    /// the navigation bar, the tab bar and the now-playing bar, inside the screen's margins (spec
+    /// §12.12 rule 5). The screenshot is the evidence that the card contains its
     /// text; the frames are the evidence of where it is.
     @MainActor
     func testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize() {
@@ -1023,17 +1024,61 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET AUTO SKIP AX5 OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
     }
 
+    /// A title long enough that, at the largest text size, the sentence naming it is too tall for
+    /// the notice's share of the page, so the notice must say the same without it (spec §12.12
+    /// rule 5). The album is its own, so this proof's queue never runs on into the other's tracks.
+    @MainActor
+    func testALongTitledSkipNoticeGivesWayToItsShorterSentenceAtTheLargestTextSize() {
+        guard requireSimulator(.phone, "The long-title skip notice proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let probe = SkipProbeAlbum.longTitle
+        // The experiment is the one intended: the fixture title is the 70 characters decided.
+        XCTAssertEqual(probe.unplayableTitle.count, 70, "The long title must be 70 characters")
+        guard let run = startSkipProbe(
+            configuration: configuration,
+            probe: probe,
+            extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        ) else { return }
+        let notice = run.notice
+        let placement = assertNoticeClearsNavigation(notice, in: run.app)
+        XCTAssertEqual(notice.label, "Couldn\u{2019}t play a track. Skipped.",
+                       "The notice must show the sentence without the title; \(placement)")
+        XCTAssertFalse(notice.label.contains("Concerto"), "notice=\(notice.label)")
+        attachScreenshot(named: "skipped-track-notice-ax5-long-title", app: run.app)
+        print("DULCET AUTO SKIP AX5 LONG TITLE OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
+    }
+
     private struct SkipProbeRun {
         let app: XCUIApplication
         let notice: XCUIElement
         let markersBefore: [String]
     }
 
-    /// Connects, opens the Skip Probe album, taps its unplayable first track, and waits for the
-    /// notice. Fails, never skips, when the album is not there.
+    /// An opt-in album `tools/seed-skip-probe` adds: an undecodable track, then a playable one.
+    private struct SkipProbeAlbum {
+        let album: String
+        let unplayableTitle: String
+        let playableTitle: String
+
+        static let standard = Self(
+            album: "Skip Probe",
+            unplayableTitle: "Unplayable Probe",
+            playableTitle: "Playable After Skip"
+        )
+        static let longTitle = Self(
+            album: "Long Title Skip Probe",
+            unplayableTitle: "Unplayable Long Probe -- Concerto for Two Violins in D minor, BWV 1043",
+            playableTitle: "Playable After Long Title"
+        )
+    }
+
+    /// Connects, opens the probe album, taps its unplayable first track, and waits for the notice.
+    /// Fails, never skips, when the album is not there.
     @MainActor
     private func startSkipProbe(
         configuration: LivePlaybackConfiguration,
+        probe: SkipProbeAlbum = .standard,
         extraLaunchArguments: [String] = []
     ) -> SkipProbeRun? {
         let app = XCUIApplication()
@@ -1059,20 +1104,20 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         let album = app.buttons.matching(identifier: "dulcet.library.album")
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Skip Probe")).firstMatch
+            .matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
         guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
-            XCTFail("The disposable server must expose the opt-in Skip Probe album; add it with "
+            XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
             return nil
         }
         album.tap()
         // The fixture is the one intended: the unplayable track first, a playable one after it.
-        let unplayableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Unplayable Probe")).firstMatch
-        let playableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playable After Skip")).firstMatch
+        let unplayableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", probe.unplayableTitle)).firstMatch
+        let playableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", probe.playableTitle)).firstMatch
         guard unplayableRow.waitForExistence(timeout: 15), scrollIntoView(unplayableRow, in: app),
               playableRow.waitForExistence(timeout: 5),
               unplayableRow.frame.minY < playableRow.frame.minY else {
-            XCTFail("The Skip Probe album must list Unplayable Probe before Playable After Skip: "
+            XCTFail("The \(probe.album) album must list \(probe.unplayableTitle) before \(probe.playableTitle): "
                 + app.debugDescription)
             return nil
         }

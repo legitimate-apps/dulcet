@@ -260,9 +260,16 @@ private func scanCoverGlow(glowing: RenderedPixels, reduced: RenderedPixels, cov
     return scan
 }
 
-/// A presented player's cover shrinks while paused, and its glow shrinks with it: the glow still
-/// reaches no further than `reach` past the cover as drawn, so paused it ends further inside the
-/// cover's layout frame than it does playing, and every gap to text measured above still holds.
+/// A presented player's cover shrinks while paused, and its glow shrinks with it: the glow reaches
+/// no further than `reach` × the cover's scale past the cover as drawn -- 12 points playing, 10.8
+/// paused, the figure the spec states -- so paused it ends further inside the cover's layout frame
+/// than it does playing, and every gap to text measured above still holds.
+///
+/// That bound alone does not catch a glow sized to the full reach around the drawn cover: the
+/// glow fades out before its clip, so drawn at 12 around a paused cover it is measured at 10.75,
+/// inside 10.8. So the paused glow is also held to the playing glow's measured extent at the same
+/// scale, give or take one pixel of the render -- the glow shrinks with the cover, not merely
+/// stays under its clip.
 /// The glow is isolated as the difference between the render with it and the render under Reduce
 /// Transparency, which share everything else, the shadow included.
 @Test @MainActor
@@ -270,6 +277,7 @@ func thePausedCoversGlowShrinksWithTheCover() async throws {
     let reach = DulcetArtworkGlow.reach
     let margin = reach + 40
     for size in [CGFloat(120), 360] {
+        var playingFarthest: CGFloat?
         for scale in [CGFloat(1), DulcetPlayerCover.pausedScale] {
             let glowing = try timedRender("cover \(size)x\(scale)") {
                 try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: false)
@@ -281,13 +289,23 @@ func thePausedCoversGlowShrinksWithTheCover() async throws {
             let drawn = size * scale
             let inset = (size - drawn) / 2
             let cover = CGRect(x: margin + inset, y: margin + inset, width: drawn, height: drawn)
+            // The glow scales with the cover it surrounds: its bound is the reach at that scale.
+            let bound = reach * scale
             let scan = await scannedOffTheMainActor {
-                scanCoverGlow(glowing: glowing, reduced: reduced, cover: cover, reach: reach)
+                scanCoverGlow(glowing: glowing, reduced: reduced, cover: cover, reach: bound)
             }
-            print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) farthest-glow=\(scan.farthest)"
-                + " beyond-reach=\(scan.beyondReach) glow-near=\(scan.glowNear)")
-            #expect(scan.beyondReach == 0, "glow \(scan.beyondReach) px past the reach of the drawn cover, size \(size) scale \(scale)")
+            print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) bound=\(bound) farthest-glow=\(scan.farthest)"
+                + " beyond-bound=\(scan.beyondReach) glow-near=\(scan.glowNear)")
+            #expect(scan.beyondReach == 0, "glow \(scan.beyondReach) px past \(bound) pt from the drawn cover, size \(size) scale \(scale)")
             #expect(scan.glowNear > 0, "the glow must be drawn at all, size \(size) scale \(scale)")
+            if scale == 1 {
+                playingFarthest = scan.farthest
+            } else {
+                let playing = try #require(playingFarthest, "the playing render comes first")
+                let onePixel = 1 / glowing.scale
+                #expect(scan.farthest <= playing * scale + onePixel,
+                        "paused glow reaches \(scan.farthest), playing \(playing) × \(scale); size \(size)")
+            }
         }
     }
 }

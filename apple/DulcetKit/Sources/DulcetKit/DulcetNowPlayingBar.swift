@@ -294,7 +294,9 @@ private struct DulcetNowPlayingBarProgress: View {
 /// It also draws the playback notices handed down by ``View/dulcetPlaybackFeedback(store:isActive:drawsNotices:)``
 /// along the bottom of the page, above the bar -- and so above the tab bar, whose safe area the
 /// page already respects. The notices are laid out in the page's own frame, before the bar's
-/// inset, so they sit clear of the navigation bar at the top and of the bar and tab bar below.
+/// inset, so they sit clear of the navigation bar at the top and of the bar and tab bar below;
+/// ``DulcetPlaybackNoticeRegion`` offers them a share of that frame's height, and a notice that
+/// would not fit it shows its shorter sentence rather than grow over the navigation bar.
 /// `drawsNotices` false leaves them to another page: only the page showing draws them, so each
 /// notice exists once.
 struct DulcetNowPlayingBarPlacement: ViewModifier {
@@ -315,7 +317,9 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
         content
             .overlay(alignment: .bottom) {
                 if drawsNotices {
-                    DulcetPlaybackNoticeStack(notices: notices)
+                    DulcetPlaybackNoticeRegion {
+                        DulcetPlaybackNoticeStack(notices: notices)
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {

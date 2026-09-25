@@ -292,7 +292,9 @@ private struct DulcetPlaybackFeedback: ViewModifier {
             .environment(\.dulcetPlaybackNotices, drawsNotices ? DulcetPlaybackNotices() : notices)
             .overlay(alignment: .bottom) {
                 if drawsNotices {
-                    DulcetPlaybackNoticeStack(notices: notices)
+                    DulcetPlaybackNoticeRegion {
+                        DulcetPlaybackNoticeStack(notices: notices)
+                    }
                 }
             }
             .onChange(of: store.snapshot.refusedQueueEdits) { previous, current in
@@ -328,9 +330,42 @@ private struct DulcetPlaybackFeedback: ViewModifier {
     }
 }
 
+/// Where the notices go: along the bottom of the space it is given -- the page's own frame,
+/// between its navigation bar and the now-playing bar -- centred, offered at most
+/// ``maximumShare`` of that height (spec §12.12 rule 5).
+///
+/// The offer is what lets a notice choose its shorter sentence rather than grow over the
+/// navigation bar: a notice is transient status, and a card covering most of the page for four
+/// seconds hides the page it is about. It takes the whole space it is given, draws nothing of its
+/// own, and passes taps through.
+struct DulcetPlaybackNoticeRegion: Layout {
+    /// The most of the page's height a notice is offered.
+    static let maximumShare: CGFloat = 1.0 / 3.0
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let offered = ProposedViewSize(width: bounds.width, height: bounds.height * Self.maximumShare)
+        for subview in subviews {
+            subview.place(at: CGPoint(x: bounds.midX, y: bounds.maxY), anchor: .bottom, proposal: offered)
+        }
+    }
+}
+
 /// The notices, stacked at the bottom of the surface drawing them, centred, clear of its edges.
 /// Taps pass through them to whatever is under.
+///
+/// The skip notice names the track when that sentence fits the height it is offered, and
+/// otherwise says the same without the title (``DulcetStrings/playbackSkippedAfterFailureUntitled``):
+/// never truncated, and never grown over navigation. VoiceOver is told the whole sentence
+/// either way, in the announcement the notice makes as it appears. The text is capped at
+/// ``DynamicTypeSize/accessibility2``, as a transient status line, so the shorter sentence fits
+/// on any phone.
 struct DulcetPlaybackNoticeStack: View {
+    static let largestTextSize = DynamicTypeSize.accessibility2
+    static let skipIdentifier = "dulcet.playback.skipped-notice"
     let notices: DulcetPlaybackNotices
 
     var body: some View {
@@ -340,10 +375,18 @@ struct DulcetPlaybackNoticeStack: View {
                     .accessibilityIdentifier("dulcet.queue.edit-refused")
             }
             if let skipMessage = notices.skipMessage {
-                DulcetPlaybackNotice(text: skipMessage, systemImage: "forward.end")
-                    .accessibilityIdentifier("dulcet.playback.skipped-notice")
+                ViewThatFits(in: .vertical) {
+                    DulcetPlaybackNotice(text: skipMessage, systemImage: "forward.end")
+                        .accessibilityIdentifier(Self.skipIdentifier)
+                    DulcetPlaybackNotice(
+                        text: DulcetStrings.playbackSkippedAfterFailureUntitled,
+                        systemImage: "forward.end"
+                    )
+                    .accessibilityIdentifier(Self.skipIdentifier)
+                }
             }
         }
+        .dynamicTypeSize(...Self.largestTextSize)
         // Never edge to edge: a notice that wraps stays a card, clear of the screen's sides.
         .padding(.horizontal, DulcetSpacing.lg)
         .padding(.bottom, DulcetSpacing.sm)

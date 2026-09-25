@@ -487,6 +487,59 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(fixture.store).snapshot.playbackSkipNotice)
     }
 
+    /// Reaching another server withdraws the notice too: it names a track of the queue left
+    /// behind. Configuring the same server again -- a reconnect -- keeps it.
+    func testConfiguringAnotherAccountClearsTheSkipNoticeAndTheSameOneKeepsIt() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .undecodable))
+        _ = try await fixture.waitForPrepare(rawID: "b")
+        let notice = try XCTUnwrap(fixture.controller.currentPresentation.skipNotice, "the case needs a notice up")
+
+        fixture.controller.configure(account: account(provider))
+        XCTAssertEqual(fixture.controller.currentPresentation.skipNotice, notice, "the same server keeps it")
+
+        fixture.controller.configure(account: account("another-\(provider)"))
+
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice)
+        await fixture.waitFor { fixture.store?.snapshot.playbackSkipNotice == nil }
+        XCTAssertNil(try XCTUnwrap(fixture.store).snapshot.playbackSkipNotice)
+    }
+
+    /// The person's Play reaches the core as they press it (spec §12.12 rule 4). A queue restored
+    /// paused, Play pressed while its entry is still preparing -- the engine reports no `Resumed`
+    /// before Ready -- then Ready and a decode failure: the next entry starts playing. The control
+    /// is the same sequence with no Play, where the next entry is prepared and left paused.
+    func testAPlayPressedBeforeARestoredEntryIsReadyLetsTheSkipPlayOn() async throws {
+        for pressesPlay in [true, false] {
+            let launched = makeFixture(tracks: ["a", "b", "c"])
+            launched.controller.replaceQueueAndPlay(launched.intent(startIndex: 0))
+            _ = try await launched.waitForPrepare(rawID: "a")
+
+            // A relaunch: a new queue client and controller over the same database.
+            let relaunched = makeFixture(tracks: ["a", "b", "c"])
+            relaunched.controller.restorePersistedQueue(with: relaunched.tracks, catalogCoverage: .wholeLibrary)
+            let restored = try await relaunched.waitForPrepare(rawID: "a")
+            XCTAssertEqual(relaunched.engine.count("play"), 0, "the restore itself starts no sound")
+            relaunched.emit(.preparing(attemptID: restored))
+            if pressesPlay { relaunched.controller.send(.play) }
+            relaunched.emit(.ready(attemptID: restored, duration: 120, seekability: .seekable))
+            let playsBefore = relaunched.engine.count("play")
+
+            relaunched.emit(.failedBeforeStart(attemptID: restored, error: .undecodable))
+            let next = try await relaunched.waitForPrepare(rawID: "b")
+            relaunched.emit(.ready(attemptID: next, duration: 120, seekability: .seekable))
+            await relaunched.waitFor { relaunched.engine.count("play") > playsBefore }
+
+            XCTAssertEqual(relaunched.controller.currentPresentation.skipNotice?.title, "Track a",
+                           "pressesPlay=\(pressesPlay): the skip happened")
+            XCTAssertEqual(relaunched.engine.count("play") - playsBefore, pressesPlay ? 1 : 0,
+                           pressesPlay ? "the person pressed Play, so b starts playing"
+                               : "nobody pressed Play, so b is prepared and left paused")
+        }
+    }
+
     /// A connection-class failure of the entry the engine advanced into stops there and is
     /// presented -- the same boundary as above, with the other side of the §12.12 rule.
     func testAnAutomaticAdvanceIntoAConnectionFailureStopsAndPresentsIt() async throws {
@@ -565,6 +618,16 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
     // MARK: Fixture
 
+    private func account(_ providerInstanceID: String) -> DulcetPlaybackAccount {
+        DulcetPlaybackAccount(
+            providerInstanceID: providerInstanceID,
+            normalizedServerURL: "http://127.0.0.1:9",
+            username: "fixture",
+            password: "fixture-password",
+            allowLocalHTTP: true
+        )
+    }
+
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
@@ -594,13 +657,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             catalog: tracks,
             artworkFetcher: artwork == nil ? nil : fetcher
         )
-        controller.configure(account: DulcetPlaybackAccount(
-            providerInstanceID: provider,
-            normalizedServerURL: "http://127.0.0.1:9",
-            username: "fixture",
-            password: "fixture-password",
-            allowLocalHTTP: true
-        ))
+        controller.configure(account: account(provider))
         // The store's data source installs the controller's single presentation handler. Tests
         // that read the published status SEQUENCE install a recorder instead and do without the
         // store; the two are never mixed, so neither observes a handler the other replaced.
@@ -789,6 +846,9 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
             outcome = .accepted(commandID: commandID)
         case let .discardPreloaded(commandID, attemptID):
             entry = .init(kind: "discard", attempt: attemptID.rawValue, session: nil, title: nil)
+            outcome = .completed(commandID: commandID, result: .withoutData)
+        case let .play(commandID):
+            entry = .init(kind: "play", attempt: nil, session: nil, title: nil)
             outcome = .completed(commandID: commandID, result: .withoutData)
         case let .stop(commandID):
             entry = .init(kind: "stop", attempt: nil, session: nil, title: nil)

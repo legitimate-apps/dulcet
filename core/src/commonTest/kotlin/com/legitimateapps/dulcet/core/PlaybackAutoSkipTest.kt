@@ -288,14 +288,81 @@ class PlaybackAutoSkipTest {
         assertEquals("f", skip.startDirective?.itemId?.rawId, "progress ended the earlier chain")
     }
 
+    /**
+     * Progress ends the chain, but not the pass (rule 3): an entry that failed and was skipped
+     * past since the person last acted is not reached again automatically, however long the
+     * entries between played.
+     */
     @Test
-    fun progressAlsoClearsTheEntriesACycleWouldStopOn() = rig(listOf("a", "b")) { rig ->
+    fun progressEndsTheChainButNotThePass() = rig(listOf("a", "b")) { rig ->
         rig.repeat(QueueRepeatMode.All)
         val a = rig.start()
         val b = assertNotNull(rig.fail(a, DomainError.Playback.NoPlayableSource).startDirective)
         rig.play(b, from = 0, to = 5)
-        val skip = rig.failAfterPartial(b, at = 5, DomainError.Playback.NoPlayableSource)
-        assertEquals("a", skip.startDirective?.itemId?.rawId, "a failed in the chain progress ended")
+
+        val stop = rig.failAfterPartial(b, at = 5, DomainError.Playback.NoPlayableSource)
+
+        assertNull(stop.startDirective, "a failed and was skipped past in this pass")
+        assertNull(stop.skippedAfterFailure)
+        assertEquals(1, stop.snapshot.currentIndex)
+        assertEquals(b.playbackSessionId, stop.snapshot.currentSession?.playbackSessionId)
+        assertEquals(PlaybackAttemptPhase.Failed, stop.snapshot.currentSession?.currentAttempt?.phase)
+    }
+
+    /**
+     * The review's probe: under repeat-all, every entry plays a second and then fails as its own.
+     * Progress forgives each failure, so only the pass bounds it -- it stops within one pass,
+     * where before it skipped all 50 times it was asked.
+     */
+    @Test
+    fun aQueueWhoseEveryEntryFailsAfterPlayingStopsWithinOnePass() {
+        for (rawIds in listOf(listOf("a", "b"), listOf("a", "b", "c", "d", "e"))) {
+            rig(rawIds) { rig ->
+                rig.repeat(QueueRepeatMode.All)
+                var current = rig.start()
+                var skips = 0
+                var last: PlaybackQueueTransition? = null
+                for (iteration in 1..50) {
+                    rig.play(current, from = 0, to = 1)
+                    val transition = rig.failAfterPartial(current, at = 1, DomainError.Protocol.UnexpectedBinary)
+                    last = transition
+                    current = transition.startDirective ?: break
+                    skips++
+                }
+                val stop = assertNotNull(last)
+                assertEquals(rawIds.size - 1, skips, "one pass over $rawIds, then stop")
+                assertNull(stop.startDirective)
+                assertNull(stop.skippedAfterFailure)
+                assertEquals(rawIds.size - 1, stop.snapshot.currentIndex, "the failure presented is the last entry's")
+                assertEquals(PlaybackAttemptPhase.Failed, stop.snapshot.currentSession?.currentAttempt?.phase)
+            }
+        }
+    }
+
+    /**
+     * The person's own action begins a new pass: after the stop, Skip reaches a failed entry, and
+     * that entry's failure skips past it again instead of stopping on the earlier pass.
+     */
+    @Test
+    fun thePersonsActionBeginsANewPass() = rig(listOf("a", "b", "c")) { rig ->
+        rig.repeat(QueueRepeatMode.All)
+        var current = rig.start()
+        repeat(2) {
+            rig.play(current, from = 0, to = 5)
+            current = assertNotNull(
+                rig.failAfterPartial(current, at = 5, DomainError.Playback.NoPlayableSource).startDirective,
+            )
+        }
+        assertEquals("c", current.itemId.rawId)
+        rig.play(current, from = 0, to = 5)
+        assertNull(rig.failAfterPartial(current, at = 5, DomainError.Playback.NoPlayableSource).startDirective)
+
+        val a = assertNotNull(rig.apply(rig.controller.next()).startDirective, "Skip is the person's call")
+        assertEquals("a", a.itemId.rawId)
+        rig.play(a, from = 0, to = 5)
+        val skip = rig.failAfterPartial(a, at = 5, DomainError.Playback.NoPlayableSource)
+
+        assertEquals("b", skip.startDirective?.itemId?.rawId, "the person's Skip began a new pass")
     }
 
     // ---- identity ----------------------------------------------------------------------------
@@ -475,6 +542,66 @@ class PlaybackAutoSkipTest {
 
         val b = assertNotNull(skip.startDirective, "the track's own failure still moves the queue")
         assertTrue(b.shouldAutoPlay, "the person asked for sound")
+    }
+
+    /**
+     * The person's Play reaches the core as they press it, whatever the engine's readiness (rule
+     * 4). Pressed while the restored entry is still preparing, it reaches the engine only, which
+     * reports no `Resumed` before Ready -- and a decode failure can come before that. The review's
+     * sequence: restored, preparing, Play, Ready, failure. The skipped-to entry must play.
+     */
+    @Test
+    fun aPlayPressedBeforeTheRestoredEntryIsReadyPlaysOnPastItsFailure() = rig(listOf("a", "b", "c")) { rig ->
+        rig.start()
+        rig.relaunch()
+        val restored = assertNotNull(rig.apply(rig.controller.restoreCurrentPaused()).startDirective)
+        rig.apply(rig.controller.recordPlaybackEvent(PlaybackEngineEvent.Preparing(restored.attemptId)))
+        rig.apply(rig.controller.recordPlayRequested(restored.playbackSessionId))
+        rig.apply(
+            rig.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.Ready(restored.attemptId, DURATION, PlaybackSeekability.Seekable),
+            ),
+        )
+
+        val b = assertNotNull(rig.fail(restored, DomainError.Playback.NoPlayableSource).startDirective)
+
+        assertEquals("b", b.itemId.rawId)
+        assertTrue(b.shouldAutoPlay, "the person pressed Play, so the next entry starts playing")
+        val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
+        assertTrue(c.shouldAutoPlay, "and so does the rest of the chain")
+    }
+
+    /** The control for the test above: the same sequence with no Play pressed stays paused. */
+    @Test
+    fun theSameRestoredSequenceWithNoPlayPressedMovesOnStillPaused() = rig(listOf("a", "b")) { rig ->
+        rig.start()
+        rig.relaunch()
+        val restored = assertNotNull(rig.apply(rig.controller.restoreCurrentPaused()).startDirective)
+        rig.apply(rig.controller.recordPlaybackEvent(PlaybackEngineEvent.Preparing(restored.attemptId)))
+        rig.apply(
+            rig.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.Ready(restored.attemptId, DURATION, PlaybackSeekability.Seekable),
+            ),
+        )
+
+        val b = assertNotNull(rig.fail(restored, DomainError.Playback.NoPlayableSource).startDirective)
+
+        assertEquals("b", b.itemId.rawId)
+        assertFalse(b.shouldAutoPlay, "nobody pressed Play")
+    }
+
+    /** A Play for a session that is no longer current says nothing about the one that is. */
+    @Test
+    fun aPlayForAStaleSessionLeavesTheRestoredEntryPaused() = rig(listOf("a", "b")) { rig ->
+        val earlier = rig.start()
+        rig.relaunch()
+        val restored = assertNotNull(rig.apply(rig.controller.restoreCurrentPaused()).startDirective)
+        assertNotEquals(earlier.playbackSessionId, restored.playbackSessionId)
+        rig.apply(rig.controller.recordPlayRequested(earlier.playbackSessionId))
+
+        val b = assertNotNull(rig.fail(restored, DomainError.Playback.NoPlayableSource).startDirective)
+
+        assertFalse(b.shouldAutoPlay, "that Play was for a session the relaunch ended")
     }
 
     /** Prepared is not played: `Ready` alone is not the person asking for sound. */

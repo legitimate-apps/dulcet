@@ -160,6 +160,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         restoredPausedSessions = []
         pendingStarts = [:]
         activeDirectiveIdentity = nil
+        // A notice names a track of the account's queue, so reaching another server withdraws it
+        // (§12.12 rule 5). Configuring the same server again keeps it.
+        if self.presentationAccount?.providerInstanceID != presentationAccount.providerInstanceID {
+            skipNotice = nil
+        }
         let coreAccount = PlaybackEndpointAccount(
             providerInstanceId: presentationAccount.providerInstanceID,
             normalizedBaseUrl: presentationAccount.normalizedServerURL,
@@ -289,6 +294,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 playbackSessionId: sessionID,
                 requiresSeekable: false
             ) else { return }
+            // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
+            // is ready the engine reports nothing, and a failure can come before Ready.
+            _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
             execute(.play(commandID: commandID("play")))
         case .pause:
             guard queueClient.acceptsCommand(
@@ -463,8 +471,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         activeDirectiveIdentity = nil
         pendingStarts = [:]
         execute(.stop(commandID: commandID("disconnect")))
-        // A notice names a track of the queue just left, so it goes with it: signing out, or
-        // reaching another server, must not show the previous account's track.
+        // A notice names a track of the queue just left, so it goes with it: signing out must not
+        // show the previous account's track. Reaching another server withdraws it in `configure`.
         skipNotice = nil
         currentPresentation = .unavailable
         emitPresentation()
