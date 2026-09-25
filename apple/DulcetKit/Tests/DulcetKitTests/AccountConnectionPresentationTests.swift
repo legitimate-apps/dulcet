@@ -1664,7 +1664,21 @@ private final class ControlledServerSearch: DulcetServerSearching {
         return operation
     }
 
-    func complete(at index: Int, _ outcome: DulcetSearchPageOutcome) {
+    // An index with no request behind it is recorded as a failure rather than subscripted: a trap
+    // here ends the whole test process, so every other test in the run reports nothing, and the
+    // one line that names the cause is an `Index out of range` with no test attached.
+    func complete(
+        at index: Int,
+        _ outcome: DulcetSearchPageOutcome,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        guard completions.indices.contains(index) else {
+            Issue.record(
+                "no search request at index \(index); \(completions.count) were issued",
+                sourceLocation: sourceLocation
+            )
+            return
+        }
         completions[index](outcome)
     }
 }
@@ -1882,11 +1896,18 @@ private func fixtureLibraryAlbum() -> DulcetAlbum {
 // debounced-search assertions below fail, and the failure read as "search issued no request"
 // rather than "the settle expired". Wait for the effect, with a deadline, so a genuine regression
 // still fails and mere contention does not.
-private func settleSearchTask(until condition: () -> Bool) async {
+private func settleSearchTask(
+    until condition: () -> Bool,
+    sourceLocation: SourceLocation = #_sourceLocation
+) async {
     let deadline = ContinuousClock.now + .seconds(5)
     while ContinuousClock.now < deadline {
         if condition() { return }
         try? await Task.sleep(for: .milliseconds(5))
+    }
+    // Returning silently let the caller go on to act on a request that was never issued.
+    if !condition() {
+        Issue.record("search condition not met within 5 s", sourceLocation: sourceLocation)
     }
 }
 
