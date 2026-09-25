@@ -784,18 +784,28 @@ private struct SearchPageCountsFixture: DulcetSearchPageCounts {
     var trackHasMore = true
 }
 
-// Every value differs, so crossing any two kinds -- or a result count with a consumed-row count --
+// Every count differs, so crossing any two kinds -- or a result count with a consumed-row count --
 // reads back a different number. The data source advances each kind's cursor by the consumed-row
-// count, so a crossed count here sends one kind's offset to another kind.
+// count, so a crossed count here sends one kind's offset to another kind. Three booleans cannot all
+// differ, so the has-more flags are checked once per kind with only that kind set: any two crossed
+// kinds then move the one `true` in at least one of the three pages.
 @Test
 func searchPageCountsCrossTheCoreBoundaryUnderTheirOwnKinds() {
     let page = DulcetSearchPage(results: [], counts: SearchPageCountsFixture())
     let resultCounts: [Int] = [page.artistResultCount, page.albumResultCount, page.trackResultCount]
     let consumedRows: [Int] = [page.artistConsumedRowCount, page.albumConsumedRowCount, page.trackConsumedRowCount]
-    let hasMore: [Bool] = [page.artistHasMore, page.albumHasMore, page.trackHasMore]
     #expect(resultCounts == [1, 2, 3])
     #expect(consumedRows == [20, 15, 7])
-    #expect(hasMore == [true, false, true])
+
+    for kind in 0..<3 {
+        var fixture = SearchPageCountsFixture()
+        fixture.artistHasMore = kind == 0
+        fixture.albumHasMore = kind == 1
+        fixture.trackHasMore = kind == 2
+        let flagged = DulcetSearchPage(results: [], counts: fixture)
+        let hasMore: [Bool] = [flagged.artistHasMore, flagged.albumHasMore, flagged.trackHasMore]
+        #expect(hasMore == (0..<3).map { $0 == kind }, "has-more with only kind \(kind) set")
+    }
 }
 
 @MainActor

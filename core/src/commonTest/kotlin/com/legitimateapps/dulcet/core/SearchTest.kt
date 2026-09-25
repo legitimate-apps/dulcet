@@ -126,19 +126,18 @@ class SearchTest {
         // Defensive synthetic intra-page duplication, not evidence of real server behavior.
         // Cross-page overlap alone does not reduce this parser's per-response distinct count.
         //
-        // The three kinds are deliberately unlike one another: a different page size, a different
-        // raw row count and a different de-duplicated count on every page, and the songs list ends
-        // a page before the others. A mapping that crossed two kinds' counts would otherwise read
-        // back the same numbers and pass.
+        // The three kinds are deliberately unlike one another: a different page size, and for every
+        // pair of kinds at least one page where their raw row count, their de-duplicated count and
+        // their hasMore each differ. A mapping that crossed two kinds' values would otherwise read
+        // back the same numbers and pass. hasMore runs artist T,F,F / album T,T,F / song F,F,F.
         val rows = mapOf(
-            // 20 a page: raw 20, 20, 1 -- distinct 1, 1, 1.
-            "artist" to List(20) { "A" } + List(20) { "B" } + "C",
+            // 20 a page: raw 20, 3, 0 -- distinct 1, 1, 0. The first page is full of one artist.
+            "artist" to List(20) { "A" } + List(3) { "B" },
             // 15 a page: raw 15, 15, 2 -- distinct 2, 3, 1.
             "album" to List(8) { "A" } + List(7) { "B" } +
                 List(5) { "C" } + List(5) { "D" } + List(5) { "E" } + List(2) { "F" },
-            // 10 a page: raw 10, 7, 0 -- distinct 7, 4, 0. The second page is short.
-            "song" to List(4) { "A" } + listOf("B", "C", "D", "E", "F", "G") +
-                listOf("H", "H", "I", "I", "J", "J", "K"),
+            // 10 a page: raw 7, 0, 0 -- distinct 4, 0, 0. The first page is already short.
+            "song" to List(4) { "A" } + listOf("B", "C", "D"),
         )
         val offsets = mutableListOf<List<Int>>()
         val search = ServerSearch(SearchEndpointTransport { parameters ->
@@ -155,9 +154,9 @@ class SearchTest {
                 "song":[${page("song", "title")}]
             }"""))
         })
-        val consumed = listOf(listOf(20, 15, 10), listOf(20, 15, 7), listOf(1, 2, 0))
-        val distinct = listOf(listOf(1, 2, 7), listOf(1, 3, 4), listOf(1, 1, 0))
-        val hasMore = listOf(listOf(true, true, true), listOf(true, true, false), listOf(false, false, false))
+        val consumed = listOf(listOf(20, 15, 7), listOf(3, 15, 0), listOf(0, 2, 0))
+        val distinct = listOf(listOf(1, 2, 4), listOf(1, 3, 0), listOf(0, 1, 0))
+        val hasMore = listOf(listOf(true, true, false), listOf(false, true, false), listOf(false, false, false))
         var next = request(artistCount = 20, albumCount = 15, trackCount = 10)
         var visible = emptyList<SearchResultItem>()
         repeat(3) { index ->
@@ -178,11 +177,11 @@ class SearchTest {
                 trackOffset = next.trackOffset + page.trackConsumedRowCount,
             )
         }
-        assertEquals(listOf(listOf(0, 0, 0), listOf(20, 15, 10), listOf(40, 30, 17)), offsets)
+        assertEquals(listOf(listOf(0, 0, 0), listOf(20, 15, 7), listOf(23, 30, 7)), offsets)
         val expected = mapOf(
-            SearchResultType.Artist to listOf("A", "B", "C"),
+            SearchResultType.Artist to listOf("A", "B"),
             SearchResultType.Album to listOf("A", "B", "C", "D", "E", "F"),
-            SearchResultType.Track to listOf("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"),
+            SearchResultType.Track to listOf("A", "B", "C", "D"),
         )
         assertEquals(SearchResultType.entries.toSet(), expected.keys, "every kind is checked")
         for ((kind, titles) in expected) {
