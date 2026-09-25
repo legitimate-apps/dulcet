@@ -63,11 +63,11 @@
           "sha256": "f98fa074f8eef7b2de3346fb83d4da15e7e6284fd13bf65210d855043f78f8c1"
         },
         {
-          "formula": "ca-certificates", "version": "2026-08-13", "revision": 0,
+          "formula": "ca-certificates", "version": "2026-09-25", "revision": 0,
           "version_scheme": 0, "dependencies": [], "bottle_tag": "all",
-          "bottle_rebuild": 1,
-          "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:37f5c1413f65c05d86e1279d76699f5d27ad77f8126f5776db13f3d64ee3d010",
-          "sha256": "37f5c1413f65c05d86e1279d76699f5d27ad77f8126f5776db13f3d64ee3d010"
+          "bottle_rebuild": 0,
+          "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a",
+          "sha256": "81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a"
         },
         {
           "formula": "openssl@3", "version": "3.6.4", "revision": 0,
