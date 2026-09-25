@@ -57,7 +57,9 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
     let success = DulcetAccountConnectOutcome.connected(DulcetConnectedAccountSummary(
         serverName: "Music", normalizedServerURL: request.serverURL
     ))
-    var observed = Set<DulcetPresentationState>()
+    // Not reached here, deliberately: accountConnectEmpty and the tlsUntrusted* states are fixture
+    // variants rather than distinct live states, and accountRemoving/accountRemovalError belong to
+    // account removal.
 
     func makeStore(
         _ connector: ControlledAccountConnector,
@@ -72,26 +74,54 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         return store
     }
 
+    // Each step is checked against the one state it must produce. A set of observed states would
+    // accept two outcomes swapping their states, because the set is the same either way.
     let connector = ControlledAccountConnector()
     let credentials = MemoryCredentialStore(persisted: nil)
     let store = makeStore(connector, credentials: credentials)
-    observed.insert(store.snapshot.state)
+    #expect(store.snapshot.state == .accountConnectIdle)
     store.submitAccountConnection()
     #expect(connector.requests == [request])
-    observed.insert(store.snapshot.state)
+    #expect(store.snapshot.state == .accountConnecting)
     connector.complete(success)
-    observed.insert(store.snapshot.state)
+    #expect(store.snapshot.state == .accountConnected)
     #expect(credentials.saved == [request])
 
     // Reconstruct from credentials actually saved by the successful production submission.
     let restoredConnector = ControlledAccountConnector()
     let restored = makeStore(restoredConnector, credentials: credentials)
-    observed.insert(restored.snapshot.state)
+    #expect(restored.snapshot.state == .accountSavedDisconnected)
     #expect(restoredConnector.requests.isEmpty)
 
-    // Reach every distinct domain-error family through the connector completion path.
-    for kind in DulcetAccountFailureKind.allCases
-        where kind != .transportCancelled && kind != .credentialPersistenceFailed {
+    // The oracle is written out per failure kind, deliberately not derived from `kind.family`:
+    // derived from production, it would move with a broken production mapping and still agree.
+    // transportCancelled is not an error presentation, and credentialPersistenceFailed is reached
+    // below through a failing credential save rather than injected.
+    let expectedState: [DulcetAccountFailureKind: DulcetPresentationState] = [
+        .invalidServerURL: .accountErrorInput,
+        .transportUnreachable: .accountErrorTransport,
+        .transportTimeout: .accountErrorTransport,
+        .localNetworkAccessDenied: .accountErrorTransport,
+        .tlsUntrusted: .accountErrorSecurity,
+        .localNetworkPolicyRejected: .accountErrorSecurity,
+        .redirectRejected: .accountErrorSecurity,
+        .malformedEnvelope: .accountErrorProtocol,
+        .incompatibleProtocol: .accountErrorProtocol,
+        .notASubsonicServer: .accountErrorProtocol,
+        .knownServerError: .accountErrorServer,
+        .unknownServerError: .accountErrorServer,
+        .invalidCredentials: .accountErrorAuthentication,
+        .tokenAuthenticationUnsupported: .accountErrorAuthentication,
+        .forbidden: .accountErrorAuthentication,
+        .unsupportedAuthenticationChallenge: .accountErrorAuthentication,
+        .crossOriginRedirectRejected: .accountErrorAuthentication,
+        .capabilityUnsupported: .accountErrorCapability,
+    ]
+    let injected = DulcetAccountFailureKind.allCases.filter {
+        $0 != .transportCancelled && $0 != .credentialPersistenceFailed
+    }
+    #expect(Set(injected) == Set(expectedState.keys), "every injected failure kind has an expected state")
+    for kind in injected {
         let failingConnector = ControlledAccountConnector()
         let failed = makeStore(failingConnector)
         failed.submitAccountConnection()
@@ -99,7 +129,7 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         failingConnector.complete(.failed(DulcetAccountErrorPresenter.presentation(
             for: DulcetAccountErrorContext(kind: kind, serverName: "Music")
         )))
-        observed.insert(failed.snapshot.state)
+        #expect(failed.snapshot.state == expectedState[kind], "\(kind)")
     }
 
     let persistenceConnector = ControlledAccountConnector()
@@ -109,17 +139,7 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
     persistenceFailed.submitAccountConnection()
     #expect(persistenceConnector.requests == [request])
     persistenceConnector.complete(success)
-    observed.insert(persistenceFailed.snapshot.state)
-
-    // Explicit expected states keep a broken production mapping from changing the oracle too.
-    // accountConnectEmpty and tlsUntrusted* are fixture variants, not distinct live states;
-    // accountRemoving/accountRemovalError belong to account removal.
-    #expect(observed == Set<DulcetPresentationState>([
-        .accountConnectIdle, .accountConnecting, .accountSavedDisconnected, .accountConnected,
-        .accountErrorInput, .accountErrorTransport, .accountErrorSecurity, .accountErrorProtocol,
-        .accountErrorServer, .accountErrorAuthentication, .accountErrorCapability,
-        .accountErrorPersistence,
-    ]), "Injected outcomes did not produce the expected presentation transitions")
+    #expect(persistenceFailed.snapshot.state == .accountErrorPersistence)
 }
 
 @MainActor
