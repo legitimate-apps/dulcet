@@ -2441,7 +2441,16 @@ chosen, and it never waits silently for a connection.
 **Step 6 waits for the account's reader to stop (R2a).** A reader closed on the main thread still
 runs the calls already queued on its own thread, and those can write seen-cache rows. Step 6 therefore
 starts only once the reader's thread has stopped — on Apple, when `close(completion:)` calls back —
-never merely once `close()` has returned (§28 revision 104 item 30).
+never merely once `close()` has returned (§28 revision 104 item 28). Android has no sign-out or
+account-removal path yet; when it gets one, its step 6 waits for the completion of
+`AndroidLibraryReader.closeCurrent`, which is bounded rather than exact. The close task first waits
+up to 10 s for cancelled work to unwind and then releases the store. After it ends, the completion
+waits until the thread's executor has terminated or 30 s have passed, and then until any reader
+still closing before this one has terminated or 45 s more have passed: about 85 s at worst. The
+bounds cover cooperative work only: a task queued before the close, or a release, that never
+finishes holds the completion indefinitely. And once a bound passes, step 6 may run while the old
+reader still writes seen-cache rows; how rarely that happens is **ASSUMED** (§28 revision 104
+item 30).
 
 ---
 
@@ -3579,6 +3588,11 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
+A detail whose header is shown but whose child list cannot be has `itemsState` `unavailable`, and
+the publication says why in `itemsUnavailableReason`: offline, the reader's own failure, or the
+read's failure, in that order. The header's freshness cannot say it, because a revalidation in flight
+is `cached(revalidating)` whatever the list's state (§28 revision 104 item 30).
+
 Lists also carry **coverage** (§16.12). `open` is stated when offline — **above** the list, not in a
 footer, because a grid that simply stops reads as finished — and with a total states both numbers:
 "Showing 120 of 2,950 albums — the rest need a connection". `unverified(scanning)` is labelled online
@@ -3918,11 +3932,13 @@ retires `DulcetKit`'s `browse` completion, which is invoked twice for one open (
   `initWithDatabaseName:account:foreground:`). It is required, with no default (§16.14), and
   `setForeground` reports every change after construction.
 
-**Android.** The same `LibraryReader` is consumed directly in Kotlin (no ObjC rule applies), through
-the `LibraryReaderSession` assembly, whose `foreground` argument is required as on Apple. It is exposed
-to Compose as `StateFlow<LibraryPublication>` inside the Android shell — never inside the core's
-public API, where CORPUS line 8 keeps raw `Flow` off the Apple boundary. `LibrarySession`'s 15-minute
-full-import cadence is removed; the epoch policy of §16.11 replaces it.
+**Android.** No ObjC rule applies, but the reader is still `internal` and confined to its thread, so
+the Android shell reaches it through a facade too: `AndroidLibraryReader` in `androidMain`, one per
+account and process, which owns the hop in both directions and copies each publication into public
+Kotlin value types (§28 revision 104 item 30). The shell exposes those publications to Compose as
+`StateFlow`s inside `LibrarySession` — never in the core's public API, where CORPUS line 8 keeps raw
+`Flow` off the Apple boundary. `LibrarySession`'s 15-minute full-import cadence is removed; the epoch
+policy of §16.11 replaces it.
 
 **Core-owned rules, never shell-owned.** Freshness, coverage, playability, search scope and the
 mutation overlay are computed in the core and copied out. A product rule encoded in one platform's
@@ -7617,7 +7633,223 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - The viewport-wins re-rebase of item 29 does not advance the tear-retry count. Each one needs a
       new viewport from the person during a rebase, so it is bounded by input, not by the limit.
 
-    R3 continues this record at item 32.
+30. **Android reaches the reader through a facade too (R3).** §16.18 said the Android shell would
+    consume `LibraryReader` directly. It cannot: the reader is `internal` to the core and confined to
+    its own thread. `AndroidLibraryReader` in `androidMain` is the Android composition root, one per
+    account and process. It builds the session on the reader's thread, runs every call there in call
+    order, delivers every publication and completion on the main thread, and copies publications
+    into public Kotlin value types. §16.18 is corrected in place. What it adds beyond the Apple
+    facade's rules:
+    - **Close on the JVM.** Closing the single-thread dispatcher only shuts its executor down: work
+      already queued still runs, and `close` returns at once. So the facade cancels every other
+      coroutine of the reader and waits for them to finish unwinding on the reader's thread, again
+      until none is left, for at most 10 s. Then it releases the database and transport. It
+      completes once the executor has terminated, waiting at most 30 s for that, and once any reader
+      still closing when this one was created has terminated, waiting at most 45 s more: about 85 s
+      after the close task starts, at worst. These waits bound cooperative work only. Nothing is
+      interrupted: a task queued before the close that never finishes, or a release that never
+      returns, holds the close and its completion indefinitely, and a read that ignores cancellation
+      for longer than 10 s is released under. A future Android sign-out's §14.7 step 6 waits for
+      that completion (§14.7 is corrected in place); Android has no sign-out yet. Past a bound, step
+      6 may run while the old reader still writes; how rarely is ASSUMED. The first R3 version
+      released first and completed at shutdown; its review found that. OBSERVED 2026-09-24 by a host
+      test: work cancelled by the close ran its cleanup before the release, and the executor had
+      terminated by the time `close` completed.
+    - **An account change, and `closeCurrent`.** A new reader opens the database only once the
+      reader still closing has terminated, whether it replaced that reader or `closeCurrent` (the
+      call a future sign-out makes) closed it, waiting at most 45 s. A reader closed while it waits
+      stops waiting and never opens the database, but it counts as terminated only once its
+      predecessor has, again waiting at most 45 s. So within those bounds a chain of account changes
+      never puts two readers on the database. The third review found that the first form of this let
+      the chain break, and the fifth that the claim was stated without its bounds. `closeCurrent`
+      with no current reader waits for the one still closing. OBSERVED by host tests that hold each
+      predecessor's thread: the closed reader's thread stopped while its predecessor's was held, and
+      it terminated only after the predecessor. Two further rules the fifth review prompted rest on
+      reading the code, not on a test: a reader drops its predecessor the moment that terminates, so
+      the old account is not kept alive, and `closeCurrent` records the reader it closes before
+      releasing its lock, so an account change racing it waits for that reader too.
+    - **A reader whose setup threw tries again at its next call that needs the session**: opening a
+      window or search, a favourite or rating change, a reconnect, the pending-change count or the
+      seen-cache's titles. Every other call, such as one on a window or search already open, and
+      every platform report, does not. The first R3 fix replaced it instead, and the second review
+      found that this stranded whoever held the old reader: its screens went silent and its
+      reconnect answered "closed". The screens opened while setup was failing were told so; they are
+      opened once it succeeds, a search with its latest query, which the third review found missing.
+      That query is applied in the same task as the opening, so a query typed after it, which is
+      queued behind that task, supersedes it. OBSERVED by a host test that queues the late opening
+      and a newer query before either runs: the search published the older query and then the newer
+      one, last, both offline as reported. What the platform reported meanwhile (foreground,
+      reachability, a constrained network) is applied to the session built late. OBSERVED by a host
+      test whose setup fails twice and then succeeds in the same reader: the screen opened while it
+      failed was opened offline, as reported, with no request, and went live after the reconnect.
+    - **A call that a racing close cancels before its turn** answers as closed rather than never
+      completing.
+    - **Restored Up Next titles.** `seenTracks` reads the titles of queued tracks from the seen-cache,
+      never from the server. The mirror used to supply them, and without this a restored row had no
+      title at launch.
+    - **Changes discarded at binding** (§16.10) are reported by every reconnect until
+      `acknowledgeDiscardedChanges`, and by none after it, so a rotation does not bring the notice
+      back. OBSERVED by a host test.
+    - **Why a child list is unavailable is now the core's.** A detail publication carries
+      `itemsUnavailableReason`: offline, the reader's own failure, or the read's failure, in that
+      order, which is the rule the list's `unavailable` state already followed. The header's
+      freshness cannot say it, because a revalidation in flight is `cached(revalidating)` whatever
+      the list's state. The first R3 version derived the reason from that freshness and said
+      "something went wrong on this device" during a revalidation; the fix the second review
+      prompted carried the earlier reason over, which the third review showed could say "offline"
+      while online. OBSERVED by a host test that fails an album's read, goes offline, and reconnects
+      with the read held: during the revalidation the list was unavailable, with the read's failure
+      as its reason.
+    - **A search's `serverPending`** is computed in the facade from the core's own values: the same
+      test the search applies before asking the server.
+31. **The shells follow the epoch policy; the fifteen-minute import is gone (R3).** `LibrarySession`
+    has no import and no timer. It does three things, and `StateFlow` appears only inside the shell:
+    - It tells the reader when the app is in the foreground. The core's cadence (§16.11 policy 1)
+      runs only then.
+    - It forwards the platform's default-network callback to `setOnline`, registered on the main
+      thread.
+    - It reconnects on `start()` when there is a network.
+
+    Reachability:
+    - **Offline.** Only the transport's own `unreachable` means offline. The first R3 version counted
+      a timeout as offline, and a review found it.
+    - **A failed reconnect** is any other failure: a timeout, credentials, TLS, or the server's own
+      error. It leaves an offline reader offline, as §16.14 requires. The shell then states it as a
+      connection failure with its reason and "Try again", because the screens' "you're offline"
+      would otherwise be the only explanation, and a wrong one. A new network, the return to the
+      foreground, "Try again" and a refresh each reconnect. A reader that was online when the
+      reconnect failed stays online, as a fresh reader is, and nothing extra is shown. The second
+      review found that a new network did not clear the failure.
+    - **A setup that failed and later succeeded** leaves the shell saying the reader is failed while
+      its screens read again. Live content in that state makes the shell reconnect, which settles it
+      and gives the fresh reader its flush and epoch read.
+    - **A reconnect's answer that arrives after the platform reported the network gone** leaves the
+      shell offline, whatever the answer.
+    - **A reader closed under the shell** (by an account change) is its own state, with no
+      connection line and no "Try again": nothing can reconnect it.
+    - **"Try again" with no network** stays offline. The reader is never told the server is reachable
+      while the platform reports no network.
+    - **The two account-level statements** are made once, on the library's first screen. One is a
+      server that reports no scan stamp (§16.12). The other is unsent changes discarded because the
+      user changed (§16.10).
+    - **The order at launch differs by app, and CONF-76 holds on both.**
+      - The phone restores its last tab. Its screens are composed inside its scaffold, whose content
+        is composed during layout, after the lifecycle effect that calls `start()`. So the
+        reconnect's epoch read is issued first and is still in flight when the windows open.
+      - The TV opens on search. Its library's windows open when the person turns to it.
+      - On both, each window publishes its cache before its own read. On a return to the foreground
+        the windows are already open when `start()` runs.
+    - **Change outcomes** are kept per entity, by kind and id, so an outcome about a track is never
+      shown on an album that happens to share its id.
+    - **A search opened late** (after a failed setup succeeded) applies the latest query at once, in
+      order, so a query typed while setup ran supersedes it rather than the reverse.
+    - **Each TV control is one focus target.** `focusable()` in front of `clickable()` made two, and
+      the centre key on the first did nothing. A TV track row is focusable whatever its playability,
+      with the centre key and an accessibility click only when it has something to say, so a row
+      that becomes unplayable while focused keeps its focus. It is one accessibility node in both
+      states, with its texts merged; the fifth review found that merge lost. CONF-76 on the TV now
+      reaches the unplayable track with the D-pad: it focuses the control above, steps down once,
+      asserts where focus landed, and presses the centre key. Before that, on both apps, it checks
+      that the row is one node carrying the track's title and "Not available offline", with a click
+      action.
+32. **R3's evidence.** OBSERVED 2026-09-24 against the local disposable Navidrome, through a
+    loopback forwarder that counts requests. The component under test was production throughout: the
+    app, its `LibrarySession`, and the process's `AndroidLibraryReader`, in Robolectric host tests.
+    Each CONF id has its own test on `android` and on `androidtv`.
+    - **CONF-76.**
+      - After a cold relaunch, every home row's first publication is its cache, with no loading state,
+        while that row's own read was issued and still held.
+      - An album seen only in a grid paints its cached header, with its track list `loading`.
+      - Offline, a never-opened album says its track list is unavailable, in §16.14's words, and
+        selecting an unplayable track says why.
+      - The core host test checks "before any request" exactly: the cached publication was delivered
+        while the server's request count was unchanged.
+    - **CONF-77.**
+      - A reconnect after an offline star sent exactly `star`, `getScanStatus`, `getMusicFolders`,
+        `getAlbumList2` three times and `getStarred2`.
+      - The app returned to the foreground after 16 emulated minutes in the background. It sent
+        nothing while stopped, then the epoch reading and the four visible rows, and nothing else.
+      - With a 400 ms cadence, the foreground read only the epoch (8 readings in 3.2 s on each app)
+        and the background read nothing.
+      - After a reconnect whose epoch read failed, both a new network and "Try again" brought the
+        reader back online.
+      - A cold first launch sent six requests on both apps.
+      - The downloaded-album recheck is not reached: Android has no download source until R4. That leg
+        is ASSUMED on Android.
+    - **CONF-79.** All four scopes appear. Offline, the scope carries the seen-cache counts (0 artists,
+      8 albums, 4 tracks), and the reader requested nothing.
+    - **CONF-84.**
+      - The star is in the first publication after the tap.
+      - A revalidation that lands while the send is held does not remove it.
+      - The acknowledgement is adopted into the cache with no read in between.
+      - Three offline taps, each published, become one pending change and one `star`.
+    - **CONF-86.** Rows 0 and 1 are live while row 2's read is held and row 3's fails, and the failed
+      row stays failed on its own.
+    - **A test defect that looked like a product one.** The phone and TV live test tasks share one
+      server account, and the configuration cache ran them at the same time: their suites started
+      4 ms apart. The TV suite's cleanup un-starred the phone's flushed star, so the phone's reconnect
+      test failed on an assertion about the server. A shared Gradle build service now runs the two
+      tasks one at a time. The suites then started 28.6 s apart, after the first had run for 23.9 s.
+    - **On emulators (API 34), with the DEV phone build and the TV debug build** connected through
+      their own connect screens to the same local server. After a relaunch with the server process
+      suspended, so no answer could arrive, both apps painted every home row from the cache with
+      "checking your server" and no loading state. Offline, both said "you're offline" with "Try
+      again", a never-opened album said its track list is unavailable in §16.14's words, and
+      selecting a track of an opened album said it will play on reconnect; on the TV the track was
+      reached with the D-pad. The phone went offline by airplane mode. The TV image keeps its
+      Ethernet up in airplane mode, so the TV went offline by the server's port closing, which the
+      transport reports as unreachable. The emulator run found one layout defect: the TV home row's
+      freshness line touched its "Try again" button. It is spaced now; the fix was not re-captured.
+    - **Counts, read from the JUnit XML of runs with `--rerun-tasks`, 0 failures and 0 skipped in
+      each.** `:core:jvmTest` 370, `:core:testAndroidHostTest` 486, `:core:macosArm64Test` 409,
+      `:android:app:testDevDebugUnitTest` 12 and `:android:tv:testDebugUnitTest` 6 (the offline
+      tests), with `:core:compileKotlinIosArm64` and `:android:app:compileProdDebugKotlin`
+      compiling. The live suites, which that command excludes unless selected with
+      `-Pdulcet.productionSearchConformance`: 7 reader tests and 1 search test on each app.
+    - **Mutation.** 32 mutants, each compiled and run against a green unmutated baseline of 26
+      tests: the facade's host tests (12) and the live reader suites on both apps (7 each). They
+      cover cache-before-request order, the reconnect budget, scope mapping, overlay presence, row
+      independence, the freshness copy, TV/phone parity, the epoch policy against the cadence, and
+      each rule the reviews added. 29 are killed and three survive.
+      - Two survive only alone: a new network after a failed reconnect not reconnecting, and live
+        content not settling a stale failed state. Each covers the other: the core reconnects by
+        itself when told the network is back, and the live content that follows makes the shell
+        reconnect. The two together are killed, by CONF-77 on both apps.
+      - A reconnect's answer arriving after a newer loss of network, and overriding it, survives. No
+        test produces that ordering, so that guard rests on reading the code.
+      - The TV track row made two focus targets again survived at first, because D-pad search moves
+        only between siblings, so every step landed on the outer target. It is killed now, by
+        asserting that the row still holds focus after the centre key. The row handles only the
+        key's release, so the key's press reaches the platform, which moves focus into a focus target
+        nested in the row.
+33. **Found in R3 and left to the core and the maintainer.**
+    - **The phone's relaunch read the full epoch five times.** It relaunched into the library while
+      the reconnect's epoch read was in flight, and the four home rows opened. `ensureEpoch()` is
+      `sessionEpoch ?: readEpoch()`, and it does not join a reading already in flight. OBSERVED
+      2026-09-24: `getScanStatus` ×5 and `getMusicFolders` ×5 where one reading was needed. On the TV,
+      whose library opened after the reconnect's reading had finished, there was one.
+      - How often a real network produces that overlap is ASSUMED.
+      - Joining an in-flight reading would change the reconnect's "flush, then read" order, so it is
+        a core decision.
+    - **The artwork pipeline does not consult reachability.** Offline screens still request cover
+      art. OBSERVED: one `getCoverArt` during the phone's offline search. The reader's own offline
+      budget is zero requests; the app's is not.
+    - **An artist seen in a list but never opened reads "age unknown".**
+      `CollectionDetailWindow.snapshot` takes the age from the artist's list state only. This comes
+      from reading the code; it was not measured.
+    - **`FEATURES.yml` still cites the two deleted `ProductionLibrarySync` tests** as evidence for
+      `library.sync` on `android` and `androidtv`. `tools/verify-parity-evidence` fails on an evidence
+      test that did not execute, so core-ci will fail until those cells are declared and the reader's
+      tests are cited. R3 leaves `FEATURES.yml` to the maintainer.
+    - **The Apple facade drops `itemsUnavailableReason`.** R3 leaves Apple code alone, so an Apple
+      shell cannot yet say why a track list is unavailable while its header shows.
+    - **Android has no sign-out or account-removal path.** `AndroidLibraryReader.closeCurrent` is
+      the gate its §14.7 step 6 must wait on, and today only tests call it.
+    - **One unexplained failure.** In one mutation run the TV's CONF-76 test failed under a mutant
+      that, run again, left it green; its failure detail was not kept. It passed in that rerun and
+      in every unmutated baseline. It is recorded, not explained.
+    - **The TV's album screen lists tracks but does not play them.** Playing from a TV album is not
+      built. The TV library had no album screen before R3.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
